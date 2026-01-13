@@ -39,7 +39,7 @@ A 4-stage ML pipeline for fine-tuning language models with OSFT:
 
 - **Name**: osft_pipeline
 - **Tier**: core
-- **Stability**: alpha
+- **Stability**: dev preview
 - **Dependencies**:
   - Kubeflow:
     - Name: Pipelines, Version: >=2.15.2
@@ -60,10 +60,10 @@ A 4-stage ML pipeline for fine-tuning language models with OSFT:
 - **Last Verified**: 2026-01-09 00:00:00+00:00
 - **Owners**:
   - Approvers:
-    - kramaranya
     - briangallagher
-    - MStokluska
     - Fiona-Waters
+    - kramaranya
+    - MStokluska
     - szaher
 
 ## Additional Resources 📚
