@@ -519,9 +519,20 @@ def train_model(
         def _pod_spec():
             return PodSpecOverride(volumes=vols, containers=[ContainerOverride(name="node", volume_mounts=vmts)])
 
+        resources = {
+            "nvidia.com/gpu": training_resource_gpu_per_worker,
+            "memory": training_resource_memory_per_worker,
+            "cpu": int(training_resource_cpu_per_worker),
+        }
+
         job = client.train(
             trainer=TrainingHubTrainer(
-                func=_train_func, func_args=params, algorithm=algo_val, packages_to_install=[], env=dict(menv)
+                func=_train_func,
+                func_args=params,
+                algorithm=algo_val,
+                packages_to_install=[],
+                env=dict(menv),
+                resources_per_node=resources,
             ),
             options=[
                 PodTemplateOverrides(
