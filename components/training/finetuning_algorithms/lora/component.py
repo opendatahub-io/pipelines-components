@@ -205,8 +205,10 @@ def train_model(
         def _nproc():
             auto = str(training_resource_num_procs_per_worker).strip().lower() == "auto"
             np = training_resource_gpu_per_worker if auto else _int(training_resource_num_procs_per_worker, 1)
-            nn = _int(training_resource_num_workers, 1)
-            return max(np, 1), max(nn, 1)
+            # TODO: LoRA (unsloth backend) only supports single-node training.
+            # Hardcoded to 1 until unsloth/training_hub add multi-node LoRA support.
+            nn = 1
+            return max(np, 1), nn
 
         def _params() -> Dict:
             np, nn = _nproc()

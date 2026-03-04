@@ -24,7 +24,7 @@ A minimal 4-stage ML pipeline for fine-tuning language models with LoRA:
 | `phase_02_train_man_train_gpu` | `int` | `1` | GPUs per worker |
 | `phase_02_train_man_train_model` | `str` | `Qwen/Qwen2.5-1.5B-Instruct` | Base model (HuggingFace ID or path) |
 | `phase_02_train_man_train_tokens` | `int` | `32000` | Max tokens per GPU (memory cap). 32000 for LoRA |
-| `phase_02_train_man_train_workers` | `int` | `1` | Number of training pods |
+| ~~`phase_02_train_man_train_workers`~~ | `int` | `1` | ~~Number of training pods~~ — **Disabled: LoRA (unsloth) only supports single-node training. Hardcoded to 1 until multi-node support is added.** |
 | `phase_02_train_man_lora_r` | `int` | `16` | [LoRA] Rank of the low-rank matrices (4, 8, 16, 32, 64) |
 | `phase_02_train_man_lora_alpha` | `int` | `32` | [LoRA] Scaling factor (typically 2x lora_r) |
 | `phase_03_eval_man_eval_tasks` | `list` | `['arc_easy']` | lm-eval tasks (arc_easy, mmlu, gsm8k, hellaswag, etc.) |

@@ -57,7 +57,9 @@ def lora_pipeline(
     phase_02_train_man_train_gpu: int = 1,
     phase_02_train_man_train_model: str = "Qwen/Qwen2.5-1.5B-Instruct",
     phase_02_train_man_train_tokens: int = 32000,
-    phase_02_train_man_train_workers: int = 1,
+    # TODO: LoRA (unsloth backend) only supports single-node training.
+    # Uncomment when unsloth/training_hub add multi-node LoRA support.
+    # phase_02_train_man_train_workers: int = 1,
     phase_02_train_man_lora_r: int = 16,
     phase_02_train_man_lora_alpha: int = 32,
     phase_03_eval_man_eval_tasks: list = ["arc_easy"],
@@ -117,7 +119,6 @@ def lora_pipeline(
             phase_02_train_man_train_gpu: GPUs per worker
             phase_02_train_man_train_model: Base model (HuggingFace ID or path)
             phase_02_train_man_train_tokens: Max tokens per GPU (memory cap). 32000 for LoRA
-            phase_02_train_man_train_workers: Number of training pods
             phase_02_train_man_lora_r: [LoRA] Rank of the low-rank matrices (4, 8, 16, 32, 64)
             phase_02_train_man_lora_alpha: [LoRA] Scaling factor (typically 2x lora_r)
             phase_03_eval_man_eval_tasks: lm-eval tasks (arc_easy, mmlu, gsm8k, hellaswag, etc.)
@@ -222,7 +223,9 @@ def lora_pipeline(
         training_resource_gpu_per_worker=phase_02_train_man_train_gpu,
         training_resource_memory_per_worker=phase_02_train_opt_memory,
         training_resource_num_procs_per_worker=phase_02_train_opt_num_procs,
-        training_resource_num_workers=phase_02_train_man_train_workers,
+        # TODO: LoRA (unsloth backend) only supports single-node training.
+        # Hardcoded to 1 until unsloth/training_hub add multi-node LoRA support.
+        training_resource_num_workers=1,
     )
     training_task.set_caching_options(False)
     kfp.kubernetes.set_image_pull_policy(training_task, "IfNotPresent")

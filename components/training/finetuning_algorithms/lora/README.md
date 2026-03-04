@@ -29,7 +29,7 @@ Train model using LoRA (Low-Rank Adaptation). Outputs model artifact and metrics
 | `training_resource_gpu_per_worker` | `int` | `1` | GPUs per worker. |
 | `training_resource_memory_per_worker` | `str` | `32Gi` | Memory per worker (e.g., 32Gi). |
 | `training_resource_num_procs_per_worker` | `str` | `auto` | Processes per worker (auto or int). |
-| `training_resource_num_workers` | `int` | `1` | Number of training pods. |
+| `training_resource_num_workers` | `int` | `1` | Number of training pods. **Note: LoRA (unsloth) only supports single-node; this value is forced to 1 internally.** |
 | `training_metadata_labels` | `str` | `` | Pod labels as key=value,key=value. |
 | `training_metadata_annotations` | `str` | `` | Pod annotations as key=value,key=value. |
 | `training_lora_r` | `int` | `16` | LoRA rank (controls model capacity). |
