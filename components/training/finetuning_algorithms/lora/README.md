@@ -70,6 +70,7 @@ Train model using LoRA (Low-Rank Adaptation). Outputs model artifact and metrics
 | `training_field_input` | `Optional[str]` | `None` | Field name for input in dataset. |
 | `training_field_output` | `Optional[str]` | `None` | Field name for output in dataset. |
 | `training_enable_model_splitting` | `Optional[bool]` | `None` | Enable model splitting across GPUs. |
+| `training_runtime` | `str` | `training-hub` | Name of the ClusterTrainingRuntime to use. |
 | `kubernetes_config` | `dsl.TaskConfig` | `None` | KFP TaskConfig for volumes/env/resources passthrough. |
 
 ## Outputs 📤

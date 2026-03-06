@@ -101,6 +101,7 @@ def train_model(
     training_field_output: Optional[str] = None,
     # Multi-GPU params
     training_enable_model_splitting: Optional[bool] = None,
+    training_runtime: str = "training-hub",
     kubernetes_config: dsl.TaskConfig = None,
 ) -> str:
     """Train model using LoRA (Low-Rank Adaptation). Outputs model artifact and metrics.
@@ -166,6 +167,7 @@ def train_model(
         training_field_input: Field name for input in dataset.
         training_field_output: Field name for output in dataset.
         training_enable_model_splitting: Enable model splitting across GPUs.
+        training_runtime: Name of the ClusterTrainingRuntime to use.
         kubernetes_config: KFP TaskConfig for volumes/env/resources passthrough.
 
     Environment:
@@ -231,7 +233,7 @@ def train_model(
 
         client = TrainerClient(KubernetesBackendConfig(client_configuration=_api.configuration))
 
-        runtime = select_runtime(client, log)
+        runtime = select_runtime(client, log, runtime_name=training_runtime)
 
         def _params() -> Dict:
             # LoRA (unsloth backend) only supports single-node training.

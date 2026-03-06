@@ -70,6 +70,7 @@ def osft_minimal_pipeline(
     phase_02_train_opt_learning_rate: float = 5e-6,
     phase_02_train_opt_max_seq_len: int = 8192,
     phase_02_train_opt_use_liger: bool = True,
+    phase_02_train_opt_runtime: str = "training-hub",
     phase_04_registry_opt_port: int = 8080,
 ):
     """OSFT Minimal Training Pipeline - Continual learning without catastrophic forgetting.
@@ -99,6 +100,7 @@ def osft_minimal_pipeline(
         phase_02_train_opt_learning_rate: Learning rate (1e-6 to 1e-4). 5e-6 recommended
         phase_02_train_opt_max_seq_len: Max sequence length in tokens
         phase_02_train_opt_use_liger: [OSFT] Enable Liger kernel optimizations. Recommended
+        phase_02_train_opt_runtime: Name of the ClusterTrainingRuntime to use.
         phase_04_registry_opt_port: Model registry server port
     """
     # =========================================================================
@@ -154,6 +156,7 @@ def osft_minimal_pipeline(
         training_resource_memory_per_worker="32Gi",
         training_resource_num_procs_per_worker="auto",
         training_resource_num_workers=phase_02_train_man_train_workers,
+        training_runtime=phase_02_train_opt_runtime,
     )
     training_task.set_caching_options(False)
     kfp.kubernetes.set_image_pull_policy(training_task, "IfNotPresent")

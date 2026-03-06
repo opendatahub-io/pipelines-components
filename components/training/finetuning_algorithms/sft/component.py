@@ -63,6 +63,7 @@ def train_model(
     training_save_samples: Optional[int] = None,
     training_accelerate_full_state_at_epoch: Optional[bool] = None,
     training_fsdp_sharding_strategy: Optional[str] = None,
+    training_runtime: str = "training-hub",
     kubernetes_config: dsl.TaskConfig = None,
 ) -> str:
     """Train model using SFT (Supervised Fine-Tuning). Outputs model artifact and metrics.
@@ -96,6 +97,7 @@ def train_model(
         training_save_samples: Number of samples to save.
         training_accelerate_full_state_at_epoch: Save full accelerate state.
         training_fsdp_sharding_strategy: FSDP sharding strategy.
+        training_runtime: Name of the ClusterTrainingRuntime to use.
         kubernetes_config: KFP TaskConfig for volumes/env/resources passthrough.
 
     Environment:
@@ -161,7 +163,7 @@ def train_model(
 
         client = TrainerClient(KubernetesBackendConfig(client_configuration=_api.configuration))
 
-        runtime = select_runtime(client, log)
+        runtime = select_runtime(client, log, runtime_name=training_runtime)
 
         def _params() -> Dict:
             np, nn = compute_nproc(

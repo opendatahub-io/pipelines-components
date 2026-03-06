@@ -120,6 +120,7 @@ def lora_pipeline(
     phase_02_train_opt_field_output: str = "",
     # Multi-GPU params
     phase_02_train_opt_enable_model_splitting: bool = False,
+    phase_02_train_opt_runtime: str = "training-hub",
     phase_03_eval_opt_batch: str = "auto",
     phase_03_eval_opt_gen_kwargs: dict = {},
     phase_03_eval_opt_limit: int = -1,
@@ -199,6 +200,7 @@ def lora_pipeline(
             phase_02_train_opt_field_input: Field name for input in dataset
             phase_02_train_opt_field_output: Field name for output in dataset
             phase_02_train_opt_enable_model_splitting: Enable model splitting across GPUs
+            phase_02_train_opt_runtime: Name of the ClusterTrainingRuntime to use.
             phase_03_eval_opt_batch: Eval batch size ('auto' or integer)
             phase_03_eval_opt_gen_kwargs: Generation params dict (max_tokens, temperature)
             phase_03_eval_opt_limit: Max samples per task (-1 = all)
@@ -307,6 +309,7 @@ def lora_pipeline(
         training_field_output=phase_02_train_opt_field_output,
         # Multi-GPU params
         training_enable_model_splitting=phase_02_train_opt_enable_model_splitting,
+        training_runtime=phase_02_train_opt_runtime,
     )
     training_task.set_caching_options(False)
     kfp.kubernetes.set_image_pull_policy(training_task, "IfNotPresent")

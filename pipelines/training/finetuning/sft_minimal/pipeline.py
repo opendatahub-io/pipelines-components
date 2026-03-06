@@ -81,6 +81,7 @@ def sft_minimal_pipeline(
     phase_02_train_opt_max_seq_len: int = 8192,
     phase_02_train_opt_fsdp_sharding: str = "FULL_SHARD",
     phase_02_train_opt_use_liger: bool = False,
+    phase_02_train_opt_runtime: str = "training-hub",
     phase_04_registry_opt_port: int = 8080,
 ):
     """SFT Training Pipeline - Standard supervised fine-tuning with instructlab-training.
@@ -110,6 +111,7 @@ def sft_minimal_pipeline(
         phase_02_train_opt_max_seq_len: Max sequence length in tokens
         phase_02_train_opt_fsdp_sharding: FSDP strategy (FULL_SHARD, HYBRID_SHARD, NO_SHARD)
         phase_02_train_opt_use_liger: Enable Liger kernel optimizations
+        phase_02_train_opt_runtime: Name of the ClusterTrainingRuntime to use.
         phase_04_registry_opt_port: Model Registry server port.
     """
     # =========================================================================
@@ -167,6 +169,7 @@ def sft_minimal_pipeline(
         training_resource_memory_per_worker="64Gi",
         training_resource_num_procs_per_worker="auto",
         training_resource_num_workers=phase_02_train_man_workers,
+        training_runtime=phase_02_train_opt_runtime,
     )
     training_task.set_caching_options(False)
     kfp.kubernetes.set_image_pull_policy(training_task, "IfNotPresent")

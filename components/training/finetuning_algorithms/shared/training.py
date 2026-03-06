@@ -21,24 +21,25 @@ def safe_int(v, default: int) -> int:
     return int(s) if s else default
 
 
-def select_runtime(client, log: logging.Logger):
-    """Find and return the 'training-hub' runtime from a TrainerClient.
+def select_runtime(client, log: logging.Logger, runtime_name: str = "training-hub"):
+    """Find and return the named runtime from a TrainerClient.
 
     Args:
         client: TrainerClient instance.
         log: Logger instance.
+        runtime_name: Name of the ClusterTrainingRuntime to find.
 
     Returns:
-        The training-hub runtime object.
+        The matching runtime object.
 
     Raises:
-        RuntimeError: If 'training-hub' runtime is not found.
+        RuntimeError: If the named runtime is not found.
     """
     for r in client.list_runtimes():
-        if getattr(r, "name", "") == "training-hub":
+        if getattr(r, "name", "") == runtime_name:
             log.info(f"Runtime: {r}")
             return r
-    raise RuntimeError("Runtime 'training-hub' not found")
+    raise RuntimeError(f"Runtime '{runtime_name}' not found")
 
 
 def compute_nproc(
