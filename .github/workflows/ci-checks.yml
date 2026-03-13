@@ -1,0 +1,46 @@
+---
+# This workflow checks if all CI checks have passed and uploads PR context for label updates.
+name: CI Check
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, labeled]
+
+jobs:
+  check_ci_status:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      checks: read
+      contents: read
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Run CI checks
+        run: |
+          LABELS="${{ join(github.event.pull_request.labels.*.name, ',') }}"
+
+          python3 .github/scripts/ci_checks/ci_checks.py \
+            --pr-number "${{ github.event.pull_request.number }}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --event-action "${{ github.event.action }}" \
+            --labels "${LABELS}" \
+            --author-association "${{ github.event.pull_request.author_association }}" \
+            --head-sha "${{ github.event.pull_request.head.sha }}" \
+            --check-name "check_ci_status" \
+            --delay 5 \
+            --retries 10 \
+            --polling-interval 5 \
+            --output-dir ./pr
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload PR artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr
+          path: pr/
