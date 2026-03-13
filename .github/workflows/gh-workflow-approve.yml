@@ -82,7 +82,7 @@ jobs:
             };
 
             core.info(`Getting workflow runs that need approval for commit ${request.head_sha}`);
-            const runs = await github.paginate(github.rest.actions.listWorkflowRunsForRepo, request, (resp) => resp.data.workflow_runs);
+            const runs = await github.paginate(github.rest.actions.listWorkflowRunsForRepo, request, (resp) => resp.data);
 
             core.info(`Found ${runs.length} workflow runs that need approval`);
             let failures = 0;
