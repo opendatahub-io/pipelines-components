@@ -12,7 +12,7 @@ metadata:
       && target_branch == "rhoai-3.4"
       && ( !".tekton/**".pathChanged()
         || ".tekton/odh-automl-v3-4-push.yaml".pathChanged()
-        || "Dockerfile.konflux.automl".pathChanged() )
+        || "Docker.konflux.automl".pathChanged() )
   labels:
     appstudio.openshift.io/application: rhoai-v3-4
     appstudio.openshift.io/component: odh-automl-v3-4
@@ -41,7 +41,7 @@ spec:
     - linux-m2xlarge/arm64
     - linux/ppc64le
   - name: dockerfile
-    value: Dockerfile.konflux.automl
+    value: Docker.konflux.automl
   - name: path-context
     value: .
   # TODO: Enable hermetic builds once yarn/npm prefetching is supported.
