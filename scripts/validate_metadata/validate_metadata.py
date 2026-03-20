@@ -11,7 +11,7 @@ from semver import Version
 # The following ordered fields are required in a metadata.yaml file.
 REQUIRED_FIELDS = ["name", "stability", "dependencies", "lastVerified"]
 # The following fields are optional in a metadata.yaml file.
-OPTIONAL_FIELDS = ["tags", "ci", "links"]
+OPTIONAL_FIELDS = ["tags", "ci", "links", "managed", "description"]
 STABILITY_OPTIONS = ["experimental", "alpha", "beta", "stable"]
 # 'Dependencies' must contain 'kubeflow' and can contain 'external_services'.
 DEPENDENCIES_FIELDS = ["kubeflow", "external_services"]
@@ -342,6 +342,22 @@ def validate_required_fields(metadata: dict):
                 raise ValidationError(
                     f"{value_type} value identified in field 'links' in {METADATA} for '{name}'. "
                     f"Value must be dictionary."
+                )
+
+        elif field == "managed":
+            managed_val = metadata.get("managed")
+            if not isinstance(managed_val, bool):
+                raise ValidationError(
+                    f"{value_type} value identified in field 'managed' in {METADATA} for '{name}'. "
+                    f"Value must be boolean (true/false)."
+                )
+
+        elif field == "description":
+            desc_val = metadata.get("description")
+            if not isinstance(desc_val, str):
+                raise ValidationError(
+                    f"{value_type} value identified in field 'description' in {METADATA} for '{name}'. "
+                    f"Value must be string."
                 )
 
 
