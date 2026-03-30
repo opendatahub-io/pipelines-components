@@ -30,6 +30,10 @@ spec:
     value: Dockerfile
   - name: path-context
     value: .
+  - name: build-platforms
+    value:
+    - linux/x86_64
+    - linux/aarch64
   - name: additional-tags
     value:
     - 'odh-pr-{{revision}}'
