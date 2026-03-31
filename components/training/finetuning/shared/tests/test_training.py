@@ -129,7 +129,7 @@ class TestSharedTrainingUnitTests:
             iter(["log line"]),
         ]
 
-        with mock.patch("components.training.finetuning_algorithms.shared.training.time.sleep"):
+        with mock.patch("components.training.finetuning.shared.training.time.sleep"):
             wait_for_training_job(mock_client, "test-job", log)
 
         assert mock_client.get_job_logs.call_count == 2
@@ -143,7 +143,7 @@ class TestSharedTrainingUnitTests:
         mock_client.get_job.side_effect = [running_job, complete_job]
         mock_client.get_job_logs.side_effect = RuntimeError("container not ready")
 
-        with mock.patch("components.training.finetuning_algorithms.shared.training.time.sleep"):
+        with mock.patch("components.training.finetuning.shared.training.time.sleep"):
             wait_for_training_job(mock_client, "test-job", log)
 
         assert mock_client.get_job_logs.call_count == 3

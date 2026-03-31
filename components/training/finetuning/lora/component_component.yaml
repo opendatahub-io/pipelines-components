@@ -1,0 +1,1139 @@
+# PIPELINE DEFINITION
+# Name: train-model
+# Description: Train model using LoRA (Low-Rank Adaptation). Outputs model artifact and metrics.
+# Inputs:
+#    dataset: system.Dataset
+#    kubernetes_config: TaskConfig
+#    pvc_path: str
+#    training_base_model: str [Default: 'Qwen/Qwen2.5-1.5B-Instruct']
+#    training_bf16: bool
+#    training_checkpoint_at_epoch: bool
+#    training_data_output_dir: str
+#    training_dataset_type: str
+#    training_effective_batch_size: int [Default: 128.0]
+#    training_enable_model_splitting: bool
+#    training_envs: str [Default: '']
+#    training_eval_steps: int
+#    training_field_input: str
+#    training_field_instruction: str
+#    training_field_messages: str
+#    training_field_output: str
+#    training_flash_attention: bool
+#    training_fp16: bool
+#    training_gradient_accumulation_steps: int
+#    training_learning_rate: float
+#    training_logging_steps: int
+#    training_lora_alpha: int [Default: 32.0]
+#    training_lora_bnb_4bit_compute_dtype: str
+#    training_lora_bnb_4bit_quant_type: str
+#    training_lora_bnb_4bit_use_double_quant: bool
+#    training_lora_dropout: float [Default: 0.0]
+#    training_lora_load_in_4bit: bool
+#    training_lora_load_in_8bit: bool
+#    training_lora_r: int [Default: 16.0]
+#    training_lora_sample_packing: bool
+#    training_lora_target_modules: str [Default: '']
+#    training_lora_use_dora: bool
+#    training_lora_use_rslora: bool
+#    training_lr_scheduler: str
+#    training_lr_warmup_steps: int
+#    training_max_seq_len: int [Default: 8192.0]
+#    training_max_tokens_per_gpu: int [Default: 32000.0]
+#    training_metadata_annotations: str [Default: '']
+#    training_metadata_labels: str [Default: '']
+#    training_micro_batch_size: int
+#    training_mlflow_experiment_name: str
+#    training_mlflow_run_name: str
+#    training_mlflow_tracking_uri: str
+#    training_num_epochs: int
+#    training_resource_cpu_per_worker: str [Default: '4']
+#    training_resource_gpu_per_worker: int [Default: 1.0]
+#    training_resource_memory_per_worker: str [Default: '32Gi']
+#    training_resource_num_procs_per_worker: str [Default: 'auto']
+#    training_resource_num_workers: int [Default: 1.0]
+#    training_save_steps: int
+#    training_save_total_limit: int
+#    training_seed: int
+#    training_tensorboard_log_dir: str
+#    training_tf32: bool
+#    training_use_liger: bool
+#    training_wandb_entity: str
+#    training_wandb_project: str
+#    training_wandb_run_name: str
+# Outputs:
+#    Output: str
+#    output_loss_chart: system.HTML
+#    output_metrics: system.Metrics
+#    output_model: system.Model
+components:
+  comp-train-model:
+    executorLabel: exec-train-model
+    inputDefinitions:
+      artifacts:
+        dataset:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+          description: Input training dataset artifact.
+          isOptional: true
+      parameters:
+        kubernetes_config:
+          description: KFP TaskConfig for volumes/env/resources passthrough.
+          isOptional: true
+          parameterType: TASK_CONFIG
+        pvc_path:
+          description: Workspace PVC root path (use dsl.WORKSPACE_PATH_PLACEHOLDER).
+          parameterType: STRING
+        training_base_model:
+          defaultValue: Qwen/Qwen2.5-1.5B-Instruct
+          description: Base model (HuggingFace ID or local path).
+          isOptional: true
+          parameterType: STRING
+        training_bf16:
+          description: Use bfloat16 precision.
+          isOptional: true
+          parameterType: BOOLEAN
+        training_checkpoint_at_epoch:
+          description: Save checkpoint at each epoch.
+          isOptional: true
+          parameterType: BOOLEAN
+        training_data_output_dir:
+          description: Directory for processed training data.
+          isOptional: true
+          parameterType: STRING
+        training_dataset_type:
+          description: Dataset format type.
+          isOptional: true
+          parameterType: STRING
+        training_effective_batch_size:
+          defaultValue: 128.0
+          description: Effective batch size per optimizer step.
+          isOptional: true
+          parameterType: NUMBER_INTEGER
+        training_enable_model_splitting:
+          description: Enable model splitting across GPUs.
+          isOptional: true
+          parameterType: BOOLEAN
+        training_envs:
+          defaultValue: ''
+          description: Environment overrides as KEY=VAL,KEY=VAL.
+          isOptional: true
+          parameterType: STRING
+        training_eval_steps:
+          description: Run evaluation every N steps.
+          isOptional: true
+          parameterType: NUMBER_INTEGER
+        training_field_input:
+          description: Field name for input in dataset.
+          isOptional: true
+          parameterType: STRING
+        training_field_instruction:
+          description: Field name for instruction in dataset.
+          isOptional: true
+          parameterType: STRING
+        training_field_messages:
+          description: Field name for messages in dataset.
+          isOptional: true
+          parameterType: STRING
+        training_field_output:
+          description: Field name for output in dataset.
+          isOptional: true
+          parameterType: STRING
+        training_flash_attention:
+          description: Enable flash attention.
+          isOptional: true
+          parameterType: BOOLEAN
+        training_fp16:
+          description: Use float16 precision.
+          isOptional: true
+          parameterType: BOOLEAN
+        training_gradient_accumulation_steps:
+          description: Gradient accumulation steps.
+          isOptional: true
+          parameterType: NUMBER_INTEGER
+        training_learning_rate:
+          description: 'Learning rate (default: 2e-4).'
+          isOptional: true
+          parameterType: NUMBER_DOUBLE
+        training_logging_steps:
+          description: Log metrics every N steps.
+          isOptional: true
+          parameterType: NUMBER_INTEGER
+        training_lora_alpha:
+          defaultValue: 32.0
+          description: LoRA scaling factor.
+          isOptional: true
+          parameterType: NUMBER_INTEGER
+        training_lora_bnb_4bit_compute_dtype:
+          description: Compute dtype (e.g., "bfloat16"). Reserved for future support.
+          isOptional: true
+          parameterType: STRING
+        training_lora_bnb_4bit_quant_type:
+          description: Quantization type (e.g., "nf4"). Reserved for future training_hub
+            support.
+          isOptional: true
+          parameterType: STRING
+        training_lora_bnb_4bit_use_double_quant:
+          description: Enable double quantization. Reserved for future training_hub
+            support.
+          isOptional: true
+          parameterType: BOOLEAN
+        training_lora_dropout:
+          defaultValue: 0.0
+          description: Dropout rate for LoRA layers.
+          isOptional: true
+          parameterType: NUMBER_DOUBLE
+        training_lora_load_in_4bit:
+          description: Enable 4-bit quantization (QLoRA).
+          isOptional: true
+          parameterType: BOOLEAN
+        training_lora_load_in_8bit:
+          description: Enable 8-bit quantization.
+          isOptional: true
+          parameterType: BOOLEAN
+        training_lora_r:
+          defaultValue: 16.0
+          description: LoRA rank (controls model capacity).
+          isOptional: true
+          parameterType: NUMBER_INTEGER
+        training_lora_sample_packing:
+          description: 'Pack multiple samples for efficiency (default: True in training_hub).'
+          isOptional: true
+          parameterType: BOOLEAN
+        training_lora_target_modules:
+          defaultValue: ''
+          description: Comma-separated list of modules to apply LoRA (empty = auto-detect).
+          isOptional: true
+          parameterType: STRING
+        training_lora_use_dora:
+          description: Use Weight-Decomposed LoRA (DoRA).
+          isOptional: true
+          parameterType: BOOLEAN
+        training_lora_use_rslora:
+          description: Use Rank-Stabilized LoRA variant.
+          isOptional: true
+          parameterType: BOOLEAN
+        training_lr_scheduler:
+          description: 'LR scheduler type (cosine, linear, etc.). Training_hub default:
+            linear.'
+          isOptional: true
+          parameterType: STRING
+        training_lr_warmup_steps:
+          description: Learning rate warmup steps.
+          isOptional: true
+          parameterType: NUMBER_INTEGER
+        training_max_seq_len:
+          defaultValue: 8192.0
+          description: Max sequence length in tokens.
+          isOptional: true
+          parameterType: NUMBER_INTEGER
+        training_max_tokens_per_gpu:
+          defaultValue: 32000.0
+          description: Max tokens per GPU (memory cap).
+          isOptional: true
+          parameterType: NUMBER_INTEGER
+        training_metadata_annotations:
+          defaultValue: ''
+          description: Pod annotations as key=value,key=value.
+          isOptional: true
+          parameterType: STRING
+        training_metadata_labels:
+          defaultValue: ''
+          description: Pod labels as key=value,key=value.
+          isOptional: true
+          parameterType: STRING
+        training_micro_batch_size:
+          description: Micro batch size per GPU.
+          isOptional: true
+          parameterType: NUMBER_INTEGER
+        training_mlflow_experiment_name:
+          description: MLflow experiment name.
+          isOptional: true
+          parameterType: STRING
+        training_mlflow_run_name:
+          description: MLflow run name.
+          isOptional: true
+          parameterType: STRING
+        training_mlflow_tracking_uri:
+          description: MLflow tracking server URI.
+          isOptional: true
+          parameterType: STRING
+        training_num_epochs:
+          description: 'Number of training epochs (default: 3).'
+          isOptional: true
+          parameterType: NUMBER_INTEGER
+        training_resource_cpu_per_worker:
+          defaultValue: '4'
+          description: CPU cores per worker.
+          isOptional: true
+          parameterType: STRING
+        training_resource_gpu_per_worker:
+          defaultValue: 1.0
+          description: GPUs per worker.
+          isOptional: true
+          parameterType: NUMBER_INTEGER
+        training_resource_memory_per_worker:
+          defaultValue: 32Gi
+          description: Memory per worker (e.g., 32Gi).
+          isOptional: true
+          parameterType: STRING
+        training_resource_num_procs_per_worker:
+          defaultValue: auto
+          description: Processes per worker (auto or int).
+          isOptional: true
+          parameterType: STRING
+        training_resource_num_workers:
+          defaultValue: 1.0
+          description: Number of training pods.
+          isOptional: true
+          parameterType: NUMBER_INTEGER
+        training_save_steps:
+          description: Save checkpoint every N steps.
+          isOptional: true
+          parameterType: NUMBER_INTEGER
+        training_save_total_limit:
+          description: Max checkpoints to keep.
+          isOptional: true
+          parameterType: NUMBER_INTEGER
+        training_seed:
+          description: Random seed for reproducibility.
+          isOptional: true
+          parameterType: NUMBER_INTEGER
+        training_tensorboard_log_dir:
+          description: TensorBoard log directory.
+          isOptional: true
+          parameterType: STRING
+        training_tf32:
+          description: Enable TF32 on Ampere+ GPUs.
+          isOptional: true
+          parameterType: BOOLEAN
+        training_use_liger:
+          description: Enable Liger kernel optimizations.
+          isOptional: true
+          parameterType: BOOLEAN
+        training_wandb_entity:
+          description: Weights & Biases entity/team.
+          isOptional: true
+          parameterType: STRING
+        training_wandb_project:
+          description: Weights & Biases project name.
+          isOptional: true
+          parameterType: STRING
+        training_wandb_run_name:
+          description: Weights & Biases run name.
+          isOptional: true
+          parameterType: STRING
+    outputDefinitions:
+      artifacts:
+        output_loss_chart:
+          artifactType:
+            schemaTitle: system.HTML
+            schemaVersion: 0.0.1
+        output_metrics:
+          artifactType:
+            schemaTitle: system.Metrics
+            schemaVersion: 0.0.1
+        output_model:
+          artifactType:
+            schemaTitle: system.Model
+            schemaVersion: 0.0.1
+      parameters:
+        Output:
+          parameterType: STRING
+    taskConfigPassthroughs:
+    - field: RESOURCES
+    - field: KUBERNETES_TOLERATIONS
+    - field: KUBERNETES_NODE_SELECTOR
+    - field: KUBERNETES_AFFINITY
+    - applyToTask: true
+      field: ENV
+    - applyToTask: true
+      field: KUBERNETES_VOLUMES
+deploymentSpec:
+  executors:
+    exec-train-model:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - train_model
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kubernetes'\
+          \ 'olot' 'matplotlib'  &&  python3 -m pip install --quiet --no-warn-script-location\
+          \ 'kfp==2.15.2' '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"\
+          3.9\"' && \"$0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\n__KFP_EMBEDDED_ARCHIVE_B64 = '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'\n\
+          \nimport base64 as __kfp_b64\nimport io as __kfp_io\nimport os as __kfp_os\n\
+          import sys as __kfp_sys\nimport tarfile as __kfp_tarfile\nimport tempfile\
+          \ as __kfp_tempfile\n\n# Extract embedded archive at import time to ensure\
+          \ sys.path and globals are set\n__kfp_tmpdir = __kfp_tempfile.TemporaryDirectory()\n\
+          __KFP_EMBEDDED_ASSET_DIR = __kfp_tmpdir.name\ntry:\n    __kfp_bytes = __kfp_b64.b64decode(__KFP_EMBEDDED_ARCHIVE_B64.encode('ascii'))\n\
+          \    with __kfp_tarfile.open(fileobj=__kfp_io.BytesIO(__kfp_bytes), mode='r:gz')\
+          \ as __kfp_tar:\n        __kfp_tar.extractall(path=__KFP_EMBEDDED_ASSET_DIR)\n\
+          except Exception as __kfp_e:\n    raise RuntimeError(f'Failed to extract\
+          \ embedded archive: {__kfp_e}')\n\n# Always prepend the extracted directory\
+          \ to sys.path for import resolution\nif __KFP_EMBEDDED_ASSET_DIR not in\
+          \ __kfp_sys.path:\n    __kfp_sys.path.insert(0, __KFP_EMBEDDED_ASSET_DIR)\n\
+          \n\n\n\ndef train_model(\n    pvc_path: str,\n    output_model: dsl.Output[dsl.Model],\n\
+          \    output_metrics: dsl.Output[dsl.Metrics],\n    output_loss_chart: dsl.Output[dsl.HTML],\n\
+          \    dataset: dsl.Input[dsl.Dataset] = None,\n    training_base_model: str\
+          \ = \"Qwen/Qwen2.5-1.5B-Instruct\",\n    training_effective_batch_size:\
+          \ int = 128,\n    training_max_tokens_per_gpu: int = 32000,\n    training_max_seq_len:\
+          \ int = 8192,\n    training_learning_rate: Optional[float] = None,\n   \
+          \ training_lr_warmup_steps: Optional[int] = None,\n    training_checkpoint_at_epoch:\
+          \ Optional[bool] = None,\n    training_num_epochs: Optional[int] = None,\n\
+          \    training_data_output_dir: Optional[str] = None,\n    training_envs:\
+          \ str = \"\",\n    training_resource_cpu_per_worker: str = \"4\",\n    training_resource_gpu_per_worker:\
+          \ int = 1,\n    training_resource_memory_per_worker: str = \"32Gi\",\n \
+          \   training_resource_num_procs_per_worker: str = \"auto\",\n    training_resource_num_workers:\
+          \ int = 1,\n    training_metadata_labels: str = \"\",\n    training_metadata_annotations:\
+          \ str = \"\",\n    training_lora_r: int = 16,\n    training_lora_alpha:\
+          \ int = 32,\n    training_lora_dropout: float = 0.0,\n    training_lora_target_modules:\
+          \ str = \"\",\n    training_lora_use_rslora: Optional[bool] = None,\n  \
+          \  training_lora_use_dora: Optional[bool] = None,\n    training_lora_load_in_4bit:\
+          \ Optional[bool] = None,\n    training_lora_load_in_8bit: Optional[bool]\
+          \ = None,\n    training_lora_bnb_4bit_quant_type: Optional[str] = None,\n\
+          \    training_lora_bnb_4bit_compute_dtype: Optional[str] = None,\n    training_lora_bnb_4bit_use_double_quant:\
+          \ Optional[bool] = None,\n    training_lora_sample_packing: Optional[bool]\
+          \ = None,\n    training_seed: Optional[int] = None,\n    training_use_liger:\
+          \ Optional[bool] = None,\n    training_lr_scheduler: Optional[str] = None,\n\
+          \    # Batch params\n    training_micro_batch_size: Optional[int] = None,\n\
+          \    training_gradient_accumulation_steps: Optional[int] = None,\n    #\
+          \ Optimization params\n    training_flash_attention: Optional[bool] = None,\n\
+          \    training_bf16: Optional[bool] = None,\n    training_fp16: Optional[bool]\
+          \ = None,\n    training_tf32: Optional[bool] = None,\n    # Saving/Logging\
+          \ params\n    training_save_steps: Optional[int] = None,\n    training_eval_steps:\
+          \ Optional[int] = None,\n    training_logging_steps: Optional[int] = None,\n\
+          \    training_save_total_limit: Optional[int] = None,\n    # Logging integration\
+          \ params\n    training_wandb_project: Optional[str] = None,\n    training_wandb_entity:\
+          \ Optional[str] = None,\n    training_wandb_run_name: Optional[str] = None,\n\
+          \    training_tensorboard_log_dir: Optional[str] = None,\n    training_mlflow_tracking_uri:\
+          \ Optional[str] = None,\n    training_mlflow_experiment_name: Optional[str]\
+          \ = None,\n    training_mlflow_run_name: Optional[str] = None,\n    # Dataset\
+          \ format params\n    training_dataset_type: Optional[str] = None,\n    training_field_messages:\
+          \ Optional[str] = None,\n    training_field_instruction: Optional[str] =\
+          \ None,\n    training_field_input: Optional[str] = None,\n    training_field_output:\
+          \ Optional[str] = None,\n    # Multi-GPU params\n    training_enable_model_splitting:\
+          \ Optional[bool] = None,\n    kubernetes_config: dsl.TaskConfig = None,\n\
+          ) -> str:\n    \"\"\"Train model using LoRA (Low-Rank Adaptation). Outputs\
+          \ model artifact and metrics.\n\n    Args:\n        pvc_path: Workspace\
+          \ PVC root path (use dsl.WORKSPACE_PATH_PLACEHOLDER).\n        output_model:\
+          \ Output model artifact.\n        output_metrics: Output training metrics\
+          \ artifact.\n        output_loss_chart: Output HTML artifact with training\
+          \ loss chart.\n        dataset: Input training dataset artifact.\n     \
+          \   training_base_model: Base model (HuggingFace ID or local path).\n  \
+          \      training_effective_batch_size: Effective batch size per optimizer\
+          \ step.\n        training_max_tokens_per_gpu: Max tokens per GPU (memory\
+          \ cap).\n        training_max_seq_len: Max sequence length in tokens.\n\
+          \        training_learning_rate: Learning rate (default: 2e-4).\n      \
+          \  training_lr_warmup_steps: Learning rate warmup steps.\n        training_checkpoint_at_epoch:\
+          \ Save checkpoint at each epoch.\n        training_num_epochs: Number of\
+          \ training epochs (default: 3).\n        training_data_output_dir: Directory\
+          \ for processed training data.\n        training_envs: Environment overrides\
+          \ as KEY=VAL,KEY=VAL.\n        training_resource_cpu_per_worker: CPU cores\
+          \ per worker.\n        training_resource_gpu_per_worker: GPUs per worker.\n\
+          \        training_resource_memory_per_worker: Memory per worker (e.g., 32Gi).\n\
+          \        training_resource_num_procs_per_worker: Processes per worker (auto\
+          \ or int).\n        training_resource_num_workers: Number of training pods.\n\
+          \        training_metadata_labels: Pod labels as key=value,key=value.\n\
+          \        training_metadata_annotations: Pod annotations as key=value,key=value.\n\
+          \        training_lora_r: LoRA rank (controls model capacity).\n       \
+          \ training_lora_alpha: LoRA scaling factor.\n        training_lora_dropout:\
+          \ Dropout rate for LoRA layers.\n        training_lora_target_modules: Comma-separated\
+          \ list of modules to apply LoRA (empty = auto-detect).\n        training_lora_use_rslora:\
+          \ Use Rank-Stabilized LoRA variant.\n        training_lora_use_dora: Use\
+          \ Weight-Decomposed LoRA (DoRA).\n        training_lora_load_in_4bit: Enable\
+          \ 4-bit quantization (QLoRA).\n        training_lora_load_in_8bit: Enable\
+          \ 8-bit quantization.\n        training_lora_bnb_4bit_quant_type: Quantization\
+          \ type (e.g., \"nf4\"). Reserved for future training_hub support.\n    \
+          \    training_lora_bnb_4bit_compute_dtype: Compute dtype (e.g., \"bfloat16\"\
+          ). Reserved for future support.\n        training_lora_bnb_4bit_use_double_quant:\
+          \ Enable double quantization. Reserved for future training_hub support.\n\
+          \        training_lora_sample_packing: Pack multiple samples for efficiency\
+          \ (default: True in training_hub).\n        training_seed: Random seed for\
+          \ reproducibility.\n        training_use_liger: Enable Liger kernel optimizations.\n\
+          \        training_lr_scheduler: LR scheduler type (cosine, linear, etc.).\
+          \ Training_hub default: linear.\n        training_micro_batch_size: Micro\
+          \ batch size per GPU.\n        training_gradient_accumulation_steps: Gradient\
+          \ accumulation steps.\n        training_flash_attention: Enable flash attention.\n\
+          \        training_bf16: Use bfloat16 precision.\n        training_fp16:\
+          \ Use float16 precision.\n        training_tf32: Enable TF32 on Ampere+\
+          \ GPUs.\n        training_save_steps: Save checkpoint every N steps.\n \
+          \       training_eval_steps: Run evaluation every N steps.\n        training_logging_steps:\
+          \ Log metrics every N steps.\n        training_save_total_limit: Max checkpoints\
+          \ to keep.\n        training_wandb_project: Weights & Biases project name.\n\
+          \        training_wandb_entity: Weights & Biases entity/team.\n        training_wandb_run_name:\
+          \ Weights & Biases run name.\n        training_tensorboard_log_dir: TensorBoard\
+          \ log directory.\n        training_mlflow_tracking_uri: MLflow tracking\
+          \ server URI.\n        training_mlflow_experiment_name: MLflow experiment\
+          \ name.\n        training_mlflow_run_name: MLflow run name.\n        training_dataset_type:\
+          \ Dataset format type.\n        training_field_messages: Field name for\
+          \ messages in dataset.\n        training_field_instruction: Field name for\
+          \ instruction in dataset.\n        training_field_input: Field name for\
+          \ input in dataset.\n        training_field_output: Field name for output\
+          \ in dataset.\n        training_enable_model_splitting: Enable model splitting\
+          \ across GPUs.\n        kubernetes_config: KFP TaskConfig for volumes/env/resources\
+          \ passthrough.\n\n    Environment:\n        HF_TOKEN: HuggingFace token\
+          \ for gated models (read from environment).\n        OCI_PULL_SECRET_MODEL_DOWNLOAD:\
+          \ Docker config.json content for pulling OCI model images.\n    \"\"\"\n\
+          \    import os\n    from typing import Dict\n\n    from data import download_oci_model,\
+          \ prepare_jsonl, resolve_dataset\n    from output import persist_model,\
+          \ plot_training_loss\n    from setup import configure_env, create_logger,\
+          \ init_k8s, parse_kv, setup_hf_token\n    from training import compute_nproc,\
+          \ select_runtime, wait_for_training_job\n\n    log = create_logger(\"train_model\"\
+          )\n    log.info(f\"Initializing LoRA training component with: pvc={pvc_path},\
+          \ model={training_base_model}\")\n\n    _api = init_k8s(log)\n\n    cache\
+          \ = os.path.join(pvc_path, \".cache\", \"huggingface\")\n    default_env:\
+          \ Dict[str, str] = {\n        \"XDG_CACHE_HOME\": \"/tmp\",\n        \"\
+          TRITON_CACHE_DIR\": \"/tmp/.triton\",\n        \"HF_HOME\": \"/tmp/.cache/huggingface\"\
+          ,\n        \"HF_DATASETS_CACHE\": os.path.join(cache, \"datasets\"),\n \
+          \       \"TRANSFORMERS_CACHE\": os.path.join(cache, \"transformers\"),\n\
+          \        \"NCCL_DEBUG\": \"INFO\",\n        \"PYTHONUNBUFFERED\": \"1\"\
+          ,\n    }\n\n    merged_env = configure_env(training_envs, default_env, log)\n\
+          \    setup_hf_token(merged_env, training_base_model, log)\n\n    ds_dir\
+          \ = os.path.join(pvc_path, \"dataset\", \"train\")\n    os.makedirs(ds_dir,\
+          \ exist_ok=True)\n\n    resolve_dataset(dataset, ds_dir, log)\n\n    jsonl\
+          \ = os.path.join(ds_dir, \"train.jsonl\")\n    prepare_jsonl(ds_dir, jsonl,\
+          \ log)\n\n    resolved = training_base_model\n\n    if isinstance(training_base_model,\
+          \ str) and training_base_model.startswith(\"oci://\"):\n        resolved\
+          \ = download_oci_model(training_base_model, pvc_path, log)\n\n    ckpt_dir\
+          \ = os.path.join(pvc_path, \"checkpoints\")\n    os.makedirs(ckpt_dir, exist_ok=True)\n\
+          \n    try:\n        from kubeflow.common.types import KubernetesBackendConfig\n\
+          \        from kubeflow.trainer import TrainerClient\n        from kubeflow.trainer.options.kubernetes\
+          \ import (\n            ContainerOverride,\n            PodSpecOverride,\n\
+          \            PodTemplateOverride,\n            PodTemplateOverrides,\n \
+          \       )\n        from kubeflow.trainer.rhai import TrainingHubAlgorithms,\
+          \ TrainingHubTrainer\n\n        if _api is None:\n            raise RuntimeError(\"\
+          K8s API not initialized\")\n\n        client = TrainerClient(KubernetesBackendConfig(client_configuration=_api.configuration))\n\
+          \n        runtime = select_runtime(client, log)\n\n        def _params()\
+          \ -> Dict:\n            np, nn = compute_nproc(\n                training_resource_gpu_per_worker,\n\
+          \                training_resource_num_procs_per_worker,\n             \
+          \   num_workers=training_resource_num_workers,\n            )\n        \
+          \    b = {\n                \"model_path\": resolved,\n                \"\
+          data_path\": jsonl if os.path.exists(jsonl) else ds_dir,\n             \
+          \   \"effective_batch_size\": int(training_effective_batch_size or 128),\n\
+          \                \"max_tokens_per_gpu\": int(training_max_tokens_per_gpu),\n\
+          \                \"max_seq_len\": int(training_max_seq_len or 8192),\n \
+          \               \"learning_rate\": float(training_learning_rate or 2e-4),\n\
+          \                \"backend\": \"unsloth\",\n                \"ckpt_output_dir\"\
+          : ckpt_dir,\n                \"data_output_dir\": training_data_output_dir\
+          \ or os.path.join(ckpt_dir, \"_internal_data_processing\"),\n          \
+          \      \"warmup_steps\": int(training_lr_warmup_steps) if training_lr_warmup_steps\
+          \ is not None else 10,\n                \"checkpoint_at_epoch\": bool(training_checkpoint_at_epoch)\n\
+          \                if training_checkpoint_at_epoch is not None\n         \
+          \       else False,\n                \"num_epochs\": int(training_num_epochs)\
+          \ if training_num_epochs else 3,\n                \"nproc_per_node\": np,\n\
+          \                \"nnodes\": nn,\n            }\n\n            # LoRA-specific\
+          \ parameters\n            b[\"lora_r\"] = int(training_lora_r)\n       \
+          \     b[\"lora_alpha\"] = int(training_lora_alpha)\n            b[\"lora_dropout\"\
+          ] = float(training_lora_dropout)\n\n            if training_lora_target_modules:\n\
+          \                b[\"target_modules\"] = [m.strip() for m in training_lora_target_modules.split(\"\
+          ,\") if m.strip()]\n\n            if training_lora_use_rslora is not None:\n\
+          \                b[\"use_rslora\"] = bool(training_lora_use_rslora)\n  \
+          \          if training_lora_use_dora is not None:\n                b[\"\
+          use_dora\"] = bool(training_lora_use_dora)\n\n            # QLoRA parameters\n\
+          \            if training_lora_load_in_4bit and training_lora_load_in_8bit:\n\
+          \                raise ValueError(\"Cannot enable both 4-bit and 8-bit quantization.\
+          \ Choose one or neither.\")\n            if training_lora_load_in_4bit is\
+          \ not None:\n                b[\"load_in_4bit\"] = bool(training_lora_load_in_4bit)\n\
+          \            if training_lora_load_in_8bit is not None:\n              \
+          \  b[\"load_in_8bit\"] = bool(training_lora_load_in_8bit)\n            #\
+          \ NOTE: bnb_4bit_quant_type, bnb_4bit_compute_dtype, bnb_4bit_use_double_quant\n\
+          \            # are accepted by training_hub's lora_sft() API but _load_unsloth_model()\
+          \ passes\n            # them as raw kwargs to FastLanguageModel.from_pretrained()\
+          \ which causes a\n            # TypeError. Omitted until training_hub wraps\
+          \ them in BitsAndBytesConfig.\n            # Unsloth defaults to nf4 quantization\
+          \ when load_in_4bit=True.\n\n            # Other optional parameters\n \
+          \           if training_lora_sample_packing is not None:\n             \
+          \   b[\"sample_packing\"] = bool(training_lora_sample_packing)\n       \
+          \     if training_lr_scheduler:\n                b[\"lr_scheduler\"] = training_lr_scheduler\n\
+          \            if training_use_liger is not None:\n                b[\"use_liger\"\
+          ] = bool(training_use_liger)\n            if training_seed is not None:\n\
+          \                b[\"seed\"] = int(training_seed)\n\n            # Batch\
+          \ params\n            if training_micro_batch_size is not None:\n      \
+          \          b[\"micro_batch_size\"] = int(training_micro_batch_size)\n  \
+          \          if training_gradient_accumulation_steps is not None:\n      \
+          \          b[\"gradient_accumulation_steps\"] = int(training_gradient_accumulation_steps)\n\
+          \n            # Optimization params\n            if training_flash_attention\
+          \ is not None:\n                b[\"flash_attention\"] = bool(training_flash_attention)\n\
+          \            if training_bf16 is not None:\n                b[\"bf16\"]\
+          \ = bool(training_bf16)\n            if training_fp16 is not None:\n   \
+          \             b[\"fp16\"] = bool(training_fp16)\n            if training_tf32\
+          \ is not None:\n                b[\"tf32\"] = bool(training_tf32)\n\n  \
+          \          # Saving/Logging params\n            if training_save_steps is\
+          \ not None:\n                b[\"save_steps\"] = int(training_save_steps)\n\
+          \            if training_eval_steps is not None:\n                b[\"eval_steps\"\
+          ] = int(training_eval_steps)\n            if training_logging_steps is not\
+          \ None:\n                b[\"logging_steps\"] = int(training_logging_steps)\n\
+          \            if training_save_total_limit is not None:\n               \
+          \ b[\"save_total_limit\"] = int(training_save_total_limit)\n\n         \
+          \   # Logging integration params\n            if training_wandb_project:\n\
+          \                b[\"wandb_project\"] = training_wandb_project\n       \
+          \     if training_wandb_entity:\n                b[\"wandb_entity\"] = training_wandb_entity\n\
+          \            if training_wandb_run_name:\n                b[\"wandb_run_name\"\
+          ] = training_wandb_run_name\n            if training_tensorboard_log_dir:\n\
+          \                b[\"tensorboard_log_dir\"] = training_tensorboard_log_dir\n\
+          \            if training_mlflow_tracking_uri:\n                b[\"mlflow_tracking_uri\"\
+          ] = training_mlflow_tracking_uri\n            if training_mlflow_experiment_name:\n\
+          \                b[\"mlflow_experiment_name\"] = training_mlflow_experiment_name\n\
+          \            if training_mlflow_run_name:\n                b[\"mlflow_run_name\"\
+          ] = training_mlflow_run_name\n\n            # Dataset format params\n  \
+          \          if training_dataset_type:\n                b[\"dataset_type\"\
+          ] = training_dataset_type\n            if training_field_messages:\n   \
+          \             b[\"field_messages\"] = training_field_messages\n        \
+          \    if training_field_instruction:\n                b[\"field_instruction\"\
+          ] = training_field_instruction\n            if training_field_input:\n \
+          \               b[\"field_input\"] = training_field_input\n            if\
+          \ training_field_output:\n                b[\"field_output\"] = training_field_output\n\
+          \n            # Multi-GPU params\n            if training_enable_model_splitting\
+          \ is not None:\n                b[\"enable_model_splitting\"] = bool(training_enable_model_splitting)\n\
+          \n            return b\n\n        params = _params()\n\n        def _train_func(p):\n\
+          \            import os\n\n            from training_hub import lora_sft\
+          \ as tr\n\n            print(\"[PY] Launching LoRA training...\", flush=True)\n\
+          \            result = tr(**(p or {}))\n\n            # Merge LoRA adapter\
+          \ weights into base model for eval/deployment compatibility.\n         \
+          \   # LoRA training saves adapter-only files (adapter_config.json, adapter_model.safetensors)\n\
+          \            # but downstream components (lm-eval, vLLM) expect a full model\
+          \ with config.json.\n            #\n            # Strategy: Use Unsloth's\
+          \ save_pretrained_merged() which properly dequantizes\n            # 4-bit\
+          \ QLoRA weights. Then post-process the saved files to:\n            # 1.\
+          \ Strip base_model. prefix from safetensors weight keys\n            # 2.\
+          \ Fix sharded index file if present\n            # 3. Remove quantization_config\
+          \ from config.json\n            ckpt_dir = p.get(\"ckpt_output_dir\")\n\
+          \            if ckpt_dir and result and \"model\" in result:\n         \
+          \       import glob as _glob\n                import json\n\n          \
+          \      from safetensors.torch import load_file, save_file\n\n          \
+          \      # Remove any existing files from trainer.save_model()\n         \
+          \       for _f in (\n                    _glob.glob(ckpt_dir + \"/*.safetensors\"\
+          )\n                    + _glob.glob(ckpt_dir + \"/model.safetensors.index.json\"\
+          )\n                    + _glob.glob(ckpt_dir + \"/adapter_config.json\"\
+          )\n                ):\n                    if os.path.exists(_f):\n    \
+          \                    os.remove(_f)\n\n                # Let Unsloth handle\
+          \ dequantization and saving\n                print(\"[PY] Merging and saving\
+          \ model (Unsloth merged_16bit)...\", flush=True)\n                result[\"\
+          model\"].save_pretrained_merged(ckpt_dir, result[\"tokenizer\"], save_method=\"\
+          merged_16bit\")\n\n                # Post-process: fix weight key prefixes\
+          \ in safetensors files\n                for sf_path in sorted(_glob.glob(ckpt_dir\
+          \ + \"/*.safetensors\")):\n                    tensors = load_file(sf_path)\n\
+          \                    clean = {}\n                    needs_fix = False\n\
+          \                    for k, v in tensors.items():\n                    \
+          \    if k.startswith(\"base_model.model.\"):\n                         \
+          \   clean[k[len(\"base_model.model.\") :]] = v\n                       \
+          \     needs_fix = True\n                        elif k.startswith(\"base_model.\"\
+          ):\n                            clean[k[len(\"base_model.\") :]] = v\n \
+          \                           needs_fix = True\n                        else:\n\
+          \                            clean[k] = v\n                    if needs_fix:\n\
+          \                        save_file(clean, sf_path)\n\n                #\
+          \ Post-process: fix weight key prefixes in index file if sharded\n     \
+          \           idx_path = ckpt_dir + \"/model.safetensors.index.json\"\n  \
+          \              if os.path.exists(idx_path):\n                    with open(idx_path)\
+          \ as f:\n                        idx = json.load(f)\n                  \
+          \  if \"weight_map\" in idx:\n                        new_map = {}\n   \
+          \                     for k, v in idx[\"weight_map\"].items():\n       \
+          \                     if k.startswith(\"base_model.model.\"):\n        \
+          \                        new_map[k[len(\"base_model.model.\") :]] = v\n\
+          \                            elif k.startswith(\"base_model.\"):\n     \
+          \                           new_map[k[len(\"base_model.\") :]] = v\n   \
+          \                         else:\n                                new_map[k]\
+          \ = v\n                        idx[\"weight_map\"] = new_map\n         \
+          \               with open(idx_path, \"w\") as f:\n                     \
+          \       json.dump(idx, f, indent=2)\n\n                # Post-process: remove\
+          \ quantization_config from config.json\n                cfg_path = ckpt_dir\
+          \ + \"/config.json\"\n                if os.path.exists(cfg_path):\n   \
+          \                 with open(cfg_path) as f:\n                        cfg\
+          \ = json.load(f)\n                    if \"quantization_config\" in cfg:\n\
+          \                        del cfg[\"quantization_config\"]\n            \
+          \            with open(cfg_path, \"w\") as f:\n                        \
+          \    json.dump(cfg, f, indent=2)\n\n                print(\"[PY] Merged\
+          \ model saved.\", flush=True)\n\n            return result\n\n        vols,\
+          \ vmts = [], []\n        if kubernetes_config and getattr(kubernetes_config,\
+          \ \"volumes\", None):\n            vols.extend(kubernetes_config.volumes)\n\
+          \        if kubernetes_config and getattr(kubernetes_config, \"volume_mounts\"\
+          , None):\n            vmts.extend(kubernetes_config.volume_mounts)\n\n \
+          \       tlbl = parse_kv(training_metadata_labels)\n        tann = parse_kv(training_metadata_annotations)\n\
+          \n        def _pod_spec():\n            return PodSpecOverride(volumes=vols,\
+          \ containers=[ContainerOverride(name=\"node\", volume_mounts=vmts)])\n\n\
+          \        resources = {\n            \"nvidia.com/gpu\": training_resource_gpu_per_worker,\n\
+          \            \"memory\": training_resource_memory_per_worker,\n        \
+          \    \"cpu\": int(training_resource_cpu_per_worker),\n        }\n\n    \
+          \    job = client.train(\n            trainer=TrainingHubTrainer(\n    \
+          \            func=_train_func,\n                func_args=params,\n    \
+          \            algorithm=TrainingHubAlgorithms.LORA_SFT,\n               \
+          \ packages_to_install=[],\n                env=dict(merged_env),\n     \
+          \           resources_per_node=resources,\n            ),\n            options=[\n\
+          \                PodTemplateOverrides(\n                    PodTemplateOverride(\n\
+          \                        target_jobs=[\"node\"],\n                     \
+          \   metadata={\"labels\": tlbl, \"annotations\": tann} if (tlbl or tann)\
+          \ else None,\n                        spec=_pod_spec(),\n              \
+          \      )\n                )\n            ],\n            runtime=runtime,\n\
+          \        )\n        log.info(f\"Job: {job}\")\n        wait_for_training_job(client,\
+          \ job, log)\n    except Exception as e:\n        log.error(f\"Training failed:\
+          \ {e}\")\n        raise\n\n    def get_training_metrics(root: str):\n  \
+          \      # TODO: Add loss chart support for LoRA once training_hub exposes\
+          \ a metrics/logging\n        # file for the unsloth backend. Blocked on:\n\
+          \        # https://github.com/Red-Hat-AI-Innovation-Team/training_hub/pull/40\n\
+          \        return {}, []\n\n    def log_training_metrics():\n        output_metrics.log_metric(\"\
+          num_epochs\", float(params.get(\"num_epochs\") or 3))\n        output_metrics.log_metric(\"\
+          effective_batch_size\", float(params.get(\"effective_batch_size\") or 128))\n\
+          \        output_metrics.log_metric(\"learning_rate\", float(params.get(\"\
+          learning_rate\") or 2e-4))\n        output_metrics.log_metric(\"max_seq_len\"\
+          , float(params.get(\"max_seq_len\") or 8192))\n        output_metrics.log_metric(\"\
+          max_tokens_per_gpu\", float(params.get(\"max_tokens_per_gpu\") or 0))\n\
+          \        output_metrics.log_metric(\"lora_r\", float(params.get(\"lora_r\"\
+          ) or 16))\n        output_metrics.log_metric(\"lora_alpha\", float(params.get(\"\
+          lora_alpha\") or 32))\n        output_metrics.log_metric(\"lora_dropout\"\
+          , float(params.get(\"lora_dropout\") or 0.0))\n        tm, loss = get_training_metrics(ckpt_dir)\n\
+          \        for k, v in tm.items():\n            output_metrics.log_metric(f\"\
+          training_{k}\", v)\n        plot_training_loss(loss, output_loss_chart.path)\n\
+          \n    log_training_metrics()\n\n    persist_model(ckpt_dir, pvc_path, training_base_model,\
+          \ output_model, log)\n    return \"training completed\"\n\n"
+        image: quay.io/opendatahub/odh-th06-cpu-torch291-py312:odh-3.4-ea2
+pipelineInfo:
+  name: train-model
+root:
+  dag:
+    outputs:
+      artifacts:
+        output_loss_chart:
+          artifactSelectors:
+          - outputArtifactKey: output_loss_chart
+            producerSubtask: train-model
+        output_metrics:
+          artifactSelectors:
+          - outputArtifactKey: output_metrics
+            producerSubtask: train-model
+        output_model:
+          artifactSelectors:
+          - outputArtifactKey: output_model
+            producerSubtask: train-model
+      parameters:
+        Output:
+          valueFromParameter:
+            outputParameterKey: Output
+            producerSubtask: train-model
+    tasks:
+      train-model:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-train-model
+        inputs:
+          artifacts:
+            dataset:
+              componentInputArtifact: dataset
+          parameters:
+            kubernetes_config:
+              componentInputParameter: kubernetes_config
+            pvc_path:
+              componentInputParameter: pvc_path
+            training_base_model:
+              componentInputParameter: training_base_model
+            training_bf16:
+              componentInputParameter: training_bf16
+            training_checkpoint_at_epoch:
+              componentInputParameter: training_checkpoint_at_epoch
+            training_data_output_dir:
+              componentInputParameter: training_data_output_dir
+            training_dataset_type:
+              componentInputParameter: training_dataset_type
+            training_effective_batch_size:
+              componentInputParameter: training_effective_batch_size
+            training_enable_model_splitting:
+              componentInputParameter: training_enable_model_splitting
+            training_envs:
+              componentInputParameter: training_envs
+            training_eval_steps:
+              componentInputParameter: training_eval_steps
+            training_field_input:
+              componentInputParameter: training_field_input
+            training_field_instruction:
+              componentInputParameter: training_field_instruction
+            training_field_messages:
+              componentInputParameter: training_field_messages
+            training_field_output:
+              componentInputParameter: training_field_output
+            training_flash_attention:
+              componentInputParameter: training_flash_attention
+            training_fp16:
+              componentInputParameter: training_fp16
+            training_gradient_accumulation_steps:
+              componentInputParameter: training_gradient_accumulation_steps
+            training_learning_rate:
+              componentInputParameter: training_learning_rate
+            training_logging_steps:
+              componentInputParameter: training_logging_steps
+            training_lora_alpha:
+              componentInputParameter: training_lora_alpha
+            training_lora_bnb_4bit_compute_dtype:
+              componentInputParameter: training_lora_bnb_4bit_compute_dtype
+            training_lora_bnb_4bit_quant_type:
+              componentInputParameter: training_lora_bnb_4bit_quant_type
+            training_lora_bnb_4bit_use_double_quant:
+              componentInputParameter: training_lora_bnb_4bit_use_double_quant
+            training_lora_dropout:
+              componentInputParameter: training_lora_dropout
+            training_lora_load_in_4bit:
+              componentInputParameter: training_lora_load_in_4bit
+            training_lora_load_in_8bit:
+              componentInputParameter: training_lora_load_in_8bit
+            training_lora_r:
+              componentInputParameter: training_lora_r
+            training_lora_sample_packing:
+              componentInputParameter: training_lora_sample_packing
+            training_lora_target_modules:
+              componentInputParameter: training_lora_target_modules
+            training_lora_use_dora:
+              componentInputParameter: training_lora_use_dora
+            training_lora_use_rslora:
+              componentInputParameter: training_lora_use_rslora
+            training_lr_scheduler:
+              componentInputParameter: training_lr_scheduler
+            training_lr_warmup_steps:
+              componentInputParameter: training_lr_warmup_steps
+            training_max_seq_len:
+              componentInputParameter: training_max_seq_len
+            training_max_tokens_per_gpu:
+              componentInputParameter: training_max_tokens_per_gpu
+            training_metadata_annotations:
+              componentInputParameter: training_metadata_annotations
+            training_metadata_labels:
+              componentInputParameter: training_metadata_labels
+            training_micro_batch_size:
+              componentInputParameter: training_micro_batch_size
+            training_mlflow_experiment_name:
+              componentInputParameter: training_mlflow_experiment_name
+            training_mlflow_run_name:
+              componentInputParameter: training_mlflow_run_name
+            training_mlflow_tracking_uri:
+              componentInputParameter: training_mlflow_tracking_uri
+            training_num_epochs:
+              componentInputParameter: training_num_epochs
+            training_resource_cpu_per_worker:
+              componentInputParameter: training_resource_cpu_per_worker
+            training_resource_gpu_per_worker:
+              componentInputParameter: training_resource_gpu_per_worker
+            training_resource_memory_per_worker:
+              componentInputParameter: training_resource_memory_per_worker
+            training_resource_num_procs_per_worker:
+              componentInputParameter: training_resource_num_procs_per_worker
+            training_resource_num_workers:
+              componentInputParameter: training_resource_num_workers
+            training_save_steps:
+              componentInputParameter: training_save_steps
+            training_save_total_limit:
+              componentInputParameter: training_save_total_limit
+            training_seed:
+              componentInputParameter: training_seed
+            training_tensorboard_log_dir:
+              componentInputParameter: training_tensorboard_log_dir
+            training_tf32:
+              componentInputParameter: training_tf32
+            training_use_liger:
+              componentInputParameter: training_use_liger
+            training_wandb_entity:
+              componentInputParameter: training_wandb_entity
+            training_wandb_project:
+              componentInputParameter: training_wandb_project
+            training_wandb_run_name:
+              componentInputParameter: training_wandb_run_name
+        taskInfo:
+          name: train-model
+  inputDefinitions:
+    artifacts:
+      dataset:
+        artifactType:
+          schemaTitle: system.Dataset
+          schemaVersion: 0.0.1
+        description: Input training dataset artifact.
+        isOptional: true
+    parameters:
+      kubernetes_config:
+        description: KFP TaskConfig for volumes/env/resources passthrough.
+        isOptional: true
+        parameterType: TASK_CONFIG
+      pvc_path:
+        description: Workspace PVC root path (use dsl.WORKSPACE_PATH_PLACEHOLDER).
+        parameterType: STRING
+      training_base_model:
+        defaultValue: Qwen/Qwen2.5-1.5B-Instruct
+        description: Base model (HuggingFace ID or local path).
+        isOptional: true
+        parameterType: STRING
+      training_bf16:
+        description: Use bfloat16 precision.
+        isOptional: true
+        parameterType: BOOLEAN
+      training_checkpoint_at_epoch:
+        description: Save checkpoint at each epoch.
+        isOptional: true
+        parameterType: BOOLEAN
+      training_data_output_dir:
+        description: Directory for processed training data.
+        isOptional: true
+        parameterType: STRING
+      training_dataset_type:
+        description: Dataset format type.
+        isOptional: true
+        parameterType: STRING
+      training_effective_batch_size:
+        defaultValue: 128.0
+        description: Effective batch size per optimizer step.
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+      training_enable_model_splitting:
+        description: Enable model splitting across GPUs.
+        isOptional: true
+        parameterType: BOOLEAN
+      training_envs:
+        defaultValue: ''
+        description: Environment overrides as KEY=VAL,KEY=VAL.
+        isOptional: true
+        parameterType: STRING
+      training_eval_steps:
+        description: Run evaluation every N steps.
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+      training_field_input:
+        description: Field name for input in dataset.
+        isOptional: true
+        parameterType: STRING
+      training_field_instruction:
+        description: Field name for instruction in dataset.
+        isOptional: true
+        parameterType: STRING
+      training_field_messages:
+        description: Field name for messages in dataset.
+        isOptional: true
+        parameterType: STRING
+      training_field_output:
+        description: Field name for output in dataset.
+        isOptional: true
+        parameterType: STRING
+      training_flash_attention:
+        description: Enable flash attention.
+        isOptional: true
+        parameterType: BOOLEAN
+      training_fp16:
+        description: Use float16 precision.
+        isOptional: true
+        parameterType: BOOLEAN
+      training_gradient_accumulation_steps:
+        description: Gradient accumulation steps.
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+      training_learning_rate:
+        description: 'Learning rate (default: 2e-4).'
+        isOptional: true
+        parameterType: NUMBER_DOUBLE
+      training_logging_steps:
+        description: Log metrics every N steps.
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+      training_lora_alpha:
+        defaultValue: 32.0
+        description: LoRA scaling factor.
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+      training_lora_bnb_4bit_compute_dtype:
+        description: Compute dtype (e.g., "bfloat16"). Reserved for future support.
+        isOptional: true
+        parameterType: STRING
+      training_lora_bnb_4bit_quant_type:
+        description: Quantization type (e.g., "nf4"). Reserved for future training_hub
+          support.
+        isOptional: true
+        parameterType: STRING
+      training_lora_bnb_4bit_use_double_quant:
+        description: Enable double quantization. Reserved for future training_hub
+          support.
+        isOptional: true
+        parameterType: BOOLEAN
+      training_lora_dropout:
+        defaultValue: 0.0
+        description: Dropout rate for LoRA layers.
+        isOptional: true
+        parameterType: NUMBER_DOUBLE
+      training_lora_load_in_4bit:
+        description: Enable 4-bit quantization (QLoRA).
+        isOptional: true
+        parameterType: BOOLEAN
+      training_lora_load_in_8bit:
+        description: Enable 8-bit quantization.
+        isOptional: true
+        parameterType: BOOLEAN
+      training_lora_r:
+        defaultValue: 16.0
+        description: LoRA rank (controls model capacity).
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+      training_lora_sample_packing:
+        description: 'Pack multiple samples for efficiency (default: True in training_hub).'
+        isOptional: true
+        parameterType: BOOLEAN
+      training_lora_target_modules:
+        defaultValue: ''
+        description: Comma-separated list of modules to apply LoRA (empty = auto-detect).
+        isOptional: true
+        parameterType: STRING
+      training_lora_use_dora:
+        description: Use Weight-Decomposed LoRA (DoRA).
+        isOptional: true
+        parameterType: BOOLEAN
+      training_lora_use_rslora:
+        description: Use Rank-Stabilized LoRA variant.
+        isOptional: true
+        parameterType: BOOLEAN
+      training_lr_scheduler:
+        description: 'LR scheduler type (cosine, linear, etc.). Training_hub default:
+          linear.'
+        isOptional: true
+        parameterType: STRING
+      training_lr_warmup_steps:
+        description: Learning rate warmup steps.
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+      training_max_seq_len:
+        defaultValue: 8192.0
+        description: Max sequence length in tokens.
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+      training_max_tokens_per_gpu:
+        defaultValue: 32000.0
+        description: Max tokens per GPU (memory cap).
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+      training_metadata_annotations:
+        defaultValue: ''
+        description: Pod annotations as key=value,key=value.
+        isOptional: true
+        parameterType: STRING
+      training_metadata_labels:
+        defaultValue: ''
+        description: Pod labels as key=value,key=value.
+        isOptional: true
+        parameterType: STRING
+      training_micro_batch_size:
+        description: Micro batch size per GPU.
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+      training_mlflow_experiment_name:
+        description: MLflow experiment name.
+        isOptional: true
+        parameterType: STRING
+      training_mlflow_run_name:
+        description: MLflow run name.
+        isOptional: true
+        parameterType: STRING
+      training_mlflow_tracking_uri:
+        description: MLflow tracking server URI.
+        isOptional: true
+        parameterType: STRING
+      training_num_epochs:
+        description: 'Number of training epochs (default: 3).'
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+      training_resource_cpu_per_worker:
+        defaultValue: '4'
+        description: CPU cores per worker.
+        isOptional: true
+        parameterType: STRING
+      training_resource_gpu_per_worker:
+        defaultValue: 1.0
+        description: GPUs per worker.
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+      training_resource_memory_per_worker:
+        defaultValue: 32Gi
+        description: Memory per worker (e.g., 32Gi).
+        isOptional: true
+        parameterType: STRING
+      training_resource_num_procs_per_worker:
+        defaultValue: auto
+        description: Processes per worker (auto or int).
+        isOptional: true
+        parameterType: STRING
+      training_resource_num_workers:
+        defaultValue: 1.0
+        description: Number of training pods.
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+      training_save_steps:
+        description: Save checkpoint every N steps.
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+      training_save_total_limit:
+        description: Max checkpoints to keep.
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+      training_seed:
+        description: Random seed for reproducibility.
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+      training_tensorboard_log_dir:
+        description: TensorBoard log directory.
+        isOptional: true
+        parameterType: STRING
+      training_tf32:
+        description: Enable TF32 on Ampere+ GPUs.
+        isOptional: true
+        parameterType: BOOLEAN
+      training_use_liger:
+        description: Enable Liger kernel optimizations.
+        isOptional: true
+        parameterType: BOOLEAN
+      training_wandb_entity:
+        description: Weights & Biases entity/team.
+        isOptional: true
+        parameterType: STRING
+      training_wandb_project:
+        description: Weights & Biases project name.
+        isOptional: true
+        parameterType: STRING
+      training_wandb_run_name:
+        description: Weights & Biases run name.
+        isOptional: true
+        parameterType: STRING
+  outputDefinitions:
+    artifacts:
+      output_loss_chart:
+        artifactType:
+          schemaTitle: system.HTML
+          schemaVersion: 0.0.1
+      output_metrics:
+        artifactType:
+          schemaTitle: system.Metrics
+          schemaVersion: 0.0.1
+      output_model:
+        artifactType:
+          schemaTitle: system.Model
+          schemaVersion: 0.0.1
+    parameters:
+      Output:
+        parameterType: STRING
+  taskConfigPassthroughs:
+  - field: RESOURCES
+  - field: KUBERNETES_TOLERATIONS
+  - field: KUBERNETES_NODE_SELECTOR
+  - field: KUBERNETES_AFFINITY
+  - applyToTask: true
+    field: ENV
+  - applyToTask: true
+    field: KUBERNETES_VOLUMES
+schemaVersion: 2.1.0
+sdkVersion: kfp-2.15.2
