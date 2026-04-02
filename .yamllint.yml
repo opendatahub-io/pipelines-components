@@ -1,4 +1,7 @@
 ---
+ignore: |
+  .tekton
+
 extends: default
 rules:
   line-length:
