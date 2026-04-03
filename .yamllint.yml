@@ -1,4 +1,7 @@
 ---
+ignore: |
+  .tekton
+
 extends: default
 ignore: |
   .tekton/
