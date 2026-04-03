@@ -1,6 +1,7 @@
 ---
 name: documents_rag_optimization_pipeline
 stability: alpha  # New pipeline without proven track record
+managed: true
 dependencies:
   kubeflow:
     - name: Pipelines
