@@ -1,0 +1,57 @@
+# RBAC for Kubeflow Pipelines steps that submit Kubeflow Trainer jobs (TrainJob) and
+# resolve ClusterTrainingRuntime (e.g. name "training-hub").
+#
+# Apply in your pipeline namespace after replacing placeholders:
+#   PIPELINE_NAMESPACE   — namespace where the pipeline runs (e.g. test-kfp)
+#   PIPELINE_SA          — Data Science Pipelines service account (e.g. pipeline-runner-dspa)
+#
+# Example:
+#   sed -e 's/PIPELINE_NAMESPACE/test-kfp/g' -e 's/PIPELINE_SA/pipeline-runner-dspa/g' \
+#     trainer_pipeline_rbac.yaml | oc apply -f -
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kubeflow-trainer-clustertrainingruntime-reader
+rules:
+  # Cluster-scoped: TrainerClient.list_runtimes() lists ClusterTrainingRuntime
+  - apiGroups: ["trainer.kubeflow.org"]
+    resources: ["clustertrainingruntimes"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kubeflow-trainer-ctr-reader-PIPELINE_NAMESPACE-PIPELINE_SA
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kubeflow-trainer-clustertrainingruntime-reader
+subjects:
+  - kind: ServiceAccount
+    name: PIPELINE_SA
+    namespace: PIPELINE_NAMESPACE
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: kubeflow-trainer-trainjob-editor
+  namespace: PIPELINE_NAMESPACE
+rules:
+  - apiGroups: ["trainer.kubeflow.org"]
+    resources: ["trainjobs"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: kubeflow-trainer-trainjob-editor
+  namespace: PIPELINE_NAMESPACE
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: kubeflow-trainer-trainjob-editor
+subjects:
+  - kind: ServiceAccount
+    name: PIPELINE_SA
+    namespace: PIPELINE_NAMESPACE

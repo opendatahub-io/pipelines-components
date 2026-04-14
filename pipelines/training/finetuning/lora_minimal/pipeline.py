@@ -3,7 +3,7 @@
 A minimal 4-stage pipeline for parameter-efficient fine-tuning:
 1. Dataset Download
 2. LoRA Training (unsloth backend)
-3. Evaluation with lm-eval
+3. Model Serving + EvalHub Evaluation
 4. Model Registry
 
 LoRA enables efficient fine-tuning by training low-rank adapter matrices
@@ -19,7 +19,7 @@ from kfp import dsl
 # Import reusable components
 from components.data_processing.dataset_download import dataset_download
 from components.deployment.kubeflow_model_registry import kubeflow_model_registry
-from components.evaluation.lm_eval import universal_llm_evaluator
+from components.evaluation.evalhub_eval import evalhub_evaluate
 from components.training.finetuning_algorithms.lora import train_model
 
 # =============================================================================
@@ -63,7 +63,8 @@ def lora_minimal_pipeline(
     # phase_02_train_man_train_workers: int = 1,
     phase_02_train_man_lora_r: int = 16,
     phase_02_train_man_lora_alpha: int = 32,
-    phase_03_eval_man_eval_tasks: list = ["arc_easy"],
+    phase_03_eval_man_evalhub_url: str = "",
+    phase_03_eval_man_namespace: str = "",
     phase_04_registry_man_address: str = "",
     phase_04_registry_man_reg_name: str = "lora-model",
     phase_04_registry_man_reg_version: str = "1.0.0",
@@ -78,7 +79,14 @@ def lora_minimal_pipeline(
     phase_02_train_opt_lora_target_modules: str = "",
     phase_02_train_opt_lora_load_in_4bit: bool = True,
     phase_02_train_opt_lora_load_in_8bit: bool = False,
+    phase_02_train_opt_dataset_type: str = "",
+    phase_02_train_opt_field_messages: str = "",
+    phase_02_train_opt_field_instruction: str = "",
+    phase_02_train_opt_field_input: str = "",
+    phase_02_train_opt_field_output: str = "",
     phase_02_train_opt_runtime: str = "training-hub",
+    phase_03_eval_opt_evalhub_tenant: str = "",
+    phase_03_eval_opt_tokenizer: str = "",
     phase_04_registry_opt_port: int = 8080,
 ):
     """LoRA Minimal Training Pipeline - Parameter-efficient fine-tuning.
@@ -87,7 +95,7 @@ def lora_minimal_pipeline(
 
     1) Dataset Download - Prepares training data from HuggingFace, S3, or HTTP
     2) LoRA Training - Fine-tunes using unsloth backend (low-rank adapters)
-    3) Evaluation - Evaluates with lm-eval harness (MMLU, GSM8K, etc.)
+    3) Model Serving + EvalHub - Serves the trained model and runs EvalHub evaluation
     4) Model Registry - Registers trained model to Kubeflow Model Registry
 
     Args:
@@ -100,7 +108,8 @@ def lora_minimal_pipeline(
         phase_02_train_man_train_tokens: Max tokens per GPU (memory cap). 32000 for LoRA
         phase_02_train_man_lora_r: [LoRA] Rank of the low-rank matrices (4, 8, 16, 32, 64)
         phase_02_train_man_lora_alpha: [LoRA] Scaling factor (typically 2x lora_r)
-        phase_03_eval_man_eval_tasks: lm-eval tasks (arc_easy, mmlu, gsm8k, hellaswag, etc.)
+        phase_03_eval_man_evalhub_url: EvalHub API base URL (empty = use component default)
+        phase_03_eval_man_namespace: Kubernetes namespace for model serving
         phase_04_registry_man_address: Model Registry address (empty = skip registration)
         phase_04_registry_man_reg_name: Model name in registry
         phase_04_registry_man_reg_version: Semantic version (major.minor.patch)
@@ -112,7 +121,14 @@ def lora_minimal_pipeline(
         phase_02_train_opt_lora_target_modules: [LoRA] Modules to apply LoRA (empty=auto-detect)
         phase_02_train_opt_lora_load_in_4bit: [QLoRA] Enable 4-bit quantization (cannot use with 8-bit)
         phase_02_train_opt_lora_load_in_8bit: [QLoRA] Enable 8-bit quantization (cannot use with 4-bit)
+        phase_02_train_opt_dataset_type: Dataset format type (empty = chat template auto-detect)
+        phase_02_train_opt_field_messages: Field name for messages column (chat-format datasets)
+        phase_02_train_opt_field_instruction: Field name for instruction/question column
+        phase_02_train_opt_field_input: Field name for input/context column
+        phase_02_train_opt_field_output: Field name for output/answer column
         phase_02_train_opt_runtime: Name of the ClusterTrainingRuntime to use.
+        phase_03_eval_opt_evalhub_tenant: EvalHub tenant namespace (required by EvalHub server).
+        phase_03_eval_opt_tokenizer: HuggingFace tokenizer ID for evaluation (e.g. base model ID).
         phase_04_registry_opt_port: Model registry server port
     """
     # =========================================================================
@@ -161,6 +177,12 @@ def lora_minimal_pipeline(
         # QLoRA parameters
         training_lora_load_in_4bit=phase_02_train_opt_lora_load_in_4bit,
         training_lora_load_in_8bit=phase_02_train_opt_lora_load_in_8bit,
+        # Dataset format
+        training_dataset_type=phase_02_train_opt_dataset_type,
+        training_field_messages=phase_02_train_opt_field_messages,
+        training_field_instruction=phase_02_train_opt_field_instruction,
+        training_field_input=phase_02_train_opt_field_input,
+        training_field_output=phase_02_train_opt_field_output,
         # Optimizations
         training_use_liger=phase_02_train_opt_use_liger,
         # Learning rate scheduler
@@ -188,7 +210,7 @@ def lora_minimal_pipeline(
             "KUBERNETES_SERVER_URL": "KUBERNETES_SERVER_URL",
             "KUBERNETES_AUTH_TOKEN": "KUBERNETES_AUTH_TOKEN",
         },
-        optional=False,
+        optional=True,
     )
 
     kfp.kubernetes.use_secret_as_env(
@@ -199,34 +221,41 @@ def lora_minimal_pipeline(
     )
 
     # =========================================================================
-    # Stage 3: Evaluation
+    # Stage 3: Serve + EvalHub evaluation + teardown
     # =========================================================================
-    eval_task = universal_llm_evaluator(
-        model_artifact=training_task.outputs["output_model"],
-        eval_dataset=dataset_download_task.outputs["eval_dataset"],
-        task_names=phase_03_eval_man_eval_tasks,
-        batch_size="auto",
-        limit=int(-1),
-        log_samples=True,
-        verbosity="INFO",
-        model_args={},
-        gen_kwargs={},
+    eval_task = evalhub_evaluate(
+        model_id=phase_02_train_man_train_model,
+        model_name=phase_04_registry_man_reg_name,
+        namespace=phase_03_eval_man_namespace,
+        evalhub_url=phase_03_eval_man_evalhub_url,
+        tenant=phase_03_eval_opt_evalhub_tenant,
+        tokenizer=phase_03_eval_opt_tokenizer,
+        gpu_count=phase_02_train_man_train_gpu,
     )
     eval_task.set_caching_options(False)
-    kfp.kubernetes.set_image_pull_policy(eval_task, "IfNotPresent")
+    eval_task.after(training_task)
 
-    kfp.kubernetes.add_node_selector(eval_task, "nvidia.com/gpu.present", "true")
-    eval_task.set_accelerator_type("nvidia.com/gpu")
-    eval_task.set_accelerator_limit(1)
-
-    # Attach shared Hugging Face token secret to all main tasks
-    for _task in [dataset_download_task, training_task, eval_task]:
+    # Attach shared Hugging Face token secret to tasks that need it
+    for _task in [dataset_download_task, training_task]:
         kfp.kubernetes.use_secret_as_env(
             task=_task,
             secret_name="hf-token",
             secret_key_to_env={"HF_TOKEN": "HF_TOKEN"},
             optional=True,
         )
+
+    kfp.kubernetes.use_secret_as_env(
+        task=eval_task,
+        secret_name="hf-token",
+        secret_key_to_env={"HF_TOKEN": "HF_TOKEN"},
+        optional=True,
+    )
+    kfp.kubernetes.use_secret_as_env(
+        task=eval_task,
+        secret_name="evalhub-auth",
+        secret_key_to_env={"EVALHUB_TOKEN": "EVALHUB_TOKEN"},
+        optional=True,
+    )
 
     # =========================================================================
     # Stage 4: Model Registry

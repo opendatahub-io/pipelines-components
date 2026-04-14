@@ -73,7 +73,15 @@ def dataset_download(
         if uri.startswith("http://") or uri.startswith("https://"):
             return ("http", uri)
         elif uri.startswith("hf://"):
-            return ("hf", uri[5:])
+            # HuggingFace URIs come in two forms:
+            #   hf://datasets/org/repo  (standard HF URI with type prefix)
+            #   hf://org/repo           (short form)
+            # Strip the scheme, then strip the optional "datasets/" prefix
+            # to get the bare dataset identifier (e.g. "org/repo").
+            hf_path = uri[5:]
+            if hf_path.startswith("datasets/"):
+                hf_path = hf_path[len("datasets/"):]
+            return ("hf", hf_path)
         elif uri.startswith("s3://"):
             return ("s3", uri[5:])
         elif uri.startswith("pvc://"):
@@ -84,52 +92,65 @@ def dataset_download(
             # Default to HuggingFace if no scheme
             return ("hf", uri)
 
-    def validate_chat_format_dataset(dataset: Dataset) -> bool:
-        """Validate that dataset follows chat template format.
+    def validate_dataset_format(dataset: Dataset) -> None:
+        """Check dataset format and log the detected structure.
 
-        Expected format:
-        - Each entry should have 'messages' or 'conversations' field
-        - Messages should be a list of dicts with 'role' and 'content'
-        - Roles should be from: 'system', 'user', 'assistant', 'function', 'tool'
+        Recognises two layout families:
+        - **Chat template**: each row has a ``messages`` or ``conversations``
+          list of ``{role, content}`` dicts.
+        - **Columnar / instruction-style**: arbitrary columns such as
+          ``question``, ``context``, ``answer``, ``instruction``, ``input``,
+          ``output``, etc.  These are handled downstream by the training
+          component's ``dataset_type`` / field-mapping parameters.
+
+        The function never raises on format mismatch — it only logs
+        warnings so the training component can decide how to interpret the
+        data.
         """
+        import logging as _logging
+
         if len(dataset) == 0:
             raise ValueError("Dataset is empty")
 
-        valid_roles = {"system", "user", "assistant", "function", "tool"}
+        keys = list(dataset[0].keys())
 
-        # Check first 100 examples (or fewer if dataset is smaller)
-        num_to_check = min(100, len(dataset))
+        # Detect chat template format
+        if "messages" in keys or "conversations" in keys:
+            field = "messages" if "messages" in keys else "conversations"
+            valid_roles = {"system", "user", "assistant", "function", "tool"}
+            num_to_check = min(100, len(dataset))
+            issues: list[str] = []
 
-        for i in range(num_to_check):
-            item = dataset[i]
+            for i in range(num_to_check):
+                messages = dataset[i].get(field, [])
+                if not isinstance(messages, list):
+                    issues.append(f"Item {i}: '{field}' is not a list")
+                    continue
+                for j, msg in enumerate(messages):
+                    if not isinstance(msg, dict):
+                        issues.append(f"Item {i}, msg {j}: not a dict")
+                    elif "role" not in msg or "content" not in msg:
+                        issues.append(f"Item {i}, msg {j}: missing role/content")
+                    elif msg["role"] not in valid_roles:
+                        issues.append(f"Item {i}, msg {j}: unknown role '{msg['role']}'")
 
-            # Check for common chat format fields
-            if "messages" in item:
-                messages = item["messages"]
-            elif "conversations" in item:
-                messages = item["conversations"]
-            else:
-                raise ValueError(
-                    f"Item {i} missing 'messages' or 'conversations' field. Found keys: {list(item.keys())}"
+            if issues:
+                _logging.warning(
+                    "Chat-format validation found %d issue(s) in first %d rows "
+                    "(first: %s). The training component may still handle this "
+                    "dataset if configured with the right field mappings.",
+                    len(issues),
+                    num_to_check,
+                    issues[0],
                 )
-
-            if not isinstance(messages, list):
-                raise ValueError(f"Item {i}: messages must be a list")
-
-            for j, msg in enumerate(messages):
-                if not isinstance(msg, dict):
-                    raise ValueError(f"Item {i}, message {j}: must be a dict")
-
-                if "role" not in msg or "content" not in msg:
-                    raise ValueError(f"Item {i}, message {j}: must have 'role' and 'content' fields")
-
-                if msg["role"] not in valid_roles:
-                    raise ValueError(
-                        f"Item {i}, message {j}: invalid role '{msg['role']}'. Must be one of {valid_roles}"
-                    )
-
-        log_message(f"Dataset validated: {len(dataset)} examples in chat format")
-        return True
+            else:
+                log_message(f"Dataset validated: {len(dataset)} examples in chat format")
+        else:
+            log_message(
+                f"Dataset is not in chat template format (fields: {keys}). "
+                f"Ensure the training component is configured with the correct "
+                f"dataset_type and field-mapping parameters."
+            )
 
     def split_hf_id_and_config(dataset_path: str) -> tuple[str, str | None]:
         """Split an HF dataset identifier into (id, config) if a config suffix is provided.
@@ -151,6 +172,21 @@ def dataset_download(
         else:
             log_message(f"Downloading from HuggingFace: {ds_id}")
 
+        # Force online mode and set a writable cache directory.
+        # Base images (e.g. odh-training) often set HF_HOME to a path like
+        # /opt/app-root/src which contains a pre-existing "datasets/" directory.
+        # When a Hub download fails the library silently falls back to that
+        # local path, producing a misleading FileNotFoundError. Using /tmp
+        # avoids the conflict and ensures a clean download.
+        hf_cache = "/tmp/hf_home"
+        os.makedirs(hf_cache, exist_ok=True)
+        os.environ["HF_HOME"] = hf_cache
+        os.environ["HF_DATASETS_CACHE"] = os.path.join(hf_cache, "datasets")
+        os.environ["HF_HUB_OFFLINE"] = "0"
+        os.environ["HF_DATASETS_OFFLINE"] = "0"
+        os.environ["TRANSFORMERS_OFFLINE"] = "0"
+        log_message(f"HF_HOME set to {hf_cache} (online mode forced)")
+
         # Set up authentication if token provided via environment
         if hf_token:
             log_message("Using HF_TOKEN from environment for Hugging Face authentication")
@@ -167,7 +203,7 @@ def dataset_download(
             )
 
         # Try to load with "train" split first
-        load_kwargs = {
+        load_kwargs: dict = {
             "path": ds_id,
             "split": "train",
         }
@@ -189,7 +225,9 @@ def dataset_download(
 
                 # Load dataset info without specifying split
                 try:
-                    load_kwargs_no_split = {"path": ds_id}
+                    load_kwargs_no_split: dict = {
+                        "path": ds_id,
+                    }
                     if ds_config:
                         load_kwargs_no_split["name"] = ds_config
                     if hf_token:
@@ -338,9 +376,9 @@ def dataset_download(
             else:
                 log_message(f"Subset count ({subset_count}) >= dataset size ({original_size}), using all examples")
 
-        # Validate chat template format
-        log_message("Validating chat template format...")
-        validate_chat_format_dataset(dataset)
+        # Check dataset format (warns on non-chat layouts, never blocks)
+        log_message("Checking dataset format...")
+        validate_dataset_format(dataset)
 
         # Split dataset (or use all for training if ratio is 1.0)
         log_message(f"Splitting dataset with {len(dataset)} examples...")

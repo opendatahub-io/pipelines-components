@@ -1,116 +1,177 @@
-# Lora Pipeline ✨
+# LoRA Pipeline
 
-> ⚠️ **Stability: alpha** — This asset is not yet stable and may change.
+> **Stability: alpha** — This asset is not yet stable and may change.
 
-## Overview 🧾
+## Overview
 
-LoRA Training Pipeline - Parameter-efficient fine-tuning.
+A 4-stage ML pipeline for parameter-efficient fine-tuning with LoRA:
 
-A 4-stage ML pipeline for fine-tuning language models with LoRA:
+1. **Dataset Download** — Prepares training data from HuggingFace, S3, or HTTP
+2. **LoRA Training** — Fine-tunes using the unsloth backend (Kubeflow Trainer `TrainJob`)
+3. **Model Serving + EvalHub Evaluation** — KServe (vLLM) deployment and EvalHub benchmarks
+4. **Model Registry** — Registers the trained model in Kubeflow Model Registry
 
-1) Dataset Download - Prepares training data from HuggingFace, S3, or HTTP 2) LoRA Training - Fine-tunes using unsloth backend (low-rank adapters) 3) Evaluation - Evaluates with lm-eval harness (MMLU, GSM8K, etc.) 4) Model Registry - Registers trained model to Kubeflow Model Registry
+The eval step uses the shared `evalhub_evaluate` component: it can create a `ServingRuntime` + `InferenceService`, run EvalHub jobs, replace an existing same-named InferenceService, and delete serving resources after evaluation (see component defaults).
 
-## Inputs 📥
+## Working configuration (reference)
 
-| Parameter | Type | Default | Description |
-| --------- | ---- | ------- | ----------- |
-| `phase_01_dataset_man_data_uri` | `str` | `None` | [REQUIRED] Dataset location (hf://dataset, s3://bucket/path, https://url) |
-| `phase_01_dataset_man_data_split` | `float` | `0.9` | Train/eval split (0.9 = 90%/10%, 1.0 = no split) |
-| `phase_02_train_man_train_batch` | `int` | `128` | Effective batch size (samples per optimizer step) |
-| `phase_02_train_man_train_epochs` | `int` | `2` | Number of training epochs. LoRA typically needs 2-3 |
-| `phase_02_train_man_train_gpu` | `int` | `1` | GPUs per worker |
-| `phase_02_train_man_train_model` | `str` | `Qwen/Qwen2.5-1.5B-Instruct` | Base model (HuggingFace ID or path) |
-| `phase_02_train_man_train_tokens` | `int` | `32000` | Max tokens per GPU (memory cap). 32000 for LoRA |
-| `phase_02_train_man_lora_r` | `int` | `16` | [LoRA] Rank of the low-rank matrices (4, 8, 16, 32, 64) |
-| `phase_02_train_man_lora_alpha` | `int` | `32` | [LoRA] Scaling factor (typically 2x lora_r) |
-| `phase_03_eval_man_eval_tasks` | `list` | `['arc_easy']` | lm-eval tasks (arc_easy, mmlu, gsm8k, hellaswag, etc.) |
-| `phase_04_registry_man_address` | `str` | `""` | Model Registry address (empty = skip registration) |
-| `phase_04_registry_man_reg_author` | `str` | `pipeline` | Author name for the registered model |
-| `phase_04_registry_man_reg_name` | `str` | `lora-model` | Model name in registry |
-| `phase_04_registry_man_reg_version` | `str` | `1.0.0` | Semantic version (major.minor.patch) |
-| `phase_01_dataset_opt_subset` | `int` | `0` | Limit to first N examples (0 = all) |
-| `phase_02_train_opt_annotations` | `str` | `""` | K8s annotations (key=val,...) |
-| `phase_02_train_opt_cpu` | `str` | `4` | CPU cores per worker |
-| `phase_02_train_opt_env_vars` | `str` | `""` | Env vars (KEY=VAL,...) |
-| `phase_02_train_opt_labels` | `str` | `""` | K8s labels (key=val,...) |
-| `phase_02_train_opt_learning_rate` | `float` | `0.0002` | Learning rate. 2e-4 recommended for LoRA |
-| `phase_02_train_opt_lr_scheduler` | `str` | `cosine` | LR schedule (cosine, linear, constant) |
-| `phase_02_train_opt_lr_warmup` | `int` | `0` | Warmup steps before full LR |
-| `phase_02_train_opt_max_seq_len` | `int` | `8192` | Max sequence length in tokens |
-| `phase_02_train_opt_memory` | `str` | `32Gi` | RAM per worker |
-| `phase_02_train_opt_num_procs` | `str` | `auto` | Processes per worker ('auto' = one per GPU) |
-| `phase_02_train_opt_save_epoch` | `bool` | `False` | Save checkpoint at each epoch |
-| `phase_02_train_opt_seed` | `int` | `42` | Random seed for reproducibility |
-| `phase_02_train_opt_use_liger` | `bool` | `True` | Enable Liger kernel optimizations |
-| `phase_02_train_opt_lora_dropout` | `float` | `0.0` | [LoRA] Dropout rate for LoRA layers |
-| `phase_02_train_opt_lora_target_modules` | `str` | `""` | [LoRA] Modules to apply LoRA (empty=auto-detect) |
-| `phase_02_train_opt_lora_use_rslora` | `bool` | `False` | [LoRA] Use Rank-Stabilized LoRA |
-| `phase_02_train_opt_lora_use_dora` | `bool` | `False` | [LoRA] Use Weight-Decomposed LoRA (DoRA) |
-| `phase_02_train_opt_lora_load_in_4bit` | `bool` | `True` | [QLoRA] Enable 4-bit quantization (cannot use with 8-bit) |
-| `phase_02_train_opt_lora_load_in_8bit` | `bool` | `False` | [QLoRA] Enable 8-bit quantization (cannot use with 4-bit) |
-| `phase_02_train_opt_lora_sample_packing` | `bool` | `False` | [LoRA] Pack multiple samples for efficiency |
-| `phase_02_train_opt_micro_batch_size` | `int` | `2` | Micro batch size per GPU |
-| `phase_02_train_opt_grad_accum_steps` | `int` | `1` | Gradient accumulation steps |
-| `phase_02_train_opt_flash_attention` | `bool` | `True` | Enable flash attention |
-| `phase_02_train_opt_bf16` | `bool` | `True` | Use bfloat16 precision |
-| `phase_02_train_opt_fp16` | `bool` | `False` | Use float16 precision |
-| `phase_02_train_opt_tf32` | `bool` | `True` | Enable TF32 on Ampere+ GPUs |
-| `phase_02_train_opt_save_steps` | `int` | `500` | Save checkpoint every N steps |
-| `phase_02_train_opt_eval_steps` | `int` | `500` | Run evaluation every N steps |
-| `phase_02_train_opt_logging_steps` | `int` | `10` | Log metrics every N steps |
-| `phase_02_train_opt_save_total_limit` | `int` | `3` | Max checkpoints to keep |
-| `phase_02_train_opt_wandb_project` | `str` | `""` | Weights & Biases project name |
-| `phase_02_train_opt_wandb_entity` | `str` | `""` | Weights & Biases entity/team |
-| `phase_02_train_opt_wandb_run_name` | `str` | `""` | Weights & Biases run name |
-| `phase_02_train_opt_tensorboard_log_dir` | `str` | `""` | TensorBoard log directory |
-| `phase_02_train_opt_mlflow_tracking_uri` | `str` | `""` | MLflow tracking server URI |
-| `phase_02_train_opt_mlflow_experiment_name` | `str` | `""` | MLflow experiment name |
-| `phase_02_train_opt_mlflow_run_name` | `str` | `""` | MLflow run name |
-| `phase_02_train_opt_dataset_type` | `str` | `""` | Dataset format type |
-| `phase_02_train_opt_field_messages` | `str` | `""` | Field name for messages in dataset |
-| `phase_02_train_opt_field_instruction` | `str` | `""` | Field name for instruction in dataset |
-| `phase_02_train_opt_field_input` | `str` | `""` | Field name for input in dataset |
-| `phase_02_train_opt_field_output` | `str` | `""` | Field name for output in dataset |
-| `phase_02_train_opt_enable_model_splitting` | `bool` | `False` | Enable model splitting across GPUs |
-| `phase_02_train_opt_runtime` | `str` | `training-hub` | Name of the ClusterTrainingRuntime to use. |
-| `phase_03_eval_opt_batch` | `str` | `auto` | Eval batch size ('auto' or integer) |
-| `phase_03_eval_opt_gen_kwargs` | `dict` | `{}` | Generation params dict (max_tokens, temperature) |
-| `phase_03_eval_opt_limit` | `int` | `-1` | Max samples per task (-1 = all) |
-| `phase_03_eval_opt_log_samples` | `bool` | `True` | Log individual predictions |
-| `phase_03_eval_opt_model_args` | `dict` | `{}` | Model init args dict (dtype, gpu_memory_utilization) |
-| `phase_03_eval_opt_verbosity` | `str` | `INFO` | Logging level (DEBUG, INFO, WARNING, ERROR) |
-| `phase_04_registry_opt_description` | `str` | `""` | Model description |
-| `phase_04_registry_opt_format_name` | `str` | `pytorch` | Model format (pytorch, onnx, tensorflow) |
-| `phase_04_registry_opt_format_version` | `str` | `1.0` | Model format version |
-| `phase_04_registry_opt_port` | `int` | `8080` | Model registry server port |
+These values match a successful deployment on OpenShift AI / RHOAI with Data Science Pipelines. Adjust namespaces, ServiceAccounts, and URLs for your cluster.
 
-## Metadata 🗂️
+### Platform
 
-- **Name**: lora_pipeline
+| Item | Example | Notes |
+|------|---------|--------|
+| Pipeline project / namespace | `test-kfp` | Where the pipeline run executes |
+| Pipeline ServiceAccount | `pipeline-runner-dspa` | Check with `oc get sa -n <namespace>` |
+| `ClusterTrainingRuntime` | `training-hub` | Must exist; matches `phase_02_train_opt_runtime` |
+| KServe + EvalHub namespace | `test-kfp` | Set `phase_03_eval_man_namespace` (often same as pipeline project) |
+| EvalHub API URL | `https://evalhub.evalhub-test.svc.cluster.local:8443` | Cluster-internal HTTPS; `phase_03_eval_man_evalhub_url` |
+| EvalHub tenant | `test-kfp` | Set `phase_03_eval_opt_evalhub_tenant`, **or** leave empty: `evalhub_evaluate` uses `phase_03_eval_man_namespace` as the `X-Tenant` value when tenant is blank (avoids EvalHub **400** on `/evaluations/providers`) |
+
+### Secrets
+
+| Secret | Required? | Purpose |
+|--------|-------------|--------|
+| `evalhub-auth` (`EVALHUB_TOKEN`) | **Yes** for evaluation | Token accepted by **your EvalHub server** |
+| `hf-token` (`HF_TOKEN`) | Optional | Gated HuggingFace models and serving pulls |
+| `kubernetes-credentials` | Optional | Training uses the step pod’s in-cluster ServiceAccount by default |
+| `s3-secret` | Optional | S3 datasets / artifacts |
+
+```bash
+oc create secret generic evalhub-auth \
+  --from-literal=EVALHUB_TOKEN="<evalhub-api-token>" \
+  -n <pipeline-namespace>
+```
+
+### RBAC
+
+Apply **before** the first run (replace namespace and pipeline ServiceAccount):
+
+**1. Kubeflow Trainer** — lists cluster-scoped `ClusterTrainingRuntime` and creates `TrainJob` in the pipeline namespace (avoids **403** on `clustertrainingruntimes`):
+
+```bash
+sed -e 's/PIPELINE_NAMESPACE/<pipeline-namespace>/g' \
+    -e 's/PIPELINE_SA/<pipeline-serviceaccount>/g' \
+    pipelines/training/finetuning/lora_minimal/trainer_pipeline_rbac.yaml | oc apply -f -
+```
+
+(Run from the repository root, or use the path to `trainer_pipeline_rbac.yaml` next to the minimal LoRA pipeline.)
+
+**2. KServe** — Role + RoleBinding in **`phase_03_eval_man_namespace`** for InferenceService / ServingRuntime lifecycle:
+
+```bash
+oc apply -n <serving-namespace> -f - <<'EOF'
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: kserve-manager
+rules:
+  - apiGroups: ["serving.kserve.io"]
+    resources: ["inferenceservices", "servingruntimes"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: pipeline-runner-kserve
+subjects:
+  - kind: ServiceAccount
+    name: <pipeline-serviceaccount>
+    namespace: <pipeline-namespace>
+roleRef:
+  kind: Role
+  name: kserve-manager
+  apiGroup: rbac.authorization.k8s.io
+EOF
+```
+
+**3. EvalHub tenant label** on the serving / tenant namespace:
+
+```bash
+oc label ns <serving-namespace> evalhub.trustyai.opendatahub.io/tenant=""
+```
+
+### Troubleshooting
+
+| Symptom | Likely cause |
+|---------|----------------|
+| **403** on `clustertrainingruntimes` | Trainer RBAC not applied or wrong ServiceAccount in binding |
+| **401** on EvalHub | Missing/invalid `evalhub-auth` |
+| **400** on `/evaluations/providers` with empty tenant | Set `phase_03_eval_opt_evalhub_tenant` **or** ensure `phase_03_eval_man_namespace` is set (tenant falls back to namespace) |
+| KServe denied | KServe Role not bound in `phase_03_eval_man_namespace` |
+
+## Pipeline parameters (summary)
+
+### Required / important
+
+| Parameter | Description |
+|-----------|-------------|
+| `phase_01_dataset_man_data_uri` | Dataset URI (`hf://`, `s3://`, `https://`, …) |
+| `phase_03_eval_man_evalhub_url` | EvalHub base URL |
+| `phase_03_eval_man_namespace` | Namespace for KServe resources (also used as EvalHub tenant if `phase_03_eval_opt_evalhub_tenant` is empty) |
+| `phase_04_registry_man_address` | Model Registry (empty skips registration) |
+
+### Evaluation and serving (optional)
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `phase_03_eval_opt_evalhub_tenant` | `""` | EvalHub `X-Tenant`; if empty, namespace is used |
+| `phase_03_eval_opt_benchmarks_json` | `""` | Custom benchmarks JSON; empty uses EvalHub defaults (e.g. ARC Easy) |
+| `phase_03_eval_opt_tokenizer` | `""` | Tokenizer for benchmarks |
+| `phase_03_eval_opt_timeout` | `3600` | EvalHub job wait (seconds) |
+| `phase_03_eval_opt_serve_*` | (various) | vLLM / KServe sizing, image, GPU, ports |
+
+See `pipeline.py` docstring for the full list of training and registry parameters.
+
+## Example run (verified pattern)
+
+| Parameter | Value |
+|-----------|-------|
+| `phase_01_dataset_man_data_uri` | `hf://b-mc2/sql-create-context` |
+| `phase_02_train_man_train_model` | `Qwen/Qwen2.5-1.5B-Instruct` |
+| `phase_03_eval_man_evalhub_url` | `https://evalhub.evalhub-test.svc.cluster.local:8443` |
+| `phase_03_eval_man_namespace` | `test-kfp` |
+| `phase_03_eval_opt_evalhub_tenant` | `test-kfp` *(or leave empty to use namespace)* |
+| `phase_04_registry_man_address` | *(empty to skip, or your registry URL)* |
+
+`phase_04_registry_man_reg_name` defaults to `lora-model`; the eval step derives the InferenceService name from it (e.g. `lora-model`).
+
+## Compiling and running
+
+### Generate `pipeline.yaml`
+
+```bash
+PYTHONPATH=/path/to/dj-pipelines-components \
+  python3 pipelines/training/finetuning/lora/pipeline.py
+```
+
+Output: `pipelines/training/finetuning/lora/pipeline.yaml`.
+
+### Upload and run
+
+1. Register/upload `pipeline.yaml` in Data Science Pipelines.
+2. Create a run with parameters and required secrets/RBAC in place.
+
+Re-upload **only** when `pipeline.py` or embedded components change. Cluster-only changes (secrets, RBAC, labels) do not require a new YAML.
+
+## Metadata
+
+- **Name**: `lora_pipeline` (pipeline display name: `lora-pipeline`)
 - **Stability**: alpha
 - **Dependencies**:
-  - Kubeflow:
-    - Name: Pipelines, Version: >=2.15.2
-    - Name: Trainer, Version: >=0.1.0
-  - External Services:
-    - Name: HuggingFace Datasets, Version: >=2.14.0
-    - Name: Kubernetes, Version: >=1.28.0
-- **Tags**:
-  - training
-  - fine_tuning
-  - lora
-  - peft
-  - parameter_efficient
-  - pipeline
-- **Last Verified**: 2026-01-14 00:00:00+00:00
-- **Owners**:
-  - Approvers:
-    - briangallagher
-    - Fiona-Waters
-    - kramaranya
-    - MStokluska
-    - szaher
+  - Kubeflow Pipelines >= 2.15.2
+  - Kubeflow Trainer (ClusterTrainingRuntime / TrainJob)
+  - KServe
+  - EvalHub server + EvalHub SDK (see `components/evaluation/evalhub_eval`)
+- **Tags**: training, fine_tuning, lora, peft, evalhub, kserve
+- **Owners**: see `OWNERS`
 
-## Additional Resources 📚
+## Additional resources
 
-- **Documentation**: [https://github.com/kubeflow/trainer](https://github.com/kubeflow/trainer)
+- [Kubeflow Trainer](https://github.com/kubeflow/trainer)
+- [KServe](https://kserve.github.io/website/)
+- [EvalHub docs](https://eval-hub.github.io/)
+- [LoRA minimal README](../lora_minimal/README.md) (narrower pipeline; shared RBAC manifest path)

@@ -1,0 +1,26 @@
+---
+name: evalhub_eval
+stability: alpha
+dependencies:
+  kubeflow:
+    - name: Pipelines
+      version: '>=2.15.2'
+  external_services:
+    - name: EvalHub Server
+      version: ">=0.1.0"
+    - name: EvalHub SDK
+      version: ">=0.1.4"
+    - name: KServe
+      version: ">=0.11.0"
+tags:
+  - evaluation
+  - llm
+  - evalhub
+  - benchmarking
+  - lm_evaluation_harness
+  - model_quality
+lastVerified: 2026-04-01T00:00:00Z
+links:
+  evalhub_docs: https://eval-hub.github.io/
+  evalhub_sdk: https://github.com/eval-hub/eval-hub-sdk
+  evalhub_server: https://github.com/eval-hub/eval-hub

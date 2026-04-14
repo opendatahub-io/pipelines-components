@@ -209,6 +209,55 @@ def train_model(
     jsonl = os.path.join(ds_dir, "train.jsonl")
     prepare_jsonl(ds_dir, jsonl, log)
 
+    # Convert non-chat datasets to chat template format.
+    # training_hub always applies format_chat_template() which expects a
+    # "messages" column.  When the user supplies field mappings for
+    # instruction/input/output style datasets we rewrite the JSONL here
+    # so training_hub sees the chat structure it expects.
+    if os.path.exists(jsonl) and (training_field_instruction or training_field_output):
+        import json as _json
+
+        f_inst = (training_field_instruction or "").strip()
+        f_inp = (training_field_input or "").strip()
+        f_out = (training_field_output or "").strip()
+
+        converted_rows: list = []
+        needs_convert = False
+
+        with open(jsonl) as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                row = _json.loads(line)
+                if "messages" in row or "conversations" in row:
+                    converted_rows.append(row)
+                    continue
+                needs_convert = True
+                user_parts: list[str] = []
+                if f_inst and f_inst in row:
+                    user_parts.append(str(row[f_inst]))
+                if f_inp and f_inp in row:
+                    user_parts.append(str(row[f_inp]))
+                assistant_text = str(row.get(f_out, "")) if f_out else ""
+                converted_rows.append(
+                    {
+                        "messages": [
+                            {"role": "user", "content": "\n".join(user_parts)},
+                            {"role": "assistant", "content": assistant_text},
+                        ]
+                    }
+                )
+
+        if needs_convert:
+            with open(jsonl, "w") as fh:
+                for row in converted_rows:
+                    fh.write(_json.dumps(row, ensure_ascii=False) + "\n")
+            log.info(
+                f"Converted {len(converted_rows)} rows from instruction format "
+                f"(fields: {f_inst}/{f_inp}/{f_out}) to chat template format"
+            )
+
     resolved = training_base_model
 
     if isinstance(training_base_model, str) and training_base_model.startswith("oci://"):

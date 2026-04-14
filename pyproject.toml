@@ -97,6 +97,7 @@ packages = [
     "kfp_components.pipelines.training.finetuning.osft_minimal",
     "kfp_components.pipelines.training.finetuning.sft",
     "kfp_components.pipelines.training.finetuning.sft_minimal",
+    "kfp_components.components.evaluation.evalhub_eval",
 ]
 
 [tool.setuptools.package-dir]

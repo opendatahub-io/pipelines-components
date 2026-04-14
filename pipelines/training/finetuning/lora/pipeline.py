@@ -3,7 +3,7 @@
 A 4-stage pipeline for parameter-efficient fine-tuning:
 1. Dataset Download
 2. LoRA Training (unsloth backend)
-3. Evaluation with lm-eval
+3. Model Serving + EvalHub Evaluation
 4. Model Registry
 
 LoRA enables efficient fine-tuning by training low-rank adapter matrices
@@ -18,7 +18,7 @@ from components.data_processing.dataset_download import dataset_download
 from components.deployment.kubeflow_model_registry import (
     kubeflow_model_registry as model_registry,
 )
-from components.evaluation.lm_eval import universal_llm_evaluator
+from components.evaluation.evalhub_eval import evalhub_evaluate
 from components.training.finetuning_algorithms.lora import train_model
 
 # =============================================================================
@@ -62,7 +62,8 @@ def lora_pipeline(
     # phase_02_train_man_train_workers: int = 1,
     phase_02_train_man_lora_r: int = 16,
     phase_02_train_man_lora_alpha: int = 32,
-    phase_03_eval_man_eval_tasks: list = ["arc_easy"],
+    phase_03_eval_man_evalhub_url: str = "",
+    phase_03_eval_man_namespace: str = "",
     phase_04_registry_man_address: str = "",
     phase_04_registry_man_reg_author: str = "pipeline",
     phase_04_registry_man_reg_name: str = "lora-model",
@@ -121,12 +122,28 @@ def lora_pipeline(
     # Multi-GPU params
     phase_02_train_opt_enable_model_splitting: bool = False,
     phase_02_train_opt_runtime: str = "training-hub",
-    phase_03_eval_opt_batch: str = "auto",
-    phase_03_eval_opt_gen_kwargs: dict = {},
-    phase_03_eval_opt_limit: int = -1,
-    phase_03_eval_opt_log_samples: bool = True,
-    phase_03_eval_opt_model_args: dict = {},
-    phase_03_eval_opt_verbosity: str = "INFO",
+    phase_03_eval_opt_evalhub_tenant: str = "",
+    phase_03_eval_opt_benchmarks_json: str = "",
+    phase_03_eval_opt_tokenizer: str = "",
+    phase_03_eval_opt_num_examples: int = 0,
+    phase_03_eval_opt_timeout: float = 3600.0,
+    phase_03_eval_opt_insecure: bool = True,
+    phase_03_eval_opt_serve_max_model_len: int = 4096,
+    phase_03_eval_opt_serve_image: str = "vllm/vllm-openai:latest",
+    phase_03_eval_opt_serve_memory_limit: str = "24Gi",
+    phase_03_eval_opt_serve_memory_request: str = "16Gi",
+    phase_03_eval_opt_serve_wait_timeout: int = 900,
+    phase_03_eval_opt_serve_cpu_limit: str = "4",
+    phase_03_eval_opt_serve_cpu_request: str = "2",
+    phase_03_eval_opt_serve_accelerator: str = "nvidia.com/gpu",
+    phase_03_eval_opt_serve_gpu_mem_util: float = 0.95,
+    phase_03_eval_opt_serve_min_replicas: int = 1,
+    phase_03_eval_opt_serve_max_replicas: int = 1,
+    phase_03_eval_opt_serve_port: int = 8080,
+    phase_03_eval_opt_serve_url_path: str = "/v1",
+    phase_03_eval_opt_serve_extra_args: str = "",
+    phase_03_eval_opt_serve_existing_runtime: str = "",
+    phase_03_eval_opt_serve_model_format: str = "vLLM",
     phase_04_registry_opt_description: str = "",
     phase_04_registry_opt_format_name: str = "pytorch",
     phase_04_registry_opt_format_version: str = "1.0",
@@ -138,7 +155,7 @@ def lora_pipeline(
 
         1) Dataset Download - Prepares training data from HuggingFace, S3, or HTTP
         2) LoRA Training - Fine-tunes using unsloth backend (low-rank adapters)
-        3) Evaluation - Evaluates with lm-eval harness (MMLU, GSM8K, etc.)
+        3) Model Serving + EvalHub Evaluation - Serves the model with vLLM and runs EvalHub benchmarks
         4) Model Registry - Registers trained model to Kubeflow Model Registry
 
     Args:
@@ -151,7 +168,8 @@ def lora_pipeline(
             phase_02_train_man_train_tokens: Max tokens per GPU (memory cap). 32000 for LoRA
             phase_02_train_man_lora_r: [LoRA] Rank of the low-rank matrices (4, 8, 16, 32, 64)
             phase_02_train_man_lora_alpha: [LoRA] Scaling factor (typically 2x lora_r)
-            phase_03_eval_man_eval_tasks: lm-eval tasks (arc_easy, mmlu, gsm8k, hellaswag, etc.)
+            phase_03_eval_man_evalhub_url: EvalHub server base URL
+            phase_03_eval_man_namespace: Kubernetes namespace for KServe/vLLM model serving
             phase_04_registry_man_address: Model Registry address (empty = skip registration)
             phase_04_registry_man_reg_author: Author name for the registered model
             phase_04_registry_man_reg_name: Model name in registry
@@ -201,12 +219,28 @@ def lora_pipeline(
             phase_02_train_opt_field_output: Field name for output in dataset
             phase_02_train_opt_enable_model_splitting: Enable model splitting across GPUs
             phase_02_train_opt_runtime: Name of the ClusterTrainingRuntime to use.
-            phase_03_eval_opt_batch: Eval batch size ('auto' or integer)
-            phase_03_eval_opt_gen_kwargs: Generation params dict (max_tokens, temperature)
-            phase_03_eval_opt_limit: Max samples per task (-1 = all)
-            phase_03_eval_opt_log_samples: Log individual predictions
-            phase_03_eval_opt_model_args: Model init args dict (dtype, gpu_memory_utilization)
-            phase_03_eval_opt_verbosity: Logging level (DEBUG, INFO, WARNING, ERROR)
+            phase_03_eval_opt_evalhub_tenant: Tenant namespace for EvalHub (X-Tenant header)
+            phase_03_eval_opt_benchmarks_json: JSON array of benchmark configs (empty = default EvalHub suite)
+            phase_03_eval_opt_tokenizer: HuggingFace tokenizer path for benchmark parameters
+            phase_03_eval_opt_num_examples: Examples per benchmark (0 = provider default)
+            phase_03_eval_opt_timeout: Seconds to wait for EvalHub job completion
+            phase_03_eval_opt_insecure: Skip TLS verification when calling EvalHub
+            phase_03_eval_opt_serve_max_model_len: Max model context length (vLLM)
+            phase_03_eval_opt_serve_image: Container image for the serving runtime
+            phase_03_eval_opt_serve_memory_limit: Memory limit for the serving predictor pod
+            phase_03_eval_opt_serve_memory_request: Memory request for the serving predictor pod
+            phase_03_eval_opt_serve_wait_timeout: Seconds to wait for InferenceService readiness
+            phase_03_eval_opt_serve_cpu_limit: CPU limit for the serving pod
+            phase_03_eval_opt_serve_cpu_request: CPU request for the serving pod
+            phase_03_eval_opt_serve_accelerator: GPU accelerator type (nvidia.com/gpu, amd.com/gpu, or empty)
+            phase_03_eval_opt_serve_gpu_mem_util: Fraction of GPU memory to use (vLLM)
+            phase_03_eval_opt_serve_min_replicas: Minimum predictor replicas
+            phase_03_eval_opt_serve_max_replicas: Maximum predictor replicas
+            phase_03_eval_opt_serve_port: Container port for the serving endpoint
+            phase_03_eval_opt_serve_url_path: URL path suffix (/v1, /v2, etc.)
+            phase_03_eval_opt_serve_extra_args: Extra CLI args as comma-separated string
+            phase_03_eval_opt_serve_existing_runtime: Pre-registered ServingRuntime name (skip creation)
+            phase_03_eval_opt_serve_model_format: Model format (vLLM, pytorch, onnx, etc.)
             phase_04_registry_opt_description: Model description
             phase_04_registry_opt_format_name: Model format (pytorch, onnx, tensorflow)
             phase_04_registry_opt_format_version: Model format version
@@ -321,7 +355,7 @@ def lora_pipeline(
             "KUBERNETES_SERVER_URL": "KUBERNETES_SERVER_URL",
             "KUBERNETES_AUTH_TOKEN": "KUBERNETES_AUTH_TOKEN",
         },
-        optional=False,
+        optional=True,
     )
 
     kfp.kubernetes.use_secret_as_env(
@@ -332,34 +366,60 @@ def lora_pipeline(
     )
 
     # =========================================================================
-    # Stage 3: Evaluation
+    # Stage 3: Serve + EvalHub evaluation + teardown
     # =========================================================================
-    eval_task = universal_llm_evaluator(
-        model_artifact=training_task.outputs["output_model"],
-        eval_dataset=dataset_download_task.outputs["eval_dataset"],
-        task_names=phase_03_eval_man_eval_tasks,
-        batch_size=phase_03_eval_opt_batch,
-        limit=phase_03_eval_opt_limit,
-        log_samples=phase_03_eval_opt_log_samples,
-        verbosity=phase_03_eval_opt_verbosity,
-        model_args=phase_03_eval_opt_model_args,
-        gen_kwargs=phase_03_eval_opt_gen_kwargs,
+    eval_task = evalhub_evaluate(
+        model_id=phase_02_train_man_train_model,
+        model_name=phase_04_registry_man_reg_name,
+        namespace=phase_03_eval_man_namespace,
+        evalhub_url=phase_03_eval_man_evalhub_url,
+        tenant=phase_03_eval_opt_evalhub_tenant,
+        benchmarks_json=phase_03_eval_opt_benchmarks_json,
+        tokenizer=phase_03_eval_opt_tokenizer,
+        num_examples=phase_03_eval_opt_num_examples,
+        timeout_seconds=phase_03_eval_opt_timeout,
+        insecure=phase_03_eval_opt_insecure,
+        gpu_count=phase_02_train_man_train_gpu,
+        max_model_len=phase_03_eval_opt_serve_max_model_len,
+        wait_timeout=phase_03_eval_opt_serve_wait_timeout,
+        serving_image=phase_03_eval_opt_serve_image,
+        memory_limit=phase_03_eval_opt_serve_memory_limit,
+        memory_request=phase_03_eval_opt_serve_memory_request,
+        cpu_limit=phase_03_eval_opt_serve_cpu_limit,
+        cpu_request=phase_03_eval_opt_serve_cpu_request,
+        accelerator_type=phase_03_eval_opt_serve_accelerator,
+        gpu_memory_utilization=phase_03_eval_opt_serve_gpu_mem_util,
+        min_replicas=phase_03_eval_opt_serve_min_replicas,
+        max_replicas=phase_03_eval_opt_serve_max_replicas,
+        port=phase_03_eval_opt_serve_port,
+        url_path=phase_03_eval_opt_serve_url_path,
+        extra_args=phase_03_eval_opt_serve_extra_args,
+        existing_runtime=phase_03_eval_opt_serve_existing_runtime,
+        model_format=phase_03_eval_opt_serve_model_format,
     )
     eval_task.set_caching_options(False)
-    kfp.kubernetes.set_image_pull_policy(eval_task, "IfNotPresent")
+    eval_task.after(training_task)
 
-    kfp.kubernetes.add_node_selector(eval_task, "nvidia.com/gpu.present", "true")
-    eval_task.set_accelerator_type("nvidia.com/gpu")
-    eval_task.set_accelerator_limit(1)
-
-    # Attach shared Hugging Face token secret to all main tasks
-    for _task in [dataset_download_task, training_task, eval_task]:
+    for _task in [dataset_download_task, training_task]:
         kfp.kubernetes.use_secret_as_env(
             task=_task,
             secret_name="hf-token",
             secret_key_to_env={"HF_TOKEN": "HF_TOKEN"},
             optional=True,
         )
+
+    kfp.kubernetes.use_secret_as_env(
+        task=eval_task,
+        secret_name="hf-token",
+        secret_key_to_env={"HF_TOKEN": "HF_TOKEN"},
+        optional=True,
+    )
+    kfp.kubernetes.use_secret_as_env(
+        task=eval_task,
+        secret_name="evalhub-auth",
+        secret_key_to_env={"EVALHUB_TOKEN": "EVALHUB_TOKEN"},
+        optional=True,
+    )
 
     # =========================================================================
     # Stage 4: Model Registry

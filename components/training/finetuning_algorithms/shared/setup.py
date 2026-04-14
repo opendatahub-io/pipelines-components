@@ -26,7 +26,20 @@ def create_logger(name: str = "train_model") -> logging.Logger:
 
 
 def init_k8s(log: logging.Logger) -> Optional[object]:
-    """Initialize Kubernetes client from environment variables.
+    """Initialize a Kubernetes API client for Kubeflow Trainer / Training APIs.
+
+    Pipeline steps that run **on-cluster** should use the pod's in-cluster
+    ServiceAccount (default). That avoids ``401 Unauthorized`` from stale or
+    incorrect tokens in a ``kubernetes-credentials`` secret.
+
+    **Credential order** (unless ``KUBERNETES_PREFER_ENV_CREDENTIALS`` is truthy):
+
+    1. In-cluster config (``/var/run/secrets/kubernetes.io/serviceaccount/...``)
+    2. ``KUBERNETES_SERVER_URL`` + ``KUBERNETES_AUTH_TOKEN`` (e.g. local dev or
+       cross-cluster)
+
+    Set ``KUBERNETES_PREFER_ENV_CREDENTIALS=1`` to use env vars first when both
+    are available.
 
     Args:
         log: Logger instance.
@@ -36,28 +49,56 @@ def init_k8s(log: logging.Logger) -> Optional[object]:
     """
     try:
         from kubernetes import client as k8s
+        from kubernetes import config as kube_config
 
-        srv = os.environ.get("KUBERNETES_SERVER_URL", "").strip()
-        tok = os.environ.get("KUBERNETES_AUTH_TOKEN", "").strip()
-        if not srv or not tok:
-            raise RuntimeError(
-                "Kubernetes credentials missing or incomplete: both KUBERNETES_SERVER_URL and "
-                "KUBERNETES_AUTH_TOKEN must be set and non-empty. Ensure the 'kubernetes-credentials' "
-                "secret is configured and mounted into the training task."
-            )
+        prefer_env = os.environ.get("KUBERNETES_PREFER_ENV_CREDENTIALS", "").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+        )
 
-        log.info("Initializing Kubernetes client from environment variables")
-        cfg = k8s.Configuration()
-        cfg.host, cfg.verify_ssl = srv, False
-        cfg.api_key = {"authorization": f"Bearer {tok}"}
-        k8s.Configuration.set_default(cfg)
+        def _api_from_incluster() -> object:
+            kube_config.load_incluster_config()
+            log.info("Initializing Kubernetes client via in-cluster ServiceAccount")
+            return k8s.ApiClient()
 
-        import urllib3
+        def _api_from_env() -> Optional[object]:
+            srv = os.environ.get("KUBERNETES_SERVER_URL", "").strip()
+            tok = os.environ.get("KUBERNETES_AUTH_TOKEN", "").strip()
+            if not srv or not tok:
+                return None
+            log.info("Initializing Kubernetes client from KUBERNETES_SERVER_URL / KUBERNETES_AUTH_TOKEN")
+            cfg = k8s.Configuration()
+            cfg.host, cfg.verify_ssl = srv, False
+            cfg.api_key = {"authorization": f"Bearer {tok}"}
+            k8s.Configuration.set_default(cfg)
 
-        # TODO: Remove this temporary workaround for SSL verification bypass
-        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+            import urllib3
 
-        return k8s.ApiClient(cfg)
+            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+            return k8s.ApiClient(cfg)
+
+        if prefer_env:
+            client = _api_from_env()
+            if client is not None:
+                return client
+            log.warning("Env credentials missing or incomplete; falling back to in-cluster config")
+            return _api_from_incluster()
+
+        try:
+            return _api_from_incluster()
+        except Exception as ic_err:
+            log.warning(f"In-cluster Kubernetes config unavailable ({ic_err}); trying env credentials")
+
+        client = _api_from_env()
+        if client is not None:
+            return client
+
+        raise RuntimeError(
+            "Kubernetes client could not be configured: in-cluster config failed and "
+            "KUBERNETES_SERVER_URL / KUBERNETES_AUTH_TOKEN are missing or incomplete."
+        )
     except Exception as e:
         log.warning(f"K8s client init failed: {e}")
         return None
