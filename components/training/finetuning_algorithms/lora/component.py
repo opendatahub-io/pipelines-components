@@ -201,6 +201,10 @@ def train_model(
     merged_env = configure_env(training_envs, default_env, log)
     setup_hf_token(merged_env, training_base_model, log)
 
+    # Configure MLflow env vars for training pods (RHOAI MLflow)
+    if training_mlflow_tracking_uri:
+        merged_env.setdefault("MLFLOW_TRACKING_INSECURE_TLS", "true")
+
     ds_dir = os.path.join(pvc_path, "dataset", "train")
     os.makedirs(ds_dir, exist_ok=True)
 
@@ -363,6 +367,25 @@ def train_model(
             import os
 
             from training_hub import lora_sft as tr
+
+            # Configure MLflow auth env vars for RHOAI MLflow server.
+            # These env vars inherit to torchrun subprocesses. The RHOAI
+            # MLflow fork (installed in training images) reads them to
+            # configure auth token and workspace header automatically.
+            mlflow_uri = (p or {}).get("mlflow_tracking_uri", "")
+            if mlflow_uri:
+                token_path = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+                if os.path.exists(token_path):
+                    with open(token_path) as f:
+                        os.environ["MLFLOW_TRACKING_TOKEN"] = f.read().strip()
+
+                ns_path = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
+                if os.path.exists(ns_path):
+                    with open(ns_path) as f:
+                        os.environ["MLFLOW_WORKSPACE"] = f.read().strip()
+
+                os.environ.setdefault("MLFLOW_TRACKING_INSECURE_TLS", "true")
+                print(f"[MLflow] Auth configured, workspace: {os.environ.get('MLFLOW_WORKSPACE', 'unset')}", flush=True)
 
             print("[PY] Launching LoRA training...", flush=True)
             result = tr(**(p or {}))
