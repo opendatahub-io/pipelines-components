@@ -38,6 +38,9 @@ Train model using SFT (Supervised Fine-Tuning). Outputs model artifact and metri
 | `training_save_samples` | `Optional[int]` | `None` | Number of samples to save. |
 | `training_accelerate_full_state_at_epoch` | `Optional[bool]` | `None` | Save full accelerate state. |
 | `training_fsdp_sharding_strategy` | `Optional[str]` | `None` | FSDP sharding strategy. |
+| `training_mlflow_tracking_uri` | `Optional[str]` | `None` | MLflow tracking server URI. |
+| `training_mlflow_experiment_name` | `Optional[str]` | `None` | MLflow experiment name. |
+| `training_mlflow_run_name` | `Optional[str]` | `None` | MLflow run name. |
 | `training_runtime` | `str` | `training-hub` | Name of the ClusterTrainingRuntime to use. |
 | `kubernetes_config` | `dsl.TaskConfig` | `None` | KFP TaskConfig for volumes/env/resources passthrough. |
 

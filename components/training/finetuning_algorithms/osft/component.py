@@ -68,6 +68,10 @@ def train_model(
     training_lr_scheduler_kwargs: str = "",
     training_save_final_checkpoint: Optional[bool] = None,
     training_fsdp_sharding_strategy: Optional[str] = None,
+    # Logging integration params
+    training_mlflow_tracking_uri: Optional[str] = None,
+    training_mlflow_experiment_name: Optional[str] = None,
+    training_mlflow_run_name: Optional[str] = None,
     training_runtime: str = "training-hub",
     kubernetes_config: dsl.TaskConfig = None,
 ) -> str:
@@ -107,6 +111,9 @@ def train_model(
         training_lr_scheduler_kwargs: LR scheduler kwargs as key=val,key=val.
         training_save_final_checkpoint: Save final checkpoint after training.
         training_fsdp_sharding_strategy: FSDP sharding strategy.
+        training_mlflow_tracking_uri: MLflow tracking server URI.
+        training_mlflow_experiment_name: MLflow experiment name.
+        training_mlflow_run_name: MLflow run name.
         training_runtime: Name of the ClusterTrainingRuntime to use.
         kubernetes_config: KFP TaskConfig for volumes/env/resources passthrough.
 
@@ -232,6 +239,14 @@ def train_model(
                 b["save_final_checkpoint"] = bool(training_save_final_checkpoint)
             if training_fsdp_sharding_strategy:
                 b["fsdp_sharding_strategy"] = training_fsdp_sharding_strategy.upper().strip()
+
+            # Logging integration params
+            if training_mlflow_tracking_uri:
+                b["mlflow_tracking_uri"] = training_mlflow_tracking_uri
+            if training_mlflow_experiment_name:
+                b["mlflow_experiment_name"] = training_mlflow_experiment_name
+            if training_mlflow_run_name:
+                b["mlflow_run_name"] = training_mlflow_run_name
             return b
 
         params = _params()

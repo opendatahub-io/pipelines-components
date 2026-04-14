@@ -43,6 +43,9 @@ Train model using OSFT (Orthogonal Subspace Fine-Tuning). Outputs model artifact
 | `training_lr_scheduler_kwargs` | `str` | `""` | LR scheduler kwargs as key=val,key=val. |
 | `training_save_final_checkpoint` | `Optional[bool]` | `None` | Save final checkpoint after training. |
 | `training_fsdp_sharding_strategy` | `Optional[str]` | `None` | FSDP sharding strategy. |
+| `training_mlflow_tracking_uri` | `Optional[str]` | `None` | MLflow tracking server URI. |
+| `training_mlflow_experiment_name` | `Optional[str]` | `None` | MLflow experiment name. |
+| `training_mlflow_run_name` | `Optional[str]` | `None` | MLflow run name. |
 | `training_runtime` | `str` | `training-hub` | Name of the ClusterTrainingRuntime to use. |
 | `kubernetes_config` | `dsl.TaskConfig` | `None` | KFP TaskConfig for volumes/env/resources passthrough. |
 

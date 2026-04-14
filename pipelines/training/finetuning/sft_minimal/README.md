@@ -33,6 +33,9 @@ A 4-stage ML pipeline for fine-tuning language models:
 | `phase_02_train_opt_fsdp_sharding` | `str` | `FULL_SHARD` | FSDP strategy (FULL_SHARD, HYBRID_SHARD, NO_SHARD) |
 | `phase_02_train_opt_use_liger` | `bool` | `False` | Enable Liger kernel optimizations |
 | `phase_02_train_opt_runtime` | `str` | `training-hub` | Name of the ClusterTrainingRuntime to use. |
+| `phase_02_train_opt_mlflow_tracking_uri` | `str` | `""` | MLflow tracking server URI. |
+| `phase_02_train_opt_mlflow_experiment_name` | `str` | `""` | MLflow experiment name. |
+| `phase_02_train_opt_mlflow_run_name` | `str` | `""` | MLflow run name. |
 | `phase_04_registry_opt_port` | `int` | `8080` | Model Registry server port. |
 
 ## Metadata 🗂️

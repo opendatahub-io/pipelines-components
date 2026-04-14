@@ -48,6 +48,9 @@ A 4-stage ML pipeline for fine-tuning language models with OSFT:
 | `phase_02_train_opt_unmask` | `bool` | `False` | [OSFT] Unmask all tokens (False=assistant only) |
 | `phase_02_train_opt_use_liger` | `bool` | `True` | [OSFT] Enable Liger kernel optimizations. Recommended |
 | `phase_02_train_opt_runtime` | `str` | `training-hub` | Name of the ClusterTrainingRuntime to use. |
+| `phase_02_train_opt_mlflow_tracking_uri` | `str` | `""` | MLflow tracking server URI. |
+| `phase_02_train_opt_mlflow_experiment_name` | `str` | `""` | MLflow experiment name. |
+| `phase_02_train_opt_mlflow_run_name` | `str` | `""` | MLflow run name. |
 | `phase_03_eval_opt_batch` | `str` | `auto` | Eval batch size ('auto' or integer) |
 | `phase_03_eval_opt_gen_kwargs` | `dict` | `{}` | Generation params dict (max_tokens, temperature) |
 | `phase_03_eval_opt_limit` | `int` | `-1` | Max samples per task (-1 = all) |

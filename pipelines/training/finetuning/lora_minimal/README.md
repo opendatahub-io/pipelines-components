@@ -36,6 +36,9 @@ A minimal 4-stage ML pipeline for fine-tuning language models with LoRA:
 | `phase_02_train_opt_lora_load_in_4bit` | `bool` | `True` | [QLoRA] Enable 4-bit quantization (cannot use with 8-bit) |
 | `phase_02_train_opt_lora_load_in_8bit` | `bool` | `False` | [QLoRA] Enable 8-bit quantization (cannot use with 4-bit) |
 | `phase_02_train_opt_runtime` | `str` | `training-hub` | Name of the ClusterTrainingRuntime to use. |
+| `phase_02_train_opt_mlflow_tracking_uri` | `str` | `""` | MLflow tracking server URI. |
+| `phase_02_train_opt_mlflow_experiment_name` | `str` | `""` | MLflow experiment name. |
+| `phase_02_train_opt_mlflow_run_name` | `str` | `""` | MLflow run name. |
 | `phase_04_registry_opt_port` | `int` | `8080` | Model registry server port |
 
 ## Metadata 🗂️

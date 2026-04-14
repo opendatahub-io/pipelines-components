@@ -178,7 +178,7 @@ def train_model(
     from typing import Dict
 
     from data import download_oci_model, prepare_jsonl, resolve_dataset
-    from output import persist_model, plot_training_loss
+    from output import extract_metrics_from_jsonl, persist_model, plot_training_loss
     from setup import configure_env, create_logger, init_k8s, parse_kv, setup_hf_token
     from training import compute_nproc, select_runtime, wait_for_training_job
 
@@ -490,10 +490,21 @@ def train_model(
         raise
 
     def get_training_metrics(root: str):
-        # TODO: Add loss chart support for LoRA once training_hub exposes a metrics/logging
-        # file for the unsloth backend. Blocked on:
-        # https://github.com/Red-Hat-AI-Innovation-Team/training_hub/pull/40
-        return {}, []
+        import os
+
+        pats = ["training_metrics.jsonl"]
+        mf = None
+        for r, _, fs in os.walk(root):
+            for p in pats:
+                if p in fs:
+                    mf = os.path.join(r, p)
+                    break
+            if mf:
+                break
+        if not mf or not os.path.exists(mf):
+            return {}, []
+        log.info(f"Metrics: {mf}")
+        return extract_metrics_from_jsonl(mf)
 
     def log_training_metrics():
         output_metrics.log_metric("num_epochs", float(params.get("num_epochs") or 3))

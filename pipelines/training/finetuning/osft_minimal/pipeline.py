@@ -71,6 +71,9 @@ def osft_minimal_pipeline(
     phase_02_train_opt_max_seq_len: int = 8192,
     phase_02_train_opt_use_liger: bool = True,
     phase_02_train_opt_runtime: str = "training-hub",
+    phase_02_train_opt_mlflow_tracking_uri: str = "",
+    phase_02_train_opt_mlflow_experiment_name: str = "",
+    phase_02_train_opt_mlflow_run_name: str = "",
     phase_04_registry_opt_port: int = 8080,
 ):
     """OSFT Minimal Training Pipeline - Continual learning without catastrophic forgetting.
@@ -101,6 +104,9 @@ def osft_minimal_pipeline(
         phase_02_train_opt_max_seq_len: Max sequence length in tokens
         phase_02_train_opt_use_liger: [OSFT] Enable Liger kernel optimizations. Recommended
         phase_02_train_opt_runtime: Name of the ClusterTrainingRuntime to use.
+        phase_02_train_opt_mlflow_tracking_uri: MLflow tracking server URI.
+        phase_02_train_opt_mlflow_experiment_name: MLflow experiment name.
+        phase_02_train_opt_mlflow_run_name: MLflow run name.
         phase_04_registry_opt_port: Model registry server port
     """
     # =========================================================================
@@ -157,6 +163,10 @@ def osft_minimal_pipeline(
         training_resource_num_procs_per_worker="auto",
         training_resource_num_workers=phase_02_train_man_train_workers,
         training_runtime=phase_02_train_opt_runtime,
+        # MLflow
+        training_mlflow_tracking_uri=phase_02_train_opt_mlflow_tracking_uri,
+        training_mlflow_experiment_name=phase_02_train_opt_mlflow_experiment_name,
+        training_mlflow_run_name=phase_02_train_opt_mlflow_run_name,
     )
     training_task.set_caching_options(False)
     kfp.kubernetes.set_image_pull_policy(training_task, "IfNotPresent")

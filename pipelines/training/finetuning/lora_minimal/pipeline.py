@@ -79,6 +79,9 @@ def lora_minimal_pipeline(
     phase_02_train_opt_lora_load_in_4bit: bool = True,
     phase_02_train_opt_lora_load_in_8bit: bool = False,
     phase_02_train_opt_runtime: str = "training-hub",
+    phase_02_train_opt_mlflow_tracking_uri: str = "",
+    phase_02_train_opt_mlflow_experiment_name: str = "",
+    phase_02_train_opt_mlflow_run_name: str = "",
     phase_04_registry_opt_port: int = 8080,
 ):
     """LoRA Minimal Training Pipeline - Parameter-efficient fine-tuning.
@@ -113,6 +116,9 @@ def lora_minimal_pipeline(
         phase_02_train_opt_lora_load_in_4bit: [QLoRA] Enable 4-bit quantization (cannot use with 8-bit)
         phase_02_train_opt_lora_load_in_8bit: [QLoRA] Enable 8-bit quantization (cannot use with 4-bit)
         phase_02_train_opt_runtime: Name of the ClusterTrainingRuntime to use.
+        phase_02_train_opt_mlflow_tracking_uri: MLflow tracking server URI.
+        phase_02_train_opt_mlflow_experiment_name: MLflow experiment name.
+        phase_02_train_opt_mlflow_run_name: MLflow run name.
         phase_04_registry_opt_port: Model registry server port
     """
     # =========================================================================
@@ -177,6 +183,10 @@ def lora_minimal_pipeline(
         # Hardcoded to 1 until unsloth/training_hub add multi-node LoRA support.
         training_resource_num_workers=1,
         training_runtime=phase_02_train_opt_runtime,
+        # MLflow
+        training_mlflow_tracking_uri=phase_02_train_opt_mlflow_tracking_uri,
+        training_mlflow_experiment_name=phase_02_train_opt_mlflow_experiment_name,
+        training_mlflow_run_name=phase_02_train_opt_mlflow_run_name,
     )
     training_task.set_caching_options(False)
     kfp.kubernetes.set_image_pull_policy(training_task, "IfNotPresent")

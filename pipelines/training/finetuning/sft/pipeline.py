@@ -85,6 +85,9 @@ def sft_pipeline(
     phase_02_train_opt_seed: int = 42,
     phase_02_train_opt_use_liger: bool = False,
     phase_02_train_opt_runtime: str = "training-hub",
+    phase_02_train_opt_mlflow_tracking_uri: str = "",
+    phase_02_train_opt_mlflow_experiment_name: str = "",
+    phase_02_train_opt_mlflow_run_name: str = "",
     phase_03_eval_opt_batch: str = "auto",
     phase_03_eval_opt_gen_kwargs: dict = {},
     phase_03_eval_opt_limit: int = -1,
@@ -137,6 +140,9 @@ def sft_pipeline(
         phase_02_train_opt_seed: Random seed for reproducibility.
         phase_02_train_opt_use_liger: Enable Liger kernel optimizations.
         phase_02_train_opt_runtime: Name of the ClusterTrainingRuntime to use.
+        phase_02_train_opt_mlflow_tracking_uri: MLflow tracking server URI.
+        phase_02_train_opt_mlflow_experiment_name: MLflow experiment name.
+        phase_02_train_opt_mlflow_run_name: MLflow run name.
         phase_03_eval_opt_batch: Batch size for evaluation (auto or int).
         phase_03_eval_opt_gen_kwargs: Generation kwargs for evaluation.
         phase_03_eval_opt_limit: Limit examples per task (-1 = no limit).
@@ -207,6 +213,10 @@ def sft_pipeline(
         training_resource_num_procs_per_worker=phase_02_train_opt_num_procs,
         training_resource_num_workers=phase_02_train_man_workers,
         training_runtime=phase_02_train_opt_runtime,
+        # MLflow
+        training_mlflow_tracking_uri=phase_02_train_opt_mlflow_tracking_uri,
+        training_mlflow_experiment_name=phase_02_train_opt_mlflow_experiment_name,
+        training_mlflow_run_name=phase_02_train_opt_mlflow_run_name,
     )
     training_task.set_caching_options(False)
     kfp.kubernetes.set_image_pull_policy(training_task, "IfNotPresent")

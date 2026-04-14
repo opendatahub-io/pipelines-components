@@ -45,6 +45,9 @@ A 4-stage ML pipeline for fine-tuning language models:
 | `phase_02_train_opt_seed` | `int` | `42` | Random seed for reproducibility. |
 | `phase_02_train_opt_use_liger` | `bool` | `False` | Enable Liger kernel optimizations. |
 | `phase_02_train_opt_runtime` | `str` | `training-hub` | Name of the ClusterTrainingRuntime to use. |
+| `phase_02_train_opt_mlflow_tracking_uri` | `str` | `""` | MLflow tracking server URI. |
+| `phase_02_train_opt_mlflow_experiment_name` | `str` | `""` | MLflow experiment name. |
+| `phase_02_train_opt_mlflow_run_name` | `str` | `""` | MLflow run name. |
 | `phase_03_eval_opt_batch` | `str` | `auto` | Batch size for evaluation (auto or int). |
 | `phase_03_eval_opt_gen_kwargs` | `dict` | `{}` | Generation kwargs for evaluation. |
 | `phase_03_eval_opt_limit` | `int` | `-1` | Limit examples per task (-1 = no limit). |

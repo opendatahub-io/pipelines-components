@@ -63,6 +63,10 @@ def train_model(
     training_save_samples: Optional[int] = None,
     training_accelerate_full_state_at_epoch: Optional[bool] = None,
     training_fsdp_sharding_strategy: Optional[str] = None,
+    # Logging integration params
+    training_mlflow_tracking_uri: Optional[str] = None,
+    training_mlflow_experiment_name: Optional[str] = None,
+    training_mlflow_run_name: Optional[str] = None,
     training_runtime: str = "training-hub",
     kubernetes_config: dsl.TaskConfig = None,
 ) -> str:
@@ -97,6 +101,9 @@ def train_model(
         training_save_samples: Number of samples to save.
         training_accelerate_full_state_at_epoch: Save full accelerate state.
         training_fsdp_sharding_strategy: FSDP sharding strategy.
+        training_mlflow_tracking_uri: MLflow tracking server URI.
+        training_mlflow_experiment_name: MLflow experiment name.
+        training_mlflow_run_name: MLflow run name.
         training_runtime: Name of the ClusterTrainingRuntime to use.
         kubernetes_config: KFP TaskConfig for volumes/env/resources passthrough.
 
@@ -202,6 +209,14 @@ def train_model(
                 b["seed"] = int(training_seed)
             if training_fsdp_sharding_strategy:
                 b["fsdp_sharding_strategy"] = training_fsdp_sharding_strategy.upper().strip()
+
+            # Logging integration params
+            if training_mlflow_tracking_uri:
+                b["mlflow_tracking_uri"] = training_mlflow_tracking_uri
+            if training_mlflow_experiment_name:
+                b["mlflow_experiment_name"] = training_mlflow_experiment_name
+            if training_mlflow_run_name:
+                b["mlflow_run_name"] = training_mlflow_run_name
             return b
 
         params = _params()

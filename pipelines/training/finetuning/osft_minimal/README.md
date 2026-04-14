@@ -32,6 +32,9 @@ A minimal 4-stage ML pipeline for fine-tuning language models with OSFT:
 | `phase_02_train_opt_max_seq_len` | `int` | `8192` | Max sequence length in tokens |
 | `phase_02_train_opt_use_liger` | `bool` | `True` | [OSFT] Enable Liger kernel optimizations. Recommended |
 | `phase_02_train_opt_runtime` | `str` | `training-hub` | Name of the ClusterTrainingRuntime to use. |
+| `phase_02_train_opt_mlflow_tracking_uri` | `str` | `""` | MLflow tracking server URI. |
+| `phase_02_train_opt_mlflow_experiment_name` | `str` | `""` | MLflow experiment name. |
+| `phase_02_train_opt_mlflow_run_name` | `str` | `""` | MLflow run name. |
 | `phase_04_registry_opt_port` | `int` | `8080` | Model registry server port |
 
 ## Metadata 🗂️

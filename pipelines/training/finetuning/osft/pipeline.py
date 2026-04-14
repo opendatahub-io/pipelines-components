@@ -87,6 +87,9 @@ def osft_pipeline(
     phase_02_train_opt_unmask: bool = False,
     phase_02_train_opt_use_liger: bool = True,
     phase_02_train_opt_runtime: str = "training-hub",
+    phase_02_train_opt_mlflow_tracking_uri: str = "",
+    phase_02_train_opt_mlflow_experiment_name: str = "",
+    phase_02_train_opt_mlflow_run_name: str = "",
     phase_03_eval_opt_batch: str = "auto",
     phase_03_eval_opt_gen_kwargs: dict = {},
     phase_03_eval_opt_limit: int = -1,
@@ -142,6 +145,9 @@ def osft_pipeline(
             phase_02_train_opt_unmask: [OSFT] Unmask all tokens (False=assistant only)
             phase_02_train_opt_use_liger: [OSFT] Enable Liger kernel optimizations. Recommended
             phase_02_train_opt_runtime: Name of the ClusterTrainingRuntime to use.
+            phase_02_train_opt_mlflow_tracking_uri: MLflow tracking server URI.
+            phase_02_train_opt_mlflow_experiment_name: MLflow experiment name.
+            phase_02_train_opt_mlflow_run_name: MLflow run name.
             phase_03_eval_opt_batch: Eval batch size ('auto' or integer)
             phase_03_eval_opt_gen_kwargs: Generation params dict (max_tokens, temperature)
             phase_03_eval_opt_limit: Max samples per task (-1 = all)
@@ -215,6 +221,10 @@ def osft_pipeline(
         training_resource_num_procs_per_worker=phase_02_train_opt_num_procs,
         training_resource_num_workers=phase_02_train_man_train_workers,
         training_runtime=phase_02_train_opt_runtime,
+        # MLflow
+        training_mlflow_tracking_uri=phase_02_train_opt_mlflow_tracking_uri,
+        training_mlflow_experiment_name=phase_02_train_opt_mlflow_experiment_name,
+        training_mlflow_run_name=phase_02_train_opt_mlflow_run_name,
     )
     training_task.set_caching_options(False)
     kfp.kubernetes.set_image_pull_policy(training_task, "IfNotPresent")
