@@ -124,3 +124,30 @@ def setup_hf_token(menv: Dict[str, str], training_base_model: str, log: logging.
         b = training_base_model.strip()
         if b.startswith("hf://") or ("/" in b and not b.startswith("oci://") and not os.path.exists(b)):
             log.warning(f"HF_TOKEN not set; only public models accessible for '{training_base_model}'")
+
+
+def validate_mlflow_tracking_uri(uri: Optional[str]) -> Optional[str]:
+    """Validate and sanitize an MLflow tracking URI.
+
+    Ensures the URI uses http(s) scheme and does not contain embedded credentials.
+
+    Args:
+        uri: MLflow tracking URI string, or None.
+
+    Returns:
+        Sanitized URI string, or None if input was empty/None.
+
+    Raises:
+        ValueError: If the URI has an invalid scheme or contains embedded credentials.
+    """
+    if not uri:
+        return None
+    from urllib.parse import urlsplit
+
+    value = uri.strip()
+    parsed = urlsplit(value)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError(f"training_mlflow_tracking_uri must be a valid http(s) URL, got: {value}")
+    if parsed.username or parsed.password:
+        raise ValueError("Do not embed credentials in training_mlflow_tracking_uri; use Kubernetes secrets instead")
+    return value

@@ -126,7 +126,7 @@ def train_model(
 
     from data import download_oci_model, prepare_jsonl, resolve_dataset
     from output import extract_metrics_from_jsonl, persist_model, plot_training_loss
-    from setup import configure_env, create_logger, init_k8s, parse_kv, setup_hf_token
+    from setup import configure_env, create_logger, init_k8s, parse_kv, setup_hf_token, validate_mlflow_tracking_uri
     from training import compute_nproc, select_runtime, wait_for_training_job
 
     log = create_logger("train_model")
@@ -148,7 +148,8 @@ def train_model(
     merged_env = configure_env(training_envs, default_env, log)
     setup_hf_token(merged_env, training_base_model, log)
 
-    # Configure MLflow env vars for training pods (RHOAI MLflow)
+    # Validate and configure MLflow env vars for training pods (RHOAI MLflow)
+    validate_mlflow_tracking_uri(training_mlflow_tracking_uri)
     if training_mlflow_tracking_uri:
         merged_env.setdefault("MLFLOW_TRACKING_INSECURE_TLS", "true")
 
@@ -268,15 +269,17 @@ def train_model(
 
             mlflow_uri = a.get("mlflow_tracking_uri", "")
             if mlflow_uri:
-                token_path = "/var/run/secrets/kubernetes.io/serviceaccount/token"
-                if os.path.exists(token_path):
-                    with open(token_path) as f:
+                try:
+                    with open("/var/run/secrets/kubernetes.io/serviceaccount/token") as f:
                         os.environ["MLFLOW_TRACKING_TOKEN"] = f.read().strip()
+                except FileNotFoundError:
+                    pass
 
-                ns_path = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
-                if os.path.exists(ns_path):
-                    with open(ns_path) as f:
+                try:
+                    with open("/var/run/secrets/kubernetes.io/serviceaccount/namespace") as f:
                         os.environ["MLFLOW_WORKSPACE"] = f.read().strip()
+                except FileNotFoundError:
+                    pass
 
                 os.environ.setdefault("MLFLOW_TRACKING_INSECURE_TLS", "true")
                 print(f"[MLflow] Auth configured, workspace: {os.environ.get('MLFLOW_WORKSPACE', 'unset')}", flush=True)
