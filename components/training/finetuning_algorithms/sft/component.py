@@ -227,6 +227,8 @@ def train_model(
         params = _params()
 
         def _train_func(p):
+            import os
+
             a = dict(p or {})
             fsdp = a.pop("fsdp_sharding_strategy", None)
             from training_hub import sft as tr
@@ -235,7 +237,6 @@ def train_model(
             # These env vars inherit to torchrun subprocesses. The RHOAI
             # MLflow fork (installed in training images) reads them to
             # configure auth token and workspace header automatically.
-            import os
 
             mlflow_uri = a.get("mlflow_tracking_uri", "")
             if mlflow_uri:
