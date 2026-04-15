@@ -8,7 +8,8 @@ Emit one Llama Stack ``POST /v1/responses`` JSON body per RAG pattern directory.
 
 Expects the ``rag_patterns`` layout from ``rag_templates_optimization``: each subdirectory contains ``pattern.json``. For each pattern, writes ``v1_responses_body.json``, ``create_model_response.py``, and ``README.md`` (how to run the script) under a matching output subdirectory. The helper script
 embeds the Llama Stack base URL from environment variable ``LLAMA_STACK_CLIENT_BASE_URL`` at pipeline run time (default ``http://localhost:8321`` if unset); each per-pattern ``README.md`` documents how to run the script and override that URL if needed. The generated ``create_model_response.py``
-resolves the API key from ``LLAMA_STACK_CLIENT_API_KEY`` or ``LLAMA_STACK_API_KEY`` (or a one-time prompt), sets ``os.environ`` for the process when you type a key at the prompt, then loops on questions until an empty line. No secret file is written.
+resolves the API key from ``LLAMA_STACK_CLIENT_API_KEY`` or ``LLAMA_STACK_API_KEY`` (or a one-time prompt), sets ``os.environ`` for the process when you type a key at the prompt, then loops on questions until an empty line. No secret file is written. For TLS, the script honors ``REQUESTS_CA_BUNDLE``
+/ ``SSL_CERT_FILE`` for custom CA bundles (e.g. corporate/private PKI), and ``LLAMA_STACK_TLS_INSECURE=1`` as a dev-only opt-out that disables certificate verification with a stderr warning.
 
 Request-body construction is defined inside this function so Kubeflow embeds it in ``ephemeral_component.py`` (module-level helpers in this file are not shipped to the executor).
 

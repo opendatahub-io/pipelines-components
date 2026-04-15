@@ -77,8 +77,8 @@ def functional_kfp_client(docrag_functional_config):
 
 
 @pytest.fixture(scope="session")
-def compiled_pipeline_path():
-    """Compile the Documents RAG Optimization pipeline to a temp YAML file."""
+def _compiled_docrag_pipeline_package_from_source():
+    """Compile the Documents RAG Optimization pipeline once per session to a temp YAML file."""
     from kfp import compiler
 
     from ..pipeline import documents_rag_optimization_pipeline
@@ -91,6 +91,25 @@ def compiled_pipeline_path():
     )
     yield path
     Path(path).unlink(missing_ok=True)
+
+
+@pytest.fixture(
+    scope="session",
+    params=["compile_from_source", "committed_pipeline_yaml"],
+    ids=["compile-from-source", "committed-pipeline-yaml"],
+)
+def pipeline_package_path(request):
+    """KFP pipeline package path: fresh compile or repo-root ``pipeline.yaml``.
+
+    Integration tests run twice so both the checked-in artifact and current Python
+    sources are exercised on the cluster.
+    """
+    if request.param == "compile_from_source":
+        return request.getfixturevalue("_compiled_docrag_pipeline_package_from_source")
+    committed = Path(__file__).resolve().parent.parent / "pipeline.yaml"
+    if not committed.is_file():
+        pytest.skip(f"Committed pipeline YAML not found: {committed}")
+    return str(committed.resolve())
 
 
 @pytest.fixture(scope="session")

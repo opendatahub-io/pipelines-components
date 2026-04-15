@@ -187,6 +187,36 @@ class TestBuildLlamaStackV1ResponsesBody:
         assert "file_search results" in body["instructions"]
         assert "Respond in the same language as the user question." in body["instructions"]
 
+    def test_script_supports_custom_ca_bundle_and_insecure_tls(self, tmp_path):
+        """Generated helper exposes CA-bundle env vars and a dev-only insecure flag.
+
+        Covers the corporate-PKI / dev-cluster TLS gap: the script must build an
+        explicit ``ssl.SSLContext`` that honors ``REQUESTS_CA_BUNDLE`` /
+        ``SSL_CERT_FILE`` for private CAs, and ``LLAMA_STACK_TLS_INSECURE`` as a
+        dev-only opt-out, then pass that context into ``urlopen``.
+        """
+        out, _ = _run_python_func(tmp_path, [("p1", _minimal_pattern())])
+        script = (out / "p1" / SCRIPT_FILENAME).read_text(encoding="utf-8")
+        # The helper builds an SSLContext from env vars.
+        assert "import ssl" in script
+        assert "_build_ssl_context" in script
+        assert "REQUESTS_CA_BUNDLE" in script
+        assert "SSL_CERT_FILE" in script
+        assert "LLAMA_STACK_TLS_INSECURE" in script
+        assert "create_default_context" in script
+        # Insecure mode actually disables verification and warns on stderr.
+        assert "ctx.check_hostname = False" in script
+        assert "ssl.CERT_NONE" in script
+        assert "file=sys.stderr" in script
+        # The context is plumbed into urlopen (not just constructed and ignored).
+        assert "context=ssl_context" in script
+        # README documents the new env vars in a dedicated section.
+        readme = (out / "p1" / README_FILENAME).read_text(encoding="utf-8")
+        assert "## TLS / certificates" in readme
+        assert "REQUESTS_CA_BUNDLE" in readme
+        assert "SSL_CERT_FILE" in readme
+        assert "LLAMA_STACK_TLS_INSECURE" in readme
+
 
 class TestBuildResponsesRequestBodiesPythonFunc:
     """Tests for prepare_responses_api_requests.python_func."""

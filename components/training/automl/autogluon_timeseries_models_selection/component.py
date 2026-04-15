@@ -28,7 +28,8 @@ def autogluon_timeseries_models_selection(
 
     This component trains multiple AutoGluon TimeSeries models using TimeSeriesPredictor
     on the selection training data, evaluates them on the test set, and selects the
-    top N performers based on the leaderboard ranking.
+    top N performers based on the leaderboard ranking. Training uses the ``fast_training``
+    preset for shorter wall-clock time versus ``medium_quality`` (trade-off: accuracy).
 
     The TimeSeriesPredictor automatically trains various model types (DeepAR, TFT,
     ARIMA, ETS, Theta, etc.) and ranks them by the evaluation metric. This component
@@ -57,7 +58,7 @@ def autogluon_timeseries_models_selection(
     logger = logging.getLogger(__name__)
 
     # Set constants
-    DEFAULT_PRESETS = "medium_quality"
+    DEFAULT_PRESETS = "fast_training"
     DEFAULT_EVAL_METRIC = "MASE"
     DEFAULT_TIME_LIMIT = 600  # 10 minutes
 

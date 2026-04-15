@@ -6,7 +6,8 @@
 
 Train and select top N AutoGluon timeseries models based on leaderboard.
 
-This component trains multiple AutoGluon TimeSeries models using TimeSeriesPredictor on the selection training data, evaluates them on the test set, and selects the top N performers based on the leaderboard ranking.
+This component trains multiple AutoGluon TimeSeries models using TimeSeriesPredictor on the selection training data, evaluates them on the test set, and selects the top N performers based on the leaderboard ranking. Training uses the ``fast_training`` preset for shorter wall-clock time versus
+``medium_quality`` (trade-off: accuracy).
 
 The TimeSeriesPredictor automatically trains various model types (DeepAR, TFT, ARIMA, ETS, Theta, etc.) and ranks them by the evaluation metric. This component selects the top N models from the leaderboard for refitting on the full dataset.
 
@@ -91,7 +92,7 @@ def example_pipeline(
   - timeseries
   - automl
   - model-selection
-- **Last Verified**: 2026-03-24 13:43:53+00:00
+- **Last Verified**: 2026-04-10 12:00:00+00:00
 - **Owners**:
   - Approvers:
     - LukaszCmielowski

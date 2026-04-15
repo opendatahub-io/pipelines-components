@@ -9,5 +9,15 @@
     "prediction_length": 2,
     "top_n": 2,
     "tags": ["smoke", "timeseries"]
+  },
+    {
+    "id": "timeseries_smoke2",
+    "dataset_path": "data/m4_hourly_subset_train.csv",
+    "target": "target",
+    "id_column": "item_id",
+    "timestamp_column": "timestamp",
+    "prediction_length": 10,
+    "top_n": 2,
+    "tags": ["smoke", "timeseries"]
   }
 ]

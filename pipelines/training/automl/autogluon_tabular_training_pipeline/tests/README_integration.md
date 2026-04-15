@@ -151,7 +151,7 @@ Fixtures used by the AutoML pipeline integration tests:
 | `datascience_pipelines_application` | session | Optionally creates a **DataSciencePipelinesApplication** CR in the test namespace (see [Creating a DataSciencePipelinesApplication CR](#creating-a-datasciencepipelinesapplication-cr-dspa)). Yields the CR dict or `None`. |
 | `uploaded_datasets` | session | Uploads dataset files from `test_configs.json` (by `dataset_path`) to S3; returns map `dataset_path` → `{"bucket", "key"}`. Empty dict when integration not configured. |
 | `kfp_client` | session | KFP client pointing at RHOAI (`rhoai_kfp_url`) with token auth; `None` if config missing. |
-| `compiled_pipeline_path` | session | Temp path to compiled AutoGluon tabular training pipeline YAML. |
+| `pipeline_package_path` | session (parametrized) | Path passed to `create_run_from_pipeline_package`: either a **fresh compile** from `pipeline.py` or the repo **`pipeline.yaml`** (`compile-from-source` / `committed-pipeline-yaml`). Each integration scenario runs for both. |
 | `pipeline_run_timeout` | function | Timeout in seconds (from `RHOAI_PIPELINE_RUN_TIMEOUT` or `3600`). |
 
 ## Test scenarios and parametrization
@@ -163,7 +163,7 @@ Scenarios are parametrized via test configs loaded from **`test_configs.json`** 
 - **Problem type** – `problem_type`: `"classification"`, `"regression"`, or `"timeseries"` (reserved for future use).
 - **AutoML/pipeline settings** – `task_type` (`"binary"`, `"multiclass"`, `"regression"`) and `automl_settings` (e.g. `top_n`) merged into pipeline arguments.
 
-One integration test runs per config.
+Two integration test runs occur per config (fresh compile and committed `pipeline.yaml`).
 To add a new scenario, add an object to the `test_configs.json` array with keys: `id`, `dataset_path`, `label_column`, `problem_type`, `task_type`, `automl_settings`, and optionally `tags` (list of strings for filtering).
 Put the dataset file under the tests directory at `dataset_path` (e.g. `data/my_dataset.csv`); it will be uploaded to S3 once per session.
 

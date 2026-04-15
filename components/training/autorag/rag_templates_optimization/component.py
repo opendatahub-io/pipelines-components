@@ -121,7 +121,12 @@ def rag_templates_optimization(
             current = current.__cause__ or current.__context__
         return False
 
-    def _create_openai_client(api_key: str, base_url: str) -> OpenAI:
+    # Mutable containers so the nested _create_openai_client can update the flags
+    # without requiring `nonlocal` or returning the flag.
+    _chat_ssl_verify = [True]
+    _embedding_ssl_verify = [True]
+
+    def _create_openai_client(api_key: str, base_url: str, _ssl_verify: list) -> OpenAI:
         """Create OpenAI client, falling back to SSL-unverified if self-signed cert detected."""
         client = OpenAI(api_key=api_key, base_url=base_url)
         try:
@@ -137,9 +142,14 @@ def rag_templates_optimization(
                     base_url=base_url,
                     http_client=httpx.Client(verify=False),
                 )
+                _ssl_verify[0] = False
             else:
                 raise
         return client
+
+    # Mutable container so the nested _create_llama_stack_client can update the flag
+    # without requiring `nonlocal` or returning the flag.
+    _ls_ssl_verify = [True]
 
     def _create_llama_stack_client(**kwargs) -> LlamaStackClient:
         """Create LlamaStackClient, falling back to SSL-unverified if self-signed cert detected."""
@@ -153,6 +163,7 @@ def rag_templates_optimization(
                     **kwargs,
                     http_client=httpx.Client(verify=False),
                 )
+                _ls_ssl_verify[0] = False
             else:
                 raise
         return client
@@ -420,6 +431,9 @@ def rag_templates_optimization(
         input_data_key: str = "",
         chat_model_url: str = "",
         embedding_model_url: str = "",
+        ls_ssl_verify: bool = True,
+        chat_ssl_verify: bool = True,
+        embedding_ssl_verify: bool = True,
     ) -> dict[str, Any]:
         """Create a mapping from placeholder names to their values from output.json.
 
@@ -448,6 +462,9 @@ def rag_templates_optimization(
             input_data_key: Input data key.
             chat_model_url: Chat model url.
             embedding_model_url: Embedding model url.
+            ls_ssl_verify: Whether LlamaStack SSL verification succeeded.
+            chat_ssl_verify: Whether chat model (OpenAI) SSL verification succeeded.
+            embedding_ssl_verify: Whether embedding model (OpenAI) SSL verification succeeded.
 
         Returns:
             Dictionary mapping placeholder names to their values.
@@ -485,6 +502,9 @@ def rag_templates_optimization(
 
         mapping["CHAT_MODEL_URL"] = chat_model_url
         mapping["EMBEDDING_MODEL_URL"] = embedding_model_url
+        mapping["LS_SSL_VERIFY"] = ls_ssl_verify
+        mapping["CHAT_SSL_VERIFY"] = chat_ssl_verify
+        mapping["EMBEDDING_SSL_VERIFY"] = embedding_ssl_verify
 
         return mapping
 
@@ -498,6 +518,9 @@ def rag_templates_optimization(
         output_notebook_path: Path,
         test_data_key: str = "",
         input_data_key: str = "",
+        ls_ssl_verify: bool = True,
+        chat_ssl_verify: bool = True,
+        embedding_ssl_verify: bool = True,
     ) -> None:
         """Generate a filled notebook from templates and output.json.
 
@@ -507,6 +530,10 @@ def rag_templates_optimization(
             output_notebook_path: Path where to save the generated notebook.
             test_data_key: Path to test data file within bucket used as input to AI4RAG.
             input_data_key: Path to documents dir within bucket used as input to AI4RAG.
+            ls_ssl_verify: Whether LlamaStack SSL verification succeeded; False causes the
+                generated notebook to skip the SSL probe and connect with verify=False directly.
+            chat_ssl_verify: Whether chat model (OpenAI) SSL verification succeeded.
+            embedding_ssl_verify: Whether embedding model (OpenAI) SSL verification succeeded.
 
         Returns:
             None. The notebook is written to output_notebook_path.
@@ -517,6 +544,9 @@ def rag_templates_optimization(
             input_data_key=input_data_key,
             chat_model_url=chat_model_url,
             embedding_model_url=embedding_model_url,
+            ls_ssl_verify=ls_ssl_verify,
+            chat_ssl_verify=chat_ssl_verify,
+            embedding_ssl_verify=embedding_ssl_verify,
         )
         notebook = Notebook.load(notebook_name=f"{notebook_template}_template.ipynb")
         filled_cells = []
@@ -605,8 +635,12 @@ def rag_templates_optimization(
                 "have to be defined when running AutoRAG experiment using an in-memory vector store."
             )
         client = Client(
-            generation_model=_create_openai_client(api_key=chat_model_token, base_url=chat_model_url),
-            embedding_model=_create_openai_client(api_key=embedding_model_token, base_url=embedding_model_url),
+            generation_model=_create_openai_client(
+                api_key=chat_model_token, base_url=chat_model_url, _ssl_verify=_chat_ssl_verify
+            ),
+            embedding_model=_create_openai_client(
+                api_key=embedding_model_token, base_url=embedding_model_url, _ssl_verify=_embedding_ssl_verify
+            ),
         )
         in_memory_vector_store_scenario = True
 
@@ -838,6 +872,8 @@ def rag_templates_optimization(
                 Path(patt_dir, "indexing_and_inference.ipynb"),
                 input_data_key=input_data_key,
                 test_data_key=test_data_key,
+                chat_ssl_verify=_chat_ssl_verify[0],
+                embedding_ssl_verify=_embedding_ssl_verify[0],
             )
         else:
             generate_notebook_from_templates(
@@ -845,6 +881,7 @@ def rag_templates_optimization(
                 pattern_data,
                 Path(patt_dir, "indexing.ipynb"),
                 input_data_key=input_data_key,
+                ls_ssl_verify=_ls_ssl_verify[0],
             )
 
             generate_notebook_from_templates(
@@ -852,6 +889,7 @@ def rag_templates_optimization(
                 pattern_data,
                 Path(patt_dir, "inference.ipynb"),
                 test_data_key=test_data_key,
+                ls_ssl_verify=_ls_ssl_verify[0],
             )
 
         # Flat schema: scores = per-metric aggregates (mean, ci_low, ci_high); final_score

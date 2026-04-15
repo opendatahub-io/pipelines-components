@@ -5,8 +5,21 @@ from pathlib import Path
 
 import pytest
 from kfp import compiler
+from kfp_components.utils.compiled_pipeline_alignment import (
+    assert_checked_in_pipeline_yaml_matches_compiled_ir,
+)
+from kfp_components.utils.pipeline_dag_tasks import (
+    assert_compiled_pipeline_root_dag_task_ids,
+)
 
 from ..pipeline import autogluon_timeseries_training_pipeline
+
+_EXPECTED_ROOT_DAG_TASK_IDS = (
+    "autogluon-timeseries-models-selection",
+    "for-loop-1",
+    "timeseries-data-loader",
+    "timeseries-leaderboard-evaluation",
+)
 
 
 class TestAutogluonTimeseriesTrainingPipelineUnitTests:
@@ -79,3 +92,18 @@ class TestAutogluonTimeseriesTrainingPipelineUnitTests:
             pytest.fail(f"Pipeline compilation or validation failed: {e}")
         finally:
             Path(tmp_path).unlink(missing_ok=True)
+
+    def test_checked_in_pipeline_yaml_matches_source_ir(self):
+        """Committed pipeline.yaml matches a fresh compile (IR + deployment; b64 embed + images redacted)."""
+        yaml_path = Path(__file__).resolve().parent.parent / "pipeline.yaml"
+        assert_checked_in_pipeline_yaml_matches_compiled_ir(
+            pipeline_func=autogluon_timeseries_training_pipeline,
+            checked_in_yaml_path=yaml_path,
+        )
+
+    def test_compiled_pipeline_root_dag_task_ids(self):
+        """Root-level step IDs are stable; renames or add/remove steps require updating expectations."""
+        assert_compiled_pipeline_root_dag_task_ids(
+            pipeline_func=autogluon_timeseries_training_pipeline,
+            expected_task_ids=_EXPECTED_ROOT_DAG_TASK_IDS,
+        )

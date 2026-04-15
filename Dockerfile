@@ -3,7 +3,9 @@ FROM registry.redhat.io/ubi9/python-311@sha256:d7620b96616955d78425518143affdc94
 WORKDIR /app
 
 USER root
-RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh
+RUN curl -LsSf https://astral.sh/uv/0.6.0/install.sh -o /tmp/uv-install.sh && \
+    echo "5464b06094b6363861b99cd60a010892e52fc2a7503b7594419828e74afecfe6  /tmp/uv-install.sh" | sha256sum -c - && \
+    sh /tmp/uv-install.sh && rm /tmp/uv-install.sh
 
 COPY pyproject.toml __init__.py ./
 COPY components/ components/

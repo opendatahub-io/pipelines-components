@@ -99,7 +99,7 @@ class TestTimeseriesModelsSelectionUnitTests:
         )
         mock_predictor.fit.assert_called_once_with(
             train_data=train_ts,
-            presets="medium_quality",
+            presets="fast_training",
             time_limit=600,
             excluded_model_types=["Chronos", "Toto", "Chronos2"],
         )
@@ -109,6 +109,7 @@ class TestTimeseriesModelsSelectionUnitTests:
         assert result.eval_metric_name == "MASE"
         assert result.predictor_path == "/tmp/workspace/timeseries_predictor"
         assert result.model_config["prediction_length"] == 24
+        assert result.model_config["presets"] == "fast_training"
         assert result.model_config["time_limit"] == 600
         assert result.model_config["known_covariates_names"] == []
         assert result.model_config["num_models_trained"] == 3

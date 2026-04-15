@@ -108,11 +108,15 @@ class TestAutogluonPipelineIntegration:
         rhoai_project,
         uploaded_datasets,
         kfp_client,
-        compiled_pipeline_path,
+        pipeline_package_path,
         pipeline_run_timeout,
         s3_client,
     ):
-        """Run pipeline for one test config; assert success and presence of artifacts."""
+        """Run pipeline for one test config; assert success and presence of artifacts.
+
+        Runs once with a fresh compile and once with committed ``pipeline.yaml`` (see
+        ``pipeline_package_path`` in conftest).
+        """
         if not uploaded_datasets or not kfp_client:
             pytest.skip("Integration prerequisites not available")
         if test_config.problem_type == "timeseries":
@@ -124,7 +128,7 @@ class TestAutogluonPipelineIntegration:
         if not arguments:
             pytest.skip(f"Dataset not available for path: {test_config.dataset_path}")
 
-        run_id, detail = _run_pipeline_and_wait(kfp_client, compiled_pipeline_path, arguments, pipeline_run_timeout)
+        run_id, detail = _run_pipeline_and_wait(kfp_client, pipeline_package_path, arguments, pipeline_run_timeout)
         assert _run_succeeded(detail), f"Pipeline run {run_id} did not succeed; state={getattr(detail, 'run', detail)}"
 
         if s3_client and config.get("s3_bucket_artifacts"):

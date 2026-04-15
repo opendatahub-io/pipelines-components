@@ -69,10 +69,12 @@ def autogluon_timeseries_training_pipeline(
        models on the selection split, scores them on the test split, and emits the top ``top_n`` models
        plus predictor path and configuration.
 
-    3. **Full refit** (``autogluon_timeseries_models_full_refit``, ``ParallelFor`` with parallelism 2): For
+    3. **Full refit** (``autogluon_timeseries_models_full_refit``, ``ParallelFor`` with parallelism 1): For
        each top model, fits a new predictor on **selection + extra** train data (full train portion per
        series), evaluates on the test split, and writes a ``_FULL`` model artifact (predictor, metrics,
-       notebook).
+       notebook). Parallelism is **one** concurrent refit pod because the workspace PVC is
+       **ReadWriteOnce**; higher parallelism would mount the same RWO volume from multiple pods and cause
+       **Multi-Attach** errors on typical block storage.
 
     4. **Leaderboard** (``leaderboard_evaluation``): Builds an HTML leaderboard from the refitted model
        metrics using the selection stage's evaluation metric.
@@ -164,9 +166,8 @@ def autogluon_timeseries_training_pipeline(
     selection_task.set_caching_options(False)
     selection_task.set_cpu_request("4").set_memory_request("16Gi")
 
-    # Stage 3: Model Refitting
-    # Refit each top model on full training dataset in parallel
-    with dsl.ParallelFor(items=selection_task.outputs["top_models"], parallelism=2) as model_name:
+    # Stage 3: Model Refitting (parallelism=1: RWO workspace allows only one pod on the volume at a time).
+    with dsl.ParallelFor(items=selection_task.outputs["top_models"], parallelism=1) as model_name:
         refit_task = autogluon_timeseries_models_full_refit(
             model_name=model_name,
             test_dataset=data_loader_task.outputs["sampled_test_dataset"],

@@ -23,6 +23,9 @@ def prepare_responses_api_requests(
     The generated ``create_model_response.py`` resolves the API key from ``LLAMA_STACK_CLIENT_API_KEY``
     or ``LLAMA_STACK_API_KEY`` (or a one-time prompt), sets ``os.environ`` for the process when you
     type a key at the prompt, then loops on questions until an empty line. No secret file is written.
+    For TLS, the script honors ``REQUESTS_CA_BUNDLE`` / ``SSL_CERT_FILE`` for custom CA bundles
+    (e.g. corporate/private PKI), and ``LLAMA_STACK_TLS_INSECURE=1`` as a dev-only opt-out that
+    disables certificate verification with a stderr warning.
 
     Request-body construction is defined inside this function so Kubeflow embeds it in
     ``ephemeral_component.py`` (module-level helpers in this file are not shipped to the executor).
@@ -221,6 +224,8 @@ from getpass import getpass
 from pathlib import Path
 from urllib import request
 from urllib.error import HTTPError, URLError
+import ssl
+import sys
 
 
 LLAMA_STACK_BASE_URL = "{base_url.rstrip("/")}"
@@ -261,7 +266,36 @@ def _resolve_api_key_once() -> str:
     return key
 
 
-def _post_responses(body: dict, api_key: str) -> int:
+def _build_ssl_context():
+    """Build an SSLContext honoring corporate CA bundles or a dev-only insecure flag.
+
+    Precedence:
+      1. LLAMA_STACK_TLS_INSECURE=1  -> verification disabled (dev only, prints warning)
+      2. REQUESTS_CA_BUNDLE          -> custom CA bundle path
+      3. SSL_CERT_FILE               -> custom CA bundle path
+      4. None                        -> stdlib default (system trust store)
+    """
+    insecure = os.environ.get("LLAMA_STACK_TLS_INSECURE", "").strip().lower() in ("1", "true", "yes", "on")
+    if insecure:
+        print(
+            "WARNING: TLS verification is DISABLED (LLAMA_STACK_TLS_INSECURE=1). "
+            "Do not use this against production Llama Stack deployments.",
+            file=sys.stderr,
+        )
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        return ctx
+    cafile = (
+        os.environ.get("REQUESTS_CA_BUNDLE", "").strip()
+        or os.environ.get("SSL_CERT_FILE", "").strip()
+    )
+    if cafile:
+        return ssl.create_default_context(cafile=cafile)
+    return None
+
+
+def _post_responses(body: dict, api_key: str, ssl_context) -> int:
     url = f"{{LLAMA_STACK_BASE_URL}}/v1/responses"
     headers = {{
         "Content-Type": "application/json",
@@ -278,7 +312,7 @@ def _post_responses(body: dict, api_key: str) -> int:
     )
 
     try:
-        with request.urlopen(req, timeout=120) as resp:
+        with request.urlopen(req, timeout=120, context=ssl_context) as resp:
             payload = resp.read().decode("utf-8")
             print(payload)
             return 0
@@ -299,6 +333,7 @@ def main() -> int:
         return 1
 
     api_key = _resolve_api_key_once()
+    ssl_context = _build_ssl_context()
 
     with BODY_PATH.open(encoding="utf-8") as f:
         template = json.load(f)
@@ -310,7 +345,7 @@ def main() -> int:
             return 0
         body = copy.deepcopy(template)
         _set_question(body, question)
-        rc = _post_responses(body, api_key)
+        rc = _post_responses(body, api_key, ssl_context)
         if rc != 0:
             return rc
 
@@ -368,10 +403,39 @@ if __name__ == "__main__":
             "To reuse the same key in a **new** shell session, export "
             "``LLAMA_STACK_CLIENT_API_KEY`` (or ``LLAMA_STACK_API_KEY``) again; nothing is "
             "written to disk by this script.\n\n"
+            "## TLS / certificates\n\n"
+            "The script uses Python's standard library (``urllib`` + ``ssl``). It honors these "
+            "environment variables, in order of precedence:\n\n"
+            "1. **``LLAMA_STACK_TLS_INSECURE=1``** — **dev only.** Disables TLS verification "
+            "entirely (``check_hostname=False``, ``verify_mode=CERT_NONE``) and prints a warning "
+            "to stderr. **Never** use this against a production Llama Stack deployment; it "
+            "exposes you to man-in-the-middle attacks.\n"
+            "2. **``REQUESTS_CA_BUNDLE=/path/to/ca-bundle.pem``** — path to a PEM file containing "
+            "the CA(s) that signed your Llama Stack server certificate. Use this when your "
+            "deployment is fronted by a private/corporate CA that is not in the OS default trust "
+            "store.\n"
+            "3. **``SSL_CERT_FILE=/path/to/ca-bundle.pem``** — same effect as "
+            "``REQUESTS_CA_BUNDLE``; honored for compatibility with the Python stdlib "
+            "convention.\n"
+            "4. If none of the above are set, the script uses the system trust store.\n\n"
+            "Example (private/corporate CA):\n\n"
+            "```bash\n"
+            "export REQUESTS_CA_BUNDLE=/etc/pki/tls/certs/corporate-ca.pem\n"
+            f"python3 {sfn}\n"
+            "```\n\n"
+            "Example (dev cluster with self-signed cert, **non-production**):\n\n"
+            "```bash\n"
+            "export LLAMA_STACK_TLS_INSECURE=1\n"
+            f"python3 {sfn}\n"
+            "```\n\n"
             "## Troubleshooting\n\n"
             f"- **Missing JSON body file** — restore ``{ofn}`` next to the script or "
             "re-download the artifact folder.\n"
-            "- **Connection or HTTP errors** — confirm the base URL, TLS, firewall, and that "
+            "- **TLS / certificate errors** (e.g. ``CERTIFICATE_VERIFY_FAILED``) — your Llama "
+            "Stack server certificate is signed by a CA not in the OS trust store. See the "
+            "**TLS / certificates** section above for ``REQUESTS_CA_BUNDLE`` / ``SSL_CERT_FILE`` "
+            "and the dev-only ``LLAMA_STACK_TLS_INSECURE`` opt-out.\n"
+            "- **Connection or HTTP errors** — confirm the base URL, firewall, and that "
             "the model and ``file_search`` / vector store identifiers in the JSON match your "
             "deployment.\n"
         )

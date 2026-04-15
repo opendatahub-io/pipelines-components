@@ -20,8 +20,8 @@ Pipeline stages:
 
 2. **Model selection** (``autogluon_timeseries_models_selection``): Trains multiple AutoGluon TimeSeries models on the selection split, scores them on the test split, and emits the top ``top_n`` models plus predictor path and configuration.
 
-3. **Full refit** (``autogluon_timeseries_models_full_refit``, ``ParallelFor`` with parallelism 2): For each top model, fits a new predictor on **selection + extra** train data (full train portion per series), evaluates on the test split, and writes a ``_FULL`` model artifact (predictor, metrics,
-notebook).
+3. **Full refit** (``autogluon_timeseries_models_full_refit``, ``ParallelFor`` with parallelism 1): For each top model, fits a new predictor on **selection + extra** train data (full train portion per series), evaluates on the test split, and writes a ``_FULL`` model artifact (predictor, metrics,
+notebook). Parallelism is **one** concurrent refit pod because the workspace PVC is **ReadWriteOnce**; higher parallelism would mount the same RWO volume from multiple pods and cause **Multi-Attach** errors on typical block storage.
 
 4. **Leaderboard** (``leaderboard_evaluation``): Builds an HTML leaderboard from the refitted model metrics using the selection stage's evaluation metric.
 
@@ -108,5 +108,5 @@ Pipeline outputs are written to the artifact store (S3-compatible storage config
 ```
 
 - **timeseries-leaderboard-evaluation**: Contains the HTML leaderboard artifact summarizing all refitted model results.
-- **autogluon-timeseries-models-full-refit**: Each top-N model is refitted in a parallel task. Each task writes a `<ModelName>_FULL/` subdirectory containing the saved TimeSeriesPredictor, metrics, pre-filled inference notebook, and a `model.json` with model metadata.
+- **autogluon-timeseries-models-full-refit**: Each top-N model is refitted in turn (parallelism 1 on the shared RWO workspace). Each task writes a `<ModelName>_FULL/` subdirectory containing the saved TimeSeriesPredictor, metrics, pre-filled inference notebook, and a `model.json` with model metadata.
 - **timeseries-data-loader**: Stores the test dataset S3 artifact used for evaluation; the training splits live on the PVC workspace instead.
