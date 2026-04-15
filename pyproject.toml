@@ -176,6 +176,7 @@ python_classes = ["Test*"]
 python_functions = ["test_*"]
 markers = [
     "integration: marks test as integration/functional/e2e (requires RHOAI cluster and .env config).",
+    "functional: marks test as a parametrized functional test (requires RHOAI cluster and .env config).",
 ]
 # Don't search these directories
 norecursedirs = [
