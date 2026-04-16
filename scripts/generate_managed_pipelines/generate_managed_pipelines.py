@@ -1,4 +1,4 @@
-"""Generate managed-pipelines.json from pipeline metadata with managed: true."""
+"""Generate managed-pipelines.json and compile managed pipeline YAMLs."""
 
 from __future__ import annotations
 
@@ -10,9 +10,14 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 import yaml
+from kfp.dsl import graph_component
 
-from scripts.lib.discovery import get_repo_root
-
+from ..lib.discovery import get_repo_root
+from ..lib.kfp_compilation import (
+    compile_and_get_yaml,
+    find_decorated_functions_runtime,
+    load_module_from_path,
+)
 from .pipeline_description import extract_pipeline_description_from_file
 
 OUTPUT_FILENAME = "managed-pipelines.json"
@@ -37,6 +42,10 @@ class ManagedPipelineMetadataError(ValueError):
         """Initialize the metadata validation error with optional pipeline location."""
         super().__init__(message)
         self.pipeline_dir = pipeline_dir
+
+
+class ManagedPipelineCompilationError(RuntimeError):
+    """Failure to compile a managed pipeline's ``pipeline.py``."""
 
 
 def _pipeline_dir_label(dir_path: Path, repo_root: Path) -> str:
@@ -198,10 +207,56 @@ def collect_managed_pipelines(repo_root: Path) -> list[ManagedPipelineEntry]:
     return result
 
 
+def _module_name_for_compilation(pipeline_py: Path, repo_root: Path) -> str:
+    """Derive a unique Python module name for dynamic import during compilation."""
+    try:
+        relative = pipeline_py.relative_to(repo_root).with_suffix("")
+        parts = [p.replace("-", "_").replace(".", "_") for p in relative.parts]
+        return "managed_compile_" + "_".join(parts)
+    except ValueError:
+        return "managed_compile_" + pipeline_py.stem
+
+
+def compile_managed_pipeline(
+    *,
+    pipeline_py: Path,
+    output_path: Path,
+    repo_root: Path,
+) -> None:
+    """Compile a managed pipeline's ``pipeline.py`` to a KFP YAML spec.
+
+    Args:
+        pipeline_py: Path to the ``pipeline.py`` source file.
+        output_path: Destination path for the compiled YAML.
+        repo_root: Repository root (used for generating a unique module name).
+
+    Raises:
+        ManagedPipelineCompilationError: On import failure, missing decorator, or compilation error.
+    """
+    module_name = _module_name_for_compilation(pipeline_py, repo_root)
+
+    try:
+        module = load_module_from_path(str(pipeline_py), module_name)
+    except Exception as e:
+        raise ManagedPipelineCompilationError(f"Failed to load module {pipeline_py}: {e}") from e
+
+    functions = find_decorated_functions_runtime(module, "pipeline")
+    functions = [(name, obj) for name, obj in functions if isinstance(obj, graph_component.GraphComponent)]
+
+    if not functions:
+        raise ManagedPipelineCompilationError(f"No @dsl.pipeline decorated function found in {pipeline_py}")
+
+    _, func = functions[0]
+    try:
+        compile_and_get_yaml(func, str(output_path))
+    except Exception as e:
+        raise ManagedPipelineCompilationError(f"Failed to compile pipeline from {pipeline_py}: {e}") from e
+
+
 def main() -> int:
-    """CLI entry point. Generate managed-pipelines.json at repo root."""
+    """CLI entry point. Generate managed-pipelines.json and compile managed pipeline YAMLs."""
     parser = argparse.ArgumentParser(
-        description="Generate managed-pipelines.json from pipeline metadata (managed: true).",
+        description="Generate managed-pipelines.json and compile managed pipeline YAMLs.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
@@ -236,6 +291,21 @@ def main() -> int:
     payload = [asdict(entry) for entry in pipelines]
     output_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     print(f"Wrote {len(pipelines)} pipeline(s) to {output_path}", file=sys.stderr)
+
+    for entry in pipelines:
+        pipeline_py = repo_root / entry.path
+        output_yaml = pipeline_py.parent / "pipeline.yaml"
+        try:
+            compile_managed_pipeline(
+                pipeline_py=pipeline_py,
+                output_path=output_yaml,
+                repo_root=repo_root,
+            )
+        except ManagedPipelineCompilationError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 1
+        print(f"Compiled {entry.name} -> {output_yaml}", file=sys.stderr)
+
     return 0
 
 

@@ -94,7 +94,7 @@ checks that generated artifacts are present under the run prefix, including
 ## Test layout
 
 - **`integration_config.py`** – Loads `.env` and builds `DOCRAG_INTEGRATION_CONFIG`; used by `conftest.py` and the integration test for skip logic and config.
-- **`conftest.py`** – Pytest fixtures: `docrag_integration_config`, `kfp_client`, `pipeline_package_path` (fresh compile or committed `pipeline.yaml`, parametrized), `pipeline_run_timeout`, `s3_client`.
+- **`conftest.py`** – Pytest fixtures: `docrag_integration_config`, `kfp_client`, `compiled_pipeline_path`, `pipeline_run_timeout`, `s3_client`.
 - **`test_pipeline_integration.py`** – Submits the compiled pipeline with arguments from config, waits for completion, asserts success, and optionally checks for artifacts in S3.
 - **`.env.example`** – Template for required and optional env vars; copy to `.env` and fill in (committable; `.env` is gitignored).
 

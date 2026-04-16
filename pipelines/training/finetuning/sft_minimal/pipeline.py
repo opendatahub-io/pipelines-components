@@ -25,7 +25,7 @@ from components.deployment.kubeflow_model_registry import (
     kubeflow_model_registry as model_registry,
 )
 from components.evaluation.lm_eval import universal_llm_evaluator
-from components.training.finetuning_algorithms.sft import train_model
+from components.training.finetuning.sft import train_model
 
 # =============================================================================
 # PVC Configuration (COMPILE-TIME settings)

@@ -50,7 +50,17 @@ spec:
   - name: hermetic
     value: true
   - name: prefetch-input
-    value: 
+    value:
+        [
+          {
+            "type": "pip",
+            "path": "pipelines/training/automl",
+            "requirements_files": [
+              "autogluon_tabular_training_pipeline/requirements.txt"
+            ],
+            "binary": {"arch": ":all:"}
+          }
+        ]
   - name: build-image-index
     value: true
   - name: enable-slack-failure-notification

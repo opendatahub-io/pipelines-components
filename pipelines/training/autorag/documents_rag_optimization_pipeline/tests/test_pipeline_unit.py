@@ -1,10 +1,5 @@
 """Unit tests for the documents_rag_optimization_pipeline pipeline."""
 
-from pathlib import Path
-
-from kfp_components.utils.compiled_pipeline_alignment import (
-    assert_checked_in_pipeline_yaml_matches_compiled_ir,
-)
 from kfp_components.utils.pipeline_dag_tasks import (
     assert_compiled_pipeline_root_dag_task_ids,
 )
@@ -41,14 +36,6 @@ class TestDocumentsRagOptimizationPipelineUnit:
         assert "input_data_key" in inputs
         assert "llama_stack_secret_name" in inputs
         assert "responses_request_default_question" not in inputs
-
-    def test_checked_in_pipeline_yaml_matches_source_ir(self):
-        """Committed pipeline.yaml matches a fresh compile (IR + deployment; b64 embed + images redacted)."""
-        yaml_path = Path(__file__).resolve().parent.parent / "pipeline.yaml"
-        assert_checked_in_pipeline_yaml_matches_compiled_ir(
-            pipeline_func=documents_rag_optimization_pipeline,
-            checked_in_yaml_path=yaml_path,
-        )
 
     def test_compiled_pipeline_root_dag_task_ids(self):
         """Root-level step IDs are stable; renames or add/remove steps require updating expectations."""

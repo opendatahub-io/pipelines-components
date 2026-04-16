@@ -1,4 +1,3 @@
----
 apiVersion: tekton.dev/v1
 kind: PipelineRun
 metadata:
@@ -19,33 +18,33 @@ metadata:
   namespace: open-data-hub-tenant
 spec:
   params:
-    - name: git-url
-      value: '{{source_url}}'
-    - name: revision
-      value: '{{revision}}'
-    - name: output-image
-      value: quay.io/opendatahub/odh-pipelines-components:odh-stable
-    - name: dockerfile
-      value: Dockerfile
-    - name: path-context
-      value: .
-    - name: build-platforms
-      value:
-        - linux/x86_64
-        - linux/aarch64
+  - name: git-url
+    value: '{{source_url}}'
+  - name: revision
+    value: '{{revision}}'
+  - name: output-image
+    value: quay.io/opendatahub/odh-pipelines-components:odh-stable
+  - name: dockerfile
+    value: Dockerfile
+  - name: path-context
+    value: .
+  - name: build-platforms
+    value:
+    - linux/x86_64
+    - linux/aarch64
   pipelineRef:
     resolver: git
     params:
-      - name: url
-        value: https://github.com/opendatahub-io/odh-konflux-central.git
-      - name: revision
-        value: main
-      - name: pathInRepo
-        value: pipeline/multi-arch-container-build.yaml
+    - name: url
+      value: https://github.com/opendatahub-io/odh-konflux-central.git
+    - name: revision
+      value: main
+    - name: pathInRepo
+      value: pipeline/multi-arch-container-build.yaml
   taskRunTemplate:
     serviceAccountName: build-pipeline-odh-pipelines-components-ci
   workspaces:
-    - name: git-auth
-      secret:
-        secretName: '{{ git_auth_secret }}'
+  - name: git-auth
+    secret:
+      secretName: '{{ git_auth_secret }}'
 status: {}

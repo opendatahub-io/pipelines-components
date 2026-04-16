@@ -114,13 +114,12 @@ class TestDocumentsRagOptimizationPipelineIntegration:
         self,
         docrag_integration_config,
         kfp_client,
-        pipeline_package_path,
+        compiled_pipeline_path,
         pipeline_run_timeout,
         s3_client,
     ):
         """Run pipeline; assert success and optional presence of artifacts in S3.
 
-        Runs once with a fresh compile and once with committed ``pipeline.yaml``.
         Counts leaderboard HTML, notebooks, pattern paths, and Llama Stack request body JSON files.
         """
         if not kfp_client:
@@ -130,7 +129,7 @@ class TestDocumentsRagOptimizationPipelineIntegration:
 
         run_id, detail = _run_pipeline_and_wait(
             kfp_client,
-            pipeline_package_path,
+            compiled_pipeline_path,
             arguments,
             pipeline_run_timeout,
         )

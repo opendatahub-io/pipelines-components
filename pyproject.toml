@@ -33,6 +33,14 @@ test = [
     "pytest-timeout",
     "semver",
     "setuptools",
+    # Component-specific SDK deps required for python_func() tests.
+    # KFP SubprocessRunner cannot auto-install these because it does not
+    # support Input[Dataset] artifacts (see: https://github.com/kubeflow/pipelines/issues/13061).
+    # Once KFP fixes this, these can be removed and tests can use
+    # SubprocessRunner(use_venv=True) instead.
+    "sdg-hub>=0.7.0,<1.0",
+    # Required for pipeline validation (validate_examples, validate_base_images)
+    "kfp-kubernetes",
 ]
 # Dependencies for AutoGluon pipeline integration tests (RHOAI + S3 + KFP)
 test_automl = [
@@ -54,7 +62,6 @@ Issues = "https://github.com/kubeflow/pipelines-components/issues"
 [tool.setuptools]
 packages = [
     "kfp_components",
-    "kfp_components.utils",
     "kfp_components.components",
     "kfp_components.components.data_processing",
     "kfp_components.components.data_processing.automl",
@@ -67,6 +74,7 @@ packages = [
     "kfp_components.components.data_processing.autorag.text_extraction",
     "kfp_components.components.data_processing.dataset_download",
     "kfp_components.components.data_processing.yoda_data_processor",
+    "kfp_components.components.data_processing.sdg",
     "kfp_components.components.deployment",
     "kfp_components.components.deployment.autorag",
     "kfp_components.components.deployment.autorag.build_responses_request_bodies",
@@ -75,26 +83,26 @@ packages = [
     "kfp_components.components.evaluation.lm_eval",
     "kfp_components.components.training",
     "kfp_components.components.training.automl",
-    "kfp_components.components.training.automl.shared",
     "kfp_components.components.training.automl.autogluon_leaderboard_evaluation",
     "kfp_components.components.training.automl.autogluon_models_training",
     "kfp_components.components.training.automl.autogluon_timeseries_leaderboard_evaluation",
     "kfp_components.components.training.automl.autogluon_timeseries_models_full_refit",
     "kfp_components.components.training.automl.autogluon_timeseries_models_selection",
+    "kfp_components.components.training.automl.shared",
     "kfp_components.components.training.autorag",
     "kfp_components.components.training.autorag.leaderboard_evaluation",
     "kfp_components.components.training.autorag.rag_templates_optimization",
     "kfp_components.components.training.autorag.search_space_preparation",
     "kfp_components.components.training.finetuning",
-    "kfp_components.components.training.finetuning_algorithms",
-    "kfp_components.components.training.finetuning_algorithms.lora",
-    "kfp_components.components.training.finetuning_algorithms.osft",
-    "kfp_components.components.training.finetuning_algorithms.sft",
-    "kfp_components.components.training.finetuning_algorithms.shared",
+    "kfp_components.components.training.finetuning.lora",
+    "kfp_components.components.training.finetuning.osft",
+    "kfp_components.components.training.finetuning.sft",
+    "kfp_components.components.training.finetuning.shared",
     "kfp_components.pipelines",
     "kfp_components.pipelines.data_processing",
     "kfp_components.pipelines.data_processing.autorag",
     "kfp_components.pipelines.data_processing.autorag.documents_indexing_pipeline",
+    "kfp_components.pipelines.data_processing.sdg",
     "kfp_components.pipelines.deployment",
     "kfp_components.pipelines.evaluation",
     "kfp_components.pipelines.training",

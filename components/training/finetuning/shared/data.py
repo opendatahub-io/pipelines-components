@@ -146,11 +146,12 @@ def _extract_tar(img_dir: str, out: str, log: logging.Logger) -> List[str]:
             continue
         try:
             with tarfile.open(fp, mode="r:*") as tf:
-                for m in tf.getmembers():
-                    if m.isfile() and m.name.startswith("models/"):
-                        tf.extract(m, path=out)
-                        ext.append(m.name)
-        except Exception:
+                members = [m for m in tf.getmembers() if m.isfile() and m.name.startswith("models/")]
+                tf.extractall(path=out, members=members, filter="data")
+                ext.extend(m.name for m in members)
+        except tarfile.FilterError:
+            raise
+        except tarfile.TarError:
             pass
     log.info(f"Extracted: {len(ext)}")
     return ext

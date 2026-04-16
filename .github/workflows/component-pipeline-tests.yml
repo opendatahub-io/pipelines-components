@@ -3,9 +3,6 @@ name: Run Tests and Validate Example Pipelines for Updated Components
 
 on:
   pull_request:
-    branches:
-      - "main"
-      - "release-*"
     paths:
       - "components/**"
       - "pipelines/**"
@@ -13,9 +10,6 @@ on:
       - "scripts/validate_examples/**"
       - ".github/workflows/component-pipeline-tests.yml"
   push:
-    branches:
-      - "main"
-      - "release-*"
     paths:
       - "components/**"
       - "pipelines/**"
@@ -29,7 +23,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
         with:
           fetch-depth: 0
 

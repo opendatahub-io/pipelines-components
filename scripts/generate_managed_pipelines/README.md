@@ -1,7 +1,8 @@
-# Generate managed-pipelines.json
+# Generate managed-pipelines.json and compile managed pipelines
 
-Generates `managed-pipelines.json` at the repository root by scanning all pipeline directories under
-`pipelines/` and including only those whose `metadata.yaml` has `managed: true`.
+Generates `managed-pipelines.json` at the repository root and compiles each managed pipeline's
+`pipeline.py` to `pipeline.yaml` using the KFP compiler. Only pipelines whose `metadata.yaml`
+has `managed: true` are included.
 
 ## Usage
 
@@ -47,3 +48,12 @@ Only directories that contain both `metadata.yaml` and `pipeline.py` are conside
 
 If any pipeline has `managed: true` but invalid metadata (missing/invalid `name` or `stability`, etc.),
 the command **exits with code 1** and prints an error; no `managed-pipelines.json` is written.
+
+## Compilation
+
+After writing `managed-pipelines.json`, the script compiles each managed pipeline's `pipeline.py`
+to `pipeline.yaml` in the same directory using the KFP SDK compiler. This eliminates the need to
+commit compiled YAML files to the repository.
+
+If compilation fails for any pipeline (missing `@dsl.pipeline` decorator, import error, etc.),
+the command **exits with code 1**.

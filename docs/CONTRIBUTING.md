@@ -632,6 +632,18 @@ git commit -m "feat(training): add logistic_regression component in sklearn_trai
 
 ### Running Tests Locally
 
+Before running tests, install the project's test dependencies and any
+component-specific packages your component requires at runtime:
+
+```bash
+# Install project-wide test dependencies (from the repo root)
+uv sync --extra test
+```
+
+> **Note:** Some components require additional runtime packages for local testing
+> (e.g., SDK libraries listed in `packages_to_install`). See each component's
+> README for specific installation instructions.
+
 Run these commands from your component/pipeline directory before submitting your contribution:
 
 ```bash
@@ -901,7 +913,8 @@ pytest tests/ --cov=. --cov-report=html
 - **Unit tests**: Should have high coverage of your component's logic
 - **Local runner tests**: Should verify end-to-end component execution
 - **Resource considerations**: Local runner tests require adequate system resources for your component's workload
-- **Dependencies**: Mock external services in unit tests; use real dependencies in local runner tests
+- **Dependencies**: Mock external services in unit tests; use real dependencies in local runner tests.
+  See each component's README for required runtime packages to install before running tests
 - **Cleanup**: Use provided fixtures to ensure proper test environment cleanup
 
 ### Building Custom Container Images

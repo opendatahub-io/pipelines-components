@@ -693,8 +693,8 @@ def kfp_client(rhoai_integration_config, datascience_pipelines_application, temp
 
 
 @pytest.fixture(scope="session")
-def _compiled_tabular_pipeline_package_from_source():
-    """Compile the tabular training pipeline once per session to a temp YAML file."""
+def compiled_pipeline_path():
+    """Compile the AutoGluon tabular training pipeline to a temp YAML file."""
     from kfp import compiler
 
     from ..pipeline import autogluon_tabular_training_pipeline
@@ -707,25 +707,6 @@ def _compiled_tabular_pipeline_package_from_source():
     )
     yield path
     Path(path).unlink(missing_ok=True)
-
-
-@pytest.fixture(
-    scope="session",
-    params=["compile_from_source", "committed_pipeline_yaml"],
-    ids=["compile-from-source", "committed-pipeline-yaml"],
-)
-def pipeline_package_path(request):
-    """KFP pipeline package path: fresh compile or repo-root ``pipeline.yaml``.
-
-    Integration tests run twice per scenario so both the checked-in artifact and
-    current Python sources are exercised on the cluster.
-    """
-    if request.param == "compile_from_source":
-        return request.getfixturevalue("_compiled_tabular_pipeline_package_from_source")
-    committed = Path(__file__).resolve().parent.parent / "pipeline.yaml"
-    if not committed.is_file():
-        pytest.skip(f"Committed pipeline YAML not found: {committed}")
-    return str(committed.resolve())
 
 
 @pytest.fixture

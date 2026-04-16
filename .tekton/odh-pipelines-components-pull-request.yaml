@@ -43,12 +43,12 @@ spec:
     value: true
   - name: build-image-index
     value: true
+# pipelines-components is TechPreview in 3.4 and s390x will need extra work - https://redhat.atlassian.net/browse/RHOAIENG-58421
   - name: build-platforms
     value:
     - linux/x86_64
     - linux-m2xlarge/arm64
     - linux/ppc64le
-    - linux/s390x
   - name: image-expires-after
     value: 5d
   - name: enable-slack-failure-notification

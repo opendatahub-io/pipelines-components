@@ -1,0 +1,37 @@
+---
+metadata:
+  name: LLM Test Flow
+  description: Minimal LLM flow for KFP component E2E testing.
+  version: 1.0.0
+  author: SDG Hub Team
+  tags:
+    - testing
+  license: Apache-2.0
+  dataset_requirements:
+    required_columns:
+      - document
+      - domain
+    description: Requires document and domain columns.
+  id: llm-test-flow
+blocks:
+  - block_type: PromptBuilderBlock
+    block_config:
+      block_name: build_question_prompt
+      input_cols:
+        - document
+      output_cols: question_prompt
+      prompt_config_path: prompts/generate_question.yaml
+  - block_type: LLMChatBlock
+    block_config:
+      block_name: generate_question
+      input_cols: question_prompt
+      output_cols: raw_question
+      max_tokens: 256
+      temperature: 0.7
+      async_mode: false
+  - block_type: LLMResponseExtractorBlock
+    block_config:
+      block_name: extract_question
+      input_cols: raw_question
+      extract_content: true
+      expand_lists: true

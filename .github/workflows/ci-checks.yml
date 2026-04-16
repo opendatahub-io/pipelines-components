@@ -17,33 +17,37 @@ jobs:
       pull-requests: write
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
 
       - name: Run CI checks
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          EVENT_ACTION: ${{ github.event.action }}
+          AUTHOR_ASSOCIATION: ${{ github.event.pull_request.author_association }}
+          AUTHOR_LOGIN: ${{ github.event.pull_request.user.login }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          LABELS="${{ join(github.event.pull_request.labels.*.name, ',') }}"
-
           # "Agent" is the Copilot code review check
           python3 .github/scripts/ci_checks/ci_checks.py \
-            --pr-number "${{ github.event.pull_request.number }}" \
+            --pr-number "$PR_NUMBER" \
             --repo "${GITHUB_REPOSITORY}" \
-            --event-action "${{ github.event.action }}" \
-            --labels "${LABELS}" \
-            --author-association "${{ github.event.pull_request.author_association }}" \
-            --author-login "${{ github.event.pull_request.user.login }}" \
-            --head-sha "${{ github.event.pull_request.head.sha }}" \
+            --event-action "$EVENT_ACTION" \
+            --labels "$PR_LABELS" \
+            --author-association "$AUTHOR_ASSOCIATION" \
+            --author-login "$AUTHOR_LOGIN" \
+            --head-sha "$HEAD_SHA" \
             --check-name "check_ci_status" \
             --ignore-checks "Agent" \
             --delay 5 \
             --retries 10 \
             --polling-interval 5 \
             --output-dir ./pr
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload PR artifact
         if: success()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: pr
           path: pr/

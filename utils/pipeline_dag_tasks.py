@@ -7,7 +7,36 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from kfp import compiler
-from kfp_components.utils.compiled_pipeline_alignment import load_pipeline_spec_document
+
+
+def _is_platform_spec(doc: dict[str, Any]) -> bool:
+    return isinstance(doc.get("platforms"), dict)
+
+
+def _is_pipeline_spec(doc: dict[str, Any]) -> bool:
+    return "deploymentSpec" in doc or "root" in doc
+
+
+def load_pipeline_spec_document(path: str | Path) -> dict[str, Any]:
+    """Load the pipeline spec dict from a compiled YAML file (single or multi-doc)."""
+    import yaml
+
+    path = Path(path)
+    with path.open() as f:
+        docs = [d for d in yaml.safe_load_all(f) if isinstance(d, dict)]
+    if not docs:
+        msg = f"Compiled YAML at {path} has no dict documents."
+        raise ValueError(msg)
+    if len(docs) == 1:
+        return docs[0]
+    pipeline_spec = next(
+        (d for d in docs if _is_pipeline_spec(d) and not _is_platform_spec(d)),
+        None,
+    )
+    if pipeline_spec is None:
+        msg = f"Could not find pipeline spec document in {path}."
+        raise ValueError(msg)
+    return pipeline_spec
 
 
 def root_dag_task_ids(pipeline_spec: dict[str, Any]) -> tuple[str, ...]:
