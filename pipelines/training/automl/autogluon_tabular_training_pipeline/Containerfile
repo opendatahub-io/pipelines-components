@@ -9,3 +9,6 @@ COPY pipelines/training/automl/autogluon_tabular_training_pipeline/requirements.
 ## Ensure build isolation
 RUN pip install --no-cache-dir -r /tmp/requirements.txt
 RUN pip install --index-url https://pypi.org/simple --no-cache-dir -r /tmp/requirements-pypi.txt
+
+## TEST - install autogluon from branch in Containerfile
+git clone --depth 1 --single-branch --branch fix/autogluon-fips --recurse-submodules https://github.com/opendatahub-io/autogluon.git && cd autogluon && pip install "common/" "core/" "features/" "tabular/" "timeseries/"
