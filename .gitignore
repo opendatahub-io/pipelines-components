@@ -381,6 +381,7 @@ tensorboard/
 
 # Custom ignore patterns for this repository
 # Add any project-specific patterns below
+CLAUDE.md
 
 # Exception for scripts/lib which is our shared Python library
 !scripts/lib/
