@@ -1,7 +1,7 @@
 import os
 
-DEFAULT_AUTOML_IMAGE = "quay.io/rhoai/odh-automl-rhel9:rhoai-3.4@sha256:6d4da6c8201577db131f37d6a8572b13b6c1d01a64115b6685ffe8e053f5fe79"
-DEFAULT_AUTORAG_IMAGE = "quay.io/rhoai/odh-autorag-rhel9:rhoai-3.4@sha256:152c98afbf558367807d9dc0bd0a203a71936476039c7130eeecc079d0605cf2"
+DEFAULT_AUTOML_IMAGE = "quay.io/opendatahub/odh-automl:odh-stable"
+DEFAULT_AUTORAG_IMAGE = "quay.io/opendatahub/odh-autorag:odh-stable"
 
 AUTOML_IMAGE = os.getenv("RELATED_IMAGE_MPI_AUTOML_RUNTIME", DEFAULT_AUTOML_IMAGE)
 AUTORAG_IMAGE = os.getenv("RELATED_IMAGE_MPI_AUTORAG_RUNTIME", DEFAULT_AUTORAG_IMAGE)
