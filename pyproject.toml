@@ -49,6 +49,17 @@ test_automl = [
     "kubernetes",
     "python-dotenv",
 ]
+
+# Dependnecies for AutoRAG functional tests
+test_autorag = [
+    "kfp-components[tests]",
+    "boto3",
+    "notebook",
+    "nbformat",
+    "papermill",
+    "python-dotenv",
+]
+
 # Local development (extends test with additional tools)
 dev = ["kfp-components[lint]", "kfp-components[test]"]
 
