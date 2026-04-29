@@ -4,6 +4,7 @@ from kfp_components.utils.consts import AUTORAG_IMAGE  # pyright: ignore[reportM
 
 @dsl.component(
     base_image=AUTORAG_IMAGE,  # noqa: E501
+    install_kfp_package=False,
 )
 def documents_discovery(
     input_data_bucket_name: str,

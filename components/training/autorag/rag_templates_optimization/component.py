@@ -8,6 +8,7 @@ from kfp_components.utils.consts import AUTORAG_IMAGE  # pyright: ignore[reportM
 @dsl.component(
     base_image=AUTORAG_IMAGE,  # noqa: E501
     embedded_artifact_path=str((Path(__file__).parent / "notebook_templates")),
+    install_kfp_package=False,
 )
 def rag_templates_optimization(
     extracted_text: dsl.InputPath(dsl.Artifact),
