@@ -28,7 +28,7 @@ catalogue==2.0.10
 certifi==2026.2.25
 charset-normalizer==3.4.6
 chronos-forecasting==2.2.2
-click==8.3.1
+click==8.2.1
 cloudpathlib==0.23.0
 cloudpickle==3.1.2
 colorlog==6.10.1
