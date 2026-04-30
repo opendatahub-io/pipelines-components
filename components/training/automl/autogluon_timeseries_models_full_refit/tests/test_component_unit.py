@@ -144,6 +144,10 @@ def _install_autogluon_mocks(
     fake_timeseries.TimeSeriesDataFrame = FakeTimeSeriesDataFrame
     fake_timeseries.TimeSeriesPredictor = predictor_class
     fake_metrics.AVAILABLE_METRICS = {"MASE": object(), "RMSE": object()}
+    fake_metrics.METRIC_ALIASES = {
+        "mean_absolute_scaled_error": "MASE",
+        "root_mean_squared_error": "RMSE",
+    }
     fake_ensemble.AbstractTimeSeriesEnsembleModel = FakeAbstractTimeSeriesEnsembleModel
 
     patcher = mock.patch.dict(
@@ -211,7 +215,7 @@ class TestTimeseriesModelsFullRefitUnitTests:
         assert (model_dir / "notebooks" / "automl_predictor_notebook.ipynb").exists()
 
         metrics = json.loads((model_dir / "metrics" / "metrics.json").read_text(encoding="utf-8"))
-        assert metrics == {"MASE": 1.23}
+        assert metrics == {"mean_absolute_scaled_error": 1.23}
 
         notebook_text = (model_dir / "notebooks" / "automl_predictor_notebook.ipynb").read_text(encoding="utf-8")
         assert "<REPLACE_" not in notebook_text
@@ -233,11 +237,11 @@ class TestTimeseriesModelsFullRefitUnitTests:
         assert "predictor" in model_meta["location"]
         assert model_meta["location"]["notebook"] == "DeepAR_FULL/notebooks/automl_predictor_notebook.ipynb"
         assert model_meta["location"]["metrics"] == "DeepAR_FULL/metrics"
-        assert model_meta["metrics"]["test_data"] == {"MASE": 1.23}
+        assert model_meta["metrics"]["test_data"] == {"mean_absolute_scaled_error": 1.23}
 
         assert model_artifact.metadata["display_name"] == "DeepAR_FULL"
         assert model_artifact.metadata["context"]["pipeline_info"]["pipeline_name"] == "my-pipeline-run"
-        assert model_artifact.metadata["context"]["metrics"]["test_data"] == {"MASE": 1.23}
+        assert model_artifact.metadata["context"]["metrics"]["test_data"] == {"mean_absolute_scaled_error": 1.23}
 
     def test_model_json_matches_artifact_metadata(self, tmp_path):
         """model.json on disk is consistent with artifact metadata context."""

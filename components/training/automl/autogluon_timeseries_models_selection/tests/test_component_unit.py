@@ -92,7 +92,7 @@ class TestTimeseriesModelsSelectionUnitTests:
         mock_predictor_cls.assert_called_once_with(
             prediction_length=24,
             target="sales",
-            eval_metric="MASE",
+            eval_metric="mean_absolute_scaled_error",
             path=str(Path("/tmp/workspace") / "timeseries_predictor"),
             verbosity=2,
             known_covariates_names=None,
@@ -106,7 +106,7 @@ class TestTimeseriesModelsSelectionUnitTests:
         mock_predictor.leaderboard.assert_called_once_with(test_ts)
 
         assert result.top_models == ["DeepAR", "TFT"]
-        assert result.eval_metric_name == "MASE"
+        assert result.eval_metric_name == "mean_absolute_scaled_error"
         assert result.predictor_path == "/tmp/workspace/timeseries_predictor"
         assert result.model_config["prediction_length"] == 24
         assert result.model_config["presets"] == "fast_training"

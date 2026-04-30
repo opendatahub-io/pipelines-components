@@ -57,7 +57,7 @@ def autogluon_timeseries_models_full_refit(
 
     import pandas as pd
     from autogluon.timeseries import TimeSeriesDataFrame, TimeSeriesPredictor
-    from autogluon.timeseries.metrics import AVAILABLE_METRICS
+    from autogluon.timeseries.metrics import AVAILABLE_METRICS, METRIC_ALIASES
     from autogluon.timeseries.models.ensemble import AbstractTimeSeriesEnsembleModel
 
     logger = logging.getLogger(__name__)
@@ -124,11 +124,16 @@ def autogluon_timeseries_models_full_refit(
 
     is_ensemble = is_ensemble_model(predictor, model_name)
 
+    # Normalize eval_metric to snake_case; accept legacy uppercase acronyms (e.g. "MASE") for back-compat.
+    _acronym_to_snake = {acronym: snake for snake, acronym in METRIC_ALIASES.items()}
+    raw_eval_metric = model_config.get("eval_metric", "mean_absolute_scaled_error")
+    eval_metric_name = _acronym_to_snake.get(raw_eval_metric, raw_eval_metric)
+
     predictor_refit = TimeSeriesPredictor(
         prediction_length=model_config.get("prediction_length"),  # 7 days
         path=predictor_output,
         target=model_config.get("target"),
-        eval_metric=model_config.get("eval_metric", "MASE"),
+        eval_metric=eval_metric_name,
     )
 
     hyperparams_option = "ensemble_hyperparameters" if is_ensemble else "hyperparameters"
@@ -166,7 +171,7 @@ def autogluon_timeseries_models_full_refit(
         "base_model": model_name,
         "selected_model": model_name,
         "prediction_length": model_config.get("prediction_length", 1),
-        "eval_metric": model_config.get("eval_metric", "MASE"),
+        "eval_metric": eval_metric_name,
         "target": model_config.get("target"),
         "id_column": model_config.get("id_column"),
         "timestamp_column": model_config.get("timestamp_column"),
@@ -178,9 +183,10 @@ def autogluon_timeseries_models_full_refit(
     metrics_path = output_path / "metrics"
     metrics_path.mkdir(parents=True, exist_ok=True)
 
-    # Convert metrics to JSON-serializable format; drop NaN/Inf which break Protobuf Struct serialization
+    # Convert metrics to JSON-serializable format; drop NaN/Inf which break Protobuf Struct serialization.
+    # Remap uppercase acronym keys (e.g. "MASE") to snake_case (e.g. "mean_absolute_scaled_error").
     metrics_dict = {
-        k: float(v) if hasattr(v, "item") else v
+        _acronym_to_snake.get(k, k.lower()): float(v) if hasattr(v, "item") else v
         for k, v in metrics.items()
         if not (isinstance(v, float) and (math.isnan(v) or math.isinf(v)))
     }

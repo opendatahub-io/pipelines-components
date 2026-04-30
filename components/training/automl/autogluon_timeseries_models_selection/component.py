@@ -59,7 +59,7 @@ def autogluon_timeseries_models_selection(
 
     # Set constants
     DEFAULT_PRESETS = "fast_training"
-    DEFAULT_EVAL_METRIC = "MASE"
+    DEFAULT_EVAL_METRIC = "mean_absolute_scaled_error"
     DEFAULT_TIME_LIMIT = 600  # 10 minutes
 
     TOP_N_MAX = 7

@@ -70,16 +70,20 @@ class TestTimeseriesLeaderboardEvaluationUnitTests:
     @mock.patch("pandas.DataFrame")
     def test_single_model(self, mock_dataframe_class, tmp_path, html_output_path, embedded_artifact):
         """Test leaderboard with a single model: return value, metadata, HTML output."""
-        artifact = _make_model_artifact(tmp_path / "ets", "ETS", {"MASE": -0.85, "WAPE": -0.12})
+        artifact = _make_model_artifact(
+            tmp_path / "ets",
+            "ETS",
+            {"mean_absolute_scaled_error": -0.85, "weighted_absolute_percentage_error": -0.12},
+        )
 
-        columns = ["model", "MASE", "WAPE", "notebook", "predictor"]
+        columns = ["model", "mean_absolute_scaled_error", "weighted_absolute_percentage_error", "notebook", "predictor"]
         rows = [
             (
                 1,
                 {
                     "model": "ETS_FULL",
-                    "MASE": -0.85,
-                    "WAPE": -0.12,
+                    "mean_absolute_scaled_error": -0.85,
+                    "weighted_absolute_percentage_error": -0.12,
                     "notebook": "http://example.com/artifacts/ETS_FULL/ETS_FULL/notebooks/automl_predictor_notebook.ipynb",
                     "predictor": "http://example.com/artifacts/ETS_FULL/ETS_FULL/predictor",
                 },
@@ -96,7 +100,7 @@ class TestTimeseriesLeaderboardEvaluationUnitTests:
 
         result = timeseries_leaderboard_evaluation.python_func(
             models=[artifact],
-            eval_metric="MASE",
+            eval_metric="mean_absolute_scaled_error",  # legacy acronym — normalized to snake_case internally
             html_artifact=mock_html,
             embedded_artifact=embedded_artifact,
         )
@@ -106,15 +110,15 @@ class TestTimeseriesLeaderboardEvaluationUnitTests:
         call_args = mock_dataframe_class.call_args[0][0]
         assert len(call_args) == 1
         assert call_args[0]["model"] == "ETS_FULL"
-        assert call_args[0]["MASE"] == -0.85
-        assert call_args[0]["WAPE"] == -0.12
+        assert call_args[0]["mean_absolute_scaled_error"] == -0.85
+        assert call_args[0]["weighted_absolute_percentage_error"] == -0.12
 
         # Verify URIs derived from artifact.uri and model directory name
         assert "ETS_FULL/notebooks/automl_predictor_notebook.ipynb" in call_args[0]["notebook"]
         assert "ETS_FULL/predictor" in call_args[0]["predictor"]
 
-        # Verify sort
-        mock_df.sort_values.assert_called_once_with(by="MASE", ascending=False)
+        # Verify sort by normalized snake_case key
+        mock_df.sort_values.assert_called_once_with(by="mean_absolute_scaled_error", ascending=False)
 
         # Verify best_model return value
         assert result.best_model == "ETS_FULL"
@@ -134,16 +138,55 @@ class TestTimeseriesLeaderboardEvaluationUnitTests:
     def test_multiple_models(self, mock_dataframe_class, tmp_path, html_output_path, embedded_artifact):
         """Test leaderboard with multiple models and best_model selection."""
         artifacts = [
-            _make_model_artifact(tmp_path / "ets", "ETS", {"MASE": -0.85, "WAPE": -0.12}),
-            _make_model_artifact(tmp_path / "deepar", "DeepAR", {"MASE": -0.72, "WAPE": -0.09}),
-            _make_model_artifact(tmp_path / "theta", "Theta", {"MASE": -0.95, "WAPE": -0.15}),
+            _make_model_artifact(
+                tmp_path / "ets",
+                "ETS",
+                {"mean_absolute_scaled_error": -0.85, "weighted_absolute_percentage_error": -0.12},
+            ),
+            _make_model_artifact(
+                tmp_path / "deepar",
+                "DeepAR",
+                {"mean_absolute_scaled_error": -0.72, "weighted_absolute_percentage_error": -0.09},
+            ),
+            _make_model_artifact(
+                tmp_path / "theta",
+                "Theta",
+                {"mean_absolute_scaled_error": -0.95, "weighted_absolute_percentage_error": -0.15},
+            ),
         ]
 
-        columns = ["model", "MASE", "WAPE", "notebook", "predictor"]
+        columns = ["model", "mean_absolute_scaled_error", "weighted_absolute_percentage_error", "notebook", "predictor"]
         rows = [
-            (1, {"model": "DeepAR_FULL", "MASE": -0.72, "WAPE": -0.09, "notebook": "nb2", "predictor": "p2"}),
-            (2, {"model": "ETS_FULL", "MASE": -0.85, "WAPE": -0.12, "notebook": "nb1", "predictor": "p1"}),
-            (3, {"model": "Theta_FULL", "MASE": -0.95, "WAPE": -0.15, "notebook": "nb3", "predictor": "p3"}),
+            (
+                1,
+                {
+                    "model": "DeepAR_FULL",
+                    "mean_absolute_scaled_error": -0.72,
+                    "weighted_absolute_percentage_error": -0.09,
+                    "notebook": "nb2",
+                    "predictor": "p2",
+                },
+            ),
+            (
+                2,
+                {
+                    "model": "ETS_FULL",
+                    "mean_absolute_scaled_error": -0.85,
+                    "weighted_absolute_percentage_error": -0.12,
+                    "notebook": "nb1",
+                    "predictor": "p1",
+                },
+            ),
+            (
+                3,
+                {
+                    "model": "Theta_FULL",
+                    "mean_absolute_scaled_error": -0.95,
+                    "weighted_absolute_percentage_error": -0.15,
+                    "notebook": "nb3",
+                    "predictor": "p3",
+                },
+            ),
         ]
         mock_df_sorted = _make_mock_sorted_df(rows, columns)
         mock_df = mock.MagicMock()
@@ -156,7 +199,7 @@ class TestTimeseriesLeaderboardEvaluationUnitTests:
 
         result = timeseries_leaderboard_evaluation.python_func(
             models=artifacts,
-            eval_metric="MASE",
+            eval_metric="mean_absolute_scaled_error",
             html_artifact=mock_html,
             embedded_artifact=embedded_artifact,
         )
@@ -171,7 +214,7 @@ class TestTimeseriesLeaderboardEvaluationUnitTests:
         # Best model is first after descending sort
         assert result.best_model == "DeepAR_FULL"
 
-        mock_df.sort_values.assert_called_once_with(by="MASE", ascending=False)
+        mock_df.sort_values.assert_called_once_with(by="mean_absolute_scaled_error", ascending=False)
 
         html = Path(html_output_path).read_text()
         assert "ETS_FULL" in html
@@ -191,10 +234,10 @@ class TestTimeseriesLeaderboardEvaluationUnitTests:
         bad_artifact.path = str(bad_path)
         bad_artifact.metadata = {}
 
-        good_artifact = _make_model_artifact(tmp_path / "ets", "ETS", {"MASE": -0.85})
+        good_artifact = _make_model_artifact(tmp_path / "ets", "ETS", {"mean_absolute_scaled_error": -0.85})
 
-        columns = ["model", "MASE", "notebook", "predictor"]
-        rows = [(1, {"model": "ETS_FULL", "MASE": -0.85, "notebook": "nb", "predictor": "p"})]
+        columns = ["model", "mean_absolute_scaled_error", "notebook", "predictor"]
+        rows = [(1, {"model": "ETS_FULL", "mean_absolute_scaled_error": -0.85, "notebook": "nb", "predictor": "p"})]
         mock_df_sorted = _make_mock_sorted_df(rows, columns)
         mock_df = mock.MagicMock()
         mock_df.sort_values.return_value = mock_df_sorted
@@ -206,7 +249,7 @@ class TestTimeseriesLeaderboardEvaluationUnitTests:
 
         result = timeseries_leaderboard_evaluation.python_func(
             models=[bad_artifact, good_artifact],
-            eval_metric="MASE",
+            eval_metric="mean_absolute_scaled_error",
             html_artifact=mock_html,
             embedded_artifact=embedded_artifact,
         )
@@ -225,14 +268,14 @@ class TestTimeseriesLeaderboardEvaluationUnitTests:
         with pytest.raises(ValueError, match="models list must not be empty"):
             timeseries_leaderboard_evaluation.python_func(
                 models=[],
-                eval_metric="MASE",
+                eval_metric="mean_absolute_scaled_error",
                 html_artifact=mock_html,
                 embedded_artifact=embedded_artifact,
             )
 
     def test_empty_eval_metric_raises(self, tmp_path, embedded_artifact):
         """Test that TypeError is raised when eval_metric is empty or not a string."""
-        artifact = _make_model_artifact(tmp_path / "ets", "ETS", {"MASE": -0.85})
+        artifact = _make_model_artifact(tmp_path / "ets", "ETS", {"mean_absolute_scaled_error": -0.85})
         mock_html = mock.MagicMock()
         mock_html.path = "/tmp/out.html"
 
@@ -268,7 +311,7 @@ class TestTimeseriesLeaderboardEvaluationUnitTests:
         with pytest.raises(ValueError, match="No valid model artifacts found"):
             timeseries_leaderboard_evaluation.python_func(
                 models=[artifact],
-                eval_metric="MASE",
+                eval_metric="mean_absolute_scaled_error",
                 html_artifact=mock_html,
                 embedded_artifact=embedded_artifact,
             )
@@ -278,18 +321,18 @@ class TestTimeseriesLeaderboardEvaluationUnitTests:
         artifact = _make_model_artifact(
             tmp_path / "ets",
             "ETS",
-            {"MASE": -0.85},
+            {"mean_absolute_scaled_error": -0.85},
             uri="http://s3.example.com/bucket/run-id/artifacts",
         )
 
         with mock.patch("pandas.DataFrame") as mock_df_class:
-            columns = ["model", "MASE", "notebook", "predictor"]
+            columns = ["model", "mean_absolute_scaled_error", "notebook", "predictor"]
             rows = [
                 (
                     1,
                     {
                         "model": "ETS_FULL",
-                        "MASE": -0.85,
+                        "mean_absolute_scaled_error": -0.85,
                         "notebook": "http://s3.example.com/bucket/run-id/artifacts/ETS_FULL/ETS_FULL/notebooks/automl_predictor_notebook.ipynb",
                         "predictor": "http://s3.example.com/bucket/run-id/artifacts/ETS_FULL/ETS_FULL/predictor",
                     },
@@ -306,7 +349,7 @@ class TestTimeseriesLeaderboardEvaluationUnitTests:
 
             timeseries_leaderboard_evaluation.python_func(
                 models=[artifact],
-                eval_metric="MASE",
+                eval_metric="mean_absolute_scaled_error",
                 html_artifact=mock_html,
                 embedded_artifact=embedded_artifact,
             )
@@ -319,7 +362,9 @@ class TestTimeseriesLeaderboardEvaluationUnitTests:
     def test_artifact_missing_metrics_json_skipped_with_warning(self, tmp_path, html_output_path, embedded_artifact):
         """Artifact without metrics/metrics.json is skipped with a warning, not an error."""
         # One valid artifact, one with no metrics.json
-        good_artifact = _make_model_artifact(tmp_path / "ets", "ETS", {"MASE": -0.85, "WAPE": -0.12})
+        good_artifact = _make_model_artifact(
+            tmp_path / "ets", "ETS", {"mean_absolute_scaled_error": -0.85, "weighted_absolute_percentage_error": -0.12}
+        )
         bad_dir = tmp_path / "bad"
         bad_dir.mkdir()
         bad_artifact = mock.MagicMock()
@@ -327,9 +372,18 @@ class TestTimeseriesLeaderboardEvaluationUnitTests:
         bad_artifact.path = str(bad_dir)
         bad_artifact.metadata = {}
 
-        columns = ["model", "MASE", "WAPE", "notebook", "predictor"]
+        columns = ["model", "mean_absolute_scaled_error", "weighted_absolute_percentage_error", "notebook", "predictor"]
         rows = [
-            (1, {"model": "ETS_FULL", "MASE": -0.85, "WAPE": -0.12, "notebook": "nb", "predictor": "pred"}),
+            (
+                1,
+                {
+                    "model": "ETS_FULL",
+                    "mean_absolute_scaled_error": -0.85,
+                    "weighted_absolute_percentage_error": -0.12,
+                    "notebook": "nb",
+                    "predictor": "pred",
+                },
+            ),
         ]
         mock_df_sorted = _make_mock_sorted_df(rows, columns)
 
@@ -344,7 +398,7 @@ class TestTimeseriesLeaderboardEvaluationUnitTests:
 
             result = timeseries_leaderboard_evaluation.python_func(
                 models=[bad_artifact, good_artifact],
-                eval_metric="MASE",
+                eval_metric="mean_absolute_scaled_error",
                 html_artifact=mock_html,
                 embedded_artifact=embedded_artifact,
             )
@@ -371,7 +425,7 @@ class TestTimeseriesLeaderboardEvaluationUnitTests:
         with pytest.raises(ValueError, match="No valid model artifacts found"):
             timeseries_leaderboard_evaluation.python_func(
                 models=[bad_artifact],
-                eval_metric="MASE",
+                eval_metric="mean_absolute_scaled_error",
                 html_artifact=mock_html,
                 embedded_artifact=embedded_artifact,
             )
