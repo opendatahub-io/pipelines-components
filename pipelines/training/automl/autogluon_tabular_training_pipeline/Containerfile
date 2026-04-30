@@ -8,4 +8,5 @@ COPY pipelines/training/automl/autogluon_tabular_training_pipeline/requirements.
 
 ## Ensure build isolation
 RUN pip install --no-cache-dir -r /tmp/requirements.txt
+RUN pip install --no-cache-dir --no-deps "git+https://github.com/Mateusz-Switala/autogluon.git@cherry-pick-from-upstream-align-metrics-names-format#subdirectory=timeseries"
 RUN pip install --index-url https://pypi.org/simple --no-cache-dir -r /tmp/requirements-pypi.txt
