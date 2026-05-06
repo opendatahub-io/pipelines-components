@@ -12,10 +12,9 @@ from kfp_components.utils.pipeline_dag_tasks import (
 from ..pipeline import autogluon_timeseries_training_pipeline
 
 _EXPECTED_ROOT_DAG_TASK_IDS = (
-    "autogluon-timeseries-models-selection",
-    "for-loop-1",
+    "autogluon-timeseries-models-training",
+    "leaderboard-evaluation",
     "timeseries-data-loader",
-    "timeseries-leaderboard-evaluation",
 )
 
 

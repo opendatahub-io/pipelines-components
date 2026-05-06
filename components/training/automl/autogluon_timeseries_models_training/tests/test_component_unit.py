@@ -1,4 +1,4 @@
-"""Unit tests for the autogluon_timeseries_models_selection component."""
+"""Unit tests for the autogluon_timeseries_models_training component."""
 
 import sys
 from pathlib import Path
@@ -6,7 +6,7 @@ from unittest import mock
 
 import pytest
 
-from ..component import autogluon_timeseries_models_selection
+from ..component import autogluon_timeseries_models_training
 
 
 @pytest.fixture(autouse=True, scope="module")
@@ -48,13 +48,13 @@ def _mock_ts_df():
     return ts_df
 
 
-class TestTimeseriesModelsSelectionUnitTests:
-    """Unit tests for autogluon_timeseries_models_selection behavior."""
+class TestTimeseriesModelsTrainingUnitTests:
+    """Unit tests for autogluon_timeseries_models_training behavior."""
 
     def test_component_function_exists(self):
         """Component exposes KFP python_func."""
-        assert callable(autogluon_timeseries_models_selection)
-        assert hasattr(autogluon_timeseries_models_selection, "python_func")
+        assert callable(autogluon_timeseries_models_training)
+        assert hasattr(autogluon_timeseries_models_training, "python_func")
 
     @mock.patch("pandas.read_csv")
     @mock.patch("autogluon.timeseries.TimeSeriesDataFrame")
@@ -73,7 +73,7 @@ class TestTimeseriesModelsSelectionUnitTests:
         test_data = mock.MagicMock()
         test_data.path = "/tmp/test.csv"
 
-        result = autogluon_timeseries_models_selection.python_func(
+        result = autogluon_timeseries_models_training.python_func(
             target="sales",
             id_column="item_id",
             timestamp_column="timestamp",
@@ -81,6 +81,8 @@ class TestTimeseriesModelsSelectionUnitTests:
             test_data=test_data,
             top_n=2,
             workspace_path="/tmp/workspace",
+            pipeline_name="ts-pipeline-123",
+            run_id="run-123",
             prediction_length=24,
         )
 
@@ -106,7 +108,7 @@ class TestTimeseriesModelsSelectionUnitTests:
         mock_predictor.leaderboard.assert_called_once_with(test_ts)
 
         assert result.top_models == ["DeepAR", "TFT"]
-        assert result.eval_metric_name == "MASE"
+        assert result.eval_metric == "MASE"
         assert result.predictor_path == "/tmp/workspace/timeseries_predictor"
         assert result.model_config["prediction_length"] == 24
         assert result.model_config["presets"] == "fast_training"
@@ -130,7 +132,7 @@ class TestTimeseriesModelsSelectionUnitTests:
         test_data.path = "/tmp/test.csv"
 
         covariates = ["is_holiday", "promo_flag"]
-        result = autogluon_timeseries_models_selection.python_func(
+        result = autogluon_timeseries_models_training.python_func(
             target="sales",
             id_column="item_id",
             timestamp_column="timestamp",
@@ -138,6 +140,8 @@ class TestTimeseriesModelsSelectionUnitTests:
             test_data=test_data,
             top_n=1,
             workspace_path="/tmp/workspace",
+            pipeline_name="ts-pipeline-123",
+            run_id="run-123",
             known_covariates_names=covariates,
         )
 
@@ -161,7 +165,7 @@ class TestTimeseriesModelsSelectionUnitTests:
             ValueError,
             match=r"top_n must be less than or equal to number_of_models_trained \(2\); got 3\.",
         ):
-            autogluon_timeseries_models_selection.python_func(
+            autogluon_timeseries_models_training.python_func(
                 target="sales",
                 id_column="item_id",
                 timestamp_column="timestamp",
@@ -169,6 +173,8 @@ class TestTimeseriesModelsSelectionUnitTests:
                 test_data=test_data,
                 top_n=3,
                 workspace_path="/tmp/workspace",
+                pipeline_name="ts-pipeline-123",
+                run_id="run-123",
             )
 
     def test_invalid_top_n_zero_raises(self):
@@ -176,7 +182,7 @@ class TestTimeseriesModelsSelectionUnitTests:
         test_data = mock.MagicMock()
         test_data.path = "/tmp/test.csv"
         with pytest.raises(ValueError, match=r"top_n must be an integer in the range \(0, 7\]; got 0\."):
-            autogluon_timeseries_models_selection.python_func(
+            autogluon_timeseries_models_training.python_func(
                 target="sales",
                 id_column="item_id",
                 timestamp_column="timestamp",
@@ -184,6 +190,8 @@ class TestTimeseriesModelsSelectionUnitTests:
                 test_data=test_data,
                 top_n=0,
                 workspace_path="/tmp/workspace",
+                pipeline_name="ts-pipeline-123",
+                run_id="run-123",
             )
 
     def test_invalid_top_n_above_max_raises(self):
@@ -191,7 +199,7 @@ class TestTimeseriesModelsSelectionUnitTests:
         test_data = mock.MagicMock()
         test_data.path = "/tmp/test.csv"
         with pytest.raises(ValueError, match=r"top_n must be an integer in the range \(0, 7\]; got 8\."):
-            autogluon_timeseries_models_selection.python_func(
+            autogluon_timeseries_models_training.python_func(
                 target="sales",
                 id_column="item_id",
                 timestamp_column="timestamp",
@@ -199,6 +207,8 @@ class TestTimeseriesModelsSelectionUnitTests:
                 test_data=test_data,
                 top_n=8,
                 workspace_path="/tmp/workspace",
+                pipeline_name="ts-pipeline-123",
+                run_id="run-123",
             )
 
     def test_invalid_prediction_length_raises(self):
@@ -206,7 +216,7 @@ class TestTimeseriesModelsSelectionUnitTests:
         test_data = mock.MagicMock()
         test_data.path = "/tmp/test.csv"
         with pytest.raises(ValueError, match="prediction_length must be greater than 0"):
-            autogluon_timeseries_models_selection.python_func(
+            autogluon_timeseries_models_training.python_func(
                 target="sales",
                 id_column="item_id",
                 timestamp_column="timestamp",
@@ -214,6 +224,8 @@ class TestTimeseriesModelsSelectionUnitTests:
                 test_data=test_data,
                 top_n=1,
                 workspace_path="/tmp/workspace",
+                pipeline_name="ts-pipeline-123",
+                run_id="run-123",
                 prediction_length=0,
             )
 
@@ -231,7 +243,7 @@ class TestTimeseriesModelsSelectionUnitTests:
         test_data.path = "/tmp/test.csv"
 
         with pytest.raises(ValueError, match=r"TimeSeriesPredictor training failed: boom"):
-            autogluon_timeseries_models_selection.python_func(
+            autogluon_timeseries_models_training.python_func(
                 target="sales",
                 id_column="item_id",
                 timestamp_column="timestamp",
@@ -239,6 +251,8 @@ class TestTimeseriesModelsSelectionUnitTests:
                 test_data=test_data,
                 top_n=2,
                 workspace_path="/tmp/workspace",
+                pipeline_name="ts-pipeline-123",
+                run_id="run-123",
             )
 
     @mock.patch("pandas.read_csv")
@@ -255,7 +269,7 @@ class TestTimeseriesModelsSelectionUnitTests:
         test_data.path = "/tmp/test.csv"
 
         with pytest.raises(ValueError, match=r"Failed to generate leaderboard: no leaderboard"):
-            autogluon_timeseries_models_selection.python_func(
+            autogluon_timeseries_models_training.python_func(
                 target="sales",
                 id_column="item_id",
                 timestamp_column="timestamp",
@@ -263,4 +277,6 @@ class TestTimeseriesModelsSelectionUnitTests:
                 test_data=test_data,
                 top_n=2,
                 workspace_path="/tmp/workspace",
+                pipeline_name="ts-pipeline-123",
+                run_id="run-123",
             )

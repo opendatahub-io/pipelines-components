@@ -1,5 +1,5 @@
 ---
-name: autogluon_timeseries_models_selection
+name: autogluon_timeseries_models_training
 stability: alpha
 dependencies:
   kubeflow:

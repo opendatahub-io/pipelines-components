@@ -2,14 +2,9 @@ from typing import List, Optional
 
 from kfp import dsl
 from kfp_components.components.data_processing.automl.timeseries_data_loader import timeseries_data_loader
-from kfp_components.components.training.automl.autogluon_timeseries_leaderboard_evaluation import (
-    timeseries_leaderboard_evaluation,
-)
-from kfp_components.components.training.automl.autogluon_timeseries_models_full_refit import (
-    autogluon_timeseries_models_full_refit,
-)
-from kfp_components.components.training.automl.autogluon_timeseries_models_selection import (
-    autogluon_timeseries_models_selection,
+from kfp_components.components.training.automl.autogluon_leaderboard_evaluation import leaderboard_evaluation
+from kfp_components.components.training.automl.autogluon_timeseries_models_training import (
+    autogluon_timeseries_models_training,
 )
 
 MAX_CPUS = "32"
@@ -70,19 +65,13 @@ def autogluon_timeseries_training_pipeline(
        ``models_selection_train_dataset.csv`` and ``extra_train_dataset.csv`` under
        ``{workspace_path}/datasets/``. The test split is written to the ``sampled_test_dataset`` artifact.
 
-    2. **Model selection** (``autogluon_timeseries_models_selection``): Trains multiple AutoGluon TimeSeries
-       models on the selection split, scores them on the test split, and emits the top ``top_n`` models
-       plus predictor path and configuration.
+    2. **Model generation + full refit** (``autogluon_timeseries_models_training``): Trains multiple
+       AutoGluon TimeSeries models on the selection split, picks top ``top_n``, and refits each selected model
+       on the full train portion (**selection + extra** splits). The component writes all refitted models to a
+       single combined ``models_artifact``.
 
-    3. **Full refit** (``autogluon_timeseries_models_full_refit``, ``ParallelFor`` with parallelism 1): For
-       each top model, fits a new predictor on **selection + extra** train data (full train portion per
-       series), evaluates on the test split, and writes a ``_FULL`` model artifact (predictor, metrics,
-       notebook). Parallelism is **one** concurrent refit pod because the workspace PVC is
-       **ReadWriteOnce**; higher parallelism would mount the same RWO volume from multiple pods and cause
-       **Multi-Attach** errors on typical block storage.
-
-    4. **Leaderboard** (``leaderboard_evaluation``): Builds an HTML leaderboard from the refitted model
-       metrics using the selection stage's evaluation metric.
+    3. **Leaderboard** (``leaderboard_evaluation``): Builds an HTML leaderboard from the combined refitted-model
+       artifact using the training stage's evaluation metric.
 
     Args:
         train_data_secret_name: Kubernetes secret name containing S3 credentials
@@ -105,10 +94,9 @@ def autogluon_timeseries_training_pipeline(
         top_n: Number of top models to select for the leaderboard and output (default: 3).
 
     Returns:
-        This pipeline wires task outputs between components; compiled runs expose artifacts from the
-        refit tasks (Model artifacts with predictor, metrics, notebook paths) and the leaderboard
-        evaluation task (HTML leaderboard and aggregated metrics), subject to Kubeflow Pipelines UI
-        and artifact configuration.
+        This pipeline wires task outputs between components; compiled runs expose the combined models artifact
+        (per-model predictor, metrics, notebook paths) and leaderboard evaluation artifact (HTML + aggregated
+        metrics), subject to Kubeflow Pipelines UI and artifact configuration.
 
     Raises:
         Component and runtime failures propagate from the underlying steps (for example: S3 access or
@@ -155,9 +143,8 @@ def autogluon_timeseries_training_pipeline(
         optional=True,
     )
 
-    # Stage 2: Model Selection
-    # Train multiple models on selection data and select top N performers
-    selection_task = autogluon_timeseries_models_selection(
+    # Stage 2: Combined model generation + full refit
+    training_task = autogluon_timeseries_models_training(
         target=target,
         id_column=id_column,
         timestamp_column=timestamp_column,
@@ -167,33 +154,20 @@ def autogluon_timeseries_training_pipeline(
         workspace_path=dsl.WORKSPACE_PATH_PLACEHOLDER,
         prediction_length=prediction_length,
         known_covariates_names=known_covariates_names,
+        pipeline_name=dsl.PIPELINE_JOB_RESOURCE_NAME_PLACEHOLDER,
+        run_id=dsl.PIPELINE_JOB_ID_PLACEHOLDER,
+        sample_rows=data_loader_task.outputs["sample_rows"],
+        sampling_config=data_loader_task.outputs["sample_config"],
+        split_config=data_loader_task.outputs["split_config"],
+        extra_train_data_path=data_loader_task.outputs["extra_train_data_path"],
     )
-    selection_task.set_caching_options(False)
-    selection_task.set_cpu_request("4").set_memory_request("16Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(MAX_MEMORY)
+    training_task.set_caching_options(False)
+    training_task.set_cpu_request("4").set_memory_request("16Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(MAX_MEMORY)
 
-    # Stage 3: Model Refitting (parallelism=1: RWO workspace allows only one pod on the volume at a time).
-    with dsl.ParallelFor(items=selection_task.outputs["top_models"], parallelism=1) as model_name:
-        refit_task = autogluon_timeseries_models_full_refit(
-            model_name=model_name,
-            test_dataset=data_loader_task.outputs["sampled_test_dataset"],
-            predictor_path=selection_task.outputs["predictor_path"],
-            sampling_config=data_loader_task.outputs["sample_config"],
-            split_config=data_loader_task.outputs["split_config"],
-            model_config=selection_task.outputs["model_config"],
-            pipeline_name=dsl.PIPELINE_JOB_RESOURCE_NAME_PLACEHOLDER,
-            run_id=dsl.PIPELINE_JOB_ID_PLACEHOLDER,
-            models_selection_train_data_path=data_loader_task.outputs["models_selection_train_data_path"],
-            extra_train_data_path=data_loader_task.outputs["extra_train_data_path"],
-            sample_rows=data_loader_task.outputs["sample_rows"],
-        )
-        refit_task.set_caching_options(False)
-        refit_task.set_cpu_request("2").set_memory_request("8Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(MAX_MEMORY)
-
-    # Stage 4: Leaderboard Evaluation
-    # Generate leaderboard from all refitted models
-    leaderboard_task = timeseries_leaderboard_evaluation(
-        models=dsl.Collected(refit_task.outputs["model_artifact"]),
-        eval_metric=selection_task.outputs["eval_metric_name"],
+    # Stage 3: Common leaderboard evaluation
+    leaderboard_task = leaderboard_evaluation(
+        models_artifact=training_task.outputs["models_artifact"],
+        eval_metric=training_task.outputs["eval_metric"],
     )
     leaderboard_task.set_caching_options(False)
     leaderboard_task.set_cpu_request("1").set_memory_request("4Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(MAX_MEMORY)

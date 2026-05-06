@@ -1,15 +1,15 @@
-# Autogluon Timeseries Models Selection ✨
+# Autogluon Timeseries Models Training ✨
 
 > ⚠️ **Stability: alpha** — This asset is not yet stable and may change.
 
 ## Overview 🧾
 
-Train and select top N AutoGluon timeseries models based on leaderboard.
+Train, select, and full-refit top N AutoGluon timeseries models.
 
-This component trains multiple AutoGluon TimeSeries models using TimeSeriesPredictor on the selection training data, evaluates them on the test set, and selects the top N performers based on the leaderboard ranking. Training uses the ``fast_training`` preset for shorter wall-clock time versus
-``medium_quality`` (trade-off: accuracy).
+This component combines model generation and full-refit into one step to avoid pipeline-level ``ParallelFor``. It trains multiple AutoGluon TimeSeries models on the selection training data, ranks them on the test set, then sequentially refits the top N models on full train data (selection split +
+extra split).
 
-The TimeSeriesPredictor automatically trains various model types (DeepAR, TFT, ARIMA, ETS, Theta, etc.) and ranks them by the evaluation metric. This component selects the top N models from the leaderboard for refitting on the full dataset.
+Refit outputs for all selected models are written under one ``models_artifact`` in a layout compatible with ``autogluon_leaderboard_evaluation``.
 
 ## Inputs 📥
 
@@ -20,8 +20,16 @@ The TimeSeriesPredictor automatically trains various model types (DeepAR, TFT, A
 | `timestamp_column` | `str` | `None` | Name of the timestamp/datetime column. |
 | `train_data_path` | `str` | `None` | Path to the selection training CSV file. |
 | `test_data` | `dsl.Input[dsl.Dataset]` | `None` | Test dataset artifact for evaluation. |
-| `top_n` | `int` | `None` | Number of top models to select for refitting. |
+| `top_n` | `int` | `None` | Number of top models to select for full refit. |
 | `workspace_path` | `str` | `None` | Workspace directory where predictor will be saved. |
+| `pipeline_name` | `str` | `None` | Pipeline name used in generated notebook placeholders. |
+| `run_id` | `str` | `None` | Pipeline run id used in generated notebook placeholders. |
+| `models_artifact` | `dsl.Output[dsl.Model]` | `None` | Combined output artifact containing all refitted models. |
+| `notebooks` | `dsl.EmbeddedInput[dsl.Dataset]` | `None` | Embedded notebook templates. |
+| `sample_rows` | `str` | `[]` | Optional sample rows JSON string used in generated notebook placeholders. |
+| `sampling_config` | `Optional[dict]` | `None` | Optional sampling config stored in artifact metadata. |
+| `split_config` | `Optional[dict]` | `None` | Optional split config stored in artifact metadata. |
+| `extra_train_data_path` | `str` | `""` | Path to extra train split for full refit. |
 | `prediction_length` | `int` | `1` | Forecast horizon (number of timesteps). |
 | `known_covariates_names` | `Optional[List[str]]` | `None` | Optional list of known covariate column names. |
 
@@ -29,20 +37,20 @@ The TimeSeriesPredictor automatically trains various model types (DeepAR, TFT, A
 
 | Name | Type | Description |
 | ---- | ---- | ----------- |
-| Output | `NamedTuple('outputs', top_models=List[str], predictor_path=str, eval_metric_name=str, model_config=dict)` | top_models list, predictor_path, eval_metric_name, model_config. |
+| Output | `NamedTuple('outputs', top_models=List[str], predictor_path=str, eval_metric=str, model_config=dict)` | top_models list, predictor_path, eval_metric, model_config. |
 
 ## Usage Examples 🧪
 
 ```python
-"""Example pipelines demonstrating usage of autogluon_timeseries_models_selection."""
+"""Example pipelines demonstrating usage of autogluon_timeseries_models_training."""
 
 from kfp import dsl
-from kfp_components.components.training.automl.autogluon_timeseries_models_selection import (
-    autogluon_timeseries_models_selection,
+from kfp_components.components.training.automl.autogluon_timeseries_models_training import (
+    autogluon_timeseries_models_training,
 )
 
 
-@dsl.pipeline(name="autogluon-timeseries-models-selection-example")
+@dsl.pipeline(name="autogluon-timeseries-models-training-example")
 def example_pipeline(
     target: str = "value",
     id_column: str = "item_id",
@@ -52,7 +60,7 @@ def example_pipeline(
     workspace_path: str = "/tmp/workspace",
     prediction_length: int = 1,
 ):
-    """Example pipeline using autogluon_timeseries_models_selection.
+    """Example pipeline using autogluon_timeseries_models_training.
 
     Args:
         target: Name of the target column.
@@ -67,7 +75,7 @@ def example_pipeline(
         artifact_uri="gs://placeholder/test_data",
         artifact_class=dsl.Dataset,
     )
-    autogluon_timeseries_models_selection(
+    autogluon_timeseries_models_training(
         target=target,
         id_column=id_column,
         timestamp_column=timestamp_column,
@@ -82,7 +90,7 @@ def example_pipeline(
 
 ## Metadata 🗂️
 
-- **Name**: autogluon_timeseries_models_selection
+- **Name**: autogluon_timeseries_models_training
 - **Stability**: alpha
 - **Dependencies**:
   - Kubeflow:
