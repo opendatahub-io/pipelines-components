@@ -59,6 +59,8 @@ def example_pipeline(
     top_n: int = 3,
     workspace_path: str = "/tmp/workspace",
     prediction_length: int = 1,
+    pipeline_name: str = "autogluon-timeseries-models-training-example",
+    run_id: str = "run-001",
 ):
     """Example pipeline using autogluon_timeseries_models_training.
 
@@ -70,6 +72,8 @@ def example_pipeline(
         top_n: Number of top models to select.
         workspace_path: Path to the workspace directory.
         prediction_length: Number of time steps to predict.
+        pipeline_name: Pipeline name used in generated notebook placeholders.
+        run_id: Run id used in generated notebook placeholders.
     """
     test_data = dsl.importer(
         artifact_uri="gs://placeholder/test_data",
@@ -83,6 +87,8 @@ def example_pipeline(
         test_data=test_data.output,
         top_n=top_n,
         workspace_path=workspace_path,
+        pipeline_name=pipeline_name,
+        run_id=run_id,
         prediction_length=prediction_length,
     )
 
