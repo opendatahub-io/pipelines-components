@@ -17,6 +17,8 @@ def autogluon_timeseries_models_selection(
     workspace_path: str,
     prediction_length: int = 1,
     known_covariates_names: Optional[List[str]] = None,
+    preset: str = "fast_training",
+    eval_metric: str = "MASE",
 ) -> NamedTuple(
     "outputs",
     top_models=List[str],
@@ -45,6 +47,8 @@ def autogluon_timeseries_models_selection(
         workspace_path: Workspace directory where predictor will be saved.
         prediction_length: Forecast horizon (number of timesteps).
         known_covariates_names: Optional list of known covariate column names.
+        preset: AutoGluon quality tier (e.g. ``"fast_training"``, ``"medium_quality"``).
+        eval_metric: Metric for model ranking in acronym or snake_case form (e.g. ``"MASE"``).
 
     Returns:
         NamedTuple: top_models list, predictor_path, eval_metric_name, model_config.
@@ -57,9 +61,6 @@ def autogluon_timeseries_models_selection(
 
     logger = logging.getLogger(__name__)
 
-    # Set constants
-    DEFAULT_PRESETS = "fast_training"
-    DEFAULT_EVAL_METRIC = "MASE"
     DEFAULT_TIME_LIMIT = 600  # 10 minutes
 
     TOP_N_MAX = 7
@@ -109,7 +110,6 @@ def autogluon_timeseries_models_selection(
     # Create predictor path in workspace
     predictor_path = Path(workspace_path) / "timeseries_predictor"
 
-    eval_metric = DEFAULT_EVAL_METRIC
     # Create TimeSeriesPredictor
     predictor = TimeSeriesPredictor(
         prediction_length=prediction_length,
@@ -121,17 +121,18 @@ def autogluon_timeseries_models_selection(
     )
 
     logger.info(
-        "Timeseries selection: training (preset=%s, time_limit=%ss, prediction_length=%s)...",
-        DEFAULT_PRESETS,
+        "Timeseries selection: training (preset=%s, eval_metric=%s, time_limit=%ss, prediction_length=%s)...",
+        preset,
+        eval_metric,
         DEFAULT_TIME_LIMIT,
         prediction_length,
     )
     try:
         predictor.fit(
             train_data=train_ts,
-            presets=DEFAULT_PRESETS,
+            presets=preset,
             time_limit=DEFAULT_TIME_LIMIT,
-            # exclude deep learning models pretrained on large time series datasets
+            # exclude models that download from HuggingFace Hub (disconnected environments)
             excluded_model_types=["Chronos", "Toto", "Chronos2"],
         )
     except Exception as e:
@@ -160,11 +161,11 @@ def autogluon_timeseries_models_selection(
     # Create model config
     model_config = {
         "prediction_length": prediction_length,
-        "eval_metric": eval_metric,
+        "eval_metric": eval_metric,  # always snake_case for downstream consumers
         "target": target,
         "id_column": id_column,
         "timestamp_column": timestamp_column,
-        "presets": DEFAULT_PRESETS,
+        "presets": preset,  # keep "presets" key (plural) — refit component reads this key
         "time_limit": DEFAULT_TIME_LIMIT,
         "known_covariates_names": known_covariates_names or [],
         "num_models_trained": len(leaderboard),
@@ -180,7 +181,7 @@ def autogluon_timeseries_models_selection(
     return outputs(
         top_models=top_models,
         predictor_path=str(predictor_path),
-        eval_metric_name=eval_metric,
+        eval_metric_name=eval_metric,  # snake_case for leaderboard metric lookup
         model_config=model_config,
     )
 

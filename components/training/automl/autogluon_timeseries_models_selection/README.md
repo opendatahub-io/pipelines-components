@@ -24,6 +24,8 @@ The TimeSeriesPredictor automatically trains various model types (DeepAR, TFT, A
 | `workspace_path` | `str` | `None` | Workspace directory where predictor will be saved. |
 | `prediction_length` | `int` | `1` | Forecast horizon (number of timesteps). |
 | `known_covariates_names` | `Optional[List[str]]` | `None` | Optional list of known covariate column names. |
+| `preset` | `str` | `fast_training` | AutoGluon quality tier (e.g. ``"fast_training"``, ``"medium_quality"``). |
+| `eval_metric` | `str` | `MASE` | Metric for model ranking in acronym or snake_case form (e.g. ``"MASE"``). |
 
 ## Outputs 📤
 

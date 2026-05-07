@@ -29,7 +29,8 @@ Args: train_data_secret_name: Kubernetes secret name containing S3 credentials (
 file (CSV or Parquet). File must include columns for item_id, timestamp, and target; optional columns for known covariates. target: Name of the column containing the numeric values to forecast. Corresponds to :attr:`~autogluon.timeseries.TimeSeriesDataFrame` target column. id_column: Name of the
 column that identifies each time series (e.g. product_id, store_id). Passed as ``id_column`` when constructing TimeSeriesDataFrame; result uses ``item_id``. timestamp_column: Name of the column containing the timestamp/datetime for each observation. Passed as ``timestamp_column`` when constructing
 TimeSeriesDataFrame; result uses ``timestamp`` as the second index level. known_covariates_names: Optional list of column names known in advance for the forecast horizon (e.g. holidays, promotions). See :attr:`~autogluon.timeseries.TimeSeriesPredictor.known_covariates_names`. prediction_length:
-Number of time steps to forecast (horizon length). Positive integer (default: 1). top_n: Number of top models to select for the leaderboard and output (default: 3).
+Number of time steps to forecast (horizon length). Positive integer (default: 1). top_n: Number of top models to select for the leaderboard and output (default: 3). preset: AutoGluon quality tier (default: ``"fast_training"``). ``"medium_quality"`` adds TemporalFusionTransformer at higher resource
+cost (8 vCPU / 32 GiB); Chronos2/Toto are excluded regardless. eval_metric: Metric for model ranking in acronym (e.g. ``"MASE"``, ``"WQL"``) or snake_case form. Normalized to snake_case internally (default: ``"MASE"``).
 
 Returns: This pipeline wires task outputs between components; compiled runs expose artifacts from the refit tasks (Model artifacts with predictor, metrics, notebook paths) and the leaderboard evaluation task (HTML leaderboard and aggregated metrics), subject to Kubeflow Pipelines UI and artifact
 configuration.
@@ -52,6 +53,8 @@ prediction_length=14, top_n=3, )
 | `known_covariates_names` | `Optional[List[str]]` | `None` |  |
 | `prediction_length` | `int` | `1` |  |
 | `top_n` | `int` | `3` |  |
+| `preset` | `str` | `fast_training` |  |
+| `eval_metric` | `str` | `MASE` |  |
 
 ## Metadata 🗂️
 

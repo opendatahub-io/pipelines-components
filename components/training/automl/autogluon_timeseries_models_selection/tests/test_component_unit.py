@@ -109,6 +109,7 @@ class TestTimeseriesModelsSelectionUnitTests:
         assert result.eval_metric_name == "MASE"
         assert result.predictor_path == "/tmp/workspace/timeseries_predictor"
         assert result.model_config["prediction_length"] == 24
+        assert result.model_config["eval_metric"] == "MASE"
         assert result.model_config["presets"] == "fast_training"
         assert result.model_config["time_limit"] == 600
         assert result.model_config["known_covariates_names"] == []
@@ -240,6 +241,127 @@ class TestTimeseriesModelsSelectionUnitTests:
                 top_n=2,
                 workspace_path="/tmp/workspace",
             )
+
+    # ── preset / eval_metric parameters ───────────────────────────────────────
+
+    @mock.patch("pandas.read_csv")
+    @mock.patch("autogluon.timeseries.TimeSeriesDataFrame")
+    @mock.patch("autogluon.timeseries.TimeSeriesPredictor")
+    def test_preset_parameter_forwarded_to_fit(self, mock_predictor_cls, mock_ts_df_cls, mock_read_csv):
+        """Preset parameter is passed to predictor.fit(presets=...) unchanged."""
+        mock_predictor = mock.MagicMock()
+        mock_predictor.leaderboard.return_value = _mock_leaderboard(["DeepAR"])
+        mock_predictor_cls.return_value = mock_predictor
+        mock_ts_df_cls.from_data_frame.side_effect = [_mock_ts_df(), _mock_ts_df()]
+        mock_read_csv.side_effect = [mock.MagicMock(), mock.MagicMock()]
+        test_data = mock.MagicMock()
+        test_data.path = "/tmp/test.csv"
+
+        autogluon_timeseries_models_selection.python_func(
+            target="sales",
+            id_column="item_id",
+            timestamp_column="timestamp",
+            train_data_path="/tmp/train.csv",
+            test_data=test_data,
+            top_n=1,
+            workspace_path="/tmp/workspace",
+            preset="medium_quality",
+        )
+
+        fit_kwargs = mock_predictor.fit.call_args[1]
+        assert fit_kwargs["presets"] == "medium_quality"
+        assert fit_kwargs["excluded_model_types"] == ["Chronos", "Toto", "Chronos2"]
+
+    @mock.patch("pandas.read_csv")
+    @mock.patch("autogluon.timeseries.TimeSeriesDataFrame")
+    @mock.patch("autogluon.timeseries.TimeSeriesPredictor")
+    def test_excluded_model_types_always_present_regardless_of_preset(
+        self, mock_predictor_cls, mock_ts_df_cls, mock_read_csv
+    ):
+        """excluded_model_types is set in every fit() call regardless of preset."""
+        for preset_value in ("fast_training", "medium_quality"):
+            mock_predictor = mock.MagicMock()
+            mock_predictor.leaderboard.return_value = _mock_leaderboard(["DeepAR"])
+            mock_predictor_cls.return_value = mock_predictor
+            mock_ts_df_cls.from_data_frame.side_effect = [_mock_ts_df(), _mock_ts_df()]
+            mock_read_csv.side_effect = [mock.MagicMock(), mock.MagicMock()]
+            test_data = mock.MagicMock()
+            test_data.path = "/tmp/test.csv"
+
+            autogluon_timeseries_models_selection.python_func(
+                target="sales",
+                id_column="item_id",
+                timestamp_column="timestamp",
+                train_data_path="/tmp/train.csv",
+                test_data=test_data,
+                top_n=1,
+                workspace_path="/tmp/workspace",
+                preset=preset_value,
+            )
+
+            fit_kwargs = mock_predictor.fit.call_args[1]
+            assert fit_kwargs["excluded_model_types"] == ["Chronos", "Toto", "Chronos2"], preset_value
+
+    @mock.patch("pandas.read_csv")
+    @mock.patch("autogluon.timeseries.TimeSeriesDataFrame")
+    @mock.patch("autogluon.timeseries.TimeSeriesPredictor")
+    def test_eval_metric_passes_through_unchanged(self, mock_predictor_cls, mock_ts_df_cls, mock_read_csv):
+        """eval_metric is forwarded as-is to AutoGluon (no normalization); AutoGluon handles both forms."""
+        cases = ["MASE", "WQL", "MAE", "RMSE", "mean_absolute_scaled_error"]
+        for metric in cases:
+            mock_predictor = mock.MagicMock()
+            mock_predictor.leaderboard.return_value = _mock_leaderboard(["DeepAR"])
+            mock_predictor_cls.return_value = mock_predictor
+            mock_ts_df_cls.from_data_frame.side_effect = [_mock_ts_df(), _mock_ts_df()]
+            mock_read_csv.side_effect = [mock.MagicMock(), mock.MagicMock()]
+            test_data = mock.MagicMock()
+            test_data.path = "/tmp/test.csv"
+
+            result = autogluon_timeseries_models_selection.python_func(
+                target="sales",
+                id_column="item_id",
+                timestamp_column="timestamp",
+                train_data_path="/tmp/train.csv",
+                test_data=test_data,
+                top_n=1,
+                workspace_path="/tmp/workspace",
+                eval_metric=metric,
+            )
+
+            ctor_kwargs = mock_predictor_cls.call_args[1]
+            assert ctor_kwargs["eval_metric"] == metric, f"metric={metric!r}"
+            assert result.eval_metric_name == metric, f"metric={metric!r}"
+            assert result.model_config["eval_metric"] == metric, f"metric={metric!r}"
+
+    @mock.patch("pandas.read_csv")
+    @mock.patch("autogluon.timeseries.TimeSeriesDataFrame")
+    @mock.patch("autogluon.timeseries.TimeSeriesPredictor")
+    def test_model_config_presets_key_and_eval_metric_forwarded(
+        self, mock_predictor_cls, mock_ts_df_cls, mock_read_csv
+    ):
+        """model_config has 'presets' key (plural) matching preset param, and eval_metric forwarded as-is."""
+        mock_predictor = mock.MagicMock()
+        mock_predictor.leaderboard.return_value = _mock_leaderboard(["DeepAR"])
+        mock_predictor_cls.return_value = mock_predictor
+        mock_ts_df_cls.from_data_frame.side_effect = [_mock_ts_df(), _mock_ts_df()]
+        mock_read_csv.side_effect = [mock.MagicMock(), mock.MagicMock()]
+        test_data = mock.MagicMock()
+        test_data.path = "/tmp/test.csv"
+
+        result = autogluon_timeseries_models_selection.python_func(
+            target="sales",
+            id_column="item_id",
+            timestamp_column="timestamp",
+            train_data_path="/tmp/train.csv",
+            test_data=test_data,
+            top_n=1,
+            workspace_path="/tmp/workspace",
+            preset="medium_quality",
+            eval_metric="WQL",
+        )
+
+        assert result.model_config["presets"] == "medium_quality"
+        assert result.model_config["eval_metric"] == "WQL"
 
     @mock.patch("pandas.read_csv")
     @mock.patch("autogluon.timeseries.TimeSeriesDataFrame")

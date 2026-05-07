@@ -46,6 +46,8 @@ def autogluon_timeseries_training_pipeline(
     known_covariates_names: Optional[List[str]] = None,
     prediction_length: int = 1,
     top_n: int = 3,
+    preset: str = "fast_training",
+    eval_metric: str = "MASE",
 ):
     """AutoGluon time series training pipeline.
 
@@ -101,6 +103,11 @@ def autogluon_timeseries_training_pipeline(
         prediction_length: Number of time steps to forecast (horizon length). Positive integer
             (default: 1).
         top_n: Number of top models to select for the leaderboard and output (default: 3).
+        preset: AutoGluon quality tier (default: ``"fast_training"``). ``"medium_quality"``
+            adds TemporalFusionTransformer at higher resource cost (8 vCPU / 32 GiB);
+            Chronos2/Toto are excluded regardless.
+        eval_metric: Metric for model ranking in acronym (e.g. ``"MASE"``, ``"WQL"``) or
+            snake_case form. Normalized to snake_case internally (default: ``"MASE"``).
 
     Returns:
         This pipeline wires task outputs between components; compiled runs expose artifacts from the
@@ -165,6 +172,8 @@ def autogluon_timeseries_training_pipeline(
         workspace_path=dsl.WORKSPACE_PATH_PLACEHOLDER,
         prediction_length=prediction_length,
         known_covariates_names=known_covariates_names,
+        preset=preset,
+        eval_metric=eval_metric,
     )
     selection_task.set_caching_options(False)
     selection_task.set_cpu_request("4").set_memory_request("16Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(MAX_MEMORY)

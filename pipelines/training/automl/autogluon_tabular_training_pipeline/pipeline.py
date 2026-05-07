@@ -1,3 +1,5 @@
+from typing import Optional
+
 from kfp import dsl
 from kfp_components.components.data_processing.automl.tabular_data_loader import automl_data_loader
 from kfp_components.components.training.automl.autogluon_leaderboard_evaluation import leaderboard_evaluation
@@ -37,6 +39,8 @@ def autogluon_tabular_training_pipeline(
     label_column: str,
     task_type: str,
     top_n: int = 3,
+    preset: str = "medium_quality",
+    eval_metric: Optional[str] = None,
 ):
     """AutoGluon Tabular Training Pipeline.
 
@@ -111,6 +115,8 @@ def autogluon_tabular_training_pipeline(
         label_column: Name of the target/label column in the dataset.
         task_type: "binary", "multiclass", or "regression"; drives metrics and model types.
         top_n: Number of top models to select and refit (default: 3); positive integer from range [1, 10].
+        preset: AutoGluon quality tier (default: "medium_quality", 4 vCPU / 16 GiB). "good_quality" trains stronger models at higher resource cost (8 vCPU / 32 GiB).
+        eval_metric: Metric used for model ranking. When None, AutoGluon's task-type default applies ("accuracy" for classification, "root_mean_squared_error" for regression).
 
     Returns:
         HTML artifact with leaderboard of refitted models ranked by task_type metric (e.g. accuracy, r2).
@@ -161,7 +167,7 @@ def autogluon_tabular_training_pipeline(
     )
 
     # Stage 1 + 2: Model selection and sequential refit of top N models
-    training_task = autogluon_models_training(
+    _training_kwargs = dict(
         label_column=label_column,
         task_type=task_type,
         top_n=top_n,
@@ -174,14 +180,30 @@ def autogluon_tabular_training_pipeline(
         sampling_config=data_loader_task.outputs["sample_config"],
         split_config=data_loader_task.outputs["split_config"],
         extra_train_data_path=data_loader_task.outputs["extra_train_data_path"],
+        preset=preset,
+        eval_metric=eval_metric,
     )
-    training_task.set_caching_options(False)
-    training_task.set_cpu_request("4").set_memory_request("16Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(MAX_MEMORY)
+
+    with dsl.If(preset == "good_quality"):
+        training_task_gq = autogluon_models_training(**_training_kwargs)
+        training_task_gq.set_caching_options(False)
+        training_task_gq.set_cpu_request("8").set_memory_request("32Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(
+            MAX_MEMORY
+        )
+
+    with dsl.Else():
+        training_task_mq = autogluon_models_training(**_training_kwargs)
+        training_task_mq.set_caching_options(False)
+        training_task_mq.set_cpu_request("4").set_memory_request("16Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(
+            MAX_MEMORY
+        )
 
     # Generate leaderboard
     leaderboard_evaluation_task = leaderboard_evaluation(
-        models_artifact=training_task.outputs["models_artifact"],
-        eval_metric=training_task.outputs["eval_metric"],
+        models_artifact=dsl.OneOf(
+            training_task_gq.outputs["models_artifact"], training_task_mq.outputs["models_artifact"]
+        ),
+        eval_metric=dsl.OneOf(training_task_gq.outputs["eval_metric"], training_task_mq.outputs["eval_metric"]),
     )
     leaderboard_evaluation_task.set_caching_options(False)
     leaderboard_evaluation_task.set_cpu_request("1").set_memory_request("4Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(

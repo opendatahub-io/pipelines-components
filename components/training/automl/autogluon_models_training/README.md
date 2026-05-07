@@ -30,6 +30,8 @@ output artifact so the pipeline does not require a ParallelFor loop. Each model 
 | `sampling_config` | `Optional[dict]` | `None` | Data sampling config stored in artifact metadata. |
 | `split_config` | `Optional[dict]` | `None` | Data split config stored in artifact metadata. |
 | `extra_train_data_path` | `str` | `""` | Optional path to extra training CSV passed to ``refit_full``. |
+| `preset` | `str` | `medium_quality` | AutoGluon quality tier. ``"medium_quality"`` or ``"good_quality"``. |
+| `eval_metric` | `Optional[str]` | `None` | Metric for model ranking (e.g. ``"r2"``, ``"accuracy"``). Defaults to ``"root_mean_squared_error"`` for regression and ``"accuracy"`` otherwise. |
 
 ## Outputs 📤
 

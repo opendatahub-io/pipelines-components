@@ -182,14 +182,14 @@ class TestAutogluonModelsTrainingUnitTests:
             split_config={"split": 0.8},
         )
 
-        # Return value
-        assert result.eval_metric == "r2"
+        # Return value — default for regression is now root_mean_squared_error
+        assert result.eval_metric == "root_mean_squared_error"
 
         # TabularPredictor constructed and fitted with correct params
         mock_predictor_class.assert_called_once_with(
             problem_type="regression",
             label="target",
-            eval_metric="r2",
+            eval_metric="root_mean_squared_error",
             path=Path(workspace_path) / "autogluon_predictor",
             verbosity=2,
         )
@@ -733,6 +733,24 @@ class TestAutogluonModelsTrainingUnitTests:
         a.metadata = {}
         return a
 
+    def test_rejects_invalid_preset(self, mock_notebooks):
+        """Reject unknown ``preset`` value."""
+        with pytest.raises(ValueError, match="preset must be one of"):
+            autogluon_models_training.python_func(
+                label_column="target",
+                task_type="regression",
+                top_n=1,
+                train_data_path="/tmp/train.csv",
+                test_data=mock.MagicMock(path="/tmp/test.csv"),
+                workspace_path="/tmp/ws",
+                pipeline_name=PIPELINE_NAME,
+                run_id=RUN_ID,
+                sample_row=SAMPLE_ROW,
+                models_artifact=self._minimal_artifact(),
+                notebooks=mock_notebooks,
+                preset="best_quality",
+            )
+
     def test_rejects_empty_label_column(self, mock_notebooks):
         """Reject blank ``label_column``."""
         with pytest.raises(TypeError, match="label_column must be a non-empty string"):
@@ -938,3 +956,332 @@ class TestAutogluonModelsTrainingUnitTests:
                 notebooks=mock_notebooks,
                 split_config=[],
             )
+
+    # ── preset / eval_metric parameters ───────────────────────────────────────
+
+    @mock.patch("pandas.read_csv")
+    @mock.patch("autogluon.tabular.TabularPredictor")
+    def test_medium_quality_preset_forwarded_as_string(
+        self, mock_predictor_class, mock_read_csv, mock_notebooks, tmp_path
+    ):
+        """Default preset is forwarded as the string 'medium_quality' to predictor.fit()."""
+        mock_predictor = mock.MagicMock()
+        mock_predictor_clone = mock.MagicMock()
+        mock_predictor_class.return_value.fit.return_value = mock_predictor
+        mock_predictor.clone.return_value = mock_predictor_clone
+        mock_predictor.problem_type = "regression"
+        mock_predictor.label = "target"
+        _mock_leaderboard_top_models(mock_predictor, ["LightGBM_BAG_L1"])
+        mock_predictor_clone.evaluate_predictions.return_value = {"root_mean_squared_error": 0.1}
+        mock_predictor_clone.feature_importance.return_value = mock.MagicMock(to_dict=lambda: {"f": 0.1})
+        mock_predictor_clone.predict.return_value = mock.MagicMock()
+        mock_read_csv.side_effect = [_mock_csv_frame(), _mock_csv_frame()]
+
+        workspace_path = str(tmp_path / "ws")
+        Path(workspace_path).mkdir()
+        models_output_dir = str(tmp_path / "out")
+        Path(models_output_dir).mkdir()
+        mock_models_artifact = mock.MagicMock()
+        mock_models_artifact.path = models_output_dir
+        mock_models_artifact.metadata = {}
+
+        autogluon_models_training.python_func(
+            label_column="target",
+            task_type="regression",
+            top_n=1,
+            train_data_path="/tmp/train.csv",
+            test_data=mock.MagicMock(path="/tmp/test.csv"),
+            workspace_path=workspace_path,
+            pipeline_name=PIPELINE_NAME,
+            run_id=RUN_ID,
+            sample_row=SAMPLE_ROW,
+            models_artifact=mock_models_artifact,
+            notebooks=mock_notebooks,
+            # No preset — should default to "medium_quality"
+        )
+
+        fit_call_kwargs = mock_predictor_class.return_value.fit.call_args[1]
+        assert fit_call_kwargs.get("presets") == "medium_quality"
+        assert "auto_stack" not in fit_call_kwargs
+
+    @mock.patch("pandas.read_csv")
+    @mock.patch("autogluon.tabular.TabularPredictor")
+    def test_good_quality_preset_expanded(self, mock_predictor_class, mock_read_csv, mock_notebooks, tmp_path):
+        """good_quality preset is forwarded as-is; only refit-conflict flags are overridden."""
+        mock_predictor = mock.MagicMock()
+        mock_predictor_clone = mock.MagicMock()
+        mock_predictor_class.return_value.fit.return_value = mock_predictor
+        mock_predictor.clone.return_value = mock_predictor_clone
+        mock_predictor.problem_type = "regression"
+        mock_predictor.label = "target"
+        _mock_leaderboard_top_models(mock_predictor, ["LightGBM_BAG_L1"])
+        mock_predictor_clone.evaluate_predictions.return_value = {"root_mean_squared_error": 0.1}
+        mock_predictor_clone.feature_importance.return_value = mock.MagicMock(to_dict=lambda: {"f": 0.1})
+        mock_predictor_clone.predict.return_value = mock.MagicMock()
+        mock_read_csv.side_effect = [_mock_csv_frame(), _mock_csv_frame()]
+
+        workspace_path = str(tmp_path / "ws")
+        Path(workspace_path).mkdir()
+        models_output_dir = str(tmp_path / "out")
+        Path(models_output_dir).mkdir()
+        mock_models_artifact = mock.MagicMock()
+        mock_models_artifact.path = models_output_dir
+        mock_models_artifact.metadata = {}
+
+        autogluon_models_training.python_func(
+            label_column="target",
+            task_type="regression",
+            top_n=1,
+            train_data_path="/tmp/train.csv",
+            test_data=mock.MagicMock(path="/tmp/test.csv"),
+            workspace_path=workspace_path,
+            pipeline_name=PIPELINE_NAME,
+            run_id=RUN_ID,
+            sample_row=SAMPLE_ROW,
+            models_artifact=mock_models_artifact,
+            notebooks=mock_notebooks,
+            preset="good_quality",
+        )
+
+        fit_call_kwargs = mock_predictor_class.return_value.fit.call_args[1]
+        # good_quality: preset string forwarded; only refit-conflict flags overridden
+        assert fit_call_kwargs["presets"] == "good_quality"
+        assert fit_call_kwargs["refit_full"] is False
+        assert fit_call_kwargs["set_best_to_refit_full"] is False
+        assert fit_call_kwargs["save_bag_folds"] is True
+        # Manual expansion kwargs must NOT be present — AutoGluon handles them via the preset
+        assert "auto_stack" not in fit_call_kwargs
+        assert "dynamic_stacking" not in fit_call_kwargs
+        assert "hyperparameters" not in fit_call_kwargs
+
+    @mock.patch("pandas.read_csv")
+    @mock.patch("autogluon.tabular.TabularPredictor")
+    def test_eval_metric_explicit_forwarded_to_predictor(
+        self, mock_predictor_class, mock_read_csv, mock_notebooks, tmp_path
+    ):
+        """Explicit eval_metric is passed through to TabularPredictor constructor and returned."""
+        mock_predictor = mock.MagicMock()
+        mock_predictor_clone = mock.MagicMock()
+        mock_predictor_class.return_value.fit.return_value = mock_predictor
+        mock_predictor.clone.return_value = mock_predictor_clone
+        mock_predictor.problem_type = "regression"
+        mock_predictor.label = "target"
+        _mock_leaderboard_top_models(mock_predictor, ["LightGBM_BAG_L1"])
+        mock_predictor_clone.evaluate_predictions.return_value = {"r2": 0.9}
+        mock_predictor_clone.feature_importance.return_value = mock.MagicMock(to_dict=lambda: {"f": 0.1})
+        mock_predictor_clone.predict.return_value = mock.MagicMock()
+        mock_read_csv.side_effect = [_mock_csv_frame(), _mock_csv_frame()]
+
+        workspace_path = str(tmp_path / "ws")
+        Path(workspace_path).mkdir()
+        models_output_dir = str(tmp_path / "out")
+        Path(models_output_dir).mkdir()
+        mock_models_artifact = mock.MagicMock()
+        mock_models_artifact.path = models_output_dir
+        mock_models_artifact.metadata = {}
+
+        result = autogluon_models_training.python_func(
+            label_column="target",
+            task_type="regression",
+            top_n=1,
+            train_data_path="/tmp/train.csv",
+            test_data=mock.MagicMock(path="/tmp/test.csv"),
+            workspace_path=workspace_path,
+            pipeline_name=PIPELINE_NAME,
+            run_id=RUN_ID,
+            sample_row=SAMPLE_ROW,
+            models_artifact=mock_models_artifact,
+            notebooks=mock_notebooks,
+            eval_metric="r2",
+        )
+
+        mock_predictor_class.assert_called_once_with(
+            problem_type="regression",
+            label="target",
+            eval_metric="r2",
+            path=Path(workspace_path) / "autogluon_predictor",
+            verbosity=2,
+        )
+        assert result.eval_metric == "r2"
+
+    @mock.patch("pandas.read_csv")
+    @mock.patch("autogluon.tabular.TabularPredictor")
+    def test_eval_metric_none_regression_resolves_to_rmse(
+        self, mock_predictor_class, mock_read_csv, mock_notebooks, tmp_path
+    ):
+        """eval_metric=None with regression resolves to 'root_mean_squared_error'."""
+        mock_predictor = mock.MagicMock()
+        mock_predictor_clone = mock.MagicMock()
+        mock_predictor_class.return_value.fit.return_value = mock_predictor
+        mock_predictor.clone.return_value = mock_predictor_clone
+        mock_predictor.problem_type = "regression"
+        mock_predictor.label = "target"
+        _mock_leaderboard_top_models(mock_predictor, ["LightGBM_BAG_L1"])
+        mock_predictor_clone.evaluate_predictions.return_value = {"root_mean_squared_error": 0.1}
+        mock_predictor_clone.feature_importance.return_value = mock.MagicMock(to_dict=lambda: {"f": 0.1})
+        mock_predictor_clone.predict.return_value = mock.MagicMock()
+        mock_read_csv.side_effect = [_mock_csv_frame(), _mock_csv_frame()]
+
+        workspace_path = str(tmp_path / "ws")
+        Path(workspace_path).mkdir()
+        models_output_dir = str(tmp_path / "out")
+        Path(models_output_dir).mkdir()
+        mock_models_artifact = mock.MagicMock()
+        mock_models_artifact.path = models_output_dir
+        mock_models_artifact.metadata = {}
+
+        result = autogluon_models_training.python_func(
+            label_column="target",
+            task_type="regression",
+            top_n=1,
+            train_data_path="/tmp/train.csv",
+            test_data=mock.MagicMock(path="/tmp/test.csv"),
+            workspace_path=workspace_path,
+            pipeline_name=PIPELINE_NAME,
+            run_id=RUN_ID,
+            sample_row=SAMPLE_ROW,
+            models_artifact=mock_models_artifact,
+            notebooks=mock_notebooks,
+            eval_metric=None,
+        )
+
+        ctor_kwargs = mock_predictor_class.call_args[1]
+        assert ctor_kwargs["eval_metric"] == "root_mean_squared_error"
+        assert result.eval_metric == "root_mean_squared_error"
+
+    @mock.patch("autogluon.core.metrics.confusion_matrix")
+    @mock.patch("pandas.read_csv")
+    @mock.patch("autogluon.tabular.TabularPredictor")
+    def test_eval_metric_none_binary_resolves_to_accuracy(
+        self, mock_predictor_class, mock_read_csv, mock_confusion_matrix, mock_notebooks, tmp_path
+    ):
+        """eval_metric=None with binary resolves to 'accuracy' — no behavior change."""
+        mock_predictor = mock.MagicMock()
+        mock_predictor_clone = mock.MagicMock()
+        mock_predictor_class.return_value.fit.return_value = mock_predictor
+        mock_predictor.clone.return_value = mock_predictor_clone
+        mock_predictor.problem_type = "binary"
+        mock_predictor.label = "target"
+        _mock_leaderboard_top_models(mock_predictor, ["LightGBM_BAG_L1"])
+        mock_predictor_clone.evaluate_predictions.return_value = {"accuracy": 0.9}
+        mock_predictor_clone.feature_importance.return_value = mock.MagicMock(to_dict=lambda: {"f": 0.1})
+        mock_predictor_clone.predict.return_value = mock.MagicMock()
+        mock_confusion_matrix.return_value = mock.MagicMock(to_dict=lambda: {"0": {"0": 5}})
+        mock_read_csv.side_effect = [_mock_csv_frame(), _mock_csv_frame()]
+
+        workspace_path = str(tmp_path / "ws")
+        Path(workspace_path).mkdir()
+        models_output_dir = str(tmp_path / "out")
+        Path(models_output_dir).mkdir()
+        mock_models_artifact = mock.MagicMock()
+        mock_models_artifact.path = models_output_dir
+        mock_models_artifact.metadata = {}
+
+        result = autogluon_models_training.python_func(
+            label_column="target",
+            task_type="binary",
+            top_n=1,
+            train_data_path="/tmp/train.csv",
+            test_data=mock.MagicMock(path="/tmp/test.csv"),
+            workspace_path=workspace_path,
+            pipeline_name=PIPELINE_NAME,
+            run_id=RUN_ID,
+            sample_row=SAMPLE_ROW,
+            models_artifact=mock_models_artifact,
+            notebooks=mock_notebooks,
+        )
+
+        assert mock_predictor_class.call_args[1]["eval_metric"] == "accuracy"
+        assert result.eval_metric == "accuracy"
+
+    @mock.patch("autogluon.core.metrics.confusion_matrix")
+    @mock.patch("pandas.read_csv")
+    @mock.patch("autogluon.tabular.TabularPredictor")
+    def test_eval_metric_none_multiclass_resolves_to_accuracy(
+        self, mock_predictor_class, mock_read_csv, mock_confusion_matrix, mock_notebooks, tmp_path
+    ):
+        """eval_metric=None with multiclass resolves to 'accuracy' — no behavior change."""
+        mock_predictor = mock.MagicMock()
+        mock_predictor_clone = mock.MagicMock()
+        mock_predictor_class.return_value.fit.return_value = mock_predictor
+        mock_predictor.clone.return_value = mock_predictor_clone
+        mock_predictor.problem_type = "multiclass"
+        mock_predictor.label = "target"
+        _mock_leaderboard_top_models(mock_predictor, ["LightGBM_BAG_L1"])
+        mock_predictor_clone.evaluate_predictions.return_value = {"accuracy": 0.88}
+        mock_predictor_clone.feature_importance.return_value = mock.MagicMock(to_dict=lambda: {"f": 0.1})
+        mock_predictor_clone.predict.return_value = mock.MagicMock()
+        mock_confusion_matrix.return_value = mock.MagicMock(to_dict=lambda: {"0": {"0": 5}})
+        mock_read_csv.side_effect = [_mock_csv_frame(), _mock_csv_frame()]
+
+        workspace_path = str(tmp_path / "ws")
+        Path(workspace_path).mkdir()
+        models_output_dir = str(tmp_path / "out")
+        Path(models_output_dir).mkdir()
+        mock_models_artifact = mock.MagicMock()
+        mock_models_artifact.path = models_output_dir
+        mock_models_artifact.metadata = {}
+
+        result = autogluon_models_training.python_func(
+            label_column="target",
+            task_type="multiclass",
+            top_n=1,
+            train_data_path="/tmp/train.csv",
+            test_data=mock.MagicMock(path="/tmp/test.csv"),
+            workspace_path=workspace_path,
+            pipeline_name=PIPELINE_NAME,
+            run_id=RUN_ID,
+            sample_row=SAMPLE_ROW,
+            models_artifact=mock_models_artifact,
+            notebooks=mock_notebooks,
+        )
+
+        assert mock_predictor_class.call_args[1]["eval_metric"] == "accuracy"
+        assert result.eval_metric == "accuracy"
+
+    @mock.patch("pandas.read_csv")
+    @mock.patch("autogluon.tabular.TabularPredictor")
+    def test_model_config_reflects_preset_and_resolved_metric(
+        self, mock_predictor_class, mock_read_csv, mock_notebooks, tmp_path
+    ):
+        """model_config in artifact metadata contains the resolved preset and eval_metric."""
+        mock_predictor = mock.MagicMock()
+        mock_predictor_clone = mock.MagicMock()
+        mock_predictor_class.return_value.fit.return_value = mock_predictor
+        mock_predictor.clone.return_value = mock_predictor_clone
+        mock_predictor.problem_type = "regression"
+        mock_predictor.label = "target"
+        _mock_leaderboard_top_models(mock_predictor, ["LightGBM_BAG_L1"])
+        mock_predictor_clone.evaluate_predictions.return_value = {"r2": 0.9}
+        mock_predictor_clone.feature_importance.return_value = mock.MagicMock(to_dict=lambda: {"f": 0.1})
+        mock_predictor_clone.predict.return_value = mock.MagicMock()
+        mock_read_csv.side_effect = [_mock_csv_frame(), _mock_csv_frame()]
+
+        workspace_path = str(tmp_path / "ws")
+        Path(workspace_path).mkdir()
+        models_output_dir = str(tmp_path / "out")
+        Path(models_output_dir).mkdir()
+        mock_models_artifact = mock.MagicMock()
+        mock_models_artifact.path = models_output_dir
+        mock_models_artifact.metadata = {}
+
+        autogluon_models_training.python_func(
+            label_column="target",
+            task_type="regression",
+            top_n=1,
+            train_data_path="/tmp/train.csv",
+            test_data=mock.MagicMock(path="/tmp/test.csv"),
+            workspace_path=workspace_path,
+            pipeline_name=PIPELINE_NAME,
+            run_id=RUN_ID,
+            sample_row=SAMPLE_ROW,
+            models_artifact=mock_models_artifact,
+            notebooks=mock_notebooks,
+            preset="good_quality",
+            eval_metric="r2",
+        )
+
+        model_config = mock_models_artifact.metadata["context"]["model_config"]
+        assert model_config["preset"] == "good_quality"
+        assert model_config["eval_metric"] == "r2"
+        assert model_config["time_limit"] == 1800
