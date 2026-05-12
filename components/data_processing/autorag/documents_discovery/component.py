@@ -51,7 +51,7 @@ def documents_discovery(
     if sampling_enabled:
         MAX_SIZE_BYTES = float(sampling_max_size) * 1024**3
 
-    def get_test_data_docs_names() -> list[str]:
+    def get_test_data_docs_names(test_data) -> list[str]:
         if test_data is None:
             return []
         with open(test_data.path, "r") as f:
@@ -72,7 +72,7 @@ def documents_discovery(
             raise ValueError("%s environment variable not set. Check if kubernetes secret was configured properly" % k)
     s3_creds["AWS_DEFAULT_REGION"] = os.environ.get("AWS_DEFAULT_REGION")
 
-    def _make_s3_client(verify=True):
+    def _make_s3_client(s3_creds, verify=True):
         return boto3.client(
             "s3",
             endpoint_url=s3_creds["AWS_S3_ENDPOINT"],
@@ -83,7 +83,7 @@ def documents_discovery(
         )
 
     try:
-        s3_client = _make_s3_client()
+        s3_client = _make_s3_client(s3_creds)
         contents = s3_client.list_objects_v2(
             Bucket=input_data_bucket_name,
             Prefix=input_data_path,
@@ -94,7 +94,7 @@ def documents_discovery(
             input_data_bucket_name,
             input_data_path,
         )
-        s3_client = _make_s3_client(verify=False)
+        s3_client = _make_s3_client(s3_creds, verify=False)
         contents = s3_client.list_objects_v2(
             Bucket=input_data_bucket_name,
             Prefix=input_data_path,
@@ -104,7 +104,7 @@ def documents_discovery(
     if not supported_files:
         raise Exception("No supported documents found.")
 
-    test_data_docs_names = get_test_data_docs_names()
+    test_data_docs_names = get_test_data_docs_names(test_data)
     if test_data_docs_names:
         supported_files.sort(key=lambda c: c["Key"] not in test_data_docs_names)
 

@@ -1,5 +1,3 @@
-from json import JSONDecodeError
-
 from kfp import dsl
 from kfp_components.utils.consts import AUTORAG_IMAGE  # pyright: ignore[reportMissingImports]
 
@@ -33,6 +31,7 @@ def test_data_loader(test_data_bucket_name: str, test_data_path: str, test_data:
     import logging
     import os
     import sys
+    from json import JSONDecodeError
 
     import boto3
     from botocore.exceptions import ClientError, SSLError
@@ -46,64 +45,57 @@ def test_data_loader(test_data_bucket_name: str, test_data_path: str, test_data:
     if not test_data_bucket_name:
         raise TypeError("test_data_bucket_name must be a non-empty string")
 
-    def get_test_data_s3():
-        """Validate S3 credentials and download the JSON test data file."""
+    class TestDataLoaderException(Exception):
+        pass
 
-        class TestDataLoaderException(Exception):
-            pass
+    s3_creds = {k: os.environ.get(k) for k in ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_S3_ENDPOINT"]}
+    for k, v in s3_creds.items():
+        if v is None:
+            raise ValueError("%s environment variable not set. Check if kubernetes secret was configured properly" % k)
+    s3_creds["AWS_DEFAULT_REGION"] = os.environ.get("AWS_DEFAULT_REGION")
 
-        s3_creds = {k: os.environ.get(k) for k in ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_S3_ENDPOINT"]}
-        for k, v in s3_creds.items():
-            if v is None:
-                raise ValueError(
-                    "%s environment variable not set. Check if kubernetes secret was configured properly" % k
-                )
-        s3_creds["AWS_DEFAULT_REGION"] = os.environ.get("AWS_DEFAULT_REGION")
+    def _make_s3_client(s3_creds, verify=True):
+        return boto3.client(
+            "s3",
+            endpoint_url=s3_creds["AWS_S3_ENDPOINT"],
+            region_name=s3_creds["AWS_DEFAULT_REGION"],
+            aws_access_key_id=s3_creds["AWS_ACCESS_KEY_ID"],
+            aws_secret_access_key=s3_creds["AWS_SECRET_ACCESS_KEY"],
+            verify=verify,
+        )
 
-        def _make_s3_client(verify=True):
-            return boto3.client(
-                "s3",
-                endpoint_url=s3_creds["AWS_S3_ENDPOINT"],
-                region_name=s3_creds["AWS_DEFAULT_REGION"],
-                aws_access_key_id=s3_creds["AWS_ACCESS_KEY_ID"],
-                aws_secret_access_key=s3_creds["AWS_SECRET_ACCESS_KEY"],
-                verify=verify,
-            )
+    s3_client = _make_s3_client(s3_creds)
 
-        s3_client = _make_s3_client()
-
-        logger.info(f"Fetching test data from S3: bucket={test_data_bucket_name}, path={test_data_path}")
-        try:
-            logger.info(f"Starting download to {test_data.path}")
-            s3_client.download_file(test_data_bucket_name, test_data_path, test_data.path)
-            logger.info("Download completed successfully")
-        except SSLError:
-            logger.warning(
-                "SSL error when downloading %s, retrying with verify=False",
-                test_data_path,
-            )
-            s3_client = _make_s3_client(verify=False)
-            s3_client.download_file(test_data_bucket_name, test_data_path, test_data.path)
-            logger.info("Download completed successfully with verify=False")
-        except ClientError as e:
-            if e.response.get("Error", {}).get("Code") in ("404", "NoSuchKey"):
-                raise FileNotFoundError(
-                    "Test data object not found in S3. bucket=%r, key=%r. "
-                    "Check that test_data_key (pipeline parameter) is the full object key to an existing JSON file."
-                    % (test_data_bucket_name, test_data_path)
-                ) from e
-            else:
-                raise TestDataLoaderException("Failed to fetch %s: %s", test_data_path, e) from e
-        except Exception as e:
+    logger.info(f"Fetching test data from S3: bucket={test_data_bucket_name}, path={test_data_path}")
+    try:
+        logger.info(f"Starting download to {test_data.path}")
+        s3_client.download_file(test_data_bucket_name, test_data_path, test_data.path)
+        logger.info("Download completed successfully")
+    except SSLError:
+        logger.warning(
+            "SSL error when downloading %s, retrying with verify=False",
+            test_data_path,
+        )
+        s3_client = _make_s3_client(s3_creds, verify=False)
+        s3_client.download_file(test_data_bucket_name, test_data_path, test_data.path)
+        logger.info("Download completed successfully with verify=False")
+    except ClientError as e:
+        if e.response.get("Error", {}).get("Code") in ("404", "NoSuchKey"):
+            raise FileNotFoundError(
+                "Test data object not found in S3. bucket=%r, key=%r. "
+                "Check that test_data_key (pipeline parameter) is the full object key to an existing JSON file."
+                % (test_data_bucket_name, test_data_path)
+            ) from e
+        else:
             raise TestDataLoaderException("Failed to fetch %s: %s", test_data_path, e) from e
+    except Exception as e:
+        raise TestDataLoaderException("Failed to fetch %s: %s", test_data_path, e) from e
 
-        try:
-            with open(test_data.path, "r") as f:
-                json.load(f)
-        except JSONDecodeError as e:
-            raise TestDataLoaderException("test_data_path must point to a valid JSON file.") from e
-
-    get_test_data_s3()
+    try:
+        with open(test_data.path, "r") as f:
+            json.load(f)
+    except JSONDecodeError as e:
+        raise TestDataLoaderException("test_data_path must point to a valid JSON file.") from e
 
 
 if __name__ == "__main__":

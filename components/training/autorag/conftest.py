@@ -31,6 +31,9 @@ def pytest_collection(session):
     return (yield)
 
 
+# import pdb
+
+
 @pytest.hookimpl(tryfirst=True)
 def pytest_addoption(parser, pluginmanager):
     """Registers an optional autorag-related command line option.
@@ -39,12 +42,16 @@ def pytest_addoption(parser, pluginmanager):
         This hook only executes for "initial" conftest files so the `component/training/autorag` path
         (or any of its subdirs) MUST be specified as pytest test_path.
     """
-    parser.addoption(
-        "--autorag-no-session-cleanup",
-        action="store_true",
-        dest="autorag_no_session_cleanup",
-        help="Disable running the `session_cleanup` fixture. Useful for debugging or development works.",
-    )
+
+    data_processing_autorag_conftest_path = Path("components", "data_processing", "autorag", "conftest.py").absolute()
+    # pdb.set_trace()
+    if not pluginmanager.hasplugin(str(data_processing_autorag_conftest_path)):
+        parser.addoption(
+            "--autorag-no-session-cleanup",
+            action="store_true",
+            dest="autorag_no_session_cleanup",
+            help="Disable running the `session_cleanup` fixture. Useful for debugging or development works.",
+        )
 
 
 @pytest.fixture(scope="session", autouse=True)

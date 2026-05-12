@@ -48,9 +48,9 @@ def text_extraction(
     import boto3
     import multiprocess as multiprocessing
     from botocore.exceptions import SSLError
+    from typing import Optional
 
     DOCUMENTS_DESCRIPTOR_FILENAME = "documents_descriptor.json"
-    SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".pptx", ".md", ".html", ".txt"}
     DOWNLOAD_MAX_THREADS = 8
 
     descriptor_path = Path(documents_descriptor.path) / DOCUMENTS_DESCRIPTOR_FILENAME
@@ -73,7 +73,7 @@ def text_extraction(
     output_dir = Path(extracted_text.path)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    def make_s3_client(verify=True):
+    def make_s3_client(s3_creds, verify=True):
         """Create a new boto3 S3 client from the environment credentials.
 
         A fresh client is created on every call so it is safe to use from
@@ -92,7 +92,7 @@ def text_extraction(
             verify=verify,
         )
 
-    def download_document(doc: dict, base_path: Path) -> Path:
+    def download_document(s3_creds, bucket, doc: dict, base_path: Path) -> Path:
         """Download a single document from S3 to a local path mirroring the S3 key structure.
 
         On an SSLError the download is retried once with certificate verification
@@ -107,6 +107,7 @@ def text_extraction(
         Returns:
             Path to the downloaded local file.
         """
+        logger = logging.getLogger("Text Extraction component logger")
         raw_key = doc["key"]
         safe_key = raw_key.strip().lstrip("/")
         rel = Path(safe_key)
@@ -120,10 +121,10 @@ def text_extraction(
         _dl_t0 = time.perf_counter()
         logger.info("Downloading %s", raw_key)
         try:
-            make_s3_client().download_file(bucket, raw_key, str(local_path))
+            make_s3_client(s3_creds).download_file(bucket, raw_key, str(local_path))
         except SSLError:
             logger.warning("SSL error when downloading %s, retrying with verify=False", raw_key)
-            make_s3_client(verify=False).download_file(bucket, raw_key, str(local_path))
+            make_s3_client(s3_creds, verify=False).download_file(bucket, raw_key, str(local_path))
         logger.info("Download finished %s (%.1fs)", raw_key, time.perf_counter() - _dl_t0)
         return local_path
 
@@ -134,6 +135,7 @@ def text_extraction(
         directory. If the path is missing or empty, returns None so that
         docling falls back to downloading models from HuggingFace.
         """
+        logger = logging.getLogger("Text Extraction component logger")
         raw = os.environ.get("DOCLING_ARTIFACTS_PATH")
         if not raw:
             logger.info("DOCLING_ARTIFACTS_PATH not set — models will be downloaded from HuggingFace.")
@@ -269,7 +271,7 @@ def text_extraction(
             return False, error_traceback
 
     def download_and_submit(
-        docs: list, download_path: Path, process_pool, out_dir: Path
+        s3_creds, bucket, docs: list, download_path: Path, process_pool, out_dir: Path
     ) -> tuple[list[tuple[str, AsyncResult]], list[dict]]:
         """Download all documents from S3, then submit for extraction largest-first.
 
@@ -293,6 +295,9 @@ def text_extraction(
             - List of download error dicts, each containing 'file' (S3 key) and
               'traceback' (full exception traceback string).
         """
+        SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".pptx", ".md", ".html", ".txt"}
+        DOWNLOAD_MAX_THREADS = 8
+        logger = logging.getLogger("Text Extraction component logger")
         download_error_details = []
         downloaded_paths = []
         skipped_docs = [doc for doc in docs if Path(doc["key"]).suffix.lower() not in SUPPORTED_EXTENSIONS]
@@ -302,7 +307,9 @@ def text_extraction(
             logger.warning("Skipping %d document(s) with unsupported extensions: %s", len(skipped_docs), skipped_keys)
 
         with ThreadPoolExecutor(max_workers=DOWNLOAD_MAX_THREADS) as dl_pool:
-            dl_futures = {dl_pool.submit(download_document, doc, download_path): doc for doc in supported}
+            dl_futures = {
+                dl_pool.submit(download_document, s3_creds, bucket, doc, download_path): doc for doc in supported
+            }
             for dl_future in as_completed(dl_futures):
                 doc = dl_futures[dl_future]
                 key = doc.get("key", "?") if isinstance(doc, dict) else "?"
@@ -394,7 +401,7 @@ def text_extraction(
     ):
         download_start_time = time.perf_counter()
         extraction_tasks, download_error_details = download_and_submit(
-            documents, Path(download_dir), process_pool, output_dir
+            s3_creds, bucket, documents, Path(download_dir), process_pool, output_dir
         )
         logger.info(
             "Downloads finished in %.1fs; %d file(s) queued for extraction, %d download error(s).",

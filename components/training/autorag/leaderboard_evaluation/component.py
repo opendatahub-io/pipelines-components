@@ -34,12 +34,6 @@ def leaderboard_evaluation(
     import json
     from pathlib import Path
 
-    # Fallback keys when ai4rag uses different structure (embedding vs embeddings, flat keys)
-    _config_column_fallbacks = {
-        "embeddings.model_id": ("embedding_model", "embedding.model_id"),
-        "generation.model_id": ("foundation_model",),
-    }
-
     def _get_nested(params: dict, key: str):
         """Resolve dotted key from flat or nested dict (e.g. chunking.method)."""
         if not params:
@@ -58,6 +52,11 @@ def leaderboard_evaluation(
         val = _get_nested(merged, col)
         if val is not None:
             return val
+        # Fallback keys when ai4rag uses different structure (embedding vs embeddings, flat keys)
+        _config_column_fallbacks = {
+            "embeddings.model_id": ("embedding_model", "embedding.model_id"),
+            "generation.model_id": ("foundation_model",),
+        }
         fallbacks = _config_column_fallbacks.get(col)
         if not fallbacks:
             return None
@@ -145,176 +144,177 @@ def leaderboard_evaluation(
         """Build a styled HTML document for the RAG leaderboard (aligned with AutoML leaderboard style)."""
         metric_label = html.escape(_metric_display_name(eval_metric))
         return f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>RAG Patterns Leaderboard</title>
-  <style>
-    :root {{
-      --bg: #0f1419;
-      --surface: #1a2332;
-      --surface-hover: #243044;
-      --border: #2d3a4f;
-      --text: #e6edf3;
-      --text-muted: #8b949e;
-      --accent: #58a6ff;
-      --accent-dim: #388bfd66;
-      --gold: #f0b429;
-      --silver: #a8b2c1;
-      --bronze: #c9a227;
-      --success: #3fb950;
-      --radius: 12px;
-      --font: 'Segoe UI', system-ui, -apple-system, sans-serif;
-    }}
-    * {{
-      box-sizing: border-box;
-    }}
-    body {{
-      margin: 0;
-      padding: 2rem;
-      font-family: var(--font);
-      background: var(--bg);
-      color: var(--text);
-      line-height: 1.5;
-      min-height: 100vh;
-    }}
-    .container {{
-      margin: 0 auto;
-      width: 100%;
-      max-width: 960px;
-    }}
-    @media (min-width: 1200px) {{
-      .container {{ max-width: 1100px; }}
-    }}
-    @media (min-width: 1400px) {{
-      .container {{ max-width: 1300px; }}
-    }}
-    @media (min-width: 1600px) {{
-      .container {{ max-width: 1500px; }}
-    }}
-    @media (min-width: 1920px) {{
-      .container {{ max-width: min(1800px, 92vw); }}
-    }}
-    header {{
-      margin-bottom: 2rem;
-      padding-bottom: 1.5rem;
-      border-bottom: 1px solid var(--border);
-    }}
-    h1 {{
-      margin: 0 0 0.25rem 0;
-      font-size: 1.75rem;
-      font-weight: 600;
-      letter-spacing: -0.02em;
-    }}
-    .subtitle {{
-      color: var(--text-muted);
-      font-size: 0.9rem;
-    }}
-    .badge {{
-      display: inline-block;
-      margin-left: 0.5rem;
-      padding: 0.2rem 0.5rem;
-      font-size: 0.75rem;
-      font-weight: 600;
-      border-radius: 6px;
-      background: var(--accent-dim);
-      color: var(--accent);
-    }}
-    .card {{
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      overflow: hidden;
-      box-shadow: 0 4px 24px rgba(0,0,0,0.25);
-    }}
-    .leaderboard-wrap {{
-      overflow-x: auto;
-    }}
-    .leaderboard-wrap table {{
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 0.85rem;
-      table-layout: auto;
-    }}
-    .leaderboard-wrap th {{
-      text-align: left;
-      padding: 0.5rem 0.5rem;
-      background: var(--surface-hover);
-      color: var(--text-muted);
-      font-weight: 600;
-      font-size: 0.7rem;
-      text-transform: uppercase;
-      letter-spacing: 0.03em;
-      border-bottom: 1px solid var(--border);
-      line-height: 1.25;
-    }}
-    .leaderboard-wrap td {{
-      padding: 0.5rem 0.5rem;
-      border-bottom: 1px solid var(--border);
-    }}
-    .leaderboard-wrap th,
-    .leaderboard-wrap td {{
-      overflow-wrap: break-word;
-      word-break: break-word;
-    }}
-    .leaderboard-wrap tr:last-child td {{
-      border-bottom: none;
-    }}
-    .leaderboard-wrap tbody tr:hover {{
-      background: var(--surface-hover);
-    }}
-    .leaderboard-wrap tbody tr.rank-1 {{
-      background: linear-gradient(90deg, rgba(240,180,41,0.12) 0%, transparent 100%);
-    }}
-    .leaderboard-wrap tbody tr.rank-1 td:first-child {{
-      color: var(--gold);
-      font-weight: 700;
-    }}
-    .leaderboard-wrap .metric-cell {{
-      font-variant-numeric: tabular-nums;
-      color: var(--success);
-    }}
-    .best-model-footer {{
-      margin-top: 1.5rem;
-      padding: 1rem 1.25rem;
-      background: var(--surface-hover);
-      border-radius: 8px;
-      font-size: 0.9rem;
-      color: var(--text-muted);
-    }}
-    .best-model-footer strong {{
-      color: var(--gold);
-    }}
-  </style>
-</head>
-<body>
-  <div class="container">
-    <header>
-      <h1>RAG Patterns Leaderboard</h1>
-      <p class="subtitle">
-        Ranked by <span class="badge">{metric_label}</span> (best first) · {num_patterns} pattern(s)
-      </p>
-    </header>
-    <div class="card">
-      <div class="leaderboard-wrap">
-        <table>
-{colgroup_html}
-          <thead>
-            <tr>{header_row}</tr>
-          </thead>
-          <tbody>
-            {table_body}
-          </tbody>
-        </table>
-      </div>
-    </div>
-    <div class="best-model-footer">
-      Best pattern: <strong>{html.escape(best_pattern_name)}</strong>
-    </div>
-  </div>
-</body>
-</html>"""
+                <html lang="en">
+                <head>
+                <meta charset="utf-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1">
+                <title>RAG Patterns Leaderboard</title>
+                <style>
+                    :root {{
+                    --bg: #0f1419;
+                    --surface: #1a2332;
+                    --surface-hover: #243044;
+                    --border: #2d3a4f;
+                    --text: #e6edf3;
+                    --text-muted: #8b949e;
+                    --accent: #58a6ff;
+                    --accent-dim: #388bfd66;
+                    --gold: #f0b429;
+                    --silver: #a8b2c1;
+                    --bronze: #c9a227;
+                    --success: #3fb950;
+                    --radius: 12px;
+                    --font: 'Segoe UI', system-ui, -apple-system, sans-serif;
+                    }}
+                    * {{
+                    box-sizing: border-box;
+                    }}
+                    body {{
+                    margin: 0;
+                    padding: 2rem;
+                    font-family: var(--font);
+                    background: var(--bg);
+                    color: var(--text);
+                    line-height: 1.5;
+                    min-height: 100vh;
+                    }}
+                    .container {{
+                    margin: 0 auto;
+                    width: 100%;
+                    max-width: 960px;
+                    }}
+                    @media (min-width: 1200px) {{
+                    .container {{ max-width: 1100px; }}
+                    }}
+                    @media (min-width: 1400px) {{
+                    .container {{ max-width: 1300px; }}
+                    }}
+                    @media (min-width: 1600px) {{
+                    .container {{ max-width: 1500px; }}
+                    }}
+                    @media (min-width: 1920px) {{
+                    .container {{ max-width: min(1800px, 92vw); }}
+                    }}
+                    header {{
+                    margin-bottom: 2rem;
+                    padding-bottom: 1.5rem;
+                    border-bottom: 1px solid var(--border);
+                    }}
+                    h1 {{
+                    margin: 0 0 0.25rem 0;
+                    font-size: 1.75rem;
+                    font-weight: 600;
+                    letter-spacing: -0.02em;
+                    }}
+                    .subtitle {{
+                    color: var(--text-muted);
+                    font-size: 0.9rem;
+                    }}
+                    .badge {{
+                    display: inline-block;
+                    margin-left: 0.5rem;
+                    padding: 0.2rem 0.5rem;
+                    font-size: 0.75rem;
+                    font-weight: 600;
+                    border-radius: 6px;
+                    background: var(--accent-dim);
+                    color: var(--accent);
+                    }}
+                    .card {{
+                    background: var(--surface);
+                    border: 1px solid var(--border);
+                    border-radius: var(--radius);
+                    overflow: hidden;
+                    box-shadow: 0 4px 24px rgba(0,0,0,0.25);
+                    }}
+                    .leaderboard-wrap {{
+                    overflow-x: auto;
+                    }}
+                    .leaderboard-wrap table {{
+                    width: 100%;
+                    border-collapse: collapse;
+                    font-size: 0.85rem;
+                    table-layout: auto;
+                    }}
+                    .leaderboard-wrap th {{
+                    text-align: left;
+                    padding: 0.5rem 0.5rem;
+                    background: var(--surface-hover);
+                    color: var(--text-muted);
+                    font-weight: 600;
+                    font-size: 0.7rem;
+                    text-transform: uppercase;
+                    letter-spacing: 0.03em;
+                    border-bottom: 1px solid var(--border);
+                    line-height: 1.25;
+                    }}
+                    .leaderboard-wrap td {{
+                    padding: 0.5rem 0.5rem;
+                    border-bottom: 1px solid var(--border);
+                    }}
+                    .leaderboard-wrap th,
+                    .leaderboard-wrap td {{
+                    overflow-wrap: break-word;
+                    word-break: break-word;
+                    }}
+                    .leaderboard-wrap tr:last-child td {{
+                    border-bottom: none;
+                    }}
+                    .leaderboard-wrap tbody tr:hover {{
+                    background: var(--surface-hover);
+                    }}
+                    .leaderboard-wrap tbody tr.rank-1 {{
+                    background: linear-gradient(90deg, rgba(240,180,41,0.12) 0%, transparent 100%);
+                    }}
+                    .leaderboard-wrap tbody tr.rank-1 td:first-child {{
+                    color: var(--gold);
+                    font-weight: 700;
+                    }}
+                    .leaderboard-wrap .metric-cell {{
+                    font-variant-numeric: tabular-nums;
+                    color: var(--success);
+                    }}
+                    .best-model-footer {{
+                    margin-top: 1.5rem;
+                    padding: 1rem 1.25rem;
+                    background: var(--surface-hover);
+                    border-radius: 8px;
+                    font-size: 0.9rem;
+                    color: var(--text-muted);
+                    }}
+                    .best-model-footer strong {{
+                    color: var(--gold);
+                    }}
+                </style>
+                </head>
+                <body>
+                <div class="container">
+                    <header>
+                    <h1>RAG Patterns Leaderboard</h1>
+                    <p class="subtitle">
+                        Ranked by <span class="badge">{metric_label}</span> (best first) · {num_patterns} pattern(s)
+                    </p>
+                    </header>
+                    <div class="card">
+                    <div class="leaderboard-wrap">
+                        <table>
+                {colgroup_html}
+                        <thead>
+                            <tr>{header_row}</tr>
+                        </thead>
+                        <tbody>
+                            {table_body}
+                        </tbody>
+                        </table>
+                    </div>
+                    </div>
+                    <div class="best-model-footer">
+                    Best pattern: <strong>{html.escape(best_pattern_name)}</strong>
+                    </div>
+                </div>
+                </body>
+                </html>
+            """
 
     rag_patterns_dir = Path(rag_patterns)
     if not rag_patterns_dir.is_dir():

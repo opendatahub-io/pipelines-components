@@ -66,6 +66,7 @@ def documents_indexing(
 
     def _create_llama_stack_client(**kwargs) -> LlamaStackClient:
         """Create LlamaStackClient, falling back to SSL-unverified if self-signed cert detected."""
+        logger = logging.getLogger("Document Loader component logger")
         client = LlamaStackClient(**kwargs)
         try:
             client.models.list()
