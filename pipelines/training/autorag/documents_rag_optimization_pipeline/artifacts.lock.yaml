@@ -1,7 +1,7 @@
 ---
 # Hermeto generic fetcher lockfile (https://github.com/hermetoproject/hermeto/blob/main/docs/generic.md).
-# Docling weights are not listed here: layout and docling-models come from Red Hat AI ModelCar images
-# (see Containerfile DOCLING_LAYOUT_MODELCAR / DOCLING_MODELS_MODELCAR; contents under /models).
+# Docling layout weights are not listed here: they come from the Red Hat AI ModelCar image
+# (see Containerfile DOCLING_LAYOUT_MODELCAR; contents under /models).
 # This lockfile pins only the sqlite-autoconf tarball for install_sqlite_from_source.sh.
 metadata:
   version: "1.0"

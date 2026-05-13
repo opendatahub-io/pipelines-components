@@ -4,8 +4,8 @@
 Modes:
   --download    Fetch layout + models from Hugging Face (needs network).
   --hermeto-dir Copy from Hermeto generic output; paths must match lockfile ``filename`` entries.
-                If none match docling-project--*, succeeds when layout + models trees already exist
-                (e.g. both copied from ModelCar; lockfile only prefetched sqlite).
+                If none match docling-project--*, succeeds when the layout tree already exists under
+                --dest (e.g. copied from ModelCar; lockfile only prefetched sqlite).
 
 See https://docling-project.github.io/docling/usage/advanced_options/ and
 https://github.com/hermetoproject/hermeto/blob/main/docs/generic.md
@@ -24,15 +24,14 @@ MODELS_REPO = "docling-project/docling-models"
 MODELS_REV = "v2.3.0"
 
 
-def _artifact_trees_ready(dest: Path) -> bool:
-    """True when both layout and models dirs exist under dest and contain at least one file."""
+def _layout_tree_ready(dest: Path) -> bool:
+    """True when docling-layout-heron dir exists under dest and contains at least one file."""
     layout = dest / LAYOUT_REPO.replace("/", "--")
-    models = dest / MODELS_REPO.replace("/", "--")
 
     def _has_file(root: Path) -> bool:
         return root.is_dir() and any(p.is_file() for p in root.rglob("*"))
 
-    return _has_file(layout) and _has_file(models)
+    return _has_file(layout)
 
 
 def _download(dest: Path) -> None:
@@ -78,14 +77,14 @@ def _from_hermeto(source: Path, dest: Path) -> None:
         shutil.copy2(path, target)
         copied += 1
     if copied == 0:
-        if _artifact_trees_ready(dest):
+        if _layout_tree_ready(dest):
             print(
-                "note: Hermeto dir had no docling-project--* files; using existing trees under --dest",
+                "note: Hermeto dir had no docling-project--* files; using existing layout tree under --dest",
                 file=sys.stderr,
             )
             return
         print(
-            f"error: no docling-project--* files under {source} and incomplete Docling dirs under {dest}",
+            f"error: no docling-project--* files under {source} and layout dir missing or empty under {dest}",
             file=sys.stderr,
         )
         sys.exit(1)
