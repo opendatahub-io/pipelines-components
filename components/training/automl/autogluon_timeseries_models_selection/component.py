@@ -65,6 +65,7 @@ def autogluon_timeseries_models_selection(
     DEFAULT_TIME_LIMIT = 600  # 10 minutes
 
     TOP_N_MAX = 7
+    VALID_PRESETS = {"fast_training", "medium_quality"}
 
     # Input validation
     for param, value in (
@@ -84,6 +85,8 @@ def autogluon_timeseries_models_selection(
         raise TypeError("prediction_length must be an integer.")
     if prediction_length <= 0:
         raise ValueError("prediction_length must be greater than 0.")
+    if preset not in VALID_PRESETS:
+        raise ValueError(f"preset must be one of {VALID_PRESETS}; got {preset!r}.")
     if eval_metric is None:
         eval_metric = "MASE"
 

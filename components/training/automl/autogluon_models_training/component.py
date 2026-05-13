@@ -171,7 +171,7 @@ def autogluon_models_training(
     )
 
     if preset == "good_quality":
-        DEFAULT_TIME_LIMIT = 60 * 60  # 60 minutes - extend time limit for good_quality preset
+        time_limit = 60 * 60  # 60 minutes - extend time limit for good_quality preset
         predictor = _predictor_instance.fit(
             train_data=train_data_df,
             presets=preset,
@@ -181,14 +181,14 @@ def autogluon_models_training(
             set_best_to_refit_full=False,
             # Required so refit_full() can access bag fold models after fit().
             save_bag_folds=True,
-            time_limit=DEFAULT_TIME_LIMIT,
+            time_limit=time_limit,
         )
     else:
         import copy
 
         from autogluon.tabular.configs.hyperparameter_configs import get_hyperparameter_config
 
-        DEFAULT_TIME_LIMIT = 30 * 60  # 30 minutes
+        time_limit = 30 * 60  # 30 minutes
         RF_XT_MAX_DEPTH = 10
         hyperparams = copy.deepcopy(get_hyperparameter_config("default"))
         for model_type in ("RF", "XT"):
@@ -198,7 +198,7 @@ def autogluon_models_training(
             train_data=train_data_df,
             use_bag_holdout=True,
             holdout_frac=0.2,
-            time_limit=DEFAULT_TIME_LIMIT,
+            time_limit=time_limit,
             presets=preset,
             hyperparameters=hyperparams,
         )
@@ -211,7 +211,7 @@ def autogluon_models_training(
     model_config = {
         "preset": preset,
         "eval_metric": eval_metric,
-        "time_limit": DEFAULT_TIME_LIMIT,
+        "time_limit": time_limit,
     }
 
     def retrieve_pipeline_name(name: str) -> str:

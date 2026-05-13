@@ -13,9 +13,8 @@ from ..pipeline import autogluon_tabular_training_pipeline
 
 # Root DAG task IDs from ``root.dag.tasks`` (fresh compile). Update when the graph changes.
 _EXPECTED_ROOT_DAG_TASK_IDS = (
-    "autogluon-models-training",
     "automl-data-loader",
-    "leaderboard-evaluation",
+    "condition-branches-1",
 )
 
 
@@ -52,11 +51,15 @@ class TestAutogluonTabularTrainingPipelineUnitTests:
             "label_column",
             "task_type",
             "top_n",
+            "preset",
+            "eval_metric",
         }
         inputs = autogluon_tabular_training_pipeline.component_spec.inputs
         params = set(inputs.keys())
         assert params == expected_params, f"Pipeline params {params} != expected {expected_params}"
         assert inputs["top_n"].default == 3
+        assert inputs["preset"].default == "medium_quality"
+        assert inputs["eval_metric"].default is None
 
     def test_compiled_pipeline_has_expected_inputs(self):
         """Test that the compiled pipeline YAML contains expected pipeline inputs."""

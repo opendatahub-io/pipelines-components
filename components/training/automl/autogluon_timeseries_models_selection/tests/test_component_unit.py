@@ -244,6 +244,20 @@ class TestTimeseriesModelsSelectionUnitTests:
 
     # ── preset / eval_metric parameters ───────────────────────────────────────
 
+    def test_rejects_invalid_preset(self):
+        """Reject unknown ``preset`` value before any IO occurs."""
+        with pytest.raises(ValueError, match="preset must be one of"):
+            autogluon_timeseries_models_selection.python_func(
+                target="sales",
+                id_column="item_id",
+                timestamp_column="timestamp",
+                train_data_path="/tmp/train.csv",
+                test_data=mock.MagicMock(path="/tmp/test.csv"),
+                top_n=1,
+                workspace_path="/tmp/workspace",
+                preset="best_quality",
+            )
+
     @mock.patch("pandas.read_csv")
     @mock.patch("autogluon.timeseries.TimeSeriesDataFrame")
     @mock.patch("autogluon.timeseries.TimeSeriesPredictor")
