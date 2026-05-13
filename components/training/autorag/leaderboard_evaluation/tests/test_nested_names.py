@@ -310,7 +310,7 @@ class TestNormalizeFlatSettings:
         assert result["embeddings"]["model_id"] == "first"
 
     def test_flat_embedding_model(self):
-        """embedding is dict with model_id vs flat embedding_model string."""
+        """Embedding is dict with model_id vs flat embedding_model string."""
         settings = {"embedding": {"model_id": "nested"}, "embedding_model": "flat"}
         result = _normalize_flat_settings(settings)
         # Nested should win
@@ -323,7 +323,7 @@ class TestNormalizeFlatSettings:
         assert result["embeddings"]["model_id"] == "flat-model"
 
     def test_flat_foundation_model(self):
-        """generation is dict with model_id vs flat foundation_model string."""
+        """Generation is dict with model_id vs flat foundation_model string."""
         settings = {"generation": {"model_id": "nested"}, "foundation_model": "flat"}
         result = _normalize_flat_settings(settings)
         # Nested should win

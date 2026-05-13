@@ -1,7 +1,6 @@
 """Unit tests for nested helper functions from text_extraction component."""
 
 import os
-import sys
 from pathlib import Path
 from unittest import mock
 
@@ -159,9 +158,7 @@ class TestDownloadDocument:
 
         expected_path = tmp_path / "path/to/file.pdf"
         assert result == expected_path
-        mock_client.download_file.assert_called_once_with(
-            "test-bucket", "path/to/file.pdf", str(expected_path)
-        )
+        mock_client.download_file.assert_called_once_with("test-bucket", "path/to/file.pdf", str(expected_path))
 
     @mock.patch("components.data_processing.autorag.text_extraction.tests.nested_names.make_s3_client")
     def test_s3_key_with_whitespace_sanitized(self, mock_make_s3_client, s3_creds, tmp_path):
@@ -175,9 +172,7 @@ class TestDownloadDocument:
 
         expected_path = tmp_path / "path/to/file.pdf"
         assert result == expected_path
-        mock_client.download_file.assert_called_once_with(
-            "test-bucket", "  path/to/file.pdf  ", str(expected_path)
-        )
+        mock_client.download_file.assert_called_once_with("test-bucket", "  path/to/file.pdf  ", str(expected_path))
 
     @mock.patch("components.data_processing.autorag.text_extraction.tests.nested_names.make_s3_client")
     def test_s3_key_with_leading_slashes_sanitized(self, mock_make_s3_client, s3_creds, tmp_path):
@@ -254,9 +249,7 @@ class TestDownloadDocument:
     def test_non_ssl_error_propagates_without_retry(self, mock_make_s3_client, s3_creds, tmp_path):
         """Non-SSL error is re-raised without retry."""
         mock_client = mock.MagicMock()
-        mock_client.download_file.side_effect = ClientError(
-            {"Error": {"Code": "404"}}, "GetObject"
-        )
+        mock_client.download_file.side_effect = ClientError({"Error": {"Code": "404"}}, "GetObject")
         mock_make_s3_client.return_value = mock_client
 
         doc = {"key": "file.pdf"}
@@ -455,9 +448,7 @@ class TestTextExtractionPoolInitializer:
     @mock.patch("components.data_processing.autorag.text_extraction.tests.nested_names._docling_artifacts_path")
     @mock.patch("docling.document_converter.DocumentConverter")
     @mock.patch.dict("os.environ", {}, clear=True)
-    def test_sets_hf_hub_offline_when_artifacts_path_exists(
-        self, mock_converter, mock_artifacts_path, tmp_path
-    ):
+    def test_sets_hf_hub_offline_when_artifacts_path_exists(self, mock_converter, mock_artifacts_path, tmp_path):
         """Sets HF_HUB_OFFLINE=1 when artifacts path exists."""
         artifacts_dir = tmp_path / "artifacts"
         artifacts_dir.mkdir()
@@ -470,9 +461,7 @@ class TestTextExtractionPoolInitializer:
     @mock.patch("components.data_processing.autorag.text_extraction.tests.nested_names._docling_artifacts_path")
     @mock.patch("docling.document_converter.DocumentConverter")
     @mock.patch.dict("os.environ", {}, clear=True)
-    def test_does_not_set_hf_hub_offline_when_artifacts_path_none(
-        self, mock_converter, mock_artifacts_path
-    ):
+    def test_does_not_set_hf_hub_offline_when_artifacts_path_none(self, mock_converter, mock_artifacts_path):
         """Does not set HF_HUB_OFFLINE when artifacts path is None."""
         mock_artifacts_path.return_value = None
 
@@ -524,9 +513,7 @@ class TestTextExtractionPoolInitializer:
         # Verify has at least one handler
         assert len(logger.handlers) > 0
         # Check if any handler is StreamHandler (might have multiple from multiple test runs)
-        has_stream_handler = any(
-            isinstance(h, logging.StreamHandler) for h in logger.handlers
-        )
+        has_stream_handler = any(isinstance(h, logging.StreamHandler) for h in logger.handlers)
         assert has_stream_handler
 
 
@@ -705,9 +692,7 @@ class TestDownloadAndSubmit:
 
     @mock.patch("components.data_processing.autorag.text_extraction.tests.nested_names.as_completed")
     @mock.patch("components.data_processing.autorag.text_extraction.tests.nested_names.ThreadPoolExecutor")
-    def test_filters_unsupported_file_extensions(
-        self, mock_executor_class, mock_as_completed, s3_creds, tmp_path
-    ):
+    def test_filters_unsupported_file_extensions(self, mock_executor_class, mock_as_completed, s3_creds, tmp_path):
         """Filters unsupported file extensions before downloading."""
         docs = [
             {"key": "file1.pdf"},
@@ -716,7 +701,7 @@ class TestDownloadAndSubmit:
             {"key": "file4.exe"},  # unsupported
         ]
 
-        mock_pool = mock.MagicMock()
+        _ = mock.MagicMock()
         mock_process_pool = mock.MagicMock()
 
         # Mock ThreadPoolExecutor context manager
@@ -727,6 +712,7 @@ class TestDownloadAndSubmit:
 
         # Mock submit to return completed futures
         futures = []
+
         def mock_submit(fn, *args):
             future = mock.MagicMock()
             file_path = tmp_path / args[2]["key"]  # doc arg
@@ -742,9 +728,7 @@ class TestDownloadAndSubmit:
         # Mock as_completed to return futures immediately
         mock_as_completed.return_value = futures
 
-        tasks, errors = download_and_submit(
-            s3_creds, "bucket", docs, tmp_path, mock_process_pool, tmp_path
-        )
+        tasks, errors = download_and_submit(s3_creds, "bucket", docs, tmp_path, mock_process_pool, tmp_path)
 
         # Verify only supported files submitted for download (pdf, docx)
         assert mock_executor.submit.call_count == 2
@@ -779,15 +763,13 @@ class TestDownloadAndSubmit:
             future.result.return_value = file_path
             futures.append(future)
 
-        future_to_doc = {futures[i]: docs[i] for i in range(len(docs))}
+        _ = {futures[i]: docs[i] for i in range(len(docs))}
         mock_executor.submit.side_effect = futures
         mock_as_completed.return_value = futures
 
         mock_process_pool = mock.MagicMock()
 
-        tasks, errors = download_and_submit(
-            s3_creds, "bucket", docs, tmp_path, mock_process_pool, tmp_path
-        )
+        tasks, errors = download_and_submit(s3_creds, "bucket", docs, tmp_path, mock_process_pool, tmp_path)
 
         # Verify ThreadPoolExecutor created with max_workers=8
         mock_executor_class.assert_called_once_with(max_workers=8)
@@ -834,9 +816,7 @@ class TestDownloadAndSubmit:
 
         mock_process_pool = mock.MagicMock()
 
-        tasks, errors = download_and_submit(
-            s3_creds, "bucket", docs, tmp_path, mock_process_pool, tmp_path
-        )
+        tasks, errors = download_and_submit(s3_creds, "bucket", docs, tmp_path, mock_process_pool, tmp_path)
 
         # Verify largest file submitted first
         assert len(tasks) == 3
@@ -875,9 +855,7 @@ class TestDownloadAndSubmit:
 
         mock_process_pool = mock.MagicMock()
 
-        tasks, errors = download_and_submit(
-            s3_creds, "bucket", docs, tmp_path, mock_process_pool, tmp_path
-        )
+        tasks, errors = download_and_submit(s3_creds, "bucket", docs, tmp_path, mock_process_pool, tmp_path)
 
         # Verify error tracked
         assert len(errors) == 1
@@ -915,9 +893,7 @@ class TestDownloadAndSubmit:
         out_dir = tmp_path / "output"
         out_dir.mkdir()
 
-        tasks, errors = download_and_submit(
-            s3_creds, "bucket", docs, tmp_path, mock_process_pool, out_dir
-        )
+        tasks, errors = download_and_submit(s3_creds, "bucket", docs, tmp_path, mock_process_pool, out_dir)
 
         # Verify apply_async called with worker_process_document
         mock_process_pool.apply_async.assert_called_once()
@@ -955,9 +931,7 @@ class TestDownloadAndSubmit:
         mock_async_result = mock.MagicMock()
         mock_process_pool.apply_async.return_value = mock_async_result
 
-        tasks, errors = download_and_submit(
-            s3_creds, "bucket", docs, tmp_path, mock_process_pool, tmp_path
-        )
+        tasks, errors = download_and_submit(s3_creds, "bucket", docs, tmp_path, mock_process_pool, tmp_path)
 
         # Verify return structure
         assert isinstance(tasks, list)
@@ -999,9 +973,7 @@ class TestDownloadAndSubmit:
         mock_process_pool = mock.MagicMock()
 
         with caplog.at_level("WARNING"):
-            tasks, errors = download_and_submit(
-                s3_creds, "bucket", docs, tmp_path, mock_process_pool, tmp_path
-            )
+            tasks, errors = download_and_submit(s3_creds, "bucket", docs, tmp_path, mock_process_pool, tmp_path)
 
         # Verify warning logged
         assert any("Skipping" in record.message for record in caplog.records)
@@ -1024,9 +996,7 @@ class TestDownloadAndSubmit:
 
         mock_process_pool = mock.MagicMock()
 
-        tasks, errors = download_and_submit(
-            s3_creds, "bucket", docs, tmp_path, mock_process_pool, tmp_path
-        )
+        tasks, errors = download_and_submit(s3_creds, "bucket", docs, tmp_path, mock_process_pool, tmp_path)
 
         assert tasks == []
         assert errors == []
@@ -1049,27 +1019,21 @@ class TestRaiseIfThresholdExceeded:
 
     def test_raises_when_errors_exceed_tolerance_threshold(self):
         """Raises when errors exceed tolerance threshold."""
-        error_details = [
-            {"file": f"file{i}.pdf", "traceback": f"Error {i}"} for i in range(11)
-        ]
+        error_details = [{"file": f"file{i}.pdf", "traceback": f"Error {i}"} for i in range(11)]
 
         with pytest.raises(RuntimeError, match="11/100 document\\(s\\) failed"):
             raise_if_threshold_exceeded(error_details, total_docs=100, tolerance=0.1)
 
     def test_does_not_raise_when_errors_equal_tolerance_threshold(self):
         """Does not raise when errors equal tolerance threshold."""
-        error_details = [
-            {"file": f"file{i}.pdf", "traceback": f"Error {i}"} for i in range(10)
-        ]
+        error_details = [{"file": f"file{i}.pdf", "traceback": f"Error {i}"} for i in range(10)]
 
         # Should not raise (10 == 10% of 100)
         raise_if_threshold_exceeded(error_details, total_docs=100, tolerance=0.1)
 
     def test_does_not_raise_when_errors_below_tolerance_threshold(self):
         """Does not raise when errors below tolerance threshold."""
-        error_details = [
-            {"file": f"file{i}.pdf", "traceback": f"Error {i}"} for i in range(5)
-        ]
+        error_details = [{"file": f"file{i}.pdf", "traceback": f"Error {i}"} for i in range(5)]
 
         # Should not raise (5 < 10% of 50 = 10)
         raise_if_threshold_exceeded(error_details, total_docs=50, tolerance=0.2)
@@ -1119,10 +1083,7 @@ class TestRaiseIfThresholdExceeded:
 
     def test_shows_all_errors_when_fewer_than_10(self):
         """Shows all errors when fewer than 10 errors."""
-        error_details = [
-            {"file": f"file{i}.pdf", "traceback": f"Error traceback {i}"}
-            for i in range(3)
-        ]
+        error_details = [{"file": f"file{i}.pdf", "traceback": f"Error traceback {i}"} for i in range(3)]
 
         with pytest.raises(RuntimeError) as exc_info:
             raise_if_threshold_exceeded(error_details, total_docs=10, tolerance=0.1)

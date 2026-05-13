@@ -44,11 +44,11 @@ def text_extraction(
     from concurrent.futures import ThreadPoolExecutor, as_completed
     from multiprocessing.pool import AsyncResult
     from pathlib import Path
+    from typing import Optional
 
     import boto3
     import multiprocess as multiprocessing
     from botocore.exceptions import SSLError
-    from typing import Optional
 
     DOCUMENTS_DESCRIPTOR_FILENAME = "documents_descriptor.json"
     DOWNLOAD_MAX_THREADS = 8

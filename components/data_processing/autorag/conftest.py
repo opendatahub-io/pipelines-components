@@ -9,7 +9,8 @@ def pytest_collection(session):
     """Wraps pytest_collection hook with custom logic to be done beforehand.
 
     In order to properly collect unit tests for functions nested within kfp.component-wrapped functions,
-    these nested functions have to be dynamically extracted to a separate file (so that they can be imported in respective unit tests).
+    these nested functions have to be dynamically extracted to a separate file
+    (so that they can be imported in respective unit tests).
 
     Notes:
         This hook only executes for "initial" conftest files so the `component/training/autorag` path
@@ -29,9 +30,6 @@ def pytest_collection(session):
 
         # If the outcome is an exception, will raise the exception.
     return (yield)
-
-
-import pdb
 
 
 def pytest_addoption(parser, pluginmanager):

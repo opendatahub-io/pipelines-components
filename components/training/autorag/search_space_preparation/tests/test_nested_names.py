@@ -7,7 +7,6 @@ from unittest.mock import MagicMock, Mock, patch
 
 import httpx
 import pytest
-
 from kfp_components.components.training.autorag.search_space_preparation.tests.nested_names import (
     _create_llama_stack_client,
     _create_openai_client,
@@ -251,7 +250,9 @@ class TestCreateLlamaStackClient:
 class TestGetModelMetadataFrom:
     """Tests for _get_model_metadata_from function."""
 
-    @patch("kfp_components.components.training.autorag.search_space_preparation.tests.nested_names._create_openai_client")
+    @patch(
+        "kfp_components.components.training.autorag.search_space_preparation.tests.nested_names._create_openai_client"
+    )
     def test_successful_metadata_retrieval_with_complete_data(self, mock_create_client):
         """Test successful metadata retrieval with id and max_model_len."""
         mock_client = MagicMock()
@@ -267,7 +268,9 @@ class TestGetModelMetadataFrom:
         assert result["max_model_len"] == 8192
         mock_create_client.assert_called_once_with(api_key="token123", base_url="https://api.example.com")
 
-    @patch("kfp_components.components.training.autorag.search_space_preparation.tests.nested_names._create_openai_client")
+    @patch(
+        "kfp_components.components.training.autorag.search_space_preparation.tests.nested_names._create_openai_client"
+    )
     def test_successful_metadata_retrieval_without_max_model_len(self, mock_create_client):
         """Test successful metadata retrieval with only id."""
         mock_client = MagicMock()
@@ -283,7 +286,9 @@ class TestGetModelMetadataFrom:
         assert result["id"] == "gpt-3.5-turbo"
         assert result["max_model_len"] == 0
 
-    @patch("kfp_components.components.training.autorag.search_space_preparation.tests.nested_names._create_openai_client")
+    @patch(
+        "kfp_components.components.training.autorag.search_space_preparation.tests.nested_names._create_openai_client"
+    )
     def test_empty_model_list_raises_value_error(self, mock_create_client):
         """Test empty model list raises ValueError."""
         mock_client = MagicMock()
@@ -293,7 +298,9 @@ class TestGetModelMetadataFrom:
         with pytest.raises(ValueError, match="Could not retrieve all the required model metadata"):
             _get_model_metadata_from("https://api.example.com", "token123")
 
-    @patch("kfp_components.components.training.autorag.search_space_preparation.tests.nested_names._create_openai_client")
+    @patch(
+        "kfp_components.components.training.autorag.search_space_preparation.tests.nested_names._create_openai_client"
+    )
     def test_model_with_empty_id_raises_value_error(self, mock_create_client):
         """Test model with empty string id raises ValueError."""
         mock_client = MagicMock()
@@ -306,7 +313,9 @@ class TestGetModelMetadataFrom:
         with pytest.raises(ValueError, match="Could not retrieve all the required model metadata"):
             _get_model_metadata_from("https://api.example.com", "token123")
 
-    @patch("kfp_components.components.training.autorag.search_space_preparation.tests.nested_names._create_openai_client")
+    @patch(
+        "kfp_components.components.training.autorag.search_space_preparation.tests.nested_names._create_openai_client"
+    )
     def test_error_message_includes_url(self, mock_create_client):
         """Test that ValueError message includes the URL."""
         mock_client = MagicMock()
@@ -369,7 +378,9 @@ class TestLoadAsLangchainDoc:
 class TestPrepareAi4ragSearchSpace:
     """Tests for prepare_ai4rag_search_space function."""
 
-    @patch("kfp_components.components.training.autorag.search_space_preparation.tests.nested_names._get_model_metadata_from")
+    @patch(
+        "kfp_components.components.training.autorag.search_space_preparation.tests.nested_names._get_model_metadata_from"
+    )
     def test_in_memory_scenario_with_complete_metadata(self, mock_get_metadata):
         """Test in-memory scenario with complete model metadata."""
         from kfp_components.components.training.autorag.search_space_preparation.tests import nested_names
@@ -400,7 +411,7 @@ class TestPrepareAi4ragSearchSpace:
             {"id": "text-embedding-ada-002", "max_model_len": 8191},
         ]
 
-        result = prepare_ai4rag_search_space()
+        _ = prepare_ai4rag_search_space()
 
         # Verify _get_model_metadata_from called correctly
         assert mock_get_metadata.call_count == 2
@@ -426,7 +437,9 @@ class TestPrepareAi4ragSearchSpace:
         call_kwargs = nested_names.AI4RAGSearchSpace.call_args[1]
         assert call_kwargs["vector_store_type"] == "chroma"
 
-    @patch("kfp_components.components.training.autorag.search_space_preparation.tests.nested_names._get_model_metadata_from")
+    @patch(
+        "kfp_components.components.training.autorag.search_space_preparation.tests.nested_names._get_model_metadata_from"
+    )
     def test_in_memory_scenario_without_max_model_len(self, mock_get_metadata):
         """Test in-memory scenario when max_model_len is 0."""
         from kfp_components.components.training.autorag.search_space_preparation.tests import nested_names
@@ -587,7 +600,7 @@ class TestRepresentModelInstance:
         mock_dumper = Mock()
         mock_dumper.represent_mapping.return_value = "yaml_node"
 
-        result = represent_model_instance(mock_dumper, mock_model)
+        _ = represent_model_instance(mock_dumper, mock_model)
 
         # Verify represent_mapping called with correct structure
         mock_dumper.represent_mapping.assert_called_once()

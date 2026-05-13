@@ -7,10 +7,9 @@ from unittest.mock import MagicMock, Mock, patch
 
 import httpx
 import pytest
-
 from kfp_components.components.training.autorag.rag_templates_optimization.tests.nested_names import (
-    NotebookCell,
     Notebook,
+    NotebookCell,
     TmpEventHandler,
     _build_pattern_json,
     _create_llama_stack_client,
@@ -93,8 +92,9 @@ class TestCreateOpenAIClient:
     def test_ssl_verification_error_fallback(self, mock_httpx_client, mock_openai_class):
         """Test fallback to unverified client on SSLCertVerificationError."""
         # Add missing module variables
-        from kfp_components.components.training.autorag.rag_templates_optimization.tests import nested_names
         import logging
+
+        from kfp_components.components.training.autorag.rag_templates_optimization.tests import nested_names
 
         nested_names._ssl_logger = logging.getLogger("test")
 
@@ -118,8 +118,9 @@ class TestCreateOpenAIClient:
     def test_httpx_connect_error_fallback(self, mock_httpx_client, mock_openai_class):
         """Test fallback to unverified client on httpx.ConnectError with SSL."""
         # Add missing module variables
-        from kfp_components.components.training.autorag.rag_templates_optimization.tests import nested_names
         import logging
+
+        from kfp_components.components.training.autorag.rag_templates_optimization.tests import nested_names
 
         nested_names._ssl_logger = logging.getLogger("test")
 
@@ -169,8 +170,9 @@ class TestCreateLlamaStackClient:
     def test_ssl_error_fallback(self, mock_httpx_client, mock_client_class):
         """Test fallback to unverified client on SSL error."""
         # Add missing module variables
-        from kfp_components.components.training.autorag.rag_templates_optimization.tests import nested_names
         import logging
+
+        from kfp_components.components.training.autorag.rag_templates_optimization.tests import nested_names
 
         nested_names._ssl_logger = logging.getLogger("test")
         nested_names._ls_ssl_verify = [True]
@@ -293,7 +295,7 @@ class TestNotebookCell:
     def test_format_source_list_missing_placeholder(self):
         """Test list source with missing placeholders."""
         cell = NotebookCell(cell_type="code", source=["Hello {name}\n"])
-        result = cell.format_source({})
+        _ = cell.format_source({})
 
         assert cell.source == ["Hello \n"]
 
@@ -684,10 +686,7 @@ class TestConstructModelInstance:
         mock_node = Mock()
 
         # Mock the mapping that would be constructed from YAML
-        mapping = {
-            "type_": "embedding",
-            "text-embedding-ada-002": {"embedding_dimension": 768}
-        }
+        mapping = {"type_": "embedding", "text-embedding-ada-002": {"embedding_dimension": 768}}
         mock_loader.construct_mapping.return_value = mapping
 
         # Setup module globals
@@ -704,9 +703,7 @@ class TestConstructModelInstance:
 
         assert result == mock_model
         nested_names.OpenAIEmbeddingModel.assert_called_once_with(
-            client=mock_client.embedding_model,
-            model_id="text-embedding-ada-002",
-            params={"embedding_dimension": 768}
+            client=mock_client.embedding_model, model_id="text-embedding-ada-002", params={"embedding_dimension": 768}
         )
 
     def test_embedding_model_llama_stack_scenario(self):
@@ -717,10 +714,7 @@ class TestConstructModelInstance:
         mock_loader = Mock()
         mock_node = Mock()
 
-        mapping = {
-            "type_": "embedding",
-            "llama-embed-v1": {"embedding_dimension": 1024}
-        }
+        mapping = {"type_": "embedding", "llama-embed-v1": {"embedding_dimension": 1024}}
         mock_loader.construct_mapping.return_value = mapping
 
         # Setup module globals
@@ -737,9 +731,7 @@ class TestConstructModelInstance:
 
         assert result == mock_model
         nested_names.LSEmbeddingModel.assert_called_once_with(
-            client=mock_client.llama_stack,
-            model_id="llama-embed-v1",
-            params={"embedding_dimension": 1024}
+            client=mock_client.llama_stack, model_id="llama-embed-v1", params={"embedding_dimension": 1024}
         )
 
     def test_generation_model_in_memory_scenario(self):
@@ -750,10 +742,7 @@ class TestConstructModelInstance:
         mock_loader = Mock()
         mock_node = Mock()
 
-        mapping = {
-            "type_": "generation",
-            "gpt-4": {"temperature": 0.7, "max_tokens": 100}
-        }
+        mapping = {"type_": "generation", "gpt-4": {"temperature": 0.7, "max_tokens": 100}}
         mock_loader.construct_mapping.return_value = mapping
 
         # Setup module globals
@@ -770,9 +759,7 @@ class TestConstructModelInstance:
 
         assert result == mock_model
         nested_names.OpenAIFoundationModel.assert_called_once_with(
-            client=mock_client.generation_model,
-            model_id="gpt-4",
-            params={"temperature": 0.7, "max_tokens": 100}
+            client=mock_client.generation_model, model_id="gpt-4", params={"temperature": 0.7, "max_tokens": 100}
         )
 
     def test_generation_model_llama_stack_scenario(self):
@@ -783,10 +770,7 @@ class TestConstructModelInstance:
         mock_loader = Mock()
         mock_node = Mock()
 
-        mapping = {
-            "type_": "generation",
-            "llama-3-70b": {"temperature": 0.5}
-        }
+        mapping = {"type_": "generation", "llama-3-70b": {"temperature": 0.5}}
         mock_loader.construct_mapping.return_value = mapping
 
         # Setup module globals
@@ -803,9 +787,7 @@ class TestConstructModelInstance:
 
         assert result == mock_model
         nested_names.LSFoundationModel.assert_called_once_with(
-            client=mock_client.llama_stack,
-            model_id="llama-3-70b",
-            params={"temperature": 0.5}
+            client=mock_client.llama_stack, model_id="llama-3-70b", params={"temperature": 0.5}
         )
 
     def test_invalid_mapping_raises_value_error(self):
@@ -817,10 +799,7 @@ class TestConstructModelInstance:
         mock_node = Mock()
 
         # Invalid mapping without type_
-        mapping = {
-            "model_id": "some-model",
-            "params": {}
-        }
+        mapping = {"model_id": "some-model", "params": {}}
         mock_loader.construct_mapping.return_value = mapping
 
         with pytest.raises(ValueError, match="Cannot load the yml-serialized !Model tag"):
@@ -834,10 +813,7 @@ class TestConstructModelInstance:
         mock_loader = Mock()
         mock_node = Mock()
 
-        mapping = {
-            "type_": "embedding",
-            "test-model": {"param": "value"}
-        }
+        mapping = {"type_": "embedding", "test-model": {"param": "value"}}
         mock_loader.construct_mapping.return_value = mapping
 
         # Setup module globals
