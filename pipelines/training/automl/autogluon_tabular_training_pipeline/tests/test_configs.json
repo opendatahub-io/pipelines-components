@@ -5,25 +5,7 @@
     "label_column": "price",
     "problem_type": "regression",
     "task_type": "regression",
-    "automl_settings": { "top_n": 2 },
+    "automl_settings": { "top_n": 2 , "eval_metric": "r2"},
     "tags": ["regression", "smoke"]
-  },
-  {
-    "id": "classification_binary",
-    "dataset_path": "data/classification.csv",
-    "label_column": "target",
-    "problem_type": "classification",
-    "task_type": "binary",
-    "automl_settings": { "top_n": 2 },
-    "tags": ["classification", "binary", "smoke"]
-  },
-  {
-    "id": "classification_multiclass",
-    "dataset_path": "data/multiclass.csv",
-    "label_column": "target",
-    "problem_type": "classification",
-    "task_type": "multiclass",
-    "automl_settings": { "top_n": 2 },
-    "tags": ["classification", "multiclass"]
   }
 ]

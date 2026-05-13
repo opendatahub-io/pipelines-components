@@ -18,7 +18,7 @@ def autogluon_timeseries_models_selection(
     prediction_length: int = 1,
     known_covariates_names: Optional[List[str]] = None,
     preset: str = "fast_training",
-    eval_metric: str = "MASE",
+    eval_metric: Optional[str] = None,
 ) -> NamedTuple(
     "outputs",
     top_models=List[str],
@@ -49,6 +49,7 @@ def autogluon_timeseries_models_selection(
         known_covariates_names: Optional list of known covariate column names.
         preset: AutoGluon quality tier (e.g. ``"fast_training"``, ``"medium_quality"``).
         eval_metric: Metric for model ranking in acronym or snake_case form (e.g. ``"MASE"``).
+            Defaults to ``"MASE"`` when ``None``.
 
     Returns:
         NamedTuple: top_models list, predictor_path, eval_metric_name, model_config.
@@ -83,6 +84,9 @@ def autogluon_timeseries_models_selection(
         raise TypeError("prediction_length must be an integer.")
     if prediction_length <= 0:
         raise ValueError("prediction_length must be greater than 0.")
+    if eval_metric is None:
+        eval_metric = "MASE"
+
     if known_covariates_names is not None:
         if not isinstance(known_covariates_names, list) or any(
             (not isinstance(v, str) or not v.strip()) for v in known_covariates_names

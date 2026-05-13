@@ -54,8 +54,8 @@ The pipeline leverages AutoGluon's unique ensembling strategy that combines mult
 | `label_column` | `str` | `None` | Name of the target/label column in the dataset. |
 | `task_type` | `str` | `None` | "binary", "multiclass", or "regression"; drives metrics and model types. |
 | `top_n` | `int` | `3` | Number of top models to select and refit (default: 3); positive integer from range [1, 10]. |
-| `preset` | `str` | `medium_quality` | AutoGluon quality tier (default: "medium_quality", 4 vCPU / 16 GiB). "good_quality" trains stronger models at higher resource cost (8 vCPU / 32 GiB). |
-| `eval_metric` | `Optional[str]` | `None` | Metric used for model ranking. When None, AutoGluon's task-type default applies ("accuracy" for classification, "root_mean_squared_error" for regression). |
+| `preset` | `str` | `medium_quality` | AutoGluon quality tier (default: ``"medium_quality"``, 4 vCPU / 16 GiB). ``"good_quality"`` trains stronger models at higher resource cost (5 vCPU / 16 GiB). |
+| `eval_metric` | `Optional[str]` | `None` | Metric used for model ranking. When None, AutoGluon's task-type default applies ("accuracy" for classification, "r2" for regression). |
 
 ## Metadata 🗂️
 

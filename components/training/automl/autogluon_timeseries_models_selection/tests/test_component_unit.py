@@ -305,6 +305,35 @@ class TestTimeseriesModelsSelectionUnitTests:
     @mock.patch("pandas.read_csv")
     @mock.patch("autogluon.timeseries.TimeSeriesDataFrame")
     @mock.patch("autogluon.timeseries.TimeSeriesPredictor")
+    def test_eval_metric_none_resolves_to_mase(self, mock_predictor_cls, mock_ts_df_cls, mock_read_csv):
+        """eval_metric=None resolves to 'MASE' and is forwarded to predictor and model_config."""
+        mock_predictor = mock.MagicMock()
+        mock_predictor.leaderboard.return_value = _mock_leaderboard(["DeepAR"])
+        mock_predictor_cls.return_value = mock_predictor
+        mock_ts_df_cls.from_data_frame.side_effect = [_mock_ts_df(), _mock_ts_df()]
+        mock_read_csv.side_effect = [mock.MagicMock(), mock.MagicMock()]
+        test_data = mock.MagicMock()
+        test_data.path = "/tmp/test.csv"
+
+        result = autogluon_timeseries_models_selection.python_func(
+            target="sales",
+            id_column="item_id",
+            timestamp_column="timestamp",
+            train_data_path="/tmp/train.csv",
+            test_data=test_data,
+            top_n=1,
+            workspace_path="/tmp/workspace",
+            eval_metric=None,
+        )
+
+        ctor_kwargs = mock_predictor_cls.call_args[1]
+        assert ctor_kwargs["eval_metric"] == "MASE"
+        assert result.eval_metric_name == "MASE"
+        assert result.model_config["eval_metric"] == "MASE"
+
+    @mock.patch("pandas.read_csv")
+    @mock.patch("autogluon.timeseries.TimeSeriesDataFrame")
+    @mock.patch("autogluon.timeseries.TimeSeriesPredictor")
     def test_eval_metric_passes_through_unchanged(self, mock_predictor_cls, mock_ts_df_cls, mock_read_csv):
         """eval_metric is forwarded as-is to AutoGluon (no normalization); AutoGluon handles both forms."""
         cases = ["MASE", "WQL", "MAE", "RMSE", "mean_absolute_scaled_error"]

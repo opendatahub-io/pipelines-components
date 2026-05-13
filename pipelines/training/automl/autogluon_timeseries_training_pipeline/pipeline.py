@@ -107,7 +107,7 @@ def autogluon_timeseries_training_pipeline(
             adds TemporalFusionTransformer at higher resource cost (8 vCPU / 32 GiB);
             Chronos2/Toto are excluded regardless.
         eval_metric: Metric for model ranking in acronym (e.g. ``"MASE"``, ``"WQL"``) or
-            snake_case form. Normalized to snake_case internally (default: ``"MASE"``).
+            snake_case form. Defaults to ``"MASE"``.
 
     Returns:
         This pipeline wires task outputs between components; compiled runs expose artifacts from the
@@ -160,9 +160,7 @@ def autogluon_timeseries_training_pipeline(
         optional=True,
     )
 
-    # Stage 2: Model Selection
-    # Train multiple models on selection data and select top N performers
-    selection_task = autogluon_timeseries_models_selection(
+    _selection_kwargs = dict(
         target=target,
         id_column=id_column,
         timestamp_column=timestamp_column,
@@ -175,35 +173,79 @@ def autogluon_timeseries_training_pipeline(
         preset=preset,
         eval_metric=eval_metric,
     )
-    selection_task.set_caching_options(False)
-    selection_task.set_cpu_request("4").set_memory_request("16Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(MAX_MEMORY)
-
-    # Stage 3: Model Refitting (parallelism=1: RWO workspace allows only one pod on the volume at a time).
-    with dsl.ParallelFor(items=selection_task.outputs["top_models"], parallelism=1) as model_name:
-        refit_task = autogluon_timeseries_models_full_refit(
-            model_name=model_name,
-            test_dataset=data_loader_task.outputs["sampled_test_dataset"],
-            predictor_path=selection_task.outputs["predictor_path"],
-            sampling_config=data_loader_task.outputs["sample_config"],
-            split_config=data_loader_task.outputs["split_config"],
-            model_config=selection_task.outputs["model_config"],
-            pipeline_name=dsl.PIPELINE_JOB_RESOURCE_NAME_PLACEHOLDER,
-            run_id=dsl.PIPELINE_JOB_ID_PLACEHOLDER,
-            models_selection_train_data_path=data_loader_task.outputs["models_selection_train_data_path"],
-            extra_train_data_path=data_loader_task.outputs["extra_train_data_path"],
-            sample_rows=data_loader_task.outputs["sample_rows"],
-        )
-        refit_task.set_caching_options(False)
-        refit_task.set_cpu_request("2").set_memory_request("8Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(MAX_MEMORY)
-
-    # Stage 4: Leaderboard Evaluation
-    # Generate leaderboard from all refitted models
-    leaderboard_task = timeseries_leaderboard_evaluation(
-        models=dsl.Collected(refit_task.outputs["model_artifact"]),
-        eval_metric=selection_task.outputs["eval_metric_name"],
+    _refit_base_kwargs = dict(
+        test_dataset=data_loader_task.outputs["sampled_test_dataset"],
+        sampling_config=data_loader_task.outputs["sample_config"],
+        split_config=data_loader_task.outputs["split_config"],
+        pipeline_name=dsl.PIPELINE_JOB_RESOURCE_NAME_PLACEHOLDER,
+        run_id=dsl.PIPELINE_JOB_ID_PLACEHOLDER,
+        models_selection_train_data_path=data_loader_task.outputs["models_selection_train_data_path"],
+        extra_train_data_path=data_loader_task.outputs["extra_train_data_path"],
+        sample_rows=data_loader_task.outputs["sample_rows"],
     )
-    leaderboard_task.set_caching_options(False)
-    leaderboard_task.set_cpu_request("1").set_memory_request("4Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(MAX_MEMORY)
+    # TODO: when possible, the leaderboard evaluation task should be outside the if/else block
+    with dsl.If(preset == "medium_quality"):
+        # Stage 2: Model Selection
+        selection_task_mq = autogluon_timeseries_models_selection(**_selection_kwargs)
+        selection_task_mq.set_caching_options(False)
+        # TODO: change to the planned size
+        selection_task_mq.set_cpu_request("2").set_memory_request("8Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(
+            MAX_MEMORY
+        )
+
+        # Stage 3: Model Refitting (parallelism=1: RWO workspace allows only one pod on the volume at a time).
+        with dsl.ParallelFor(items=selection_task_mq.outputs["top_models"], parallelism=1) as model_name:
+            refit_task = autogluon_timeseries_models_full_refit(
+                model_name=model_name,
+                predictor_path=selection_task_mq.outputs["predictor_path"],
+                model_config=selection_task_mq.outputs["model_config"],
+                **_refit_base_kwargs,
+            )
+            refit_task.set_caching_options(False)
+            refit_task.set_cpu_request("2").set_memory_request("8Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(
+                MAX_MEMORY
+            )
+
+        # Stage 4: Leaderboard Evaluation
+        leaderboard_task = timeseries_leaderboard_evaluation(
+            models=dsl.Collected(refit_task.outputs["model_artifact"]),
+            eval_metric=selection_task_mq.outputs["eval_metric_name"],
+        )
+        leaderboard_task.set_caching_options(False)
+        leaderboard_task.set_cpu_request("1").set_memory_request("4Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(
+            MAX_MEMORY
+        )
+
+    with dsl.Else():
+        # Stage 2: Model Selection
+        selection_task_ft = autogluon_timeseries_models_selection(**_selection_kwargs)
+        selection_task_ft.set_caching_options(False)
+        selection_task_ft.set_cpu_request("2").set_memory_request("8Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(
+            MAX_MEMORY
+        )
+
+        # Stage 3: Model Refitting (parallelism=1: RWO workspace allows only one pod on the volume at a time).
+        with dsl.ParallelFor(items=selection_task_ft.outputs["top_models"], parallelism=1) as model_name:
+            refit_task = autogluon_timeseries_models_full_refit(
+                model_name=model_name,
+                predictor_path=selection_task_ft.outputs["predictor_path"],
+                model_config=selection_task_ft.outputs["model_config"],
+                **_refit_base_kwargs,
+            )
+            refit_task.set_caching_options(False)
+            refit_task.set_cpu_request("2").set_memory_request("8Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(
+                MAX_MEMORY
+            )
+
+        # Stage 4: Leaderboard Evaluation
+        leaderboard_task = timeseries_leaderboard_evaluation(
+            models=dsl.Collected(refit_task.outputs["model_artifact"]),
+            eval_metric=selection_task_ft.outputs["eval_metric_name"],
+        )
+        leaderboard_task.set_caching_options(False)
+        leaderboard_task.set_cpu_request("1").set_memory_request("4Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(
+            MAX_MEMORY
+        )
 
 
 if __name__ == "__main__":

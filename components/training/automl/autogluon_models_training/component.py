@@ -64,7 +64,7 @@ def autogluon_models_training(
         extra_train_data_path: Optional path to extra training CSV passed to ``refit_full``.
         preset: AutoGluon quality tier. ``"medium_quality"`` or ``"good_quality"``.
         eval_metric: Metric for model ranking (e.g. ``"r2"``, ``"accuracy"``). Defaults
-            to ``"root_mean_squared_error"`` for regression and ``"accuracy"`` otherwise.
+            to ``"r2"`` for regression and ``"accuracy"`` otherwise.
 
     Returns:
         NamedTuple with ``eval_metric`` (the metric used for ranking, e.g. ``"r2"`` or ``"accuracy"``).
@@ -82,6 +82,7 @@ def autogluon_models_training(
     import shutil
     from concurrent.futures import ThreadPoolExecutor
     from pathlib import Path
+    from typing import NamedTuple
 
     import pandas as pd
     from autogluon.tabular import TabularPredictor
@@ -158,7 +159,7 @@ def autogluon_models_training(
             extra_train_df = None
 
     if eval_metric is None:
-        eval_metric = "root_mean_squared_error" if task_type == "regression" else "accuracy"
+        eval_metric = "r2" if task_type == "regression" else "accuracy"
 
     predictor_path = Path(workspace_path) / "autogluon_predictor"
     _predictor_instance = TabularPredictor(
@@ -183,13 +184,23 @@ def autogluon_models_training(
             time_limit=DEFAULT_TIME_LIMIT,
         )
     else:
+        import copy
+
+        from autogluon.tabular.configs.hyperparameter_configs import get_hyperparameter_config
+
         DEFAULT_TIME_LIMIT = 30 * 60  # 30 minutes
+        RF_XT_MAX_DEPTH = 10
+        hyperparams = copy.deepcopy(get_hyperparameter_config("default"))
+        for model_type in ("RF", "XT"):
+            for config in hyperparams.get(model_type, []):
+                config["max_depth"] = RF_XT_MAX_DEPTH
         predictor = _predictor_instance.fit(
             train_data=train_data_df,
             use_bag_holdout=True,
             holdout_frac=0.2,
             time_limit=DEFAULT_TIME_LIMIT,
             presets=preset,
+            hyperparameters=hyperparams,
         )
 
     # Select top N models

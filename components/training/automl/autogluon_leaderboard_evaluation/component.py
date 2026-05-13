@@ -65,6 +65,7 @@ def leaderboard_evaluation(
     import json
     import logging
     from pathlib import Path
+    from typing import NamedTuple
 
     import pandas as pd
     from leaderboard_utils import _build_leaderboard_html, _build_leaderboard_table, _round_metrics

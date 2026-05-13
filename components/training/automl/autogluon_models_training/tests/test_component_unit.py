@@ -24,6 +24,11 @@ def isolated_sys_modules():
             if sub == "autogluon.core":
                 _m.__path__ = []
             mocked_modules[sub] = _m
+        for sub in ("autogluon.tabular.configs", "autogluon.tabular.configs.hyperparameter_configs"):
+            _m = mock.MagicMock()
+            _m.__spec__ = None
+            _m.get_hyperparameter_config.return_value = {}
+            mocked_modules[sub] = _m
         yield
 
 
@@ -182,25 +187,23 @@ class TestAutogluonModelsTrainingUnitTests:
             split_config={"split": 0.8},
         )
 
-        # Return value — default for regression is now root_mean_squared_error
-        assert result.eval_metric == "root_mean_squared_error"
+        assert result.eval_metric == "r2"
 
         # TabularPredictor constructed and fitted with correct params
         mock_predictor_class.assert_called_once_with(
             problem_type="regression",
             label="target",
-            eval_metric="root_mean_squared_error",
+            eval_metric="r2",
             path=Path(workspace_path) / "autogluon_predictor",
             verbosity=2,
         )
         mock_predictor_class.return_value.fit.assert_called_once_with(
             train_data=mock_train_df,
-            num_stack_levels=1,
-            num_bag_folds=4,
             use_bag_holdout=True,
             holdout_frac=0.2,
             time_limit=1800,
             presets="medium_quality",
+            hyperparameters={},
         )
 
         # read_csv: train, test, extra
@@ -1004,6 +1007,63 @@ class TestAutogluonModelsTrainingUnitTests:
         assert fit_call_kwargs.get("presets") == "medium_quality"
         assert "auto_stack" not in fit_call_kwargs
 
+    @mock.patch("autogluon.tabular.configs.hyperparameter_configs.get_hyperparameter_config")
+    @mock.patch("pandas.read_csv")
+    @mock.patch("autogluon.tabular.TabularPredictor")
+    def test_medium_quality_rf_xt_max_depth_set(
+        self, mock_predictor_class, mock_read_csv, mock_get_hp_config, mock_notebooks, tmp_path
+    ):
+        """medium_quality injects max_depth=10 into every RF and XT hyperparameter config."""
+        mock_get_hp_config.return_value = {
+            "GBM": [{}],
+            "RF": [
+                {"criterion": "gini", "ag_args": {"name_suffix": "Gini"}},
+                {"criterion": "entropy", "ag_args": {"name_suffix": "Entr"}},
+            ],
+            "XT": [
+                {"criterion": "gini", "ag_args": {"name_suffix": "Gini"}},
+            ],
+        }
+        mock_predictor = mock.MagicMock()
+        mock_predictor_clone = mock.MagicMock()
+        mock_predictor_class.return_value.fit.return_value = mock_predictor
+        mock_predictor.clone.return_value = mock_predictor_clone
+        mock_predictor.problem_type = "regression"
+        mock_predictor.label = "target"
+        _mock_leaderboard_top_models(mock_predictor, ["LightGBM_BAG_L1"])
+        mock_predictor_clone.evaluate_predictions.return_value = {"r2": 0.9}
+        mock_predictor_clone.feature_importance.return_value = mock.MagicMock(to_dict=lambda: {"f": 0.1})
+        mock_predictor_clone.predict.return_value = mock.MagicMock()
+        mock_read_csv.side_effect = [_mock_csv_frame(), _mock_csv_frame()]
+
+        workspace_path = str(tmp_path / "ws")
+        Path(workspace_path).mkdir()
+        mock_models_artifact = mock.MagicMock()
+        mock_models_artifact.path = str(tmp_path / "out")
+        Path(mock_models_artifact.path).mkdir()
+        mock_models_artifact.metadata = {}
+
+        autogluon_models_training.python_func(
+            label_column="target",
+            task_type="regression",
+            top_n=1,
+            train_data_path="/tmp/train.csv",
+            test_data=mock.MagicMock(path="/tmp/test.csv"),
+            workspace_path=workspace_path,
+            pipeline_name=PIPELINE_NAME,
+            run_id=RUN_ID,
+            sample_row=SAMPLE_ROW,
+            models_artifact=mock_models_artifact,
+            notebooks=mock_notebooks,
+            preset="medium_quality",
+        )
+
+        fit_hyperparams = mock_predictor_class.return_value.fit.call_args[1]["hyperparameters"]
+        mock_get_hp_config.assert_called_once_with("default")
+        assert fit_hyperparams["GBM"] == [{}]  # unchanged
+        assert all(c["max_depth"] == 10 for c in fit_hyperparams["RF"])
+        assert all(c["max_depth"] == 10 for c in fit_hyperparams["XT"])
+
     @mock.patch("pandas.read_csv")
     @mock.patch("autogluon.tabular.TabularPredictor")
     def test_good_quality_preset_expanded(self, mock_predictor_class, mock_read_csv, mock_notebooks, tmp_path):
@@ -1106,10 +1166,10 @@ class TestAutogluonModelsTrainingUnitTests:
 
     @mock.patch("pandas.read_csv")
     @mock.patch("autogluon.tabular.TabularPredictor")
-    def test_eval_metric_none_regression_resolves_to_rmse(
+    def test_eval_metric_none_regression_resolves_to_r2(
         self, mock_predictor_class, mock_read_csv, mock_notebooks, tmp_path
     ):
-        """eval_metric=None with regression resolves to 'root_mean_squared_error'."""
+        """eval_metric=None with regression resolves to 'r2'."""
         mock_predictor = mock.MagicMock()
         mock_predictor_clone = mock.MagicMock()
         mock_predictor_class.return_value.fit.return_value = mock_predictor
@@ -1117,7 +1177,7 @@ class TestAutogluonModelsTrainingUnitTests:
         mock_predictor.problem_type = "regression"
         mock_predictor.label = "target"
         _mock_leaderboard_top_models(mock_predictor, ["LightGBM_BAG_L1"])
-        mock_predictor_clone.evaluate_predictions.return_value = {"root_mean_squared_error": 0.1}
+        mock_predictor_clone.evaluate_predictions.return_value = {"r2": 0.9}
         mock_predictor_clone.feature_importance.return_value = mock.MagicMock(to_dict=lambda: {"f": 0.1})
         mock_predictor_clone.predict.return_value = mock.MagicMock()
         mock_read_csv.side_effect = [_mock_csv_frame(), _mock_csv_frame()]
@@ -1146,8 +1206,8 @@ class TestAutogluonModelsTrainingUnitTests:
         )
 
         ctor_kwargs = mock_predictor_class.call_args[1]
-        assert ctor_kwargs["eval_metric"] == "root_mean_squared_error"
-        assert result.eval_metric == "root_mean_squared_error"
+        assert ctor_kwargs["eval_metric"] == "r2"
+        assert result.eval_metric == "r2"
 
     @mock.patch("autogluon.core.metrics.confusion_matrix")
     @mock.patch("pandas.read_csv")
@@ -1284,4 +1344,4 @@ class TestAutogluonModelsTrainingUnitTests:
         model_config = mock_models_artifact.metadata["context"]["model_config"]
         assert model_config["preset"] == "good_quality"
         assert model_config["eval_metric"] == "r2"
-        assert model_config["time_limit"] == 1800
+        assert model_config["time_limit"] == 3600
