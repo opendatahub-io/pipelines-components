@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Populate Docling artifact dirs for offline use (matches docling 2.73.x layout models).
 
-Two modes:
-  --download     Fetch from Hugging Face (needs network; used by default image builds).
-  --hermeto-dir  Copy from Hermeto generic output (deps/generic/...); paths must match
-                 artifacts.lock.yaml ``filename`` entries (networkless Konflux builds).
+Modes:
+  --download    Fetch layout + models from Hugging Face (needs network).
+  --hermeto-dir Copy from Hermeto generic output; paths must match lockfile ``filename`` entries.
+                If none match docling-project--*, succeeds when layout + models trees already exist
+                (e.g. both copied from ModelCar; lockfile only prefetched sqlite).
 
 See https://docling-project.github.io/docling/usage/advanced_options/ and
 https://github.com/hermetoproject/hermeto/blob/main/docs/generic.md
@@ -21,6 +22,17 @@ LAYOUT_REPO = "docling-project/docling-layout-heron"
 LAYOUT_REV = "main"
 MODELS_REPO = "docling-project/docling-models"
 MODELS_REV = "v2.3.0"
+
+
+def _artifact_trees_ready(dest: Path) -> bool:
+    """True when both layout and models dirs exist under dest and contain at least one file."""
+    layout = dest / LAYOUT_REPO.replace("/", "--")
+    models = dest / MODELS_REPO.replace("/", "--")
+
+    def _has_file(root: Path) -> bool:
+        return root.is_dir() and any(p.is_file() for p in root.rglob("*"))
+
+    return _has_file(layout) and _has_file(models)
 
 
 def _download(dest: Path) -> None:
@@ -66,7 +78,16 @@ def _from_hermeto(source: Path, dest: Path) -> None:
         shutil.copy2(path, target)
         copied += 1
     if copied == 0:
-        print(f"error: no files under {source}", file=sys.stderr)
+        if _artifact_trees_ready(dest):
+            print(
+                "note: Hermeto dir had no docling-project--* files; using existing trees under --dest",
+                file=sys.stderr,
+            )
+            return
+        print(
+            f"error: no docling-project--* files under {source} and incomplete Docling dirs under {dest}",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
 
@@ -83,7 +104,7 @@ def main() -> None:
     group.add_argument(
         "--download",
         action="store_true",
-        help="Download pinned repos from Hugging Face Hub.",
+        help="Download pinned layout + models repos from Hugging Face Hub.",
     )
     group.add_argument(
         "--hermeto-dir",

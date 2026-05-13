@@ -1,5 +1,12 @@
 # This container is used to run the AutoRAG components of the training pipeline.
 
+# Docling weights: Red Hat AI ModelCars; files live under /models in each image.
+ARG DOCLING_LAYOUT_MODELCAR="registry.stage.redhat.io/rhai/modelcar-docling-project-docling-layout-heron:3.0"
+FROM ${DOCLING_LAYOUT_MODELCAR} AS docling_layout
+
+ARG DOCLING_MODELS_MODELCAR="registry.stage.redhat.io/rhai/modelcar-docling-project-docling-models:3.0"
+FROM ${DOCLING_MODELS_MODELCAR} AS docling_models
+
 ARG BASE_IMAGE="quay.io/aipcc/base-images/cpu:3.4"
 
 FROM ${BASE_IMAGE}
@@ -28,16 +35,16 @@ RUN pip install --index-url https://console.redhat.com/api/pypi/public-rhai/rhoa
 RUN pip install --index-url https://pypi.org/simple --no-cache-dir -r /tmp/requirements-pypi.txt
 RUN pip install --index-url https://pypi.org/simple --no-cache-dir -r /tmp/requirements-pypi-whl.txt
 
-# Docling models for offline text extraction. Hermeto: prefetch with generic lockfile (see /tmp/artifacts.lock.yaml)
-# and mount output at ${HERMETO_GENERIC_DEPS}; https://github.com/hermetoproject/hermeto/blob/main/docs/generic.md
+# Docling models for offline text extraction: COPY from ModelCars (/models). Hermeto lockfile only
+# prefetches sqlite (see /tmp/artifacts.lock.yaml); seed merges any extra docling prefetches if present.
+# https://github.com/hermetoproject/hermeto/blob/main/docs/generic.md
 # Must match --dest below. Do not use /opt/docling-artifacts on aipcc: non-root RUN cannot mkdir there (Permission denied).
 ENV DOCLING_ARTIFACTS_PATH=/opt/app-root/docling-artifacts/models
 USER root
-RUN mkdir -p /opt/app-root/docling-artifacts \
-    && if [ -d "${HERMETO_GENERIC_DEPS}" ] && [ -n "$(ls -A "${HERMETO_GENERIC_DEPS}" 2>/dev/null)" ]; then \
+COPY --from=docling_layout /models/ /opt/app-root/docling-artifacts/models/docling-project--docling-layout-heron/
+COPY --from=docling_models /models/ /opt/app-root/docling-artifacts/models/docling-project--docling-models/
+RUN if [ -d "${HERMETO_GENERIC_DEPS}" ] && [ -n "$(ls -A "${HERMETO_GENERIC_DEPS}" 2>/dev/null)" ]; then \
       python3 /tmp/seed_docling_models.py --dest /opt/app-root/docling-artifacts/models --hermeto-dir "${HERMETO_GENERIC_DEPS}"; \
-    else \
-      python3 /tmp/seed_docling_models.py --dest /opt/app-root/docling-artifacts/models --download; \
     fi \
     && chown -R 1001:0 /opt/app-root/docling-artifacts
 USER default

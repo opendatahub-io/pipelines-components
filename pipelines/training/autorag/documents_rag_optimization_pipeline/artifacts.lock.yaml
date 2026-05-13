@@ -1,43 +1,11 @@
 ---
 # Hermeto generic fetcher lockfile (https://github.com/hermetoproject/hermeto/blob/main/docs/generic.md).
-# Pin: docling-project/docling-layout-heron @ main, docling-project/docling-models @ v2.3.0;
-# sqlite-autoconf 3510300 (system libsqlite3 replacement; see install_sqlite_from_source.sh).
-# Filenames mirror paths under DOCLING_ARTIFACTS_PATH (parent of docling-project--* dirs).
+# Docling weights are not listed here: layout and docling-models come from Red Hat AI ModelCar images
+# (see Containerfile DOCLING_LAYOUT_MODELCAR / DOCLING_MODELS_MODELCAR; contents under /models).
+# This lockfile pins only the sqlite-autoconf tarball for install_sqlite_from_source.sh.
 metadata:
   version: "1.0"
 artifacts:
-  - download_url: "https://huggingface.co/docling-project/docling-layout-heron/resolve/main/config.json"
-    checksum: "sha256:fdea30805ce2f5666b147fca941dcdd27ad468e27d6ed21902207d3da056a97d"
-    filename: "docling-project--docling-layout-heron/config.json"
-  - download_url: "https://huggingface.co/docling-project/docling-layout-heron/resolve/main/model.safetensors"
-    checksum: "sha256:00333a43451945aaf89db8ca9c0a17e75d1537c17db60fdb91aa95f4c7929e0c"
-    filename: "docling-project--docling-layout-heron/model.safetensors"
-  - download_url: "https://huggingface.co/docling-project/docling-layout-heron/resolve/main/preprocessor_config.json"
-    checksum: "sha256:cd38cd59999e7a95d68e487fbe5132df3d4e5c32a0836add57e6126ba0c4eaf1"
-    filename: "docling-project--docling-layout-heron/preprocessor_config.json"
-  - download_url: "https://huggingface.co/docling-project/docling-models/resolve/v2.3.0/config.json"
-    checksum: "sha256:9c34024dc28ff47b75818f415e769809798c29bf9bde6f2ccc63a4acb62396d9"
-    filename: "docling-project--docling-models/config.json"
-  - download_url: >-
-      https://huggingface.co/docling-project/docling-models/resolve/v2.3.0/model_artifacts/tableformer/accurate/tableformer_accurate.safetensors
-    checksum: "sha256:2a7d6c924b3cd12fb99a09280ca9c33a89c5d60b93253617d2e088c1a40374d9"
-    filename: >-
-      docling-project--docling-models/model_artifacts/tableformer/accurate/tableformer_accurate.safetensors
-  - download_url: >-
-      https://huggingface.co/docling-project/docling-models/resolve/v2.3.0/model_artifacts/tableformer/accurate/tm_config.json
-    checksum: "sha256:984e122ceb8ccf84d84c9d2882f6f2302a44b4f1e577babd6289892c36f3cffd"
-    filename: >-
-      docling-project--docling-models/model_artifacts/tableformer/accurate/tm_config.json
-  - download_url: >-
-      https://huggingface.co/docling-project/docling-models/resolve/v2.3.0/model_artifacts/tableformer/fast/tableformer_fast.safetensors
-    checksum: "sha256:3119563aab5a7c96fda4d621119b63fd8806272b86c30936d15507616422f718"
-    filename: >-
-      docling-project--docling-models/model_artifacts/tableformer/fast/tableformer_fast.safetensors
-  - download_url: >-
-      https://huggingface.co/docling-project/docling-models/resolve/v2.3.0/model_artifacts/tableformer/fast/tm_config.json
-    checksum: "sha256:dca6762508dddfae6d57d6cb4ef822c6000119dff0f3b6489db7413118c2622a"
-    filename: >-
-      docling-project--docling-models/model_artifacts/tableformer/fast/tm_config.json
   - download_url: "https://sqlite.org/2026/sqlite-autoconf-3510300.tar.gz"
     checksum: "sha256:81f5be397049b0cae1b167f2225af7646fc0f82e4a9b3c48c9ea3a533e21d77a"
     filename: "sqlite-autoconf-3510300.tar.gz"
