@@ -23,7 +23,8 @@ def pytest_collection(session):
             if (nested_names_dest_path := path / "tests" / "nested_names.py").exists():
                 continue
             command = (
-                "/bin/bash components/training/autorag/scripts/orchestrate_extraction.sh "
+                "/bin/bash "
+                "components/training/autorag/rag_templates_optimization/tests/scripts/orchestrate_extraction.sh "
                 f"{nested_names_dest_path.absolute()} {component_path.absolute()}"
             )
             subprocess.run(command.split(), shell=False, check=True)

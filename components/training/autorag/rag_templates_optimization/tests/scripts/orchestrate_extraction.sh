@@ -15,7 +15,7 @@ echo "Parsing file ($2) in order to extract nested functions to a separate file.
 
 
 
-awk -v nested_names_file_path="$1" -f components/training/autorag/scripts/extract_nested_funcs.awk $2
+awk -v nested_names_file_path="$1" -f components/training/autorag/rag_templates_optimization/tests/scripts/extract_nested_funcs.awk $2
 rc=$?
 
 if (( $rc == 0)); then 

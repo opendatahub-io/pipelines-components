@@ -23,16 +23,14 @@ def pytest_collection(session):
             if (nested_names_dest_path := path / "tests" / "nested_names.py").exists():
                 continue
             command = (
-                "/bin/bash components/training/autorag/scripts/orchestrate_extraction.sh "
+                "/bin/bash "
+                "components/training/autorag/rag_templates_optimization/tests/scripts/orchestrate_extraction.sh "
                 f"{nested_names_dest_path.absolute()} {component_path.absolute()}"
             )
             subprocess.run(command.split(), shell=False, check=True)
 
         # If the outcome is an exception, will raise the exception.
     return (yield)
-
-
-# import pdb
 
 
 @pytest.hookimpl(tryfirst=True)
@@ -43,7 +41,6 @@ def pytest_addoption(parser, pluginmanager):
         This hook only executes for "initial" conftest files so the `component/training/autorag` path
         (or any of its subdirs) MUST be specified as pytest test_path.
     """
-
     data_processing_autorag_conftest_path = Path("components", "data_processing", "autorag", "conftest.py").absolute()
     # pdb.set_trace()
     if not pluginmanager.hasplugin(str(data_processing_autorag_conftest_path)):
