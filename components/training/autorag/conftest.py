@@ -1,7 +1,15 @@
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
+
+# Inject ai4rag mocks into sys.modules before test collection
+# This must happen at module import time to be available during test collection
+from components.training.autorag.tests.ai4rag_mocks import make_ai4rag_modules
+
+_AI4RAG_MOCKS = make_ai4rag_modules()
+sys.modules.update(_AI4RAG_MOCKS)
 
 
 @pytest.hookimpl(wrapper=True)
