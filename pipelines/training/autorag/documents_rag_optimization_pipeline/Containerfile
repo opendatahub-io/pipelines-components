@@ -1,14 +1,13 @@
 # This container is used to run the AutoRAG components of the training pipeline.
 
 # Docling weights: Red Hat AI ModelCars; files live under /models in each image.
+# Every ARG referenced by a FROM must appear before the first FROM (Buildah / OpenShift builds).
 ARG DOCLING_LAYOUT_MODELCAR="registry.stage.redhat.io/rhai/modelcar-docling-project-docling-layout-heron:3.0"
-FROM ${DOCLING_LAYOUT_MODELCAR} AS docling_layout
-
 ARG DOCLING_MODELS_MODELCAR="registry.stage.redhat.io/rhai/modelcar-docling-project-docling-models:3.0"
-FROM ${DOCLING_MODELS_MODELCAR} AS docling_models
-
 ARG BASE_IMAGE="quay.io/aipcc/base-images/cpu:3.4"
 
+FROM ${DOCLING_LAYOUT_MODELCAR} AS docling_layout
+FROM ${DOCLING_MODELS_MODELCAR} AS docling_models
 FROM ${BASE_IMAGE}
 
 COPY pipelines/training/autorag/documents_rag_optimization_pipeline/requirements.txt \
