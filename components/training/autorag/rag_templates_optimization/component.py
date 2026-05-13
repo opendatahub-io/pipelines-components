@@ -62,17 +62,6 @@ def rag_templates_optimization(
         rag_patterns: Folder containing all generated RAG patterns (each subdir: pattern.json,
             indexing_notebook.ipynb, inference_notebook.ipynb).
     """
-    # ChromaDB (via ai4rag) requires sqlite3 >= 3.35; RHEL9 base image has older sqlite.
-    # Patch stdlib sqlite3 with pysqlite3-binary before any ai4rag import.
-    import sys
-
-    try:
-        import pysqlite3
-
-        sys.modules["sqlite3"] = pysqlite3
-    except ImportError:
-        pass
-
     import logging
     import os
     import ssl

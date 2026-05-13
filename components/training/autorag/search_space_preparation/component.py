@@ -55,17 +55,6 @@ def search_space_preparation(
 
         metric: Quality metric to evaluate the intermediate RAG patterns.
     """
-    # ChromaDB (via ai4rag) requires sqlite3 >= 3.35; RHEL9 base image has older sqlite.
-    # Patch stdlib sqlite3 with pysqlite3-binary before any ai4rag import.
-    import sys
-
-    try:
-        import pysqlite3
-
-        sys.modules["sqlite3"] = pysqlite3
-    except ImportError:
-        pass
-
     import logging
     import os
     import ssl
