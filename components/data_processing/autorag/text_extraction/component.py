@@ -99,6 +99,8 @@ def text_extraction(
         disabled. Any other exception propagates to the caller.
 
         Args:
+            s3_creds: mapping of env variables to credentials
+            bucket: name of the bucket to download data from
             doc: Document descriptor dict containing at least a "key" field with
                 the S3 object key.
             base_path: Local directory under which the file is saved, preserving
@@ -284,6 +286,8 @@ def text_extraction(
         workers sit idle.
 
         Args:
+            s3_creds: mapping of env variables to credentials
+            bucket: name of the bucket to download data from
             docs: List of document descriptor dicts from the documents_descriptor JSON.
             download_path: Local temporary directory where downloaded files are stored.
             process_pool: Active multiprocessing Pool to submit extraction tasks to.
