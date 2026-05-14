@@ -188,8 +188,7 @@ def autogluon_timeseries_training_pipeline(
         # Stage 2: Model Selection
         selection_task_mq = autogluon_timeseries_models_selection(**_selection_kwargs)
         selection_task_mq.set_caching_options(False)
-        # TODO: change to the planned size
-        selection_task_mq.set_cpu_request("2").set_memory_request("8Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(
+        selection_task_mq.set_cpu_request("8").set_memory_request("32Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(
             MAX_MEMORY
         )
 
@@ -202,7 +201,7 @@ def autogluon_timeseries_training_pipeline(
                 **_refit_base_kwargs,
             )
             refit_task.set_caching_options(False)
-            refit_task.set_cpu_request("2").set_memory_request("8Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(
+            refit_task.set_cpu_request("8").set_memory_request("32Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(
                 MAX_MEMORY
             )
 
@@ -220,7 +219,7 @@ def autogluon_timeseries_training_pipeline(
         # Stage 2: Model Selection
         selection_task_ft = autogluon_timeseries_models_selection(**_selection_kwargs)
         selection_task_ft.set_caching_options(False)
-        selection_task_ft.set_cpu_request("2").set_memory_request("8Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(
+        selection_task_ft.set_cpu_request("4").set_memory_request("16Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(
             MAX_MEMORY
         )
 
@@ -233,7 +232,7 @@ def autogluon_timeseries_training_pipeline(
                 **_refit_base_kwargs,
             )
             refit_task.set_caching_options(False)
-            refit_task.set_cpu_request("2").set_memory_request("8Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(
+            refit_task.set_cpu_request("4").set_memory_request("16Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(
                 MAX_MEMORY
             )
 

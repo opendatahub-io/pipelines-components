@@ -186,8 +186,7 @@ def autogluon_tabular_training_pipeline(
     with dsl.If(preset == "good_quality"):
         training_task_gq = autogluon_models_training(**_training_kwargs)
         training_task_gq.set_caching_options(False)
-        # TODO: change to the planned size
-        training_task_gq.set_cpu_request("2").set_memory_request("8Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(
+        training_task_gq.set_cpu_request("8").set_memory_request("32Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(
             MAX_MEMORY
         )
 
@@ -203,7 +202,7 @@ def autogluon_tabular_training_pipeline(
     with dsl.Else():
         training_task_mq = autogluon_models_training(**_training_kwargs)
         training_task_mq.set_caching_options(False)
-        training_task_mq.set_cpu_request("2").set_memory_request("8Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(
+        training_task_mq.set_cpu_request("4").set_memory_request("16Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(
             MAX_MEMORY
         )
         leaderboard_evaluation_task = leaderboard_evaluation(
