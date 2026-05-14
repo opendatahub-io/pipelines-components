@@ -19,5 +19,29 @@
     "prediction_length": 10,
     "top_n": 2,
     "tags": ["smoke", "timeseries"]
+  },
+  {
+    "id": "timeseries_medium_quality_preset",
+    "dataset_path": "data/timeseries_sales.csv",
+    "target": "target",
+    "id_column": "item_id",
+    "timestamp_column": "timestamp",
+    "known_covariates_names": ["promo"],
+    "prediction_length": 2,
+    "top_n": 2,
+    "preset": "medium_quality",
+    "tags": ["timeseries", "preset"]
+  },
+  {
+    "id": "timeseries_wql_eval_metric",
+    "dataset_path": "data/timeseries_sales.csv",
+    "target": "target",
+    "id_column": "item_id",
+    "timestamp_column": "timestamp",
+    "known_covariates_names": ["promo"],
+    "prediction_length": 2,
+    "top_n": 2,
+    "eval_metric": "WQL",
+    "tags": ["timeseries", "eval_metric"]
   }
 ]

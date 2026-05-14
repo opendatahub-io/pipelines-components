@@ -30,6 +30,8 @@ class TestConfig:
     prediction_length: int
     top_n: int
     tags: list[str]
+    preset: str = "fast_training"
+    eval_metric: str = "MASE"
 
     def get_pipeline_arguments(
         self,
@@ -48,6 +50,8 @@ class TestConfig:
             "known_covariates_names": self.known_covariates_names,
             "prediction_length": self.prediction_length,
             "top_n": self.top_n,
+            "preset": self.preset,
+            "eval_metric": self.eval_metric,
         }
 
 
@@ -85,6 +89,8 @@ def _load_configs() -> list[TestConfig]:
                     prediction_length=int(item.get("prediction_length", 1)),
                     top_n=int(item.get("top_n", 3)),
                     tags=tags,
+                    preset=str(item.get("preset", "fast_training")),
+                    eval_metric=str(item.get("eval_metric", "MASE")),
                 )
             )
         except KeyError as e:

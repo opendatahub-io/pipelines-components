@@ -28,7 +28,7 @@ def autogluon_models_training(
     split_config: Optional[dict] = None,
     extra_train_data_path: str = "",
     preset: str = "medium_quality",
-    eval_metric: Optional[str] = None,
+    eval_metric: str = "",
 ) -> NamedTuple("outputs", eval_metric=str):
     """Train AutoGluon models, select the top N, and refit each on the full dataset.
 
@@ -158,7 +158,7 @@ def autogluon_models_training(
             logger.warning("Extra train CSV is empty; passing train_data_extra=None to refit_full.")
             extra_train_df = None
 
-    if eval_metric is None:
+    if not eval_metric:
         eval_metric = "r2" if task_type == "regression" else "accuracy"
 
     predictor_path = Path(workspace_path) / "autogluon_predictor"

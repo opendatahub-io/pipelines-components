@@ -1,5 +1,3 @@
-from typing import Optional
-
 from kfp import dsl
 from kfp_components.components.data_processing.automl.tabular_data_loader import automl_data_loader
 from kfp_components.components.training.automl.autogluon_leaderboard_evaluation import leaderboard_evaluation
@@ -40,7 +38,7 @@ def autogluon_tabular_training_pipeline(
     task_type: str,
     top_n: int = 3,
     preset: str = "medium_quality",
-    eval_metric: Optional[str] = None,
+    eval_metric: str = "",
 ):
     """AutoGluon Tabular Training Pipeline.
 
@@ -117,7 +115,7 @@ def autogluon_tabular_training_pipeline(
         top_n: Number of top models to select and refit (default: 3); positive integer from range [1, 10].
         preset: AutoGluon quality tier (default: ``"medium_quality"``, 4 vCPU / 16 GiB).
             ``"good_quality"`` trains stronger models at higher resource cost (5 vCPU / 16 GiB).
-        eval_metric: Metric used for model ranking. When None, AutoGluon's task-type default applies ("accuracy" for classification, "r2" for regression).
+        eval_metric: Metric used for model ranking. Empty string (default) lets AutoGluon pick the task-type default ("accuracy" for classification, "r2" for regression).
 
     Returns:
         HTML artifact with leaderboard of refitted models ranked by task_type metric (e.g. accuracy, r2).
