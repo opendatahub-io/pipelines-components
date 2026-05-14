@@ -1,4 +1,7 @@
 # This container is used to run the AutoRAG components of the training pipeline.
+# Build context must be this directory (see .tekton path-context). From repo root:
+#   podman build -f pipelines/training/autorag/documents_rag_optimization_pipeline/Containerfile \
+#     pipelines/training/autorag/documents_rag_optimization_pipeline
 
 # Docling layout weights: Red Hat AI ModelCar; files live under /models in the image.
 # Every ARG referenced by a FROM must appear before the first FROM (Buildah / OpenShift builds).
@@ -8,15 +11,9 @@ ARG BASE_IMAGE="quay.io/aipcc/base-images/cpu:3.4"
 FROM ${DOCLING_LAYOUT_MODELCAR} AS docling_layout
 FROM ${BASE_IMAGE}
 
-COPY pipelines/training/autorag/documents_rag_optimization_pipeline/requirements.txt \
-     pipelines/training/autorag/documents_rag_optimization_pipeline/requirements-pypi.txt \
-     pipelines/training/autorag/documents_rag_optimization_pipeline/requirements-pypi-whl.txt \
-     /tmp/
+COPY requirements.txt requirements-pypi.txt requirements-pypi-whl.txt /tmp/
 
-COPY pipelines/training/autorag/documents_rag_optimization_pipeline/seed_docling_models.py \
-     pipelines/training/autorag/documents_rag_optimization_pipeline/artifacts.lock.yaml \
-     pipelines/training/autorag/documents_rag_optimization_pipeline/install_sqlite_from_source.sh \
-     /tmp/
+COPY seed_docling_models.py artifacts.lock.yaml install_sqlite_from_source.sh /tmp/
 
 # Build SQLite from sqlite-autoconf (Hermeto generic prefetch or download); replace system libsqlite3.
 # https://github.com/hermetoproject/hermeto/blob/main/docs/generic.md
