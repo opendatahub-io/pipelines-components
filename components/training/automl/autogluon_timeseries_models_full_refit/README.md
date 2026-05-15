@@ -7,7 +7,7 @@
 Refit a single AutoGluon timeseries model on full training data.
 
 This component takes a model selected during the selection phase and refits it on the full training dataset (selection + extra train data) for improved performance. The refitted model is optimized and saved for deployment. Each model directory contains a ``model.json`` file with model metadata
-(name, base model, location, metrics).
+(name, location, metrics).
 
 ## Inputs 📥
 
@@ -97,10 +97,11 @@ def example_pipeline(
   - timeseries
   - automl
   - model-refit
-- **Last Verified**: 2026-03-25 12:00:00+00:00
+- **Last Verified**: 2026-04-21 12:00:00+00:00
 - **Owners**:
   - Approvers:
     - LukaszCmielowski
+    - DorotaDR
   - Reviewers:
     - Mateusz-Switala
     - DorotaDR
@@ -113,7 +114,7 @@ The refitted model artifact is written under `model_artifact.path` with the foll
 ```text
 model_artifact/
 └── <ModelName>_FULL/              # e.g. ETS_FULL
-    ├── model.json                 # Model metadata (name, base_model, location, metrics)
+    ├── model.json                 # Model metadata (name, location, metrics)
     ├── predictor/                 # AutoGluon TimeSeriesPredictor files
     │   ├── predictor.pkl
     │   └── predictor_metadata.json
@@ -130,12 +131,11 @@ Each model directory contains a `model.json` file with the model's metadata:
 ```json
 {
   "name": "ETS_FULL",
-  "base_model": "ETS",
   "location": {
     "model_directory": "ETS_FULL",
     "predictor": "ETS_FULL/predictor",
-    "metrics": "ETS_FULL/metrics",
-    "notebooks": "ETS_FULL/notebooks"
+    "notebook": "ETS_FULL/notebooks/automl_predictor_notebook.ipynb",
+    "metrics": "ETS_FULL/metrics"
   },
   "metrics": {
     "test_data": {"MASE": -0.85, "WAPE": -0.12, "RMSE": -150.3}

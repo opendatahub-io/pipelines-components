@@ -105,3 +105,18 @@ readme:
 
 sync-packages:
 	@$(UVRUN) python -m scripts.sync_packages.sync_packages
+
+AIPCC_INDEX_URL := https://console.redhat.com/api/pypi/public-rhai/rhoai/3.4/cpu-ubi9/simple
+
+requirements:
+	echo "--index-url $(AIPCC_INDEX_URL)" > requirements.txt
+	echo "" >> requirements.txt
+	uv pip compile pyproject.toml --generate-hashes --no-header --no-annotate \
+		--no-emit-package kfp-components \
+		--python-version 3.12 \
+		--index-url $(AIPCC_INDEX_URL) >> requirements.txt
+	echo "--index-url $(AIPCC_INDEX_URL)" > requirements-build.txt
+	echo "" >> requirements-build.txt
+	printf 'setuptools\nwheel\n' | uv pip compile --generate-hashes --no-header --no-annotate \
+		--python-version 3.12 \
+		--index-url $(AIPCC_INDEX_URL) - >> requirements-build.txt

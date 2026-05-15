@@ -18,7 +18,7 @@ DEPENDENCIES_FIELDS = ["kubeflow", "external_services"]
 # A given dependency must contain 'name' and 'version' fields.
 DEPENDENCY_REQUIRED_FIELDS = ["name", "version"]
 # Comparison operators for dependency versions.
-COMPARISON = {">=", "<=", "=="}
+COMPARISON = {">=", "<=", "==", "~="}
 
 OWNERS = "OWNERS"
 METADATA = "metadata.yaml"

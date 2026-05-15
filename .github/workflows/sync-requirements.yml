@@ -1,0 +1,30 @@
+---
+name: Check requirements.txt
+
+on:
+  pull_request:
+    paths:
+      - pyproject.toml
+      - uv.lock
+      - requirements.txt
+
+permissions:
+  contents: read
+
+concurrency:
+  group: check-requirements-${{ github.head_ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78  # v7.6.0
+
+      - name: Verify requirements.txt is up-to-date
+        run: |
+          make requirements
+          git diff --exit-code requirements.txt \
+            || { echo ""; echo "requirements.txt is out of sync."; echo "Run 'make requirements' and commit the result."; exit 1; }

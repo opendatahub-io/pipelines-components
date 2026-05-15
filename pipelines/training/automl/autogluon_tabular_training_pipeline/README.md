@@ -62,17 +62,18 @@ The pipeline leverages AutoGluon's unique ensembling strategy that combines mult
 - **Managed**: Yes
 - **Dependencies**:
   - Kubeflow:
-    - Name: Pipelines, Version: >=2.15.2
+    - Name: Pipelines, Version: 2.16.1
     - Name: Kubernetes, Version: >=1.28.0
 - **Tags**:
   - training
   - pipeline
   - automl
   - autogluon-tabular-training-pipeline
-- **Last Verified**: 2026-03-30 15:09:22+00:00
+- **Last Verified**: 2026-05-07 12:00:00+00:00
 - **Owners**:
   - Approvers:
     - LukaszCmielowski
+    - DorotaDR
   - Reviewers:
     - Mateusz-Switala
     - DorotaDR

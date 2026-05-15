@@ -11,8 +11,8 @@ license = "Apache-2.0"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "kfp>=2.15.2",
-    "kfp-kubernetes>=2.15.2",
+    "kfp>=2.16.1",
+    "kfp-kubernetes>=2.16.1",
 ]
 
 [project.optional-dependencies]
@@ -62,6 +62,7 @@ Issues = "https://github.com/kubeflow/pipelines-components/issues"
 [tool.setuptools]
 packages = [
     "kfp_components",
+    "kfp_components.utils",
     "kfp_components.components",
     "kfp_components.components.data_processing",
     "kfp_components.components.data_processing.automl",

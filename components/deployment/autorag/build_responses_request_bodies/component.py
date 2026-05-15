@@ -1,4 +1,4 @@
-"""Create Llama Stack /v1/responses JSON bodies from RAG pattern artifacts."""
+"""Create OGX /v1/responses JSON bodies from RAG pattern artifacts."""
 
 from kfp import dsl
 from kfp_components.utils.consts import AUTORAG_IMAGE  # pyright: ignore[reportMissingImports]
@@ -11,20 +11,20 @@ def prepare_responses_api_requests(
     rag_patterns: dsl.InputPath(dsl.Artifact),
     responses_api_artifacts: dsl.Output[dsl.Artifact],
 ):
-    """Emit one Llama Stack ``POST /v1/responses`` JSON body per RAG pattern directory.
+    """Emit one OGX ``POST /v1/responses`` JSON body per RAG pattern directory.
 
     Expects the ``rag_patterns`` layout from ``rag_templates_optimization``: each subdirectory
     contains ``pattern.json``. For each pattern, writes ``v1_responses_body.json``,
     ``create_model_response.py``, and ``README.md`` (how to run the script) under a matching
     output subdirectory.
-    The helper script embeds the Llama Stack base URL from environment variable
-    ``LLAMA_STACK_CLIENT_BASE_URL`` at pipeline run time (default ``http://localhost:8321`` if unset);
+    The helper script embeds the OGX base URL from environment variable
+    ``OGX_CLIENT_BASE_URL`` at pipeline run time (default ``http://localhost:8321`` if unset);
     each per-pattern ``README.md`` documents how to run the script and override that URL if needed.
-    The generated ``create_model_response.py`` resolves the API key from ``LLAMA_STACK_CLIENT_API_KEY``
-    or ``LLAMA_STACK_API_KEY`` (or a one-time prompt), sets ``os.environ`` for the process when you
+    The generated ``create_model_response.py`` resolves the API key from ``OGX_CLIENT_API_KEY``
+    or ``OGX_API_KEY`` (or a one-time prompt), sets ``os.environ`` for the process when you
     type a key at the prompt, then loops on questions until an empty line. No secret file is written.
     For TLS, the script honors ``REQUESTS_CA_BUNDLE`` / ``SSL_CERT_FILE`` for custom CA bundles
-    (e.g. corporate/private PKI), and ``LLAMA_STACK_TLS_INSECURE=1`` as a dev-only opt-out that
+    (e.g. corporate/private PKI), and ``OGX_TLS_INSECURE=1`` as a dev-only opt-out that
     disables certificate verification with a stderr warning.
 
     Request-body construction is defined inside this function so Kubeflow embeds it in
@@ -32,12 +32,12 @@ def prepare_responses_api_requests(
 
     The generated body matches OpenAI-compatible ``POST /v1/responses`` (see OpenAI's
     `Migrate to the Responses API <https://developers.openai.com/api/docs/guides/migrate-to-responses>`__
-    and Llama Stack's ``POST /v1/responses``): ``model``, ``input``, ``stream``, ``store``,
+    and OGX's ``POST /v1/responses``): ``model``, ``input``, ``stream``, ``store``,
     ``metadata`` (string values only), optional ``instructions``, and optional ``tools`` /
     ``file_search`` when a collection name is set, plus ``tool_choice`` forcing file search
     and ``include: ["file_search_call.results"]`` to return file-search hits in the response.
     Replace
-    ``vector_store_ids`` with Llama Stack--registered vector store identifiers if your deployment
+    ``vector_store_ids`` with OGX-registered vector store identifiers if your deployment
     does not use the collection name as the store id.
 
     Args:
@@ -58,9 +58,7 @@ def prepare_responses_api_requests(
     output_filename = "v1_responses_body.json"
     script_filename = "create_model_response.py"
     readme_filename = "README.md"
-    llama_stack_base_url = (
-        (os.environ.get("LLAMA_STACK_CLIENT_BASE_URL") or "http://localhost:8321").strip().rstrip("/")
-    )
+    ogx_base_url = (os.environ.get("OGX_CLIENT_BASE_URL") or "http://localhost:8321").strip().rstrip("/")
     grounding_instruction = (
         "Use only information found in file_search results. "
         'If file_search results are insufficient, reply exactly: "I cannot answer based on the provided context."'
@@ -69,7 +67,7 @@ def prepare_responses_api_requests(
     default_instructions = f"{grounding_instruction} {default_language_instruction}"
 
     def _metadata_string_values(pattern: dict) -> dict[str, str]:
-        """Build compact metadata dict with string values only (Llama Stack API constraint)."""
+        """Build compact metadata dict with string values only (OGX API constraint)."""
         settings = pattern.get("settings") or {}
         vs = settings.get("vector_store") or {}
         emb = settings.get("embedding") or {}
@@ -179,8 +177,8 @@ def prepare_responses_api_requests(
             parts.append(default_language_instruction)
         return " ".join(p.strip() for p in parts if p and p.strip())
 
-    def _build_llama_stack_v1_responses_body(pattern: dict) -> dict:
-        """Build the JSON object sent as the HTTP body for Llama Stack ``POST /v1/responses``."""
+    def _build_ogx_v1_responses_body(pattern: dict) -> dict:
+        """Build the JSON object sent as the HTTP body for OGX ``POST /v1/responses``."""
         settings = pattern.get("settings") or {}
         generation = settings.get("generation") or {}
         model_id = str(generation.get("model_id") or "").strip()
@@ -228,7 +226,7 @@ import ssl
 import sys
 
 
-LLAMA_STACK_BASE_URL = "{base_url.rstrip("/")}"
+OGX_BASE_URL = "{base_url.rstrip("/")}"
 BODY_PATH = Path(__file__).with_name("{output_filename}")
 
 
@@ -242,8 +240,8 @@ def _set_question(body: dict, question: str) -> None:
 
 def _api_key_from_env() -> str:
     return (
-        os.environ.get("LLAMA_STACK_CLIENT_API_KEY", "").strip()
-        or os.environ.get("LLAMA_STACK_API_KEY", "").strip()
+        os.environ.get("OGX_CLIENT_API_KEY", "").strip()
+        or os.environ.get("OGX_API_KEY", "").strip()
     )
 
 
@@ -251,16 +249,16 @@ def _apply_api_key_to_env(key: str) -> None:
     """Store key only in this process environment (for the rest of this run)."""
     if not key:
         return
-    os.environ["LLAMA_STACK_CLIENT_API_KEY"] = key
-    os.environ["LLAMA_STACK_API_KEY"] = key
+    os.environ["OGX_CLIENT_API_KEY"] = key
+    os.environ["OGX_API_KEY"] = key
 
 
 def _resolve_api_key_once() -> str:
-    """Use ``LLAMA_STACK_CLIENT_API_KEY`` / ``LLAMA_STACK_API_KEY``, else one interactive prompt."""
+    """Use ``OGX_CLIENT_API_KEY`` / ``OGX_API_KEY``, else one interactive prompt."""
     key = _api_key_from_env()
     if key:
         return key
-    key = getpass("Llama Stack API key (press Enter if not required): ").strip()
+    key = getpass("OGX API key (press Enter if not required): ").strip()
     if key:
         _apply_api_key_to_env(key)
     return key
@@ -270,16 +268,16 @@ def _build_ssl_context():
     """Build an SSLContext honoring corporate CA bundles or a dev-only insecure flag.
 
     Precedence:
-      1. LLAMA_STACK_TLS_INSECURE=1  -> verification disabled (dev only, prints warning)
+      1. OGX_TLS_INSECURE=1  -> verification disabled (dev only, prints warning)
       2. REQUESTS_CA_BUNDLE          -> custom CA bundle path
       3. SSL_CERT_FILE               -> custom CA bundle path
       4. None                        -> stdlib default (system trust store)
     """
-    insecure = os.environ.get("LLAMA_STACK_TLS_INSECURE", "").strip().lower() in ("1", "true", "yes", "on")
+    insecure = os.environ.get("OGX_TLS_INSECURE", "").strip().lower() in ("1", "true", "yes", "on")
     if insecure:
         print(
-            "WARNING: TLS verification is DISABLED (LLAMA_STACK_TLS_INSECURE=1). "
-            "Do not use this against production Llama Stack deployments.",
+            "WARNING: TLS verification is DISABLED (OGX_TLS_INSECURE=1). "
+            "Do not use this against production OGX deployments.",
             file=sys.stderr,
         )
         ctx = ssl.create_default_context()
@@ -296,7 +294,7 @@ def _build_ssl_context():
 
 
 def _post_responses(body: dict, api_key: str, ssl_context) -> int:
-    url = f"{{LLAMA_STACK_BASE_URL}}/v1/responses"
+    url = f"{{OGX_BASE_URL}}/v1/responses"
     headers = {{
         "Content-Type": "application/json",
         "Accept": "application/json",
@@ -360,28 +358,28 @@ if __name__ == "__main__":
         ofn = output_filename
         sfn = script_filename
         return (
-            f"# Call Llama Stack ``POST /v1/responses`` for this RAG pattern\n\n"
+            f"# Call OGX ``POST /v1/responses`` for this RAG pattern\n\n"
             f"This folder contains:\n\n"
             f"- ``{ofn}`` — request body for the OpenAI-compatible Responses API "
-            f"(Llama Stack ``/v1/responses``).\n"
+            f"(OGX ``/v1/responses``).\n"
             f"- ``{sfn}`` — interactive helper that loads the JSON, resolves the API key from "
             f"environment variables or one prompt (then sets ``os.environ`` for this run only), "
             f"then loops: ask a question, POST, repeat until you enter an empty question.\n\n"
             "## Prerequisites\n\n"
             "- Python 3 available on your PATH as ``python3`` "
             "(or run with your Python interpreter).\n"
-            "- Network reachability to Llama Stack.\n"
+            "- Network reachability to OGX.\n"
             f"- Keep ``{ofn}`` in the **same directory** as ``{sfn}`` "
             "(the script loads the JSON from alongside itself).\n\n"
             "## Server URL\n\n"
             "The script was generated with:\n\n"
             "```text\n"
-            f'LLAMA_STACK_BASE_URL = "{url}"\n'
+            f'OGX_BASE_URL = "{url}"\n'
             "```\n\n"
             "That value came from the pipeline run (environment variable "
-            "``LLAMA_STACK_CLIENT_BASE_URL``, or ``http://localhost:8321`` if unset). "
-            f"To use a different URL, edit ``LLAMA_STACK_BASE_URL`` inside ``{sfn}``, or re-run "
-            "the pipeline step with ``LLAMA_STACK_CLIENT_BASE_URL`` set as needed.\n\n"
+            "``OGX_CLIENT_BASE_URL``, or ``http://localhost:8321`` if unset). "
+            f"To use a different URL, edit ``OGX_BASE_URL`` inside ``{sfn}``, or re-run "
+            "the pipeline step with ``OGX_CLIENT_BASE_URL`` set as needed.\n\n"
             "## Run\n\n"
             "From this directory:\n\n"
             "```bash\n"
@@ -393,7 +391,7 @@ if __name__ == "__main__":
             f"./{sfn}\n"
             "```\n\n"
             "Flow:\n\n"
-            "1. **API key** — use ``LLAMA_STACK_CLIENT_API_KEY`` or ``LLAMA_STACK_API_KEY`` "
+            "1. **API key** — use ``OGX_CLIENT_API_KEY`` or ``OGX_API_KEY`` "
             "(recommended: export in your shell before running). If unset, you are prompted "
             "**once**; a typed key is applied only to this process (``os.environ`` for the rest "
             "of this run). Press Enter if your server needs no bearer token.\n"
@@ -401,17 +399,17 @@ if __name__ == "__main__":
             "the JSON body. An **empty line** exits.\n\n"
             "Each response body is printed to stdout (JSON).\n\n"
             "To reuse the same key in a **new** shell session, export "
-            "``LLAMA_STACK_CLIENT_API_KEY`` (or ``LLAMA_STACK_API_KEY``) again; nothing is "
+            "``OGX_CLIENT_API_KEY`` (or ``OGX_API_KEY``) again; nothing is "
             "written to disk by this script.\n\n"
             "## TLS / certificates\n\n"
             "The script uses Python's standard library (``urllib`` + ``ssl``). It honors these "
             "environment variables, in order of precedence:\n\n"
-            "1. **``LLAMA_STACK_TLS_INSECURE=1``** — **dev only.** Disables TLS verification "
+            "1. **``OGX_TLS_INSECURE=1``** — **dev only.** Disables TLS verification "
             "entirely (``check_hostname=False``, ``verify_mode=CERT_NONE``) and prints a warning "
-            "to stderr. **Never** use this against a production Llama Stack deployment; it "
+            "to stderr. **Never** use this against a production OGX deployment; it "
             "exposes you to man-in-the-middle attacks.\n"
             "2. **``REQUESTS_CA_BUNDLE=/path/to/ca-bundle.pem``** — path to a PEM file containing "
-            "the CA(s) that signed your Llama Stack server certificate. Use this when your "
+            "the CA(s) that signed your OGX server certificate. Use this when your "
             "deployment is fronted by a private/corporate CA that is not in the OS default trust "
             "store.\n"
             "3. **``SSL_CERT_FILE=/path/to/ca-bundle.pem``** — same effect as "
@@ -425,16 +423,16 @@ if __name__ == "__main__":
             "```\n\n"
             "Example (dev cluster with self-signed cert, **non-production**):\n\n"
             "```bash\n"
-            "export LLAMA_STACK_TLS_INSECURE=1\n"
+            "export OGX_TLS_INSECURE=1\n"
             f"python3 {sfn}\n"
             "```\n\n"
             "## Troubleshooting\n\n"
             f"- **Missing JSON body file** — restore ``{ofn}`` next to the script or "
             "re-download the artifact folder.\n"
-            "- **TLS / certificate errors** (e.g. ``CERTIFICATE_VERIFY_FAILED``) — your Llama "
-            "Stack server certificate is signed by a CA not in the OS trust store. See the "
+            "- **TLS / certificate errors** (e.g. ``CERTIFICATE_VERIFY_FAILED``) — your OGX "
+            "server certificate is signed by a CA not in the OS trust store. See the "
             "**TLS / certificates** section above for ``REQUESTS_CA_BUNDLE`` / ``SSL_CERT_FILE`` "
-            "and the dev-only ``LLAMA_STACK_TLS_INSECURE`` opt-out.\n"
+            "and the dev-only ``OGX_TLS_INSECURE`` opt-out.\n"
             "- **Connection or HTTP errors** — confirm the base URL, firewall, and that "
             "the model and ``file_search`` / vector store identifiers in the JSON match your "
             "deployment.\n"
@@ -454,16 +452,16 @@ if __name__ == "__main__":
             continue
         with pattern_path.open(encoding="utf-8") as f:
             pattern = json.load(f)
-        body = _build_llama_stack_v1_responses_body(pattern)
+        body = _build_ogx_v1_responses_body(pattern)
         dest_dir = out_root / sub.name
         dest_dir.mkdir(parents=True, exist_ok=True)
         out_file = dest_dir / output_filename
         with out_file.open("w", encoding="utf-8") as out_f:
             json.dump(body, out_f, indent=2, ensure_ascii=False)
         script_file = dest_dir / script_filename
-        script_file.write_text(_request_script_contents(llama_stack_base_url), encoding="utf-8")
+        script_file.write_text(_request_script_contents(ogx_base_url), encoding="utf-8")
         readme_file = dest_dir / readme_filename
-        readme_file.write_text(_pattern_readme_contents(llama_stack_base_url), encoding="utf-8")
+        readme_file.write_text(_pattern_readme_contents(ogx_base_url), encoding="utf-8")
         written.append(
             {
                 "pattern_dir": sub.name,

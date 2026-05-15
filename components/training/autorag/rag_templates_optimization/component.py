@@ -16,11 +16,7 @@ def rag_templates_optimization(
     rag_patterns: dsl.Output[dsl.Artifact],
     embedded_artifact: dsl.EmbeddedInput[dsl.Dataset],
     test_data_key: Optional[str],
-    chat_model_url: Optional[str] = None,
-    chat_model_token: Optional[str] = None,
-    embedding_model_url: Optional[str] = None,
-    embedding_model_token: Optional[str] = None,
-    llama_stack_vector_io_provider_id: Optional[str] = None,
+    vector_io_provider_id: str,
     optimization_settings: Optional[dict] = None,
     input_data_key: Optional[str] = "",
 ):
@@ -42,16 +38,7 @@ def rag_templates_optimization(
 
         test_data_key: Path to the benchmark JSON file in object storage used by generated notebooks.
 
-        chat_model_url: Inference endpoint URL for the chat/generation model (OpenAI-compatible).
-            Required for in-memory scenario.
-
-        chat_model_token: Optional API token for the chat model endpoint. Omit if deployment has no auth.
-
-        embedding_model_url: Inference endpoint URL for the embedding model. Required for in-memory scenario.
-
-        embedding_model_token: Optional API token for the embedding model endpoint. Omit if no auth.
-
-        llama_stack_vector_io_provider_id: Vector I/O provider identifier as registered in llama-stack.
+        vector_io_provider_id: Vector I/O provider identifier as registered in OGX.
 
         optimization_settings: Additional settings customising the experiment.
 
@@ -75,7 +62,6 @@ def rag_templates_optimization(
     import logging
     import os
     import ssl
-    from collections import namedtuple
     from json import dump as json_dump
     from json import load as json_load
     from pathlib import Path
@@ -89,19 +75,15 @@ def rag_templates_optimization(
     from ai4rag.core.experiment.results import ExperimentResults
     from ai4rag.core.hpo.gam_opt import GAMOptSettings
     from ai4rag.rag.embedding.base_model import BaseEmbeddingModel
-    from ai4rag.rag.embedding.llama_stack import LSEmbeddingModel
-    from ai4rag.rag.embedding.openai_model import OpenAIEmbeddingModel
+    from ai4rag.rag.embedding.ogx import OGXEmbeddingModel
     from ai4rag.rag.foundation_models.base_model import BaseFoundationModel
-    from ai4rag.rag.foundation_models.llama_stack import LSFoundationModel
-    from ai4rag.rag.foundation_models.openai_model import OpenAIFoundationModel
+    from ai4rag.rag.foundation_models.ogx import OGXFoundationModel
     from ai4rag.search_space.src.parameter import Parameter
     from ai4rag.search_space.src.search_space import AI4RAGSearchSpace
     from ai4rag.utils.event_handler.event_handler import BaseEventHandler, LogLevel
     from langchain_core.documents import Document
-    from llama_stack_client import APIConnectionError as LSAPIConnectionError
-    from llama_stack_client import LlamaStackClient
-    from openai import APIConnectionError as OAIAPIConnectionError
-    from openai import OpenAI
+    from ogx_client import APIConnectionError as OGXAPIConnectionError
+    from ogx_client import OgxClient
 
     DEFAULT_MAX_NUMBER_OF_RAG_PATTERNS = 8
     MAX_NUMBER_OF_RAG_PATTERNS_ALLOWED_RANGE = (4, 20)
@@ -121,49 +103,23 @@ def rag_templates_optimization(
             current = current.__cause__ or current.__context__
         return False
 
-    # Mutable containers so the nested _create_openai_client can update the flags
+    # Mutable container so the nested _create_ogx_client can update the flag
     # without requiring `nonlocal` or returning the flag.
-    _chat_ssl_verify = [True]
-    _embedding_ssl_verify = [True]
+    _ogx_ssl_verify = [True]
 
-    def _create_openai_client(api_key: str, base_url: str, _ssl_verify: list) -> OpenAI:
-        """Create OpenAI client, falling back to SSL-unverified if self-signed cert detected."""
-        client = OpenAI(api_key=api_key, base_url=base_url)
+    def _create_ogx_client(**kwargs) -> OgxClient:
+        """Create OgxClient, falling back to SSL-unverified if self-signed cert detected."""
+        client = OgxClient(**kwargs)
         try:
             client.models.list()
-        except (ssl.SSLCertVerificationError, httpx.ConnectError, OAIAPIConnectionError) as exc:
+        except (ssl.SSLCertVerificationError, httpx.ConnectError, OGXAPIConnectionError) as exc:
             if _is_ssl_error(exc):
-                _ssl_logger.warning(
-                    "SSL verification failed for %s — retrying with verify=False. ",
-                    base_url,
-                )
-                client = OpenAI(
-                    api_key=api_key,
-                    base_url=base_url,
-                    http_client=httpx.Client(verify=False),
-                )
-                _ssl_verify[0] = False
-            else:
-                raise
-        return client
-
-    # Mutable container so the nested _create_llama_stack_client can update the flag
-    # without requiring `nonlocal` or returning the flag.
-    _ls_ssl_verify = [True]
-
-    def _create_llama_stack_client(**kwargs) -> LlamaStackClient:
-        """Create LlamaStackClient, falling back to SSL-unverified if self-signed cert detected."""
-        client = LlamaStackClient(**kwargs)
-        try:
-            client.models.list()
-        except (ssl.SSLCertVerificationError, httpx.ConnectError, LSAPIConnectionError) as exc:
-            if _is_ssl_error(exc):
-                _ssl_logger.warning("SSL verification failed for LlamaStackClient — retrying with verify=False. ")
-                client = LlamaStackClient(
+                _ssl_logger.warning("SSL verification failed for OgxClient — retrying with verify=False. ")
+                client = OgxClient(
                     **kwargs,
                     http_client=httpx.Client(verify=False),
                 )
-                _ls_ssl_verify[0] = False
+                _ogx_ssl_verify[0] = False
             else:
                 raise
         return client
@@ -365,9 +321,8 @@ def rag_templates_optimization(
         def load(
             cls,
             notebook_name: Literal[
-                "ls_indexing_template.ipynb",
-                "ls_inference_template.ipynb",
-                "chroma_template.ipynb",
+                "ogx_indexing_template.ipynb",
+                "ogx_inference_template.ipynb",
             ],
         ) -> "Notebook":
             """Load a Jupyter notebook from a file.
@@ -429,11 +384,7 @@ def rag_templates_optimization(
         output_data: dict[str, Any],
         test_data_key: str = "",
         input_data_key: str = "",
-        chat_model_url: str = "",
-        embedding_model_url: str = "",
-        ls_ssl_verify: bool = True,
-        chat_ssl_verify: bool = True,
-        embedding_ssl_verify: bool = True,
+        ogx_ssl_verify: bool = True,
     ) -> dict[str, Any]:
         """Create a mapping from placeholder names to their values from output.json.
 
@@ -445,7 +396,7 @@ def rag_templates_optimization(
             "config": {
                 "pattern_name": "...",
                 "autorag_version": "...",
-                "llama_stack": {
+                "ogx": {
                     "foundation_model": {...},
                     "embedding_model": {...},
                     "vector_store": {...},
@@ -460,11 +411,7 @@ def rag_templates_optimization(
             output_data: The parsed pattern.json data
             test_data_key: Test data key.
             input_data_key: Input data key.
-            chat_model_url: Chat model url.
-            embedding_model_url: Embedding model url.
-            ls_ssl_verify: Whether LlamaStack SSL verification succeeded.
-            chat_ssl_verify: Whether chat model (OpenAI) SSL verification succeeded.
-            embedding_ssl_verify: Whether embedding model (OpenAI) SSL verification succeeded.
+            ogx_ssl_verify: Whether OGX SSL verification succeeded.
 
         Returns:
             Dictionary mapping placeholder names to their values.
@@ -491,6 +438,11 @@ def rag_templates_optimization(
         ret = settings.get("retrieval", {})
         mapping["RETRIEVAL_METHOD"] = ret.get("method", "")
         mapping["NUMBER_OF_CHUNKS"] = ret.get("number_of_chunks", 5)
+        # Hybrid search parameters (optional, None if not present)
+        mapping["SEARCH_MODE"] = ret.get("search_mode")
+        mapping["RANKER_STRATEGY"] = ret.get("ranker_strategy")
+        mapping["RANKER_K"] = ret.get("ranker_k")
+        mapping["RANKER_ALPHA"] = ret.get("ranker_alpha")
 
         ch = settings.get("chunking", {})
         mapping["CHUNKING_METHOD"] = ch.get("method", "")
@@ -500,27 +452,20 @@ def rag_templates_optimization(
         mapping["TEST_DATA_KEY"] = test_data_key
         mapping["INPUT_DATA_KEY"] = input_data_key
 
-        mapping["CHAT_MODEL_URL"] = chat_model_url
-        mapping["EMBEDDING_MODEL_URL"] = embedding_model_url
-        mapping["LS_SSL_VERIFY"] = ls_ssl_verify
-        mapping["CHAT_SSL_VERIFY"] = chat_ssl_verify
-        mapping["EMBEDDING_SSL_VERIFY"] = embedding_ssl_verify
+        mapping["OGX_SSL_VERIFY"] = ogx_ssl_verify
 
         return mapping
 
     def generate_notebook_from_templates(
         notebook_template: Literal[
-            "ls_inference",
-            "ls_indexing",
-            "chroma",
+            "ogx_inference",
+            "ogx_indexing",
         ],
         output_data: dict[str, Any],
         output_notebook_path: Path,
         test_data_key: str = "",
         input_data_key: str = "",
-        ls_ssl_verify: bool = True,
-        chat_ssl_verify: bool = True,
-        embedding_ssl_verify: bool = True,
+        ogx_ssl_verify: bool = True,
     ) -> None:
         """Generate a filled notebook from templates and output.json.
 
@@ -530,10 +475,8 @@ def rag_templates_optimization(
             output_notebook_path: Path where to save the generated notebook.
             test_data_key: Path to test data file within bucket used as input to AI4RAG.
             input_data_key: Path to documents dir within bucket used as input to AI4RAG.
-            ls_ssl_verify: Whether LlamaStack SSL verification succeeded; False causes the
+            ogx_ssl_verify: Whether OGX SSL verification succeeded; False causes the
                 generated notebook to skip the SSL probe and connect with verify=False directly.
-            chat_ssl_verify: Whether chat model (OpenAI) SSL verification succeeded.
-            embedding_ssl_verify: Whether embedding model (OpenAI) SSL verification succeeded.
 
         Returns:
             None. The notebook is written to output_notebook_path.
@@ -542,11 +485,7 @@ def rag_templates_optimization(
             output_data,
             test_data_key=test_data_key,
             input_data_key=input_data_key,
-            chat_model_url=chat_model_url,
-            embedding_model_url=embedding_model_url,
-            ls_ssl_verify=ls_ssl_verify,
-            chat_ssl_verify=chat_ssl_verify,
-            embedding_ssl_verify=embedding_ssl_verify,
+            ogx_ssl_verify=ogx_ssl_verify,
         )
         notebook = Notebook.load(notebook_name=f"{notebook_template}_template.ipynb")
         filled_cells = []
@@ -557,11 +496,6 @@ def rag_templates_optimization(
         notebook = Notebook(cells=filled_cells)
 
         notebook.save(Path(output_notebook_path))
-
-    if embedding_model_url and chat_model_url:
-        # Specification of OpenAI API compatibility
-        embedding_model_url += "/v1"
-        chat_model_url += "/v1"
 
     class TmpEventHandler(BaseEventHandler):
         """Exists temporarily only for the purpose of satisying type hinting checks"""
@@ -601,48 +535,15 @@ def rag_templates_optimization(
 
         return documents
 
-    llama_stack_client_base_url = os.environ.get("LLAMA_STACK_CLIENT_BASE_URL", None)
-    llama_stack_client_api_key = os.environ.get("LLAMA_STACK_CLIENT_API_KEY", None)
+    ogx_client_base_url = (os.environ.get("OGX_CLIENT_BASE_URL") or "").strip()
+    ogx_client_api_key = (os.environ.get("OGX_CLIENT_API_KEY") or "").strip()
 
-    in_memory_vector_store_scenario = False
-    Client = namedtuple(
-        "Client",
-        ["llama_stack", "generation_model", "embedding_model"],
-        defaults=[None, None, None],
-    )
-
-    if llama_stack_client_base_url and llama_stack_client_api_key:
-        client = Client(llama_stack=_create_llama_stack_client())
-    else:
-        for name, value in (
-            ("chat_model_url", chat_model_url),
-            ("chat_model_token", chat_model_token),
-            ("embedding_model_url", embedding_model_url),
-            ("embedding_model_token", embedding_model_token),
-        ):
-            if not value:
-                raise TypeError(f"{name} must be a non-empty string.")
-        if not all(
-            (
-                chat_model_url,
-                chat_model_token,
-                embedding_model_url,
-                embedding_model_token,
-            )
-        ):
-            raise ValueError(
-                "All of (`chat_model_url`, `chat_model_token`, `embedding_model_url`, `embedding_model_token`) "
-                "have to be defined when running AutoRAG experiment using an in-memory vector store."
-            )
-        client = Client(
-            generation_model=_create_openai_client(
-                api_key=chat_model_token, base_url=chat_model_url, _ssl_verify=_chat_ssl_verify
-            ),
-            embedding_model=_create_openai_client(
-                api_key=embedding_model_token, base_url=embedding_model_url, _ssl_verify=_embedding_ssl_verify
-            ),
+    if not ogx_client_base_url or not ogx_client_api_key:
+        raise ValueError(
+            "OGX_CLIENT_BASE_URL and OGX_CLIENT_API_KEY environment variables must be set to non-empty values."
         )
-        in_memory_vector_store_scenario = True
+
+    client = _create_ogx_client(base_url=ogx_client_base_url, api_key=ogx_client_api_key)
 
     def construct_model_instance(loader, node: yml.MappingNode) -> BaseEmbeddingModel | BaseFoundationModel:
         """Instructs yml.Loader on how to construct "!Model" tag."""
@@ -651,17 +552,11 @@ def rag_templates_optimization(
         match mapping:
             case {"type_": "embedding", **id_to_params}:
                 model_id, params = id_to_params.popitem()
-                if in_memory_vector_store_scenario:
-                    return OpenAIEmbeddingModel(client=client.embedding_model, model_id=model_id, params=params)
-                else:
-                    return LSEmbeddingModel(client=client.llama_stack, model_id=model_id, params=params)
+                return OGXEmbeddingModel(client=client, model_id=model_id, params=params)
 
             case {"type_": "generation", **id_to_params}:
                 model_id, params = id_to_params.popitem()
-                if in_memory_vector_store_scenario:
-                    return OpenAIFoundationModel(client=client.generation_model, model_id=model_id, params=params)
-                else:
-                    return LSFoundationModel(client=client.llama_stack, model_id=model_id, params=params)
+                return OGXFoundationModel(client=client, model_id=model_id, params=params)
             case _:
                 raise ValueError(f"Cannot load the yml-serialized !Model tag: {mapping}")
 
@@ -700,33 +595,20 @@ def rag_templates_optimization(
 
     benchmark_data = pd.read_json(Path(test_data))
 
-    if not llama_stack_vector_io_provider_id or not llama_stack_vector_io_provider_id.strip():
-        if in_memory_vector_store_scenario:
-            llama_stack_vector_io_provider_id = "chroma"
-        else:
-            raise ValueError(
-                "llama_stack_vector_io_provider_id must be provided when using llama-stack vector database."
-            )
-
-    # ai4rag expects vector_store_type with an "ls_" prefix for llama-stack providers.
-    # Users provide the raw llama-stack provider_id (e.g. "milvus"); the prefix is added here.
-    # If the user already included "ls_", don't double-prefix.
-    if in_memory_vector_store_scenario:
-        vector_store_type = llama_stack_vector_io_provider_id
-    elif llama_stack_vector_io_provider_id.startswith("ls_"):
-        vector_store_type = llama_stack_vector_io_provider_id
-    else:
-        vector_store_type = f"ls_{llama_stack_vector_io_provider_id}"
+    if not isinstance(vector_io_provider_id, str) or not vector_io_provider_id.strip():
+        raise ValueError("vector_io_provider_id must be a non-empty string.")
+    vector_io_provider_id = vector_io_provider_id.strip()
 
     rag_exp = AI4RAGExperiment(
-        client=None if in_memory_vector_store_scenario else client.llama_stack,
+        client=client,
         event_handler=event_handler,
         optimizer_settings=optimizer_settings,
         search_space=search_space,
         benchmark_data=benchmark_data,
-        vector_store_type=vector_store_type,
+        vector_store_type="ogx",
         documents=documents,
         optimization_metric=optimization_metric,
+        ogx_vector_io_provider_id=vector_io_provider_id,
         # TODO some necessary kwargs (if any at all)
     )
 
@@ -808,7 +690,7 @@ def rag_templates_optimization(
                 "vector_store": {
                     "datasource_type": idx.get("vector_store", {}).get("datasource_type")
                     or rp.get("vector_store", {}).get("datasource_type")
-                    or vector_store_type,
+                    or vector_io_provider_id,
                     "collection_name": getattr(evaluation_result, "collection", "") or "",
                 },
                 "chunking": {
@@ -865,32 +747,21 @@ def rag_templates_optimization(
         patt_dir.mkdir(parents=True, exist_ok=True)
 
         pattern_data = _build_pattern_json(eval, iteration=i, max_combinations=max_combinations)
-        if llama_stack_vector_io_provider_id == "chroma":
-            generate_notebook_from_templates(
-                "chroma",
-                pattern_data,
-                Path(patt_dir, "indexing_and_inference.ipynb"),
-                input_data_key=input_data_key,
-                test_data_key=test_data_key,
-                chat_ssl_verify=_chat_ssl_verify[0],
-                embedding_ssl_verify=_embedding_ssl_verify[0],
-            )
-        else:
-            generate_notebook_from_templates(
-                "ls_indexing",
-                pattern_data,
-                Path(patt_dir, "indexing.ipynb"),
-                input_data_key=input_data_key,
-                ls_ssl_verify=_ls_ssl_verify[0],
-            )
+        generate_notebook_from_templates(
+            "ogx_indexing",
+            pattern_data,
+            Path(patt_dir, "indexing.ipynb"),
+            input_data_key=input_data_key,
+            ogx_ssl_verify=_ogx_ssl_verify[0],
+        )
 
-            generate_notebook_from_templates(
-                "ls_inference",
-                pattern_data,
-                Path(patt_dir, "inference.ipynb"),
-                test_data_key=test_data_key,
-                ls_ssl_verify=_ls_ssl_verify[0],
-            )
+        generate_notebook_from_templates(
+            "ogx_inference",
+            pattern_data,
+            Path(patt_dir, "inference.ipynb"),
+            test_data_key=test_data_key,
+            ogx_ssl_verify=_ogx_ssl_verify[0],
+        )
 
         # Flat schema: scores = per-metric aggregates (mean, ci_low, ci_high); final_score
         pattern_data["scores"] = (getattr(eval, "scores", None) or {}).get("scores") or {}

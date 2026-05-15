@@ -10,7 +10,7 @@ from kfp_components.utils.consts import AUTORAG_IMAGE  # pyright: ignore[reportM
 def documents_indexing(
     embedding_model_id: str,
     extracted_text: dsl.Input[dsl.Artifact],
-    llama_stack_vector_io_provider_id: str,
+    vector_io_provider_id: str,
     embedding_params: Optional[dict] = None,
     distance_metric: str = "cosine",
     chunking_method: str = "recursive",
@@ -21,14 +21,14 @@ def documents_indexing(
 ):
     """Index extracted text into a vector store with optional batch processing.
 
-    Reads markdown files from extracted_text, chunks them, embeds via Llama Stack,
+    Reads markdown files from extracted_text, chunks them, embeds via OGX,
     and adds them to the vector store. When batch_size > 0, processes documents
     in batches to limit memory use and allow progress on large inputs.
 
     Args:
         embedding_model_id: Embedding model ID used for the vector store.
         extracted_text: Input artifact (folder) containing .md files from text extraction.
-        llama_stack_vector_io_provider_id: Llama Stack provider ID for the vector database.
+        vector_io_provider_id: OGX provider ID for the vector database.
         embedding_params: Optional embedding parameters.
         distance_metric: Vector distance metric (e.g. "cosine").
         chunking_method: Chunking method.
@@ -45,11 +45,11 @@ def documents_indexing(
 
     import httpx
     from ai4rag.rag.chunking import LangChainChunker
-    from ai4rag.rag.embedding.llama_stack import LSEmbeddingModel, LSEmbeddingParams
-    from ai4rag.rag.vector_store.llama_stack import LSVectorStore
+    from ai4rag.rag.embedding.ogx import OGXEmbeddingModel, OGXEmbeddingParams
+    from ai4rag.rag.vector_store.ogx import OGXVectorStore
     from langchain_core.documents import Document
-    from llama_stack_client import APIConnectionError as LSAPIConnectionError
-    from llama_stack_client import LlamaStackClient
+    from ogx_client import APIConnectionError as OGXAPIConnectionError
+    from ogx_client import OgxClient
 
     def _is_ssl_error(exc: BaseException) -> bool:
         """Check whether an exception (or its cause/context chain) is an SSL verification failure."""
@@ -63,17 +63,17 @@ def documents_indexing(
             current = current.__cause__ or current.__context__
         return False
 
-    def _create_llama_stack_client(**kwargs) -> LlamaStackClient:
-        """Create LlamaStackClient, falling back to SSL-unverified if self-signed cert detected."""
-        client = LlamaStackClient(**kwargs)
+    def _create_ogx_client(**kwargs) -> OgxClient:
+        """Create OgxClient, falling back to SSL-unverified if self-signed cert detected."""
+        client = OgxClient(**kwargs)
         try:
             client.models.list()
-        except (ssl.SSLCertVerificationError, httpx.ConnectError, LSAPIConnectionError) as exc:
+        except (ssl.SSLCertVerificationError, httpx.ConnectError, OGXAPIConnectionError) as exc:
             if _is_ssl_error(exc):
                 logger.warning(
-                    "SSL verification failed for LlamaStackClient — retrying with verify=False. ",
+                    "SSL verification failed for OgxClient — retrying with verify=False. ",
                 )
-                client = LlamaStackClient(
+                client = OgxClient(
                     **kwargs,
                     http_client=httpx.Client(verify=False),
                 )
@@ -90,8 +90,8 @@ def documents_indexing(
     supported_chunking_methods = ("recursive",)
     supported_chunks_sizes_range = (128, 2048)
 
-    if not llama_stack_vector_io_provider_id or not llama_stack_vector_io_provider_id.strip():
-        raise ValueError("llama_stack_vector_io_provider_id must be a non-empty string.")
+    if not vector_io_provider_id or not vector_io_provider_id.strip():
+        raise ValueError("vector_io_provider_id must be a non-empty string.")
 
     if not embedding_model_id:
         raise ValueError("embedding_model_id must be a non-empty string.")
@@ -122,11 +122,19 @@ def documents_indexing(
         if not isinstance(embedding_params, dict):
             raise TypeError("embedding_params must be a dictionary.")
 
-    params = LSEmbeddingParams(**embedding_params)
+    params = OGXEmbeddingParams(**embedding_params)
 
-    client = _create_llama_stack_client(
-        base_url=os.getenv("LLAMA_STACK_CLIENT_BASE_URL"),
-        api_key=os.getenv("LLAMA_STACK_CLIENT_API_KEY"),
+    ogx_base_url = os.getenv("OGX_CLIENT_BASE_URL")
+    ogx_api_key = os.getenv("OGX_CLIENT_API_KEY")
+    missing = [
+        name for name, val in (("OGX_CLIENT_BASE_URL", ogx_base_url), ("OGX_CLIENT_API_KEY", ogx_api_key)) if not val
+    ]
+    if missing:
+        raise RuntimeError(f"Required environment variable(s) not set: {', '.join(missing)}")
+
+    client = _create_ogx_client(
+        base_url=ogx_base_url,
+        api_key=ogx_api_key,
     )
 
     paths = sorted(Path(extracted_text.path).glob("*.md"))
@@ -138,13 +146,13 @@ def documents_indexing(
         return
 
     chunker = LangChainChunker(method=chunking_method, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
-    embedding_model = LSEmbeddingModel(client=client, model_id=embedding_model_id, params=params)
+    embedding_model = OGXEmbeddingModel(client=client, model_id=embedding_model_id, params=params)
 
-    collection_name_param = {"reuse_collection_name": collection_name if collection_name is not None else {}}
-    ls_vectorstore = LSVectorStore(
+    collection_name_param = {"reuse_collection_name": collection_name} if collection_name is not None else {}
+    ogx_vectorstore = OGXVectorStore(
         embedding_model=embedding_model,
         client=client,
-        provider_id=llama_stack_vector_io_provider_id,
+        provider_id=vector_io_provider_id,
         distance_metric=distance_metric,
         **collection_name_param,
     )
@@ -162,7 +170,7 @@ def documents_indexing(
             for p in batch_paths
         ]
         batch_chunks = chunker.split_documents(batch_documents)
-        ls_vectorstore.add_documents(batch_chunks)
+        ogx_vectorstore.add_documents(batch_chunks)
         total_chunks += len(batch_chunks)
         batch_num = start // effective_batch_size + 1
         num_batches = (total_documents + effective_batch_size - 1) // effective_batch_size

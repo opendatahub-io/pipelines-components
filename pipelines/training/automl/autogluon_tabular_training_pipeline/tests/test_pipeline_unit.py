@@ -89,3 +89,44 @@ class TestAutogluonTabularTrainingPipelineUnitTests:
             pipeline_func=autogluon_tabular_training_pipeline,
             expected_task_ids=_EXPECTED_ROOT_DAG_TASK_IDS,
         )
+
+    def test_compiled_pipeline_wires_loader_outputs_to_training_task(self):
+        """Training step consumes data-loader outputs (sample_row, paths, configs)."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as tmp_file:
+            tmp_path = tmp_file.name
+        try:
+            compiler.Compiler().compile(
+                pipeline_func=autogluon_tabular_training_pipeline,
+                package_path=tmp_path,
+            )
+            content = Path(tmp_path).read_text(encoding="utf-8")
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
+
+        assert "dependentTasks:" in content
+        assert "autogluon-models-training:" in content
+        assert "automl-data-loader" in content
+        assert "producerTask: automl-data-loader" in content
+        assert "outputParameterKey: sample_row" in content
+        assert "outputParameterKey: models_selection_train_data_path" in content
+        assert "outputParameterKey: split_config" in content
+        assert "outputParameterKey: sample_config" in content
+        assert "outputParameterKey: extra_train_data_path" in content
+
+    def test_compiled_pipeline_data_loader_declares_task_type_and_label(self):
+        """Tabular data loader component exposes task_type and label_column inputs."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as tmp_file:
+            tmp_path = tmp_file.name
+        try:
+            compiler.Compiler().compile(
+                pipeline_func=autogluon_tabular_training_pipeline,
+                package_path=tmp_path,
+            )
+            content = Path(tmp_path).read_text(encoding="utf-8")
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
+
+        assert "comp-automl-data-loader:" in content
+        assert "task_type:" in content
+        assert "label_column:" in content
+        assert "defaultValue: regression" in content

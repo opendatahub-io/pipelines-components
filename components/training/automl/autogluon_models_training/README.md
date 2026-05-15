@@ -6,6 +6,8 @@
 
 Train AutoGluon models, select the top N, and refit each on the full dataset.
 
+Expects pre-cleaned CSV data from the tabular data loader (infinite values replaced, duplicates removed, missing labels dropped). Reads train/test/extra-train CSVs and validates that the label column exists in each dataset.
+
 This component combines the model selection and full-refit stages into a single step. It trains a TabularPredictor on sampled data, ranks all models on the test set, then refits each of the top N models on the full training data in a single ``refit_full`` call. Post-refit work (predict, evaluate,
 feature importance, confusion matrix, notebook generation) runs concurrently across all top-N models via ``ThreadPoolExecutor``. The deployment clone (``set_model_best`` + ``clone_for_deployment``) is serialized afterward because it mutates predictor state. All artifacts are written under a single
 output artifact so the pipeline does not require a ParallelFor loop. Each model directory contains a ``model.json`` file with model metadata (name, location, metrics).
@@ -45,10 +47,11 @@ output artifact so the pipeline does not require a ParallelFor loop. Each model 
 - **Tags**:
   - training
   - automl
-- **Last Verified**: 2026-03-30 15:09:22+00:00
+- **Last Verified**: 2026-04-21 12:00:00+00:00
 - **Owners**:
   - Approvers:
     - LukaszCmielowski
+    - DorotaDR
   - Reviewers:
     - Mateusz-Switala
     - DorotaDR
@@ -143,7 +146,8 @@ Each model directory contains a `model.json` file with the model's metadata, mat
   "location": {
     "model_directory": "LightGBM_BAG_L1_FULL",
     "predictor": "LightGBM_BAG_L1_FULL/predictor",
-    "notebook": "LightGBM_BAG_L1_FULL/notebooks/automl_predictor_notebook.ipynb"
+    "notebook": "LightGBM_BAG_L1_FULL/notebooks/automl_predictor_notebook.ipynb",
+    "metrics": "LightGBM_BAG_L1_FULL/metrics"
   },
   "metrics": {
     "test_data": {"root_mean_squared_error": 0.42, "r2": 0.85}
@@ -177,7 +181,7 @@ Each entry in **`context.models`** contains:
 | Key | Type | Description |
 | --- | ---- | ----------- |
 | `name` | `str` | Model name with `_FULL` suffix (e.g. `"LightGBM_BAG_L1_FULL"`). |
-| `location` | `dict` | Paths relative to `models_artifact.path`: `model_directory`, `predictor`, `notebook`. |
+| `location` | `dict` | Paths relative to `models_artifact.path`: `model_directory`, `predictor`, `notebook`, `metrics`. |
 | `metrics` | `dict` | `test_data` — evaluation results dict from `evaluate_predictions` (metric names → values). |
 
 Example:
@@ -199,7 +203,8 @@ Example:
         "location": {
           "model_directory": "LightGBM_BAG_L1_FULL",
           "predictor": "LightGBM_BAG_L1_FULL/predictor",
-          "notebook": "LightGBM_BAG_L1_FULL/notebooks/automl_predictor_notebook.ipynb"
+          "notebook": "LightGBM_BAG_L1_FULL/notebooks/automl_predictor_notebook.ipynb",
+          "metrics": "LightGBM_BAG_L1_FULL/metrics"
         },
         "metrics": {
           "test_data": {"root_mean_squared_error": 0.42, "r2": 0.85}
@@ -210,7 +215,8 @@ Example:
         "location": {
           "model_directory": "CatBoost_BAG_L1_FULL",
           "predictor": "CatBoost_BAG_L1_FULL/predictor",
-          "notebook": "CatBoost_BAG_L1_FULL/notebooks/automl_predictor_notebook.ipynb"
+          "notebook": "CatBoost_BAG_L1_FULL/notebooks/automl_predictor_notebook.ipynb",
+          "metrics": "CatBoost_BAG_L1_FULL/metrics"
         },
         "metrics": {
           "test_data": {"root_mean_squared_error": 0.51, "r2": 0.80}

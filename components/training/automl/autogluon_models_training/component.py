@@ -30,6 +30,10 @@ def autogluon_models_training(
 ) -> NamedTuple("outputs", eval_metric=str):
     """Train AutoGluon models, select the top N, and refit each on the full dataset.
 
+    Expects pre-cleaned CSV data from the tabular data loader (infinite values replaced,
+    duplicates removed, missing labels dropped). Reads train/test/extra-train CSVs and
+    validates that the label column exists in each dataset.
+
     This component combines the model selection and full-refit stages into a single
     step. It trains a TabularPredictor on sampled data, ranks all models on the test
     set, then refits each of the top N models on the full training data in a single
@@ -63,7 +67,8 @@ def autogluon_models_training(
     Raises:
         TypeError: If any required string parameter is empty or configs have wrong types.
         ValueError: If ``task_type`` is invalid, ``top_n`` is out of range, ``sample_row``
-            is not a JSON list, or ``problem_type`` is unsupported for notebook generation.
+            is not a JSON list, ``problem_type`` is unsupported for notebook generation,
+            label column not found in CSV, or train/test data is empty.
         FileNotFoundError: If train/test data or predictor paths cannot be found.
     """  # noqa: E501
     import json
@@ -120,8 +125,32 @@ def autogluon_models_training(
     # 1. models selection stage
 
     train_data_df = pd.read_csv(train_data_path)
+    if label_column not in train_data_df.columns:
+        raise ValueError(
+            f"Label column {label_column!r} not found in train CSV. Available columns: {list(train_data_df.columns)}"
+        )
+    if train_data_df.empty:
+        raise ValueError("Training CSV is empty. Ensure the data loader produced valid training data.")
+
     test_data_df = pd.read_csv(test_data.path)
-    extra_train_df = pd.read_csv(extra_train_data_path) if extra_train_data_path.strip() else None
+    if label_column not in test_data_df.columns:
+        raise ValueError(
+            f"Label column {label_column!r} not found in test CSV. Available columns: {list(test_data_df.columns)}"
+        )
+    if test_data_df.empty:
+        raise ValueError("Test CSV is empty. Ensure the data loader produced valid test data.")
+
+    extra_train_df = None
+    if extra_train_data_path.strip():
+        extra_train_df = pd.read_csv(extra_train_data_path)
+        if label_column not in extra_train_df.columns:
+            raise ValueError(
+                f"Label column {label_column!r} not found in extra-train CSV. "
+                f"Available columns: {list(extra_train_df.columns)}"
+            )
+        if extra_train_df.empty:
+            logger.warning("Extra train CSV is empty; passing train_data_extra=None to refit_full.")
+            extra_train_df = None
 
     eval_metric = "r2" if task_type == "regression" else "accuracy"
 
@@ -165,7 +194,7 @@ def autogluon_models_training(
 
     pipeline_name_trimmed = retrieve_pipeline_name(pipeline_name)
 
-    # Strip label column from sample row —- same for all models
+    # Strip label column from sample row -- same for all models
     sample_row_formatted = [
         {col: value for col, value in row.items() if col != predictor.label} for row in sample_row_list
     ]
@@ -265,12 +294,12 @@ def autogluon_models_training(
 
         return model_name_full, eval_results
 
-    # Phase A: metrics + notebooks — all models run concurrently.
+    # Phase A: metrics + notebooks - all models run concurrently.
     with ThreadPoolExecutor(max_workers=len(model_names_full)) as executor:
         futures = [executor.submit(_process_model, name) for name in model_names_full]
         eval_results_by_model = dict(f.result() for f in futures)
 
-    # Phase B: clone for deployment — sequential because set_model_best mutates predictor state.
+    # Phase B: clone for deployment - sequential because set_model_best mutates predictor state.
     for model_name_full in model_names_full:
         output_path = Path(models_artifact.path) / model_name_full
         predictor_clone.set_model_best(model=model_name_full, save_trainer=True)
@@ -288,6 +317,7 @@ def autogluon_models_training(
                 "model_directory": model_name_full,
                 "predictor": str(Path(model_name_full) / "predictor"),
                 "notebook": str(Path(model_name_full) / "notebooks" / "automl_predictor_notebook.ipynb"),
+                "metrics": str(Path(model_name_full) / "metrics"),
             },
             "metrics": {
                 "test_data": eval_results,

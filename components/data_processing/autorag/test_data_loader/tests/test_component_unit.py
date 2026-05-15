@@ -15,6 +15,11 @@ MOCKED_ENV_VARIABLES = {
     "AWS_S3_ENDPOINT": "https://s3.example.com",
     "AWS_DEFAULT_REGION": "us-east-1",
 }
+MOCKED_ENV_VARIABLES_NO_REGION = {
+    "AWS_ACCESS_KEY_ID": "test_key",
+    "AWS_SECRET_ACCESS_KEY": "test_secret",
+    "AWS_S3_ENDPOINT": "https://s3.example.com",
+}
 
 
 class _MockSSLError(Exception):
@@ -90,6 +95,43 @@ class TestTestDataLoaderUnitTests:
         assert out_path.exists()
         assert json.loads(out_path.read_text(encoding="utf-8"))["dataset"] == "ok"
         mock_s3.download_file.assert_called_once()
+
+    @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES_NO_REGION, clear=True)
+    def test_missing_region_is_allowed(self, tmp_path):
+        """Component works when AWS_DEFAULT_REGION is not present."""
+        mock_boto3 = mock.MagicMock()
+        mock_s3 = mock.MagicMock()
+
+        out_path = tmp_path / "test_data.json"
+
+        def _write_valid_json(_bucket, _key, destination):
+            with open(destination, "w", encoding="utf-8") as f:
+                json.dump({"dataset": "ok"}, f)
+
+        mock_s3.download_file.side_effect = _write_valid_json
+        mock_boto3.client.return_value = mock_s3
+
+        mock_botocore, mock_botocore_exceptions = _mock_botocore_modules()
+        test_data_artifact = mock.MagicMock()
+        test_data_artifact.path = str(out_path)
+
+        with mock.patch.dict(
+            sys.modules,
+            {
+                "boto3": mock_boto3,
+                "botocore": mock_botocore,
+                "botocore.exceptions": mock_botocore_exceptions,
+            },
+        ):
+            test_data_loader.python_func(
+                test_data_bucket_name="my-bucket",
+                test_data_path="data/test.json",
+                test_data=test_data_artifact,
+            )
+
+        client_kwargs = mock_boto3.client.call_args.kwargs
+        assert client_kwargs["region_name"] is None
+        assert out_path.exists()
 
     @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
     def test_ssl_error_retries_with_verify_false(self, tmp_path):

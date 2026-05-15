@@ -60,7 +60,7 @@ def text_extraction(
     for k, v in s3_creds.items():
         if v is None:
             raise ValueError(f"{k} environment variable not set. Check if kubernetes secret was configured properly.")
-    s3_creds["AWS_DEFAULT_REGION"] = os.environ.get("AWS_DEFAULT_REGION", "")
+    s3_creds["AWS_DEFAULT_REGION"] = os.environ.get("AWS_DEFAULT_REGION")
 
     logger = logging.getLogger("Text Extraction component logger")
     logger.setLevel(logging.INFO)
@@ -106,17 +106,24 @@ def text_extraction(
         Returns:
             Path to the downloaded local file.
         """
-        key = doc["key"]
-        local_path = base_path / key
+        raw_key = doc["key"]
+        safe_key = raw_key.strip().lstrip("/")
+        rel = Path(safe_key)
+        if not safe_key or rel.is_absolute() or ".." in rel.parts:
+            raise ValueError(f"Unsafe S3 key (path traversal): {raw_key!r}")
+        local_path = (base_path / rel).resolve()
+        base_resolved = base_path.resolve()
+        if not local_path.is_relative_to(base_resolved):
+            raise ValueError(f"Unsafe S3 key (escapes download directory): {raw_key!r}")
         local_path.parent.mkdir(parents=True, exist_ok=True)
         _dl_t0 = time.perf_counter()
-        logger.info("Downloading %s", key)
+        logger.info("Downloading %s", raw_key)
         try:
-            make_s3_client().download_file(bucket, key, str(local_path))
+            make_s3_client().download_file(bucket, raw_key, str(local_path))
         except SSLError:
-            logger.warning("SSL error when downloading %s, retrying with verify=False", key)
-            make_s3_client(verify=False).download_file(bucket, key, str(local_path))
-        logger.info("Download finished %s (%.1fs)", key, time.perf_counter() - _dl_t0)
+            logger.warning("SSL error when downloading %s, retrying with verify=False", raw_key)
+            make_s3_client(verify=False).download_file(bucket, raw_key, str(local_path))
+        logger.info("Download finished %s (%.1fs)", raw_key, time.perf_counter() - _dl_t0)
         return local_path
 
     def _docling_artifacts_path() -> Optional[Path]:

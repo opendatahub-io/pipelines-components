@@ -7,6 +7,7 @@ can run with sys.modules['pandas'] patched. Used together with _mock_boto3_and_p
 import csv
 import io
 import json
+import math
 import random
 from collections import Counter
 
@@ -73,8 +74,81 @@ class MockedDataFrame:
         if not subset:
             return self
         col_indices = [self._columns.index(c) for c in subset]
-        new_rows = [row for row in self._rows if all(row[i] != "" and row[i] is not None for i in col_indices)]
+
+        def _cell_missing(val) -> bool:
+            if val is None or val == "":
+                return True
+            try:
+                return math.isnan(float(val))
+            except (TypeError, ValueError):
+                return False
+
+        new_rows = [row for row in self._rows if all(not _cell_missing(row[i]) for i in col_indices)]
         return MockedDataFrame(self._columns, new_rows)
+
+    def replace(self, to_replace, value, inplace=False):
+        """Minimal ``DataFrame.replace``: map ±infinity to NaN (float), matching production pandas."""
+        inf_like = False
+        if isinstance(to_replace, (list, tuple)):
+            for x in to_replace:
+                if isinstance(x, float) and math.isinf(x):
+                    inf_like = True
+                    break
+        if not inf_like:
+            out = MockedDataFrame(self._columns, [list(r) for r in self._rows])
+            return None if inplace else out
+
+        def _map_cell(v):
+            try:
+                fv = float(v)
+                if math.isinf(fv):
+                    return float("nan")
+            except (TypeError, ValueError):
+                pass
+            return v
+
+        new_rows = [[_map_cell(c) for c in row] for row in self._rows]
+        out = MockedDataFrame(self._columns, new_rows)
+        if inplace:
+            self._columns = out._columns
+            self._rows = out._rows
+            return None
+        return out
+
+    def drop_duplicates(self, inplace=False):
+        """Drop full-row duplicates (first occurrence kept).
+
+        NaN in any cell is treated like pandas duplicate detection (two NaNs in the
+        same column positions count as equal), not Python ``tuple`` equality.
+        """
+
+        def _dedup_key_part(cell):
+            if isinstance(cell, float):
+                if math.isnan(cell):
+                    return "__PANDAS_NAN__"
+                return ("float", cell)
+            try:
+                fv = float(cell)
+                if math.isnan(fv):
+                    return "__PANDAS_NAN__"
+            except (TypeError, ValueError):
+                pass
+            return cell
+
+        seen: set[tuple] = set()
+        new_rows = []
+        for row in self._rows:
+            key = tuple(_dedup_key_part(c) for c in row)
+            if key in seen:
+                continue
+            seen.add(key)
+            new_rows.append(list(row))
+        out = MockedDataFrame(self._columns, new_rows)
+        if inplace:
+            self._columns = out._columns
+            self._rows = out._rows
+            return None
+        return out
 
     def _col_index(self, col):
         """Return the index of the given column name."""

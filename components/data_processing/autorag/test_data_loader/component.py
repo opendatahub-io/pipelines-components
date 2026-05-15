@@ -21,7 +21,8 @@ def test_data_loader(test_data_bucket_name: str, test_data_path: str, test_data:
         test_data: Output artifact that receives the downloaded file.
 
     Environment variables (required when run with pipeline secret injection):
-        AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_S3_ENDPOINT, AWS_DEFAULT_REGION.
+        AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_S3_ENDPOINT.
+        AWS_DEFAULT_REGION is optional.
 
     Raises:
         ValueError: If S3 credentials are missing or misconfigured.
@@ -50,15 +51,13 @@ def test_data_loader(test_data_bucket_name: str, test_data_path: str, test_data:
         class TestDataLoaderException(Exception):
             pass
 
-        s3_creds = {
-            k: os.environ.get(k)
-            for k in ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_S3_ENDPOINT", "AWS_DEFAULT_REGION"]
-        }
+        s3_creds = {k: os.environ.get(k) for k in ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_S3_ENDPOINT"]}
         for k, v in s3_creds.items():
             if v is None:
                 raise ValueError(
                     "%s environment variable not set. Check if kubernetes secret was configured properly" % k
                 )
+        s3_creds["AWS_DEFAULT_REGION"] = os.environ.get("AWS_DEFAULT_REGION")
 
         def _make_s3_client(verify=True):
             return boto3.client(

@@ -27,7 +27,8 @@ def documents_discovery(
         discovered_documents: Output artifact containing the documents descriptor JSON file.
 
     Environment variables (required when run with pipeline secret injection):
-        AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_S3_ENDPOINT, AWS_DEFAULT_REGION.
+        AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_S3_ENDPOINT.
+        AWS_DEFAULT_REGION is optional.
     """
     import json
     import logging
@@ -64,13 +65,11 @@ def documents_discovery(
     """Validate S3 credentials, list objects, sample, and write JSON descriptor."""
     from botocore.exceptions import SSLError
 
-    s3_creds = {
-        k: os.environ.get(k)
-        for k in ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_S3_ENDPOINT", "AWS_DEFAULT_REGION"]
-    }
+    s3_creds = {k: os.environ.get(k) for k in ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_S3_ENDPOINT"]}
     for k, v in s3_creds.items():
         if v is None:
             raise ValueError("%s environment variable not set. Check if kubernetes secret was configured properly" % k)
+    s3_creds["AWS_DEFAULT_REGION"] = os.environ.get("AWS_DEFAULT_REGION")
 
     def _make_s3_client(verify=True):
         return boto3.client(

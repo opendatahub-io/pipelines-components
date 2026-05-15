@@ -16,6 +16,11 @@ The component reads data in chunks to efficiently handle large files without loa
 
 For **regression** tasks the split is random; for **binary** and **multiclass** tasks the split is **stratified** by the label column by default.
 
+Rows with a missing label (NaN / empty in ``label_column``) are dropped after load and before splitting, so regression runs do not propagate null targets into splits or the ``sample_row`` JSON (stratified sampling already dropped per chunk; this applies the same rule to random and first-n-rows
+paths).
+
+After sampling, **+/- infinity** values in the frame are replaced with **NaN** (same idea as AutoAI ``loadXy``), then **full-row duplicates** are dropped before the label drop and train/test split.
+
 Authentication uses AWS-style credentials provided via environment variables (e.g. from a Kubernetes secret).
 
 ## Inputs 📥
@@ -90,6 +95,7 @@ def example_pipeline(
 - **Owners**:
   - Approvers:
     - LukaszCmielowski
+    - DorotaDR
   - Reviewers:
     - Mateusz-Switala
     - DorotaDR

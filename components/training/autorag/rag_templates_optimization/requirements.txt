@@ -1,6 +1,4 @@
-
-
-ai4rag@https://github.com/IBM/ai4rag/archive/refs/heads/dev.zip
+ai4rag==0.5.5
 kfp[kubernetes] ~= 2.14
 PyYAML
 langchain-text-splitters

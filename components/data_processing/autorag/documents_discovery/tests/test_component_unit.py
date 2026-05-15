@@ -15,6 +15,11 @@ MOCKED_ENV_VARIABLES = {
     "AWS_S3_ENDPOINT": "https://s3.example.com",
     "AWS_DEFAULT_REGION": "us-east-1",
 }
+MOCKED_ENV_VARIABLES_NO_REGION = {
+    "AWS_ACCESS_KEY_ID": "test_key",
+    "AWS_SECRET_ACCESS_KEY": "test_secret",
+    "AWS_S3_ENDPOINT": "https://s3.example.com",
+}
 
 
 class _MockSSLError(Exception):
@@ -83,6 +88,38 @@ class TestDocumentsDiscoveryUnitTests:
         assert payload["bucket"] == "my-bucket"
         assert payload["count"] == 2
         assert payload["total_size_bytes"] == 3000
+
+    @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES_NO_REGION, clear=True)
+    def test_missing_region_is_allowed(self, tmp_path):
+        """Component works when AWS_DEFAULT_REGION is not present."""
+        mock_boto3 = mock.MagicMock()
+        mock_s3 = mock.MagicMock()
+        mock_s3.list_objects_v2.return_value = {"Contents": [{"Key": "docs/a.pdf", "Size": 1000}]}
+        mock_boto3.client.return_value = mock_s3
+        mock_botocore, mock_botocore_exceptions = _make_botocore_modules()
+
+        discovered = mock.MagicMock()
+        discovered.path = str(tmp_path / "descriptor")
+
+        with mock.patch.dict(
+            sys.modules,
+            {
+                "boto3": mock_boto3,
+                "botocore": mock_botocore,
+                "botocore.exceptions": mock_botocore_exceptions,
+            },
+        ):
+            documents_discovery.python_func(
+                input_data_bucket_name="my-bucket",
+                input_data_path="docs/",
+                discovered_documents=discovered,
+                sampling_enabled=False,
+            )
+
+        client_kwargs = mock_boto3.client.call_args.kwargs
+        assert client_kwargs["region_name"] is None
+        descriptor_file = tmp_path / "descriptor" / "documents_descriptor.json"
+        assert descriptor_file.exists()
 
     @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
     def test_ssl_error_retries_with_verify_false(self, tmp_path):

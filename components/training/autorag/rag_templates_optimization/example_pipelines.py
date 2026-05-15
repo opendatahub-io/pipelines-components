@@ -9,14 +9,14 @@ from kfp_components.components.training.autorag.rag_templates_optimization impor
 @dsl.pipeline(name="rag-templates-optimization-example")
 def example_pipeline(
     test_data_key: str = "questions",
-    llama_stack_vector_io_provider_id: str = "milvus",
+    vector_io_provider_id: str = "milvus",
     input_data_key: str = "",
 ):
     """Example pipeline using rag_templates_optimization.
 
     Args:
         test_data_key: Key for the test data.
-        llama_stack_vector_io_provider_id: Vector I/O provider identifier.
+        vector_io_provider_id: Vector I/O provider identifier.
         input_data_key: Key for the input data.
     """
     extracted_text = dsl.importer(
@@ -36,6 +36,6 @@ def example_pipeline(
         test_data=test_data.output,
         search_space_prep_report=search_space_prep_report.output,
         test_data_key=test_data_key,
-        llama_stack_vector_io_provider_id=llama_stack_vector_io_provider_id,
+        vector_io_provider_id=vector_io_provider_id,
         input_data_key=input_data_key,
     )

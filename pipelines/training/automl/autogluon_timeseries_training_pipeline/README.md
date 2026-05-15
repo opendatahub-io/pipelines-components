@@ -60,14 +60,14 @@ prediction_length=14, top_n=3, )
 - **Managed**: Yes
 - **Dependencies**:
   - Kubeflow:
-    - Name: Pipelines, Version: >=2.15.2
+    - Name: Pipelines, Version: 2.16.1
     - Name: Kubernetes, Version: >=1.28.0
 - **Tags**:
   - training
   - pipeline
   - automl
   - autogluon-timeseries-training-pipeline
-- **Last Verified**: 2026-03-25 15:00:00+00:00
+- **Last Verified**: 2026-05-07 12:00:00+00:00
 - **Owners**:
   - Approvers:
     - DorotaDR

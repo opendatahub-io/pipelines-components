@@ -31,7 +31,7 @@ def autogluon_timeseries_models_full_refit(
     refits it on the full training dataset (selection + extra train data)
     for improved performance. The refitted model is optimized and saved
     for deployment. Each model directory contains a ``model.json`` file
-    with model metadata (name, base model, location, metrics).
+    with model metadata (name, location, metrics).
 
     Args:
         model_name: Name of the model to refit.
@@ -251,12 +251,11 @@ def autogluon_timeseries_models_full_refit(
     # Write model.json alongside predictor/, metrics/, notebooks/
     model_metadata = {
         "name": model_name_full,
-        "base_model": model_name,
         "location": {
             "model_directory": model_name_full,
             "predictor": f"{model_name_full}/predictor",
+            "notebook": f"{model_name_full}/notebooks/automl_predictor_notebook.ipynb",
             "metrics": f"{model_name_full}/metrics",
-            "notebooks": f"{model_name_full}/notebooks",
         },
         "metrics": {
             "test_data": metrics_dict,
@@ -275,8 +274,8 @@ def autogluon_timeseries_models_full_refit(
         "location": {
             "model_directory": model_name_full,
             "predictor": f"{model_name_full}/predictor",
+            "notebook": f"{model_name_full}/notebooks/automl_predictor_notebook.ipynb",
             "metrics": f"{model_name_full}/metrics",
-            "notebooks": f"{model_name_full}/notebooks",
         },
         "pipeline_info": {
             "pipeline_name": pipeline_name,

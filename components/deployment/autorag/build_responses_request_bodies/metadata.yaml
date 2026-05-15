@@ -6,13 +6,13 @@ dependencies:
     - name: Pipelines
       version: '>=2.15.2'
   external_services:
-    - name: Llama Stack
-      version: ">=0.1.0"
+    - name: OGX
+      version: ">=1.0.0"
 tags:
   - deployment
   - autorag
-  - llama-stack
+  - ogx
   - responses-api
-lastVerified: 2026-03-30T00:00:00Z
+lastVerified: 2026-05-14T00:00:00Z
 links:
-  documentation: https://llamastack.github.io/docs/api/create-openai-response-v-1-responses-post
+  documentation: https://ogx-ai.github.io/docs/api/create-openai-response-v-1-responses-post

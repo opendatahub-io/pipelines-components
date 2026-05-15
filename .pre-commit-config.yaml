@@ -8,6 +8,12 @@ repos:
         language: system
         files: (^pyproject\.toml$|^uv\.lock$)
         pass_filenames: false
+      - id: sync-requirements
+        name: sync requirements
+        entry: make requirements
+        language: system
+        files: (^pyproject\.toml$|^uv\.lock$)
+        pass_filenames: false
       - id: ruff-format
         name: ruff format
         # --force-exclude respects pyproject.toml excludes when files are passed directly

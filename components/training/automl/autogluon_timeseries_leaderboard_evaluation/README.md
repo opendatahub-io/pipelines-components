@@ -44,6 +44,7 @@ Note: KFP does not propagate artifact metadata through executor inputs for colle
 - **Owners**:
   - Approvers:
     - LukaszCmielowski
+    - DorotaDR
   - Reviewers:
     - Mateusz-Switala
     - DorotaDR

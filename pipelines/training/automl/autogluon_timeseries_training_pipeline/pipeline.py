@@ -12,6 +12,9 @@ from kfp_components.components.training.automl.autogluon_timeseries_models_selec
     autogluon_timeseries_models_selection,
 )
 
+MAX_CPUS = "32"
+MAX_MEMORY = "64Gi"
+
 
 @dsl.pipeline(
     name="autogluon-timeseries-training-pipeline",
@@ -133,7 +136,7 @@ def autogluon_timeseries_training_pipeline(
         timestamp_column=timestamp_column,
     )
     data_loader_task.set_caching_options(False)
-    data_loader_task.set_cpu_request("2").set_memory_request("8Gi")
+    data_loader_task.set_cpu_request("2").set_memory_request("8Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(MAX_MEMORY)
 
     # Configure S3 secret for data loader
     from kfp.kubernetes import use_secret_as_env
@@ -164,7 +167,7 @@ def autogluon_timeseries_training_pipeline(
         known_covariates_names=known_covariates_names,
     )
     selection_task.set_caching_options(False)
-    selection_task.set_cpu_request("4").set_memory_request("16Gi")
+    selection_task.set_cpu_request("4").set_memory_request("16Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(MAX_MEMORY)
 
     # Stage 3: Model Refitting (parallelism=1: RWO workspace allows only one pod on the volume at a time).
     with dsl.ParallelFor(items=selection_task.outputs["top_models"], parallelism=1) as model_name:
@@ -182,7 +185,7 @@ def autogluon_timeseries_training_pipeline(
             sample_rows=data_loader_task.outputs["sample_rows"],
         )
         refit_task.set_caching_options(False)
-        refit_task.set_cpu_request("2").set_memory_request("8Gi")
+        refit_task.set_cpu_request("2").set_memory_request("8Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(MAX_MEMORY)
 
     # Stage 4: Leaderboard Evaluation
     # Generate leaderboard from all refitted models
@@ -191,7 +194,7 @@ def autogluon_timeseries_training_pipeline(
         eval_metric=selection_task.outputs["eval_metric_name"],
     )
     leaderboard_task.set_caching_options(False)
-    leaderboard_task.set_cpu_request("1").set_memory_request("4Gi")
+    leaderboard_task.set_cpu_request("1").set_memory_request("4Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(MAX_MEMORY)
 
 
 if __name__ == "__main__":

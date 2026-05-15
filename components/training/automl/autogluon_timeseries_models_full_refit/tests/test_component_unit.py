@@ -228,11 +228,11 @@ class TestTimeseriesModelsFullRefitUnitTests:
         assert model_json_path.exists()
         model_meta = json.loads(model_json_path.read_text(encoding="utf-8"))
         assert model_meta["name"] == "DeepAR_FULL"
-        assert model_meta["base_model"] == "DeepAR"
+        assert "base_model" not in model_meta
         assert model_meta["location"]["model_directory"] == "DeepAR_FULL"
         assert "predictor" in model_meta["location"]
-        assert "metrics" in model_meta["location"]
-        assert "notebooks" in model_meta["location"]
+        assert model_meta["location"]["notebook"] == "DeepAR_FULL/notebooks/automl_predictor_notebook.ipynb"
+        assert model_meta["location"]["metrics"] == "DeepAR_FULL/metrics"
         assert model_meta["metrics"]["test_data"] == {"MASE": 1.23}
 
         assert model_artifact.metadata["display_name"] == "DeepAR_FULL"
