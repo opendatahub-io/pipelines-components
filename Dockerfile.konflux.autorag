@@ -1,0 +1,48 @@
+# This container is used to run the AutoRAG components of the training pipeline.
+
+#ARG BASE_IMAGE="quay.io/aipcc/base-images/cpu:3.3"
+ARG BASE_IMAGE="registry.redhat.io/rhai/base-image-cpu-rhel9@sha256:e42e1d0b52b4f2d2906b302f75987d353248279fa69eead69f907f6fff8d708c"
+FROM ${BASE_IMAGE}
+
+COPY pipelines/training/autorag/documents_rag_optimization_pipeline/requirements.txt \
+     pipelines/training/autorag/documents_rag_optimization_pipeline/requirements-pypi.txt \
+     pipelines/training/autorag/documents_rag_optimization_pipeline/requirements-pypi-whl.txt \
+     /tmp/
+
+COPY pipelines/training/autorag/documents_rag_optimization_pipeline/seed_docling_models.py \
+     pipelines/training/autorag/documents_rag_optimization_pipeline/artifacts.lock.yaml \
+     pipelines/training/autorag/documents_rag_optimization_pipeline/install_sqlite_from_source.sh \
+     /tmp/
+
+# Build SQLite from sqlite-autoconf (Hermeto generic prefetch or download); replace system libsqlite3.
+# https://github.com/hermetoproject/hermeto/blob/main/docs/generic.md
+ARG HERMETO_GENERIC_DEPS=/cachi2/output/deps/generic
+
+# Build SQLite from sqlite-autoconf (Hermeto generic prefetch or download); replace system libsqlite3.
+USER root
+RUN HERMETO_GENERIC_DEPS="${HERMETO_GENERIC_DEPS}" bash /tmp/install_sqlite_from_source.sh
+USER default
+
+## TODO: Ensure build isolation
+RUN pip install --index-url https://console.redhat.com/api/pypi/public-rhai/rhoai/3.4/cpu-ubi9/simple/ --no-cache-dir -r /tmp/requirements.txt
+RUN pip install --index-url https://pypi.org/simple --no-cache-dir -r /tmp/requirements-pypi.txt
+RUN pip install --index-url https://pypi.org/simple --no-cache-dir -r /tmp/requirements-pypi-whl.txt
+
+# Docling models for offline text extraction. Hermeto: prefetch with generic lockfile (see /tmp/artifacts.lock.yaml)
+# and mount output at ${HERMETO_GENERIC_DEPS}; https://github.com/hermetoproject/hermeto/blob/main/docs/generic.md
+ENV DOCLING_ARTIFACTS_PATH=/opt/app-root/docling-artifacts/models
+RUN if [ -d "${HERMETO_GENERIC_DEPS}" ] && [ -n "$(ls -A "${HERMETO_GENERIC_DEPS}" 2>/dev/null)" ]; then \
+      python3 /tmp/seed_docling_models.py --dest /opt/app-root/docling-artifacts/models --hermeto-dir "${HERMETO_GENERIC_DEPS}"; \
+    else \
+      python3 /tmp/seed_docling_models.py --dest /opt/app-root/docling-artifacts/models --download; \
+    fi
+
+LABEL com.redhat.component="odh-autorag-container" \
+      name="managed-open-data-hub/odh-autorag-rhel9" \
+      description="odh-autorag" \
+      summary="odh-autorag" \
+      maintainer="['managed-open-data-hub@redhat.com']" \
+      io.openshift.expose-services="" \
+      io.k8s.display-name="odh-autorag" \
+      io.k8s.description="odh-autorag" \
+      com.redhat.license_terms="https://www.redhat.com/licenses/Red_Hat_Standard_EULA_20191108.pdf"

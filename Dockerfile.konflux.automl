@@ -1,0 +1,21 @@
+ARG BASE_IMAGE="registry.redhat.io/rhai/base-image-cpu-rhel9@sha256:e42e1d0b52b4f2d2906b302f75987d353248279fa69eead69f907f6fff8d708c"
+
+FROM ${BASE_IMAGE}
+
+COPY pipelines/training/automl/autogluon_tabular_training_pipeline/requirements.txt \
+     pipelines/training/automl/autogluon_tabular_training_pipeline/requirements-pypi.txt \
+     /tmp/
+
+## Ensure build isolation
+RUN pip install --index-url https://console.redhat.com/api/pypi/public-rhai/rhoai/3.4/cpu-ubi9/simple/ --no-cache-dir -r /tmp/requirements.txt
+RUN pip install --index-url https://pypi.org/simple --no-cache-dir -r /tmp/requirements-pypi.txt
+
+LABEL com.redhat.component="odh-automl-container" \
+      name="managed-open-data-hub/odh-automl-rhel9" \
+      description="odh-automl" \
+      summary="odh-automl" \
+      maintainer="['managed-open-data-hub@redhat.com']" \
+      io.openshift.expose-services="" \
+      io.k8s.display-name="odh-automl" \
+      io.k8s.description="odh-automl" \
+      com.redhat.license_terms="https://www.redhat.com/licenses/Red_Hat_Standard_EULA_20191108.pdf"
