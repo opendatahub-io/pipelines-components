@@ -61,10 +61,10 @@ def rag_templates_optimization(
 
     import logging
     import os
-    import ssl
     from json import dump as json_dump
     from json import load as json_load
     from pathlib import Path
+    from re import search
     from string import Formatter
     from typing import Any, Literal, Self
 
@@ -82,7 +82,6 @@ def rag_templates_optimization(
     from ai4rag.search_space.src.search_space import AI4RAGSearchSpace
     from ai4rag.utils.event_handler.event_handler import BaseEventHandler, LogLevel
     from langchain_core.documents import Document
-    from ogx_client import APIConnectionError as OGXAPIConnectionError
     from ogx_client import OgxClient
 
     DEFAULT_MAX_NUMBER_OF_RAG_PATTERNS = 8
@@ -91,38 +90,32 @@ def rag_templates_optimization(
     SUPPORTED_OPTIMIZATION_METRICS = frozenset({"faithfulness", "answer_correctness", "context_correctness"})
     _ssl_logger = logging.getLogger(__name__)
 
-    def _is_ssl_error(exc: BaseException) -> bool:
-        """Check whether an exception (or its cause/context chain) is an SSL verification failure."""
-        seen = set()
-        current: BaseException | None = exc
-        while current is not None and id(current) not in seen:
-            seen.add(id(current))
-            msg = str(current).upper()
-            if "CERTIFICATE_VERIFY_FAILED" in msg or "SSL" in msg:
-                return True
-            current = current.__cause__ or current.__context__
-        return False
+    def _create_ogx_client(base_url, api_key) -> OgxClient:
+        """Creates OgxClient.
 
-    # Mutable container so the nested _create_ogx_client can update the flag
-    # without requiring `nonlocal` or returning the flag.
-    _ogx_ssl_verify = [True]
+        For the time being (temporarily), if self-signed certificate is detected in the certificates chain, then
+        OGXClient is created with `verify=False` option making it (insecurely) NOT validate the server-side certificate.
 
-    def _create_ogx_client(**kwargs) -> OgxClient:
-        """Create OgxClient, falling back to SSL-unverified if self-signed cert detected."""
-        client = OgxClient(**kwargs)
+        Args:
+            base_url: URL pointing to OGX server.
+            api_key: API Key to initialise the OGXClient instance with.
+        """
         try:
-            client.models.list()
-        except (ssl.SSLCertVerificationError, httpx.ConnectError, OGXAPIConnectionError) as exc:
-            if _is_ssl_error(exc):
-                _ssl_logger.warning("SSL verification failed for OgxClient — retrying with verify=False. ")
-                client = OgxClient(
-                    **kwargs,
-                    http_client=httpx.Client(verify=False),
-                )
-                _ogx_ssl_verify[0] = False
-            else:
-                raise
-        return client
+            httpx.get(base_url)
+        except httpx.ConnectError as e:
+            if search(r"\bself.*signed.*certificate\b", str(e)):
+                _ssl_logger.info("OGX server presents a self-signed certificate")
+                if httpx.get(base_url, verify=False).status_code != 200:
+                    _ssl_logger.error(
+                        "Cannot establish connection with the OGX server even without "
+                        "verification of the self-signed certificate.",
+                        exc_info=True,
+                    )
+                    raise e
+                _ssl_logger.warning("Initialising OGXClient without server-side certificate verification.")
+                return OgxClient(base_url=base_url, api_key=api_key, http_client=httpx.Client(verify=False))
+
+        return OgxClient(base_url=base_url, api_key=api_key)
 
     if not isinstance(test_data_key, str) or not test_data_key.strip() or not test_data_key.lower().endswith(".json"):
         raise ValueError("test_data_path must point to a JSON file")
@@ -384,7 +377,6 @@ def rag_templates_optimization(
         output_data: dict[str, Any],
         test_data_key: str = "",
         input_data_key: str = "",
-        ogx_ssl_verify: bool = True,
     ) -> dict[str, Any]:
         """Create a mapping from placeholder names to their values from output.json.
 
@@ -411,7 +403,6 @@ def rag_templates_optimization(
             output_data: The parsed pattern.json data
             test_data_key: Test data key.
             input_data_key: Input data key.
-            ogx_ssl_verify: Whether OGX SSL verification succeeded.
 
         Returns:
             Dictionary mapping placeholder names to their values.
@@ -452,9 +443,6 @@ def rag_templates_optimization(
         mapping["TEST_DATA_KEY"] = test_data_key
         mapping["INPUT_DATA_KEY"] = input_data_key
 
-        mapping["OGX_SSL_VERIFY"] = ogx_ssl_verify
-        mapping["OGX_CLIENT_BASE_URL"] = (os.environ.get("OGX_CLIENT_BASE_URL") or "").strip()
-
         return mapping
 
     def generate_notebook_from_templates(
@@ -466,7 +454,6 @@ def rag_templates_optimization(
         output_notebook_path: Path,
         test_data_key: str = "",
         input_data_key: str = "",
-        ogx_ssl_verify: bool = True,
     ) -> None:
         """Generate a filled notebook from templates and output.json.
 
@@ -476,8 +463,6 @@ def rag_templates_optimization(
             output_notebook_path: Path where to save the generated notebook.
             test_data_key: Path to test data file within bucket used as input to AI4RAG.
             input_data_key: Path to documents dir within bucket used as input to AI4RAG.
-            ogx_ssl_verify: Whether OGX SSL verification succeeded; False causes the
-                generated notebook to skip the SSL probe and connect with verify=False directly.
 
         Returns:
             None. The notebook is written to output_notebook_path.
@@ -486,7 +471,6 @@ def rag_templates_optimization(
             output_data,
             test_data_key=test_data_key,
             input_data_key=input_data_key,
-            ogx_ssl_verify=ogx_ssl_verify,
         )
         notebook = Notebook.load(notebook_name=f"{notebook_template}_template.ipynb")
         filled_cells = []
@@ -546,7 +530,7 @@ def rag_templates_optimization(
             "OGX_CLIENT_BASE_URL and OGX_CLIENT_API_KEY environment variables must be set to non-empty values."
         )
 
-    client = _create_ogx_client(base_url=ogx_client_base_url, api_key=ogx_client_api_key)
+    client = _create_ogx_client(ogx_client_base_url, ogx_client_api_key)
 
     def construct_model_instance(loader, node: yml.MappingNode) -> BaseEmbeddingModel | BaseFoundationModel:
         """Instructs yml.Loader on how to construct "!Model" tag."""
@@ -755,7 +739,6 @@ def rag_templates_optimization(
             pattern_data,
             Path(patt_dir, "indexing.ipynb"),
             input_data_key=input_data_key,
-            ogx_ssl_verify=_ogx_ssl_verify[0],
         )
 
         generate_notebook_from_templates(
@@ -763,7 +746,6 @@ def rag_templates_optimization(
             pattern_data,
             Path(patt_dir, "inference.ipynb"),
             test_data_key=test_data_key,
-            ogx_ssl_verify=_ogx_ssl_verify[0],
         )
 
         # Flat schema: scores = per-metric aggregates (mean, ci_low, ci_high); final_score

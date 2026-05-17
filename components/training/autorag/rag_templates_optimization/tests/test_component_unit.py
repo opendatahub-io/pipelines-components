@@ -1,7 +1,6 @@
 """Tests for the rag_templates_optimization component."""
 
 import os
-import ssl
 import sys
 import types
 from unittest import mock
@@ -32,8 +31,12 @@ def _make_httpx_module():
         def __exit__(self, *args):
             pass
 
+    def get(url, **kwargs):
+        return types.SimpleNamespace(status_code=200)
+
     mod.ConnectError = ConnectError
     mod.Client = Client
+    mod.get = get
     return mod
 
 
@@ -48,8 +51,12 @@ def _make_minimal_httpx_module():
         def __init__(self, **kwargs):
             self.kwargs = kwargs
 
+    def get(url, **kwargs):
+        return types.SimpleNamespace(status_code=200)
+
     mod.ConnectError = ConnectError
     mod.Client = Client
+    mod.get = get
     return mod
 
 
@@ -346,32 +353,32 @@ class TestSSLFallbackRagTemplatesOptimization:
         },
     )
     def test_ogx_client_ssl_retry_with_verify_false(self, tmp_path):
-        """SSL error on models.list() retries OgxClient with verify=False."""
+        """Self-signed cert detected by httpx.get creates OgxClient with verify=False."""
         mocks = _make_all_mocks()
+        httpx_mod = mocks["httpx"]
 
-        mock_ogx_client_fail = mock.MagicMock()
-        mock_ogx_client_fail.models.list.side_effect = ssl.SSLCertVerificationError(
-            "CERTIFICATE_VERIFY_FAILED: self-signed certificate"
-        )
-        mock_ogx_client_ok = mock.MagicMock()
-        mock_ogx_client_ok.models.list.return_value = []
+        get_call_count = 0
 
-        ogx_call_count = 0
+        def fake_get(url, **kwargs):
+            nonlocal get_call_count
+            get_call_count += 1
+            if get_call_count == 1:
+                raise httpx_mod.ConnectError("self-signed certificate in certificate chain")
+            return types.SimpleNamespace(status_code=200)
+
+        httpx_mod.get = fake_get
+
+        ogx_mod = _make_ogx_client_module()
         ogx_kwargs_history = []
 
         def fake_ogx_client(**kwargs):
-            nonlocal ogx_call_count
-            ogx_call_count += 1
             ogx_kwargs_history.append(kwargs)
-            if ogx_call_count == 1:
-                return mock_ogx_client_fail
-            return mock_ogx_client_ok
+            client = mock.MagicMock()
+            client.models.list.return_value = []
+            return client
 
-        ogx_mod = _make_ogx_client_module()
         ogx_mod.OgxClient.side_effect = fake_ogx_client
         mocks["ogx_client"] = ogx_mod
-
-        # Abort after client creation via AI4RAGSearchSpace
         mocks["ai4rag.search_space.src.search_space"].AI4RAGSearchSpace.side_effect = _SentinelAbort
 
         extracted_text, test_data, search_space_report = self._make_paths(tmp_path)
@@ -389,12 +396,9 @@ class TestSSLFallbackRagTemplatesOptimization:
                     vector_io_provider_id="milvus",
                 )
 
-        assert ogx_call_count == 2, "OgxClient should be instantiated twice (initial + SSL retry)"
-        assert ogx_kwargs_history[0].get("http_client") is None, "First call should not disable SSL"
-        assert isinstance(ogx_kwargs_history[1].get("http_client"), mocks["httpx"].Client), (
-            "Second call should pass httpx.Client"
-        )
-        assert ogx_kwargs_history[1]["http_client"].kwargs.get("verify") is False
+        assert len(ogx_kwargs_history) == 1, "OgxClient should be instantiated once (with verify=False)"
+        assert isinstance(ogx_kwargs_history[0].get("http_client"), httpx_mod.Client)
+        assert ogx_kwargs_history[0]["http_client"].kwargs.get("verify") is False
 
     @mock.patch.dict(
         "os.environ",
@@ -403,42 +407,30 @@ class TestSSLFallbackRagTemplatesOptimization:
             "OGX_CLIENT_API_KEY": "test-api-key",
         },
     )
-    def test_ogx_client_api_connection_error_wrapping_ssl_retries(self, tmp_path):
-        """OGXAPIConnectionError wrapping an SSL cause triggers the verify=False retry (production case)."""
+    def test_ogx_client_ssl_retry_non_200_reraises(self, tmp_path):
+        """Self-signed cert detected but verify=False probe returns non-200 re-raises the error."""
         mocks = _make_all_mocks()
+        httpx_mod = mocks["httpx"]
+
+        get_call_count = 0
+
+        def fake_get(url, **kwargs):
+            nonlocal get_call_count
+            get_call_count += 1
+            if get_call_count == 1:
+                raise httpx_mod.ConnectError("self-signed certificate in certificate chain")
+            return types.SimpleNamespace(status_code=500)
+
+        httpx_mod.get = fake_get
 
         ogx_mod = _make_ogx_client_module()
-        OGXAPIConnectionError = ogx_mod.APIConnectionError
-        ssl_err = ssl.SSLCertVerificationError("CERTIFICATE_VERIFY_FAILED: self-signed certificate")
-        api_err = OGXAPIConnectionError("Connection error.")
-        api_err.__cause__ = ssl_err
-
-        mock_ogx_client_fail = mock.MagicMock()
-        mock_ogx_client_fail.models.list.side_effect = api_err
-        mock_ogx_client_ok = mock.MagicMock()
-        mock_ogx_client_ok.models.list.return_value = []
-
-        ogx_call_count = 0
-        ogx_kwargs_history = []
-
-        def fake_ogx_client(**kwargs):
-            nonlocal ogx_call_count
-            ogx_call_count += 1
-            ogx_kwargs_history.append(kwargs)
-            if ogx_call_count == 1:
-                return mock_ogx_client_fail
-            return mock_ogx_client_ok
-
-        ogx_mod.OgxClient.side_effect = fake_ogx_client
         mocks["ogx_client"] = ogx_mod
-
-        mocks["ai4rag.search_space.src.search_space"].AI4RAGSearchSpace.side_effect = _SentinelAbort
 
         extracted_text, test_data, search_space_report = self._make_paths(tmp_path)
         rag_patterns, embedded_artifact = self._make_output_artifacts()
 
         with mock.patch.dict(sys.modules, mocks):
-            with pytest.raises(_SentinelAbort):
+            with pytest.raises(httpx_mod.ConnectError):
                 rag_templates_optimization.python_func(
                     extracted_text=extracted_text,
                     test_data=test_data,
@@ -448,11 +440,6 @@ class TestSSLFallbackRagTemplatesOptimization:
                     test_data_key="small-dataset/benchmark.json",
                     vector_io_provider_id="milvus",
                 )
-
-        assert ogx_call_count == 2, "OgxClient should be instantiated twice (initial + SSL retry)"
-        assert ogx_kwargs_history[0].get("http_client") is None
-        assert isinstance(ogx_kwargs_history[1].get("http_client"), mocks["httpx"].Client)
-        assert ogx_kwargs_history[1]["http_client"].kwargs.get("verify") is False
 
     @mock.patch.dict(
         "os.environ",
@@ -462,21 +449,20 @@ class TestSSLFallbackRagTemplatesOptimization:
         },
     )
     def test_ogx_client_non_ssl_error_is_reraised(self, tmp_path):
-        """Non-SSL error from models.list() propagates without retry."""
+        """Non-SSL ConnectError from httpx.get() propagates without retry."""
         mocks = _make_all_mocks()
+        httpx_mod = mocks["httpx"]
 
-        mock_ogx_client = mock.MagicMock()
-        mock_ogx_client.models.list.side_effect = ConnectionRefusedError("Connection refused")
+        httpx_mod.get = mock.MagicMock(side_effect=httpx_mod.ConnectError("Connection refused"))
 
         ogx_mod = _make_ogx_client_module()
-        ogx_mod.OgxClient.return_value = mock_ogx_client
         mocks["ogx_client"] = ogx_mod
 
         extracted_text, test_data, search_space_report = self._make_paths(tmp_path)
         rag_patterns, embedded_artifact = self._make_output_artifacts()
 
         with mock.patch.dict(sys.modules, mocks):
-            with pytest.raises(ConnectionRefusedError):
+            with pytest.raises(httpx_mod.ConnectError, match="Connection refused"):
                 rag_templates_optimization.python_func(
                     extracted_text=extracted_text,
                     test_data=test_data,
@@ -494,25 +480,28 @@ class TestSSLFallbackRagTemplatesOptimization:
             "OGX_CLIENT_API_KEY": "test-api-key",
         },
     )
-    def test_ogx_client_api_connection_error_non_ssl_cause_is_reraised(self, tmp_path):
-        """OGXAPIConnectionError whose cause is NOT SSL propagates without retry."""
+    def test_ogx_client_happy_path_no_ssl_issue(self, tmp_path):
+        """When httpx.get() succeeds, OgxClient is created without http_client override."""
         mocks = _make_all_mocks()
 
         ogx_mod = _make_ogx_client_module()
-        OGXAPIConnectionError = ogx_mod.APIConnectionError
-        err = OGXAPIConnectionError("Connection timeout")
-        err.__cause__ = TimeoutError("timed out")
+        ogx_kwargs_history = []
 
-        mock_ogx_client = mock.MagicMock()
-        mock_ogx_client.models.list.side_effect = err
-        ogx_mod.OgxClient.return_value = mock_ogx_client
+        def fake_ogx_client(**kwargs):
+            ogx_kwargs_history.append(kwargs)
+            client = mock.MagicMock()
+            client.models.list.return_value = []
+            return client
+
+        ogx_mod.OgxClient.side_effect = fake_ogx_client
         mocks["ogx_client"] = ogx_mod
+        mocks["ai4rag.search_space.src.search_space"].AI4RAGSearchSpace.side_effect = _SentinelAbort
 
         extracted_text, test_data, search_space_report = self._make_paths(tmp_path)
         rag_patterns, embedded_artifact = self._make_output_artifacts()
 
         with mock.patch.dict(sys.modules, mocks):
-            with pytest.raises(OGXAPIConnectionError):
+            with pytest.raises(_SentinelAbort):
                 rag_templates_optimization.python_func(
                     extracted_text=extracted_text,
                     test_data=test_data,
@@ -522,3 +511,6 @@ class TestSSLFallbackRagTemplatesOptimization:
                     test_data_key="small-dataset/benchmark.json",
                     vector_io_provider_id="milvus",
                 )
+
+        assert len(ogx_kwargs_history) == 1, "OgxClient should be instantiated once"
+        assert ogx_kwargs_history[0].get("http_client") is None, "No http_client override needed"
