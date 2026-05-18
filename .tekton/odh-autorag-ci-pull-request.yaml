@@ -30,7 +30,7 @@ spec:
   - name: dockerfile
     value: pipelines/training/autorag/documents_rag_optimization_pipeline/Containerfile
   - name: path-context
-    value: .
+    value: pipelines/training/autorag/documents_rag_optimization_pipeline
   - name: pipeline-type
     value: pull-request
   - name: additional-tags
