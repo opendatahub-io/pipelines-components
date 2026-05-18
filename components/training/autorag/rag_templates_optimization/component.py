@@ -72,7 +72,6 @@ def rag_templates_optimization(
     import pandas as pd
     import yaml as yml
     from ai4rag.core.experiment.experiment import AI4RAGExperiment
-    from ai4rag.core.experiment.results import ExperimentResults
     from ai4rag.core.hpo.gam_opt import GAMOptSettings
     from ai4rag.rag.embedding.base_model import BaseEmbeddingModel
     from ai4rag.rag.embedding.ogx import OGXEmbeddingModel
@@ -80,7 +79,7 @@ def rag_templates_optimization(
     from ai4rag.rag.foundation_models.ogx import OGXFoundationModel
     from ai4rag.search_space.src.parameter import Parameter
     from ai4rag.search_space.src.search_space import AI4RAGSearchSpace
-    from ai4rag.utils.event_handler.event_handler import BaseEventHandler, LogLevel
+    from ai4rag.utils.event_handler import KFPEventHandler
     from langchain_core.documents import Document
     from ogx_client import OgxClient
 
@@ -482,15 +481,6 @@ def rag_templates_optimization(
 
         notebook.save(Path(output_notebook_path))
 
-    class TmpEventHandler(BaseEventHandler):
-        """Exists temporarily only for the purpose of satisying type hinting checks"""
-
-        def on_status_change(self, level: LogLevel, message: str, step: str | None = None) -> None:
-            pass
-
-        def on_pattern_creation(self, payload: dict, evaluation_results: list, **kwargs) -> None:
-            pass
-
     def load_as_langchain_doc(path: str | Path) -> list[Document]:
         """Load a text file or folder into a list of langchain Document objects.
 
@@ -568,7 +558,6 @@ def rag_templates_optimization(
         params=[Parameter(param, "C", values=values) for param, values in search_space.items()]
     )
 
-    event_handler = TmpEventHandler()
     max_rag_patterns = optimization_settings.get("max_number_of_rag_patterns", DEFAULT_MAX_NUMBER_OF_RAG_PATTERNS)
     if isinstance(max_rag_patterns, str):
         try:
@@ -588,7 +577,7 @@ def rag_templates_optimization(
 
     rag_exp = AI4RAGExperiment(
         client=client,
-        event_handler=event_handler,
+        event_handler=KFPEventHandler(),
         optimizer_settings=optimizer_settings,
         search_space=search_space,
         benchmark_data=benchmark_data,
@@ -602,170 +591,38 @@ def rag_templates_optimization(
     # retrieve documents && run optimisation loop
     rag_exp.search()
 
-    def _evaluation_result_fallback(eval_data_list, evaluation_result):
-        """Build evaluation_results.json-style list when question_scores missing or incomplete."""
-        out = []
-        for ev in eval_data_list:
-            answer_contexts = []
-            if getattr(ev, "contexts", None) and getattr(ev, "context_ids", None):
-                answer_contexts = [{"text": t, "document_id": doc_id} for t, doc_id in zip(ev.contexts, ev.context_ids)]
-            scores = {}
-            q_scores = (evaluation_result.scores or {}).get("question_scores") or {}
-            for key in q_scores:
-                if isinstance(q_scores[key], dict) and getattr(ev, "question_id", None) in q_scores[key]:
-                    scores[key] = q_scores[key][ev.question_id]
-            out.append(
-                {
-                    "question": getattr(ev, "question", ""),
-                    "correct_answers": getattr(ev, "ground_truths", None),
-                    "answer": getattr(ev, "answer", ""),
-                    "answer_contexts": answer_contexts,
-                    "scores": scores,
-                }
-            )
-        return out
-
     rag_patterns_dir = Path(rag_patterns.path)
-    evaluation_data_list = getattr(rag_exp.results, "evaluation_data", [])
 
-    def _build_pattern_json(evaluation_result, iteration: int, max_combinations: int) -> dict:
-        """Build pattern.json with flat schema (name, iteration, settings, scores, final_score)."""
-        idx = evaluation_result.indexing_params or {}
-        rp = evaluation_result.rag_params or {}
-        chunking = idx.get("chunking") or {}
-        # ai4rag puts embedding in indexing_params.embedding, not rag_params
-        embedding_from_idx = idx.get("embedding") or idx.get("embeddings") or {}
-        embeddings = rp.get("embeddings") or rp.get("embedding") or embedding_from_idx
-        retrieval = rp.get("retrieval") or {}
-
-        # ai4rag retrieval: search_mode is "hybrid" | "vector"; ranker_* used when search_mode is hybrid
-        def _ret(key: str, default=None):
-            return retrieval.get(key) if isinstance(retrieval, dict) else default
-
-        def _rp(key: str, default=None):
-            return rp.get(key) if isinstance(rp, dict) else default
-
-        retrieval_method = _ret("method") or _ret("retrieval_method") or _rp("retrieval_method") or "simple"
-        number_of_chunks = _ret("number_of_chunks") or _rp("number_of_chunks") or 5
-        search_mode = _ret("search_mode") or _rp("search_mode")
-        ranker_strategy = _ret("ranker_strategy") or _rp("ranker_strategy")
-        ranker_k = _ret("ranker_k") if _ret("ranker_k") is not None else _rp("ranker_k")
-        ranker_alpha = _ret("ranker_alpha") if _ret("ranker_alpha") is not None else _rp("ranker_alpha")
-        generation = rp.get("generation") or {}
-        # embedding model_id: from indexing_params.embedding (ai4rag), or rag_params, or flat embedding_model
-        embedding_model_id = None
-        if isinstance(embedding_from_idx, dict) and embedding_from_idx.get("model_id"):
-            embedding_model_id = embedding_from_idx.get("model_id")
-        if not embedding_model_id and isinstance(embeddings, dict):
-            embedding_model_id = embeddings.get("model_id")
-        if not embedding_model_id and isinstance(rp.get("embedding_model"), str):
-            embedding_model_id = rp.get("embedding_model")
-        if not embedding_model_id and hasattr(rp.get("embedding_model"), "model_id"):
-            embedding_model_id = getattr(rp.get("embedding_model"), "model_id", None)
-        # generation model_id: from rag_params.generation (ai4rag) or flat foundation_model
-        generation_model_id = generation.get("model_id") if isinstance(generation, dict) else None
-        if not generation_model_id and isinstance(rp.get("foundation_model"), str):
-            generation_model_id = rp.get("foundation_model")
-        if not generation_model_id and hasattr(rp.get("foundation_model"), "model_id"):
-            generation_model_id = getattr(rp.get("foundation_model"), "model_id", None)
-        return {
-            "name": getattr(evaluation_result, "pattern_name", ""),
-            "iteration": iteration,
-            "max_combinations": max_combinations,
-            "duration_seconds": getattr(evaluation_result, "execution_time", 0) or 0,
-            "settings": {
-                "vector_store": {
-                    "datasource_type": idx.get("vector_store", {}).get("datasource_type")
-                    or rp.get("vector_store", {}).get("datasource_type")
-                    or vector_io_provider_id,
-                    "collection_name": getattr(evaluation_result, "collection", "") or "",
-                },
-                "chunking": {
-                    "method": chunking.get("method", "recursive"),
-                    "chunk_size": chunking.get("chunk_size", 2048),
-                    "chunk_overlap": chunking.get("chunk_overlap", 256),
-                },
-                "embedding": {
-                    "model_id": embedding_model_id or "",
-                    "distance_metric": (
-                        embeddings.get("distance_metric", "cosine") if isinstance(embeddings, dict) else "cosine"
-                    ),
-                    "embedding_params": embeddings.get("embedding_params", {"embedding_dimension": 768}),
-                },
-                "retrieval": {
-                    "method": retrieval_method,
-                    "number_of_chunks": number_of_chunks,
-                    **({"search_mode": search_mode} if search_mode is not None else {}),
-                    **({"ranker_strategy": ranker_strategy} if ranker_strategy is not None else {}),
-                    **({"ranker_k": ranker_k} if ranker_k is not None else {}),
-                    **({"ranker_alpha": ranker_alpha} if ranker_alpha is not None else {}),
-                },
-                "generation": {
-                    "model_id": generation_model_id or "",
-                    "context_template_text": generation.get("context_template_text", "{document}"),
-                    "user_message_text": generation.get(
-                        "user_message_text",
-                        (
-                            "\n\nContext:\n{reference_documents}:\n\nQuestion: {question}. \nAgain, please answer "
-                            "the question based on the context provided only. If the context is not related to "
-                            "the question, just say you cannot answer. Respond exclusively in the language of "
-                            "the question."
-                        ),
-                    ),
-                    "system_message_text": generation.get(
-                        "system_message_text",
-                        (
-                            "Please answer the question I provide in the Question section below, based solely "
-                            "on the information I provide in the Context section. If unanswerable, say so."
-                        ),
-                    ),
-                },
-            },
-        }
-
-    evaluations_list = list(rag_exp.results.evaluations)
-    max_combinations = getattr(rag_exp.results, "max_combinations", len(evaluations_list)) or 24
+    ## create responses-related files in each pattern dir (?)
 
     rag_patterns.metadata["name"] = "rag_patterns_artifact"
     rag_patterns.metadata["uri"] = rag_patterns.uri
     rag_patterns.metadata["metadata"] = {"patterns": []}
-    for i, eval in enumerate(evaluations_list):
-        patt_dir = rag_patterns_dir / eval.pattern_name
+
+    for pattern_data in rag_exp.event_handler.patterns:
+        patt_dir = rag_patterns_dir / pattern_data["payload"]["pattern_name"]
         patt_dir.mkdir(parents=True, exist_ok=True)
 
-        pattern_data = _build_pattern_json(eval, iteration=i, max_combinations=max_combinations)
         generate_notebook_from_templates(
             "ogx_indexing",
-            pattern_data,
+            pattern_data["payload"],
             Path(patt_dir, "indexing.ipynb"),
             input_data_key=input_data_key,
         )
 
         generate_notebook_from_templates(
             "ogx_inference",
-            pattern_data,
+            pattern_data["payload"],
             Path(patt_dir, "inference.ipynb"),
             test_data_key=test_data_key,
         )
 
-        # Flat schema: scores = per-metric aggregates (mean, ci_low, ci_high); final_score
-        pattern_data["scores"] = (getattr(eval, "scores", None) or {}).get("scores") or {}
-        pattern_data["final_score"] = getattr(eval, "final_score", None)
-        rag_patterns.metadata["metadata"]["patterns"].append(pattern_data)
+        rag_patterns.metadata["metadata"]["patterns"].append(pattern_data["payload"])
         with (patt_dir / "pattern.json").open("w+", encoding="utf-8") as pattern_details:
-            json_dump(pattern_data, pattern_details, indent=2)
+            json_dump(pattern_data["payload"], pattern_details, indent=2)
 
-        eval_data = evaluation_data_list[i] if i < len(evaluation_data_list) else []
-        try:
-            q_scores = (eval.scores or {}).get("question_scores") or {}
-            if q_scores and all(isinstance(q_scores.get(k), dict) for k in q_scores):
-                evaluation_result_list = ExperimentResults.create_evaluation_results_json(eval_data, eval)
-            else:
-                evaluation_result_list = _evaluation_result_fallback(eval_data, eval)
-        except (KeyError, TypeError):
-            evaluation_result_list = _evaluation_result_fallback(eval_data, eval)
         with (patt_dir / "evaluation_results.json").open("w+", encoding="utf-8") as f:
-            json_dump(evaluation_result_list, f, indent=2)
+            json_dump(pattern_data["evaluation_results"], f, indent=2)
 
     # TODO autorag_run_artifact
 
