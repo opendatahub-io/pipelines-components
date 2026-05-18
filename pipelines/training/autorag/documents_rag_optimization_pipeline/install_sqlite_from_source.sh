@@ -6,7 +6,7 @@
 #      see artifacts.lock.yaml).
 #   2. Otherwise download from sqlite.org (networked builds, e.g. local Containerfile).
 #
-# This script is intentionally separate from seed_docling_models.py (Docling HF artifacts).
+# This script is intentionally separate from seed_docling_models.py (Docling OCI artifacts).
 
 set -euo pipefail
 
