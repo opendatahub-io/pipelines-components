@@ -31,6 +31,33 @@ spec:
     value: pipelines/training/autorag/documents_rag_optimization_pipeline/Containerfile
   - name: path-context
     value: pipelines/training/autorag/documents_rag_optimization_pipeline
+  - name: hermetic
+    value: true
+  - name: prefetch-input
+    value:
+      [
+        {
+          "type": "pip",
+          "path": "pipelines/training/autorag",
+          "requirements_files": [
+            "documents_rag_optimization_pipeline/requirements.txt",
+            "documents_rag_optimization_pipeline/requirements-pypi-whl.txt"
+          ],
+          "binary": {"arch": ":all:"}
+        },
+        {
+          "type": "pip",
+          "path": "pipelines/training/autorag/documents_rag_optimization_pipeline",
+          "requirements_files": [
+            "requirements-pypi.txt"
+          ]
+        },
+        {
+          "type": "generic",
+          "path": "pipelines/training/autorag/documents_rag_optimization_pipeline",
+          "lockfile": "artifacts.lock.yaml"
+        }
+      ]
   pipelineRef:
     resolver: git
     params:

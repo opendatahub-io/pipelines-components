@@ -24,11 +24,10 @@ RUN pip install --index-url https://pypi.org/simple --no-cache-dir -r /tmp/requi
 
 # Docling models for offline text extraction from Red Hat OCI artifacts (RHAISTRAT-1710).
 # Konflux: Hermeto prefetches registry.stage.redhat.io blobs via artifacts.lock.yaml into ${HERMETO_GENERIC_DEPS}.
-# Local build: seed via skopeo (--oci) when Hermeto output is absent.
+# Local build: pull OCI artifacts via registry API (--oci) when Hermeto output is absent.
 ENV DOCLING_ARTIFACTS_PATH=/opt/app-root/docling-artifacts/models
 USER root
-RUN dnf install -y skopeo \
-    && mkdir -p /opt/app-root/docling-artifacts \
+RUN mkdir -p /opt/app-root/docling-artifacts \
     && if [ -f "${HERMETO_GENERIC_DEPS}/docling-project--docling-layout-heron/config.json" ]; then \
       python3 /tmp/seed_docling_models.py --dest /opt/app-root/docling-artifacts/models --hermeto-dir "${HERMETO_GENERIC_DEPS}"; \
     else \
