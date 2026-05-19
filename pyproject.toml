@@ -91,8 +91,6 @@ packages = [
     "kfp_components.components.training.automl",
     "kfp_components.components.training.automl.autogluon_leaderboard_evaluation",
     "kfp_components.components.training.automl.autogluon_models_training",
-    "kfp_components.components.training.automl.autogluon_timeseries_leaderboard_evaluation",
-    "kfp_components.components.training.automl.autogluon_timeseries_models_full_refit",
     "kfp_components.components.training.automl.autogluon_timeseries_models_training",
     "kfp_components.components.training.automl.shared",
     "kfp_components.components.training.autorag",
@@ -137,7 +135,7 @@ packages = [
 [tool.setuptools.package-data]
 "*" = ["*.yaml", "*.yml", "*.json"]
 "kfp_components.components.training.automl.autogluon_models_training" = ["notebook_templates/*.ipynb"]
-"kfp_components.components.training.automl.autogluon_timeseries_models_full_refit" = ["notebook_templates/*.ipynb"]
+"kfp_components.components.training.automl.autogluon_timeseries_models_training" = ["notebook_templates/*.ipynb"]
 "kfp_components.components.training.automl.shared" = ["*.html"]
 "kfp_components.components.training.autorag.rag_templates_optimization" = ["notebook_templates/*.ipynb"]
 

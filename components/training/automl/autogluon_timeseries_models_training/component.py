@@ -4,9 +4,7 @@ from typing import List, NamedTuple, Optional
 from kfp import dsl
 from kfp_components.utils.consts import AUTOML_IMAGE  # pyright: ignore[reportMissingImports]
 
-_NOTEBOOKS_DIR = str(
-    pathlib.Path(__file__).parent.parent / "autogluon_timeseries_models_full_refit" / "notebook_templates"
-)
+_NOTEBOOKS_DIR = str(pathlib.Path(__file__).parent / "notebook_templates")
 
 
 @dsl.component(
