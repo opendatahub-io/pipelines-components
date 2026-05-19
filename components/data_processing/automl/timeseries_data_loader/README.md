@@ -4,25 +4,29 @@
 
 ## Overview 🧾
 
-Load and split timeseries data from S3 for AutoGluon training.
+Load and split timeseries data from S3 or PVC for AutoGluon training.
 
-This component loads time series data from S3, samples it (up to 100 MB), and performs a two-stage **per-series temporal** split for efficient AutoGluon training: 1. Primary split (default 80/20): for each distinct ``id_column`` value, the earliest (1 - test_size) fraction of rows by
+This component loads time series data from S3 or PVC, samples it (up to 100 MB), and performs a two-stage **per-series temporal** split for efficient AutoGluon training: 1. Primary split (default 80/20): for each distinct ``id_column`` value, the earliest (1 - test_size) fraction of rows by
 ``timestamp_column`` goes to the train portion and the remainder to the test set (so every series with at least two rows contributes holdout data; single-row series stay in train only). 2. Secondary split (default 30/70 of each series' train rows): early segment to selection-train, later segment to
 extra-train.
 
 The test set is written to S3 artifact, while train CSVs are written to the PVC workspace for sharing across pipeline steps.
 
+**Data Source Configuration:** - When ``data_source="s3"``: reads from S3 using AWS credentials from environment variables - When ``data_source="pvc"``: reads from PVC workspace filesystem
+
 ## Inputs 📥
 
 | Parameter | Type | Default | Description |
 | --------- | ---- | ------- | ----------- |
-| `file_key` | `str` | `None` | S3 object key of the CSV file containing time series data. |
-| `bucket_name` | `str` | `None` | S3 bucket name containing the file. |
+| `file_key` | `str` | `None` | S3 object key of the CSV file (required when data_source="s3"). |
+| `bucket_name` | `str` | `None` | S3 bucket name containing the file (required when data_source="s3"). |
 | `workspace_path` | `str` | `None` | PVC workspace directory where train CSVs will be written. |
 | `target` | `str` | `None` | Name of the target column to forecast. |
 | `id_column` | `str` | `None` | Name of the column identifying each time series (item_id). |
 | `timestamp_column` | `str` | `None` | Name of the timestamp/datetime column. |
 | `sampled_test_dataset` | `dsl.Output[dsl.Dataset]` | `None` | Output dataset artifact for the test split. |
+| `data_source` | `str` | `s3` | Data source type ("s3" or "pvc"). Default is "s3". |
+| `pvc_data_path` | `str` | `""` | Path to CSV file on PVC (required when data_source="pvc"). Can be absolute (/path/to/file.csv) or relative to workspace_path. |
 | `selection_train_size` | `float` | `0.3` | Fraction of train portion for model selection (default: 0.3). |
 
 ## Outputs 📤
@@ -85,7 +89,7 @@ def example_pipeline(
   - timeseries
   - automl
   - data-loading
-- **Last Verified**: 2026-04-02 00:00:00+00:00
+- **Last Verified**: 2026-05-13 00:00:00+00:00
 - **Owners**:
   - Approvers:
     - LukaszCmielowski

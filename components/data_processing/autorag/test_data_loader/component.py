@@ -7,25 +7,34 @@ from kfp_components.utils.consts import AUTORAG_IMAGE  # pyright: ignore[reportM
 @dsl.component(
     base_image=AUTORAG_IMAGE,  # noqa: E501
 )
-def test_data_loader(test_data_bucket_name: str, test_data_path: str, test_data: dsl.Output[dsl.Artifact] = None):
-    """Download test data json file from S3 into a KFP artifact.
+def test_data_loader(
+    test_data_bucket_name: str,
+    test_data_path: str,
+    test_data: dsl.Output[dsl.Artifact] = None,
+    data_source: str = "s3",
+    pvc_data_path: str = "",
+):
+    """Download test data json file from S3 or PVC into a KFP artifact.
 
-    The component reads S3-compatible credentials from environment variables
-    (injected by the pipeline from a Kubernetes secret) and downloads a JSON
-    test data file from the provided bucket and path to the output artifact.
+    **Data Source Configuration:**
+    - When ``data_source="s3"``: downloads JSON from S3 using AWS credentials
+    - When ``data_source="pvc"``: loads JSON from PVC workspace filesystem
 
     Args:
-        test_data_bucket_name: S3 (or compatible) bucket that contains the test
-            data file.
-        test_data_path: S3 object key to the JSON test data file.
+        test_data_bucket_name: S3 bucket containing the test data file (required when data_source="s3").
+        test_data_path: S3 object key to the JSON test data file (required when data_source="s3").
         test_data: Output artifact that receives the downloaded file.
+        data_source: Data source type ("s3" or "pvc"). Default is "s3".
+        pvc_data_path: Path to JSON file on PVC (required when data_source="pvc").
+            Can be absolute or relative to current directory.
 
-    Environment variables (required when run with pipeline secret injection):
+    Environment variables (required when data_source="s3"):
         AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_S3_ENDPOINT.
         AWS_DEFAULT_REGION is optional.
 
     Raises:
-        ValueError: If S3 credentials are missing or misconfigured.
+        ValueError: If data_source is invalid, S3 credentials are missing, or required parameters are missing.
+        FileNotFoundError: If PVC file not found when data_source="pvc".
         Exception: If the download fails or the path is not a JSON file.
     """
     import json
@@ -42,8 +51,17 @@ def test_data_loader(test_data_bucket_name: str, test_data_path: str, test_data:
         handler = logging.StreamHandler(sys.stdout)
         logger.addHandler(handler)
 
-    if not test_data_bucket_name:
-        raise TypeError("test_data_bucket_name must be a non-empty string")
+    # Data source validation
+    VALID_DATA_SOURCES = {"s3", "pvc"}
+    if data_source not in VALID_DATA_SOURCES:
+        raise ValueError(f"data_source must be one of {VALID_DATA_SOURCES}; got {data_source!r}.")
+
+    if data_source == "pvc":
+        if not pvc_data_path or not pvc_data_path.strip():
+            raise ValueError("pvc_data_path must be provided when data_source='pvc'")
+    elif data_source == "s3":
+        if not test_data_bucket_name:
+            raise TypeError("test_data_bucket_name must be a non-empty string when data_source='s3'")
 
     def get_test_data_s3():
         """Validate S3 credentials and download the JSON test data file."""
@@ -102,7 +120,30 @@ def test_data_loader(test_data_bucket_name: str, test_data_path: str, test_data:
         except JSONDecodeError as e:
             raise TestDataLoaderException("test_data_path must point to a valid JSON file.") from e
 
-    get_test_data_s3()
+    def _load_test_data_pvc(pvc_path, output_path):
+        """Load test data from PVC and validate JSON format."""
+        import shutil
+
+        if not os.path.exists(pvc_path):
+            raise FileNotFoundError(f"PVC test data file not found: {pvc_path}")
+
+        # Validate JSON format
+        with open(pvc_path, "r") as f:
+            try:
+                data = json.load(f)
+                logger.info(f"Loaded {len(data)} test questions from PVC")
+            except JSONDecodeError as e:
+                raise ValueError(f"PVC file {pvc_path} is not valid JSON") from e
+
+        # Copy to output artifact
+        shutil.copy2(pvc_path, output_path)
+        logger.info(f"Copied test data from PVC: {pvc_path} -> {output_path}")
+
+    # Load data from S3 or PVC based on data_source
+    if data_source == "s3":
+        get_test_data_s3()
+    elif data_source == "pvc":
+        _load_test_data_pvc(pvc_data_path, test_data.path)
 
 
 if __name__ == "__main__":

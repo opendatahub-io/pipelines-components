@@ -6,7 +6,9 @@
 
 Text Extraction component.
 
-Reads the documents_descriptor JSON (from documents_discovery), fetches the listed documents from S3, and extracts text using the docling library.
+Reads the documents_descriptor JSON (from documents_discovery), fetches the listed documents from S3 or PVC, and extracts text using the docling library.
+
+**Data Source Configuration:** - When descriptor has ``data_source="s3"``: downloads documents from S3 before extraction - When descriptor has ``data_source="pvc"``: processes documents directly from PVC filesystem
 
 ## Inputs 📥
 
@@ -50,7 +52,7 @@ def example_pipeline():
   - data-processing
   - autorag
   - text-extraction
-- **Last Verified**: 2026-04-21 12:00:00+00:00
+- **Last Verified**: 2026-05-13 00:00:00+00:00
 - **Owners**:
   - Approvers:
     - LukaszCmielowski

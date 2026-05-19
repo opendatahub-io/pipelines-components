@@ -25,11 +25,11 @@ notebook). Parallelism is **one** concurrent refit pod because the workspace PVC
 
 4. **Leaderboard** (``leaderboard_evaluation``): Builds an HTML leaderboard from the refitted model metrics using the selection stage's evaluation metric.
 
-Args: train_data_secret_name: Kubernetes secret name containing S3 credentials (e.g. AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_S3_ENDPOINT, AWS_DEFAULT_REGION). train_data_bucket_name: S3-compatible bucket name containing the time series data file. train_data_file_key: S3 object key of the data
-file (CSV or Parquet). File must include columns for item_id, timestamp, and target; optional columns for known covariates. target: Name of the column containing the numeric values to forecast. Corresponds to :attr:`~autogluon.timeseries.TimeSeriesDataFrame` target column. id_column: Name of the
-column that identifies each time series (e.g. product_id, store_id). Passed as ``id_column`` when constructing TimeSeriesDataFrame; result uses ``item_id``. timestamp_column: Name of the column containing the timestamp/datetime for each observation. Passed as ``timestamp_column`` when constructing
-TimeSeriesDataFrame; result uses ``timestamp`` as the second index level. known_covariates_names: Optional list of column names known in advance for the forecast horizon (e.g. holidays, promotions). See :attr:`~autogluon.timeseries.TimeSeriesPredictor.known_covariates_names`. prediction_length:
-Number of time steps to forecast (horizon length). Positive integer (default: 1). top_n: Number of top models to select for the leaderboard and output (default: 3).
+Args: train_data_secret_name: Kubernetes secret name containing S3 credentials (required when data_source="s3"). train_data_bucket_name: S3-compatible bucket name (required when data_source="s3"). train_data_file_key: S3 object key of the data file (required when data_source="s3"). target: Name of
+the column containing the numeric values to forecast. Corresponds to :attr:`~autogluon.timeseries.TimeSeriesDataFrame` target column. id_column: Name of the column that identifies each time series (e.g. product_id, store_id). Passed as ``id_column`` when constructing TimeSeriesDataFrame; result uses
+``item_id``. timestamp_column: Name of the column containing the timestamp/datetime for each observation. Passed as ``timestamp_column`` when constructing TimeSeriesDataFrame; result uses ``timestamp`` as the second index level. data_source: Data source type ("s3" or "pvc"). Default is "s3".
+pvc_train_data_path: Path to CSV file on PVC (required when data_source="pvc"). Can be absolute or relative to workspace_path. known_covariates_names: Optional list of column names known in advance for the forecast horizon (e.g. holidays, promotions). See
+:attr:`~autogluon.timeseries.TimeSeriesPredictor.known_covariates_names`. prediction_length: Number of time steps to forecast (horizon length). Positive integer (default: 1). top_n: Number of top models to select for the leaderboard and output (default: 3).
 
 Returns: This pipeline wires task outputs between components; compiled runs expose artifacts from the refit tasks (Model artifacts with predictor, metrics, notebook paths) and the leaderboard evaluation task (HTML leaderboard and aggregated metrics), subject to Kubeflow Pipelines UI and artifact
 configuration.
@@ -49,6 +49,8 @@ prediction_length=14, top_n=3, )
 | `target` | `str` | `None` |  |
 | `id_column` | `str` | `None` |  |
 | `timestamp_column` | `str` | `None` |  |
+| `data_source` | `str` | `s3` |  |
+| `pvc_train_data_path` | `str` | `""` |  |
 | `known_covariates_names` | `Optional[List[str]]` | `None` |  |
 | `prediction_length` | `int` | `1` |  |
 | `top_n` | `int` | `3` |  |
@@ -60,14 +62,14 @@ prediction_length=14, top_n=3, )
 - **Managed**: Yes
 - **Dependencies**:
   - Kubeflow:
-    - Name: Pipelines, Version: 2.16.1
+    - Name: Pipelines, Version: >=2.16.1
     - Name: Kubernetes, Version: >=1.28.0
 - **Tags**:
   - training
   - pipeline
   - automl
   - autogluon-timeseries-training-pipeline
-- **Last Verified**: 2026-05-07 12:00:00+00:00
+- **Last Verified**: 2026-05-13 00:00:00+00:00
 - **Owners**:
   - Approvers:
     - DorotaDR

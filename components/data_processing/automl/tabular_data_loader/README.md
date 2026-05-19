@@ -6,7 +6,7 @@
 
 Automl Data Loader component.
 
-Loads tabular (CSV) data from S3 in batches, sampling up to 100 MB of data, then splits the sampled data into test, selection-train, and extra-train sets.
+Loads tabular (CSV) data from S3 or PVC in batches, sampling up to 100 MB of data, then splits the sampled data into test, selection-train, and extra-train sets.
 
 The component reads data in chunks to efficiently handle large files without loading the entire dataset into memory at once. After sampling, it performs a two-stage split:
 
@@ -21,17 +21,19 @@ paths).
 
 After sampling, **+/- infinity** values in the frame are replaced with **NaN** (same idea as AutoAI ``loadXy``), then **full-row duplicates** are dropped before the label drop and train/test split.
 
-Authentication uses AWS-style credentials provided via environment variables (e.g. from a Kubernetes secret).
+**Data Source Configuration:** - When ``data_source="s3"``: reads from S3 using AWS credentials from environment variables - When ``data_source="pvc"``: reads from PVC workspace filesystem
 
 ## Inputs 📥
 
 | Parameter | Type | Default | Description |
 | --------- | ---- | ------- | ----------- |
-| `file_key` | `str` | `None` | S3 object key of the CSV file. |
-| `bucket_name` | `str` | `None` | S3 bucket name containing the file. |
+| `file_key` | `str` | `None` | S3 object key of the CSV file (required when data_source="s3"). |
+| `bucket_name` | `str` | `None` | S3 bucket name containing the file (required when data_source="s3"). |
 | `workspace_path` | `str` | `None` | PVC workspace directory where train CSVs will be written. |
 | `label_column` | `str` | `None` | Name of the label/target column in the dataset. |
 | `sampled_test_dataset` | `dsl.Output[dsl.Dataset]` | `None` | Output dataset artifact for the test split. |
+| `data_source` | `str` | `s3` | Data source type ("s3" or "pvc"). Default is "s3". |
+| `pvc_data_path` | `str` | `""` | Path to CSV file on PVC (required when data_source="pvc"). Can be absolute (/path/to/file.csv) or relative to workspace_path. |
 | `sampling_method` | `Optional[str]` | `None` | "first_n_rows", "stratified", or "random"; if None, derived from task_type. |
 | `task_type` | `str` | `regression` | "binary", "multiclass", or "regression" (default); used when sampling_method is None. |
 | `split_config` | `Optional[dict]` | `None` | Split configuration dictionary. Available keys: "test_size" (float), "random_state" (int), "stratify" (bool). |
@@ -91,7 +93,7 @@ def example_pipeline(
     - Name: Pipelines, Version: >=2.15.2
 - **Tags**:
   - data-processing
-- **Last Verified**: 2026-04-02 00:00:00+00:00
+- **Last Verified**: 2026-05-13 00:00:00+00:00
 - **Owners**:
   - Approvers:
     - LukaszCmielowski

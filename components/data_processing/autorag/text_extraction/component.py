@@ -16,7 +16,11 @@ def text_extraction(
     """Text Extraction component.
 
     Reads the documents_descriptor JSON (from documents_discovery), fetches
-    the listed documents from S3, and extracts text using the docling library.
+    the listed documents from S3 or PVC, and extracts text using the docling library.
+
+    **Data Source Configuration:**
+    - When descriptor has ``data_source="s3"``: downloads documents from S3 before extraction
+    - When descriptor has ``data_source="pvc"``: processes documents directly from PVC filesystem
 
     Args:
         documents_descriptor: Input artifact containing
@@ -56,11 +60,22 @@ def text_extraction(
     if not descriptor_path.exists():
         raise FileNotFoundError(f"documents_descriptor.json not found at {descriptor_path}")
 
-    s3_creds = {k: os.environ.get(k) for k in ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_S3_ENDPOINT"]}
-    for k, v in s3_creds.items():
-        if v is None:
-            raise ValueError(f"{k} environment variable not set. Check if kubernetes secret was configured properly.")
-    s3_creds["AWS_DEFAULT_REGION"] = os.environ.get("AWS_DEFAULT_REGION")
+    # Read descriptor to determine data source (will be read again later)
+    with open(descriptor_path) as f:
+        descriptor_preview = json.load(f)
+    data_source = descriptor_preview.get("data_source", "s3")  # Default to s3 for backward compatibility
+
+    # Only validate S3 credentials when using S3 data source
+    if data_source == "s3":
+        s3_creds = {k: os.environ.get(k) for k in ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_S3_ENDPOINT"]}
+        for k, v in s3_creds.items():
+            if v is None:
+                raise ValueError(
+                    f"{k} environment variable not set. Check if kubernetes secret was configured properly."
+                )
+        s3_creds["AWS_DEFAULT_REGION"] = os.environ.get("AWS_DEFAULT_REGION")
+    else:
+        s3_creds = {}  # Not needed for PVC mode
 
     logger = logging.getLogger("Text Extraction component logger")
     logger.setLevel(logging.INFO)
@@ -321,6 +336,49 @@ def text_extraction(
         ]
         return extraction_tasks, download_error_details
 
+    def _submit_pvc_documents(
+        docs: list, pvc_base_path: str, process_pool, out_dir: Path
+    ) -> list[tuple[str, AsyncResult]]:
+        """Submit PVC documents for extraction without downloading.
+
+        Filters out unsupported extensions, verifies files exist on PVC,
+        sorts by size descending, and submits to extraction pool.
+
+        Args:
+            docs: List of document descriptor dicts with "key" field (relative path).
+            pvc_base_path: Base directory path on PVC where documents are located.
+            process_pool: Active multiprocessing Pool to submit extraction tasks to.
+            out_dir: Directory where extracted Markdown files will be written.
+
+        Returns:
+            List of (local_file_path_str, AsyncResult) pairs, one per document,
+            ordered largest-first.
+        """
+        local_paths = []
+        skipped_docs = [doc for doc in docs if Path(doc["key"]).suffix.lower() not in SUPPORTED_EXTENSIONS]
+        supported = [doc for doc in docs if Path(doc["key"]).suffix.lower() in SUPPORTED_EXTENSIONS]
+
+        if skipped_docs:
+            skipped_keys = ", ".join(doc["key"] for doc in skipped_docs)
+            logger.warning("Skipping %d document(s) with unsupported extensions: %s", len(skipped_docs), skipped_keys)
+
+        for doc in supported:
+            full_path = os.path.join(pvc_base_path, doc["key"])
+            if not os.path.exists(full_path):
+                logger.warning("PVC file not found, skipping: %s", full_path)
+                continue
+            local_paths.append(Path(full_path))
+
+        # Sort by size (largest first) to avoid straggler problem
+        local_paths.sort(key=lambda p: p.stat().st_size, reverse=True)
+
+        # Submit for extraction (worker_process_document already handles local paths)
+        extraction_tasks = [
+            (str(local_path), process_pool.apply_async(worker_process_document, (str(local_path), str(out_dir))))
+            for local_path in local_paths
+        ]
+        return extraction_tasks
+
     def raise_if_threshold_exceeded(error_details: list, total_docs: int, tolerance: Optional[float]) -> None:
         """Check whether the error count exceeds the allowed tolerance.
 
@@ -360,7 +418,10 @@ def text_extraction(
 
     with open(descriptor_path) as f:
         descriptor = json.load(f)
-    bucket = descriptor["bucket"]
+
+    data_source = descriptor.get("data_source", "s3")  # Default to s3 for backward compatibility
+    bucket = descriptor.get("bucket")
+    pvc_base_path = descriptor.get("pvc_base_path")
     documents = descriptor["documents"]
 
     if not documents:
@@ -391,17 +452,25 @@ def text_extraction(
             initializer=_text_extraction_pool_initializer,
         ) as process_pool,
     ):
-        download_start_time = time.perf_counter()
-        extraction_tasks, download_error_details = download_and_submit(
-            documents, Path(download_dir), process_pool, output_dir
-        )
-        logger.info(
-            "Downloads finished in %.1fs; %d file(s) queued for extraction, %d download error(s).",
-            time.perf_counter() - download_start_time,
-            len(extraction_tasks),
-            len(download_error_details),
-        )
-        raise_if_threshold_exceeded(download_error_details, len(documents), error_tolerance)
+        if data_source == "s3":
+            download_start_time = time.perf_counter()
+            logger.info("Downloading %d documents from S3...", len(documents))
+            extraction_tasks, download_error_details = download_and_submit(
+                documents, Path(download_dir), process_pool, output_dir
+            )
+            logger.info(
+                "Downloads finished in %.1fs; %d file(s) queued for extraction, %d download error(s).",
+                time.perf_counter() - download_start_time,
+                len(extraction_tasks),
+                len(download_error_details),
+            )
+            raise_if_threshold_exceeded(download_error_details, len(documents), error_tolerance)
+
+        elif data_source == "pvc":
+            logger.info("Processing %d documents from PVC...", len(documents))
+            extraction_tasks = _submit_pvc_documents(documents, pvc_base_path, process_pool, output_dir)
+            download_error_details = []  # No download errors in PVC mode
+            logger.info("%d file(s) queued for extraction from PVC.", len(extraction_tasks))
 
         extraction_error_details = []
         processed_count = 0

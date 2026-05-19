@@ -43,6 +43,8 @@ def autogluon_timeseries_training_pipeline(
     target: str,
     id_column: str,
     timestamp_column: str,
+    data_source: str = "s3",
+    pvc_train_data_path: str = "",
     known_covariates_names: Optional[List[str]] = None,
     prediction_length: int = 1,
     top_n: int = 3,
@@ -83,11 +85,9 @@ def autogluon_timeseries_training_pipeline(
        metrics using the selection stage's evaluation metric.
 
     Args:
-        train_data_secret_name: Kubernetes secret name containing S3 credentials
-            (e.g. AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_S3_ENDPOINT, AWS_DEFAULT_REGION).
-        train_data_bucket_name: S3-compatible bucket name containing the time series data file.
-        train_data_file_key: S3 object key of the data file (CSV or Parquet). File must include
-            columns for item_id, timestamp, and target; optional columns for known covariates.
+        train_data_secret_name: Kubernetes secret name containing S3 credentials (required when data_source="s3").
+        train_data_bucket_name: S3-compatible bucket name (required when data_source="s3").
+        train_data_file_key: S3 object key of the data file (required when data_source="s3").
         target: Name of the column containing the numeric values to forecast. Corresponds to
             :attr:`~autogluon.timeseries.TimeSeriesDataFrame` target column.
         id_column: Name of the column that identifies each time series (e.g. product_id, store_id).
@@ -95,6 +95,9 @@ def autogluon_timeseries_training_pipeline(
         timestamp_column: Name of the column containing the timestamp/datetime for each observation.
             Passed as ``timestamp_column`` when constructing TimeSeriesDataFrame; result uses
             ``timestamp`` as the second index level.
+        data_source: Data source type ("s3" or "pvc"). Default is "s3".
+        pvc_train_data_path: Path to CSV file on PVC (required when data_source="pvc").
+            Can be absolute or relative to workspace_path.
         known_covariates_names: Optional list of column names known in advance for the forecast
             horizon (e.g. holidays, promotions). See
             :attr:`~autogluon.timeseries.TimeSeriesPredictor.known_covariates_names`.
@@ -134,24 +137,27 @@ def autogluon_timeseries_training_pipeline(
         target=target,
         id_column=id_column,
         timestamp_column=timestamp_column,
+        data_source=data_source,
+        pvc_data_path=pvc_train_data_path,
     )
     data_loader_task.set_caching_options(False)
     data_loader_task.set_cpu_request("2").set_memory_request("8Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(MAX_MEMORY)
 
-    # Configure S3 secret for data loader
+    # Configure S3 secret for data loader (only when using S3)
     from kfp.kubernetes import use_secret_as_env
 
-    use_secret_as_env(
-        data_loader_task,
-        secret_name=train_data_secret_name,
-        secret_key_to_env={
-            "AWS_ACCESS_KEY_ID": "AWS_ACCESS_KEY_ID",
-            "AWS_SECRET_ACCESS_KEY": "AWS_SECRET_ACCESS_KEY",
-            "AWS_S3_ENDPOINT": "AWS_S3_ENDPOINT",
-            "AWS_DEFAULT_REGION": "AWS_DEFAULT_REGION",
-        },
-        optional=True,
-    )
+    if data_source == "s3":
+        use_secret_as_env(
+            data_loader_task,
+            secret_name=train_data_secret_name,
+            secret_key_to_env={
+                "AWS_ACCESS_KEY_ID": "AWS_ACCESS_KEY_ID",
+                "AWS_SECRET_ACCESS_KEY": "AWS_SECRET_ACCESS_KEY",
+                "AWS_S3_ENDPOINT": "AWS_S3_ENDPOINT",
+                "AWS_DEFAULT_REGION": "AWS_DEFAULT_REGION",
+            },
+            optional=True,
+        )
 
     # Stage 2: Model Selection
     # Train multiple models on selection data and select top N performers

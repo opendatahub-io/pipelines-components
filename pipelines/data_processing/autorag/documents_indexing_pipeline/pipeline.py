@@ -18,6 +18,8 @@ def documents_indexing_pipeline(
     input_data_secret_name: str,
     input_data_bucket_name: str,
     input_data_key: Optional[str] = None,
+    input_data_source: str = "s3",
+    pvc_input_data_path: str = "",
     collection_name: str = None,
     embedding_params: Optional[dict] = None,
     distance_metric: str = "cosine",
@@ -33,6 +35,11 @@ def documents_indexing_pipeline(
             ("OGX_CLIENT_BASE_URL", "OGX_CLIENT_API_KEY").
         embedding_model_id: Embedding model ID for the vector store.
         vector_io_provider_id: Optional OGX provider ID.
+        input_data_secret_name: Name of the secret with S3 credentials (required when input_data_source="s3").
+        input_data_bucket_name: S3 bucket containing input data (required when input_data_source="s3").
+        input_data_key: For S3: prefix; for PVC: directory path within workspace.
+        input_data_source: Data source type ("s3" or "pvc"). Default is "s3".
+        pvc_input_data_path: Directory path on PVC containing documents (required when input_data_source="pvc").
         input_data_secret_name: Name of the secret with S3 credentials for input data
             ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_S3_ENDPOINT", "AWS_DEFAULT_REGION").
         input_data_bucket_name: Name of the S3 bucket containing input data.
@@ -48,6 +55,8 @@ def documents_indexing_pipeline(
     documents_discovery_task = documents_discovery(
         input_data_bucket_name=input_data_bucket_name,
         input_data_path=input_data_key,
+        data_source=input_data_source,
+        pvc_data_path=pvc_input_data_path,
     )
 
     text_extraction_task = text_extraction(
@@ -67,20 +76,23 @@ def documents_indexing_pipeline(
         collection_name=collection_name,
     )
 
-    def set_input_data_secrets(task, secret_name):
-        use_secret_as_env(
-            task,
-            secret_name=secret_name,
-            secret_key_to_env={
-                "AWS_ACCESS_KEY_ID": "AWS_ACCESS_KEY_ID",
-                "AWS_SECRET_ACCESS_KEY": "AWS_SECRET_ACCESS_KEY",
-                "AWS_S3_ENDPOINT": "AWS_S3_ENDPOINT",
-                "AWS_DEFAULT_REGION": "AWS_DEFAULT_REGION",
-            },
-        )
+    # Only inject S3 credentials when using S3 data source
+    if input_data_source == "s3":
 
-    set_input_data_secrets(documents_discovery_task, input_data_secret_name)
-    set_input_data_secrets(text_extraction_task, input_data_secret_name)
+        def set_input_data_secrets(task, secret_name):
+            use_secret_as_env(
+                task,
+                secret_name=secret_name,
+                secret_key_to_env={
+                    "AWS_ACCESS_KEY_ID": "AWS_ACCESS_KEY_ID",
+                    "AWS_SECRET_ACCESS_KEY": "AWS_SECRET_ACCESS_KEY",
+                    "AWS_S3_ENDPOINT": "AWS_S3_ENDPOINT",
+                    "AWS_DEFAULT_REGION": "AWS_DEFAULT_REGION",
+                },
+            )
+
+        set_input_data_secrets(documents_discovery_task, input_data_secret_name)
+        set_input_data_secrets(text_extraction_task, input_data_secret_name)
 
     use_secret_as_env(
         documents_indexing_task,

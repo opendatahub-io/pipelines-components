@@ -13,6 +13,7 @@ Welcome! This guide covers everything you need to know to contribute components 
 - [Testing and Quality](#testing-and-quality)
   - [Component Testing Guide](#component-testing-guide)
 - [Adding a Custom Base Image](#adding-a-custom-base-image)
+- [Requesting Managed Pipeline Runtime Images](#requesting-managed-pipeline-runtime-images)
 - [Submitting Your Contribution](#submitting-your-contribution)
 - [Getting Help](#getting-help)
 
@@ -1089,6 +1090,121 @@ podman run --rm my-component:test python -c "import pandas; print(pandas.__versi
 ```
 
 </details>
+
+## Requesting Managed Pipeline Runtime Images
+
+### About Managed Pipeline Runtime Images
+
+Managed pipeline runtime images are different from custom base images used by individual components. While custom base images are for components you develop and maintain, managed pipeline runtime images are for pipelines that are deployed and managed by OpenDataHub operators in production environments.
+
+**When to use managed pipeline runtime images:**
+
+- Your pipeline is marked with `managed: true` in its metadata.yaml
+- Your pipeline requires specific runtime images (like specialized ML frameworks)
+- Your pipeline needs to work in OpenDataHub managed deployments
+- You need RELATED_IMAGE_* environment variables for image references
+
+**Current managed pipelines with runtime images:**
+
+- AutoML (`RELATED_IMAGE_ODH_AUTOML_IMAGE`)
+- AutoRAG (`RELATED_IMAGE_ODH_AUTORAG_IMAGE`)
+
+### Technical Background
+
+Managed pipeline runtime images use a specific flow for image references in OpenDataHub deployments:
+
+1. **ODH operator** contains RELATED_IMAGE_* environment variables with pinned image digests
+2. **ODH operator** reads these variables and passes them to DSPO via imageParamMap and params.env
+3. **DSPO** forwards RELATED_IMAGE_* variables to the init-managed-pipelines container
+4. **pipelines-components** reads variables via `utils/consts.py` constants
+
+This ensures managed pipelines use the exact images tested and approved for each release.
+
+### Naming Convention
+
+All managed pipeline runtime images must follow the pattern:
+
+```text
+RELATED_IMAGE_ODH_<IMAGE_NAME>_IMAGE
+```
+
+For example:
+
+- Variable: `RELATED_IMAGE_ODH_AUTOML_IMAGE`
+- Constant: `AUTOML_IMAGE` (in `utils/consts.py`)
+
+### Request Process
+
+To add a new managed pipeline runtime image, submit pull requests to the three required repositories with the implementation described below.
+
+### Implementation Requirements
+
+Adding a new managed pipeline runtime image requires changes in **three repositories**:
+
+**A. pipelines-components (this repository):**
+
+```python
+# In utils/consts.py
+DEFAULT_MYIMAGE_IMAGE = "quay.io/opendatahub/my-image:odh-stable"
+MYIMAGE_IMAGE = os.getenv("RELATED_IMAGE_ODH_MYIMAGE_IMAGE", DEFAULT_MYIMAGE_IMAGE)
+```
+
+**B. ODH operator** ([opendatahub-operator](https://github.com/opendatahub-io/opendatahub-operator)):
+
+```go
+// In internal/controller/components/datasciencepipelines/datasciencepipelines_support.go imageParamMap
+"RELATED_IMAGE_ODH_MYIMAGE_IMAGE": "RELATED_IMAGE_ODH_MYIMAGE_IMAGE",
+```
+
+**C. DSPO** ([data-science-pipelines-operator](https://github.com/opendatahub-io/data-science-pipelines-operator)):
+
+```yaml
+# In config/manager/manager.yaml
+- name: RELATED_IMAGE_ODH_MYIMAGE_IMAGE
+  value: $(RELATED_IMAGE_ODH_MYIMAGE_IMAGE)
+```
+
+### Submit Pull Requests
+
+Create PRs for each repository following their contribution guidelines. Include in your PR description:
+
+- **Variable name**: The RELATED_IMAGE_* environment variable name
+- **Pipeline**: Which managed pipeline will use this image
+- **Image**: The image registry and name
+
+### Example Implementation
+
+Here's how the existing AutoML image is implemented:
+
+```python
+# utils/consts.py
+DEFAULT_AUTOML_IMAGE = "quay.io/opendatahub/odh-automl:odh-stable"
+AUTOML_IMAGE = os.getenv("RELATED_IMAGE_ODH_AUTOML_IMAGE", DEFAULT_AUTOML_IMAGE)
+
+# In your component
+from kfp import dsl
+from kfp_components.utils.consts import AUTOML_IMAGE
+
+@dsl.component(base_image=AUTOML_IMAGE)
+def my_automl_component():
+    # Component implementation
+    pass
+```
+
+This pattern ensures:
+
+- Production deployments use the approved managed image
+- Development environments fall back to default images
+- Image references are centralized and maintainable
+
+### Getting Help with Managed Pipeline Images
+
+If you have questions about managed pipeline runtime images:
+
+- Review existing implementations in `utils/consts.py`
+- Check the managed pipeline examples in `pipelines/training/automl/` and `pipelines/training/autorag/`
+- Ask questions in your pull request
+- Contact maintainers
 
 ## Submitting Your Contribution
 

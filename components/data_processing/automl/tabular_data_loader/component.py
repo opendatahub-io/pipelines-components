@@ -13,6 +13,8 @@ def automl_data_loader(  # noqa: D417
     workspace_path: str,
     label_column: str,
     sampled_test_dataset: dsl.Output[dsl.Dataset],
+    data_source: str = "s3",
+    pvc_data_path: str = "",
     sampling_method: Optional[str] = None,
     task_type: str = "regression",
     split_config: Optional[dict] = None,
@@ -27,7 +29,7 @@ def automl_data_loader(  # noqa: D417
 ):
     """Automl Data Loader component.
 
-    Loads tabular (CSV) data from S3 in batches, sampling up to 100 MB of data,
+    Loads tabular (CSV) data from S3 or PVC in batches, sampling up to 100 MB of data,
     then splits the sampled data into test, selection-train, and extra-train sets.
 
     The component reads data in chunks to efficiently handle large files without
@@ -54,15 +56,19 @@ def automl_data_loader(  # noqa: D417
     idea as AutoAI ``loadXy``), then **full-row duplicates** are dropped before the
     label drop and train/test split.
 
-    Authentication uses AWS-style credentials provided via environment variables
-    (e.g. from a Kubernetes secret).
+    **Data Source Configuration:**
+    - When ``data_source="s3"``: reads from S3 using AWS credentials from environment variables
+    - When ``data_source="pvc"``: reads from PVC workspace filesystem
 
     Args:
-        file_key: S3 object key of the CSV file.
-        bucket_name: S3 bucket name containing the file.
+        file_key: S3 object key of the CSV file (required when data_source="s3").
+        bucket_name: S3 bucket name containing the file (required when data_source="s3").
         workspace_path: PVC workspace directory where train CSVs will be written.
         label_column: Name of the label/target column in the dataset.
         sampled_test_dataset: Output dataset artifact for the test split.
+        data_source: Data source type ("s3" or "pvc"). Default is "s3".
+        pvc_data_path: Path to CSV file on PVC (required when data_source="pvc").
+            Can be absolute (/path/to/file.csv) or relative to workspace_path.
         sampling_method: "first_n_rows", "stratified", or "random"; if None, derived from task_type.
         task_type: "binary", "multiclass", or "regression" (default); used when sampling_method is None.
         split_config: Split configuration dictionary. Available keys: "test_size" (float), "random_state" (int), "stratify" (bool).
@@ -70,6 +76,7 @@ def automl_data_loader(  # noqa: D417
 
     Raises:
         ValueError: If sampling_method or task_type is invalid, or if required parameters are missing.
+        FileNotFoundError: If PVC data file not found when data_source="pvc".
 
     Returns:
         NamedTuple: Contains sample config, split config, a sample row, and paths to selection-train and extra-train CSVs.
@@ -89,16 +96,32 @@ def automl_data_loader(  # noqa: D417
     DEFAULT_RANDOM_STATE = 42
     VALID_SAMPLING_METHODS = {"first_n_rows", "stratified", "random"}
     VALID_TASK_TYPES = {"binary", "multiclass", "regression"}
+    VALID_DATA_SOURCES = {"s3", "pvc"}
+
+    # Data source validation
+    if data_source not in VALID_DATA_SOURCES:
+        raise ValueError(f"data_source must be one of {VALID_DATA_SOURCES}; got {data_source!r}.")
+
+    if data_source == "pvc":
+        if not pvc_data_path or not pvc_data_path.strip():
+            raise ValueError("pvc_data_path must be provided when data_source='pvc'")
 
     # Input validation
     for param, value in (
-        ("bucket_name", bucket_name),
-        ("file_key", file_key),
         ("workspace_path", workspace_path),
         ("label_column", label_column),
     ):
         if not isinstance(value, str) or not value.strip():
             raise TypeError(f"{param} must be a non-empty string.")
+
+    # S3-specific validation (only when using S3)
+    if data_source == "s3":
+        for param, value in (
+            ("bucket_name", bucket_name),
+            ("file_key", file_key),
+        ):
+            if not isinstance(value, str) or not value.strip():
+                raise TypeError(f"{param} must be a non-empty string when data_source='s3'.")
 
     if task_type not in VALID_TASK_TYPES:
         raise ValueError(f"task_type must be one of {VALID_TASK_TYPES}; got {task_type!r}.")
@@ -305,15 +328,59 @@ def automl_data_loader(  # noqa: D417
             return _sample_random(text_stream, PANDAS_CHUNK_SIZE, max_size_bytes)
         return _sample_first_n_rows(text_stream, PANDAS_CHUNK_SIZE, max_size_bytes)
 
-    s3_client = get_s3_client()
-    sampled_dataframe = load_data_in_batches(
-        s3_client,
-        bucket_name,
-        file_key,
-        max_size_bytes=MAX_SIZE_BYTES,
-        sampling_method=sampling_method,
-        label_column=label_column,
-    )
+    def _load_pvc_data_in_batches(file_path, max_size_bytes, sampling_method, label_column):
+        """Load CSV from PVC filesystem using the same sampling strategies as S3."""
+        if sampling_method == "stratified" and label_column is None:
+            raise ValueError("label_column must be provided when sampling_method='stratified'")
+
+        with open(file_path, "r", encoding="utf-8") as text_stream:
+            if sampling_method == "stratified":
+                return _sample_stratified(text_stream, PANDAS_CHUNK_SIZE, max_size_bytes, label_column)
+            elif sampling_method == "random":
+                return _sample_random(text_stream, PANDAS_CHUNK_SIZE, max_size_bytes)
+            else:  # first_n_rows
+                return _sample_first_n_rows(text_stream, PANDAS_CHUNK_SIZE, max_size_bytes)
+
+    # Load data from S3 or PVC based on data_source
+    if data_source == "s3":
+        s3_client = get_s3_client()
+        sampled_dataframe = load_data_in_batches(
+            s3_client,
+            bucket_name,
+            file_key,
+            max_size_bytes=MAX_SIZE_BYTES,
+            sampling_method=sampling_method,
+            label_column=label_column,
+        )
+        logger.info(
+            "Read %d rows from s3://%s/%s (sampling_method=%s)",
+            len(sampled_dataframe),
+            bucket_name,
+            file_key,
+            sampling_method,
+        )
+
+    elif data_source == "pvc":
+        # Resolve PVC path (support both absolute and relative paths)
+        pvc_file_path = (
+            os.path.join(workspace_path, pvc_data_path) if not pvc_data_path.startswith("/") else pvc_data_path
+        )
+        if not os.path.exists(pvc_file_path):
+            raise FileNotFoundError(f"PVC data file not found: {pvc_file_path}")
+
+        logger.info("Loading data from PVC: %s", pvc_file_path)
+        sampled_dataframe = _load_pvc_data_in_batches(
+            pvc_file_path,
+            max_size_bytes=MAX_SIZE_BYTES,
+            sampling_method=sampling_method,
+            label_column=label_column,
+        )
+        logger.info(
+            "Read %d rows from PVC file %s (sampling_method=%s)", len(sampled_dataframe), pvc_file_path, sampling_method
+        )
+
+    # Store the number of samples for sample_config
+    n_samples = len(sampled_dataframe)
 
     if label_column not in sampled_dataframe.columns:
         raise ValueError(
@@ -351,9 +418,6 @@ def automl_data_loader(  # noqa: D417
             f"No rows remain after removing missing values in label column {label_column!r}. "
             "Ensure the dataset has at least one row with a non-null label (e.g. empty cells in the target column)."
         )
-
-    n_samples = len(sampled_dataframe)
-    logger.info("Read %d rows from s3://%s/%s (sampling_method=%s)", n_samples, bucket_name, file_key, sampling_method)
 
     # --- Train/test split ---
     from pathlib import Path

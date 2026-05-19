@@ -44,6 +44,10 @@ def documents_rag_optimization_pipeline(
     vector_io_provider_id: str,
     input_data_key: str = "",
     embedding_models: Optional[List] = None,
+    test_data_source: str = "s3",
+    pvc_test_data_path: str = "",
+    input_data_source: str = "s3",
+    pvc_input_data_path: str = "",
     generation_models: Optional[List] = None,
     optimization_metric: str = "faithfulness",
     optimization_max_rag_patterns: int = 8,
@@ -63,14 +67,16 @@ def documents_rag_optimization_pipeline(
 
     Args:
         test_data_secret_name: Name of the Kubernetes secret holding S3-compatible credentials for
-            test data access. The following environment variables are required:
-            AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_S3_ENDPOINT.
+            test data access (required when test_data_source="s3"). The following environment variables
+            are required: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_S3_ENDPOINT.
             AWS_DEFAULT_REGION is optional.
-        test_data_bucket_name: S3 (or compatible) bucket name for the test data file.
-        test_data_key: Object key (path) of the test data JSON file in the test data bucket.
+        test_data_bucket_name: S3 (or compatible) bucket name for the test data file (required when
+            test_data_source="s3").
+        test_data_key: Object key (path) of the test data JSON file in the test data bucket (required
+            when test_data_source="s3").
         input_data_secret_name: Name of the Kubernetes secret holding S3-compatible credentials
-            for input document data access. The following environment variables are required:
-            AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_S3_ENDPOINT.
+            for input document data access (required when input_data_source="s3"). The following
+            environment variables are required: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_S3_ENDPOINT.
             AWS_DEFAULT_REGION is optional.
         input_data_bucket_name: S3 (or compatible) bucket name for the input documents.
         ogx_secret_name: Name of the Kubernetes secret for OGX API connection.
@@ -78,6 +84,14 @@ def documents_rag_optimization_pipeline(
         vector_io_provider_id: Vector I/O provider id (e.g., registered in OGX Milvus).
         input_data_key: Object key (path) of the input documents in the input data bucket.
         embedding_models: Optional list of embedding model identifiers to use in the search space.
+        input_data_bucket_name: S3 (or compatible) bucket name for the input documents (required when
+            input_data_source="s3").
+        test_data_source: Data source type for test data ("s3" or "pvc"). Default is "s3".
+        pvc_test_data_path: Path to JSON file on PVC (required when test_data_source="pvc").
+            Can be absolute or relative to current directory.
+        input_data_source: Data source type for input documents ("s3" or "pvc"). Default is "s3".
+        pvc_input_data_path: Directory path on PVC containing documents (required when input_data_source="pvc").
+            Can be absolute or relative to current directory.
         generation_models: Optional list of foundation/generation model identifiers to use in the
             search space.
         optimization_metric: Quality metric used to optimize RAG patterns. Supported values:
@@ -88,6 +102,8 @@ def documents_rag_optimization_pipeline(
     test_data_loader_task = test_data_loader(
         test_data_bucket_name=test_data_bucket_name,
         test_data_path=test_data_key,
+        data_source=test_data_source,
+        pvc_data_path=pvc_test_data_path,
     )
 
     test_data_loader_task.set_caching_options(False)
@@ -99,6 +115,8 @@ def documents_rag_optimization_pipeline(
         input_data_bucket_name=input_data_bucket_name,
         input_data_path=input_data_key,
         test_data=test_data_loader_task.outputs["test_data"],
+        data_source=input_data_source,
+        pvc_data_path=pvc_input_data_path,
     )
 
     documents_discovery_task.set_caching_options(False)
@@ -115,13 +133,35 @@ def documents_rag_optimization_pipeline(
         MAX_MEMORY
     )
 
-    for task, secret_name in zip(
-        [test_data_loader_task, documents_discovery_task, text_extraction_task],
-        [test_data_secret_name, input_data_secret_name, input_data_secret_name],
-    ):
+    # Only inject S3 credentials when using S3 data sources
+    if test_data_source == "s3":
         use_secret_as_env(
-            task,
-            secret_name=secret_name,
+            test_data_loader_task,
+            secret_name=test_data_secret_name,
+            secret_key_to_env={
+                "AWS_ACCESS_KEY_ID": "AWS_ACCESS_KEY_ID",
+                "AWS_SECRET_ACCESS_KEY": "AWS_SECRET_ACCESS_KEY",
+                "AWS_S3_ENDPOINT": "AWS_S3_ENDPOINT",
+                "AWS_DEFAULT_REGION": "AWS_DEFAULT_REGION",
+            },
+            optional=True,
+        )
+
+    if input_data_source == "s3":
+        use_secret_as_env(
+            documents_discovery_task,
+            secret_name=input_data_secret_name,
+            secret_key_to_env={
+                "AWS_ACCESS_KEY_ID": "AWS_ACCESS_KEY_ID",
+                "AWS_SECRET_ACCESS_KEY": "AWS_SECRET_ACCESS_KEY",
+                "AWS_S3_ENDPOINT": "AWS_S3_ENDPOINT",
+                "AWS_DEFAULT_REGION": "AWS_DEFAULT_REGION",
+            },
+            optional=True,
+        )
+        use_secret_as_env(
+            text_extraction_task,
+            secret_name=input_data_secret_name,
             secret_key_to_env={
                 "AWS_ACCESS_KEY_ID": "AWS_ACCESS_KEY_ID",
                 "AWS_SECRET_ACCESS_KEY": "AWS_SECRET_ACCESS_KEY",

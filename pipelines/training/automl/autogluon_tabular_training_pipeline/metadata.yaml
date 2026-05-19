@@ -5,7 +5,7 @@ managed: true
 dependencies:
   kubeflow:
     - name: Pipelines
-      version: '2.16.1'
+      version: '>=2.16.1'
     - name: Kubernetes
       version: ">=1.28.0"
 tags:
@@ -13,4 +13,4 @@ tags:
   - pipeline
   - automl
   - autogluon-tabular-training-pipeline
-lastVerified: 2026-05-07T12:00:00Z
+lastVerified: 2026-05-13T00:00:00Z

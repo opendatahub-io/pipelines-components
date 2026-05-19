@@ -4,17 +4,19 @@
 
 ## Overview 🧾
 
-Download test data json file from S3 into a KFP artifact.
+Download test data json file from S3 or PVC into a KFP artifact.
 
-The component reads S3-compatible credentials from environment variables (injected by the pipeline from a Kubernetes secret) and downloads a JSON test data file from the provided bucket and path to the output artifact.
+**Data Source Configuration:** - When ``data_source="s3"``: downloads JSON from S3 using AWS credentials - When ``data_source="pvc"``: loads JSON from PVC workspace filesystem
 
 ## Inputs 📥
 
 | Parameter | Type | Default | Description |
 | --------- | ---- | ------- | ----------- |
-| `test_data_bucket_name` | `str` | `None` | S3 (or compatible) bucket that contains the test data file. |
-| `test_data_path` | `str` | `None` | S3 object key to the JSON test data file. |
+| `test_data_bucket_name` | `str` | `None` | S3 bucket containing the test data file (required when data_source="s3"). |
+| `test_data_path` | `str` | `None` | S3 object key to the JSON test data file (required when data_source="s3"). |
 | `test_data` | `dsl.Output[dsl.Artifact]` | `None` | Output artifact that receives the downloaded file. |
+| `data_source` | `str` | `s3` | Data source type ("s3" or "pvc"). Default is "s3". |
+| `pvc_data_path` | `str` | `""` | Path to JSON file on PVC (required when data_source="pvc"). Can be absolute or relative to current directory. |
 
 ## Usage Examples 🧪
 
@@ -56,7 +58,7 @@ def example_pipeline(
   - data-processing
   - autorag
   - test-data
-- **Last Verified**: 2026-01-23 10:29:45+00:00
+- **Last Verified**: 2026-05-13 00:00:00+00:00
 - **Owners**:
   - Approvers:
     - LukaszCmielowski

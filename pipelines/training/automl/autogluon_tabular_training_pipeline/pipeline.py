@@ -36,6 +36,8 @@ def autogluon_tabular_training_pipeline(
     train_data_file_key: str,
     label_column: str,
     task_type: str,
+    data_source: str = "s3",
+    pvc_train_data_path: str = "",
     top_n: int = 3,
 ):
     """AutoGluon Tabular Training Pipeline.
@@ -105,11 +107,14 @@ def autogluon_tabular_training_pipeline(
     - Selecting optimal ensemble configurations
 
     Args:
-        train_data_secret_name: Kubernetes secret name with S3 credentials (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_S3_ENDPOINT, AWS_DEFAULT_REGION).
-        train_data_bucket_name: S3-compatible bucket name containing the tabular data file.
-        train_data_file_key: S3 object key of the CSV file (features and target column).
+        train_data_secret_name: Kubernetes secret name with S3 credentials (required when data_source="s3").
+        train_data_bucket_name: S3-compatible bucket name (required when data_source="s3").
+        train_data_file_key: S3 object key of the CSV file (required when data_source="s3").
         label_column: Name of the target/label column in the dataset.
         task_type: "binary", "multiclass", or "regression"; drives metrics and model types.
+        data_source: Data source type ("s3" or "pvc"). Default is "s3".
+        pvc_train_data_path: Path to CSV file on PVC (required when data_source="pvc").
+            Can be absolute or relative to workspace_path.
         top_n: Number of top models to select and refit (default: 3); positive integer from range [1, 10].
 
     Returns:
@@ -144,21 +149,25 @@ def autogluon_tabular_training_pipeline(
         workspace_path=dsl.WORKSPACE_PATH_PLACEHOLDER,
         label_column=label_column,
         task_type=task_type,
+        data_source=data_source,
+        pvc_data_path=pvc_train_data_path,
     )
     data_loader_task.set_caching_options(False)
     data_loader_task.set_cpu_request("2").set_memory_request("8Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(MAX_MEMORY)
 
-    use_secret_as_env(
-        data_loader_task,
-        secret_name=train_data_secret_name,
-        secret_key_to_env={
-            "AWS_ACCESS_KEY_ID": "AWS_ACCESS_KEY_ID",
-            "AWS_SECRET_ACCESS_KEY": "AWS_SECRET_ACCESS_KEY",
-            "AWS_S3_ENDPOINT": "AWS_S3_ENDPOINT",
-            "AWS_DEFAULT_REGION": "AWS_DEFAULT_REGION",
-        },
-        optional=True,  # Mark as optional to not block the pipeline. If needed, error will be raised by component
-    )
+    # Only inject S3 credentials when using S3 data source
+    if data_source == "s3":
+        use_secret_as_env(
+            data_loader_task,
+            secret_name=train_data_secret_name,
+            secret_key_to_env={
+                "AWS_ACCESS_KEY_ID": "AWS_ACCESS_KEY_ID",
+                "AWS_SECRET_ACCESS_KEY": "AWS_SECRET_ACCESS_KEY",
+                "AWS_S3_ENDPOINT": "AWS_S3_ENDPOINT",
+                "AWS_DEFAULT_REGION": "AWS_DEFAULT_REGION",
+            },
+            optional=True,  # Mark as optional to not block the pipeline. If needed, error will be raised by component
+        )
 
     # Stage 1 + 2: Model selection and sequential refit of top N models
     training_task = autogluon_models_training(

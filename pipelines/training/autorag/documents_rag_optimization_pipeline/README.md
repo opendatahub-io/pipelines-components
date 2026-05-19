@@ -16,15 +16,19 @@ The system integrates with OGX API for inference and vector database operations,
 
 | Parameter | Type | Default | Description |
 | --------- | ---- | ------- | ----------- |
-| `test_data_secret_name` | `str` | `None` | Name of the Kubernetes secret holding S3-compatible credentials for test data access. The following environment variables are required: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_S3_ENDPOINT. AWS_DEFAULT_REGION is optional. |
-| `test_data_bucket_name` | `str` | `None` | S3 (or compatible) bucket name for the test data file. |
-| `test_data_key` | `str` | `None` | Object key (path) of the test data JSON file in the test data bucket. |
-| `input_data_secret_name` | `str` | `None` | Name of the Kubernetes secret holding S3-compatible credentials for input document data access. The following environment variables are required: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_S3_ENDPOINT. AWS_DEFAULT_REGION is optional. |
-| `input_data_bucket_name` | `str` | `None` | S3 (or compatible) bucket name for the input documents. |
+| `test_data_secret_name` | `str` | `None` | Name of the Kubernetes secret holding S3-compatible credentials for test data access (required when test_data_source="s3"). The following environment variables are required: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_S3_ENDPOINT. AWS_DEFAULT_REGION is optional. |
+| `test_data_bucket_name` | `str` | `None` | S3 (or compatible) bucket name for the test data file (required when test_data_source="s3"). |
+| `test_data_key` | `str` | `None` | Object key (path) of the test data JSON file in the test data bucket (required when test_data_source="s3"). |
+| `input_data_secret_name` | `str` | `None` | Name of the Kubernetes secret holding S3-compatible credentials for input document data access (required when input_data_source="s3"). The following environment variables are required: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_S3_ENDPOINT. AWS_DEFAULT_REGION is optional. |
+| `input_data_bucket_name` | `str` | `None` | S3 (or compatible) bucket name for the input documents (required when input_data_source="s3"). |
 | `ogx_secret_name` | `str` | `None` | Name of the Kubernetes secret for OGX API connection. The secret must define: OGX_CLIENT_API_KEY, OGX_CLIENT_BASE_URL. |
 | `vector_io_provider_id` | `str` | `None` | Vector I/O provider id (e.g., registered in OGX Milvus). |
 | `input_data_key` | `str` | `""` | Object key (path) of the input documents in the input data bucket. |
 | `embedding_models` | `Optional[List]` | `None` | Optional list of embedding model identifiers to use in the search space. |
+| `test_data_source` | `str` | `s3` | Data source type for test data ("s3" or "pvc"). Default is "s3". |
+| `pvc_test_data_path` | `str` | `""` | Path to JSON file on PVC (required when test_data_source="pvc"). Can be absolute or relative to current directory. |
+| `input_data_source` | `str` | `s3` | Data source type for input documents ("s3" or "pvc"). Default is "s3". |
+| `pvc_input_data_path` | `str` | `""` | Directory path on PVC containing documents (required when input_data_source="pvc"). Can be absolute or relative to current directory. |
 | `generation_models` | `Optional[List]` | `None` | Optional list of foundation/generation model identifiers to use in the search space. |
 | `optimization_metric` | `str` | `faithfulness` | Quality metric used to optimize RAG patterns. Supported values: "faithfulness", "answer_correctness", "context_correctness". |
 | `optimization_max_rag_patterns` | `int` | `8` | Maximum number of RAG patterns to generate. Passed to ai4rag (max_number_of_rag_patterns). Defaults to 8. |

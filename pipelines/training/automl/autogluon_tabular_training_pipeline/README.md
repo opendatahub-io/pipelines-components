@@ -48,11 +48,13 @@ The pipeline leverages AutoGluon's unique ensembling strategy that combines mult
 
 | Parameter | Type | Default | Description |
 | --------- | ---- | ------- | ----------- |
-| `train_data_secret_name` | `str` | `None` | Kubernetes secret name with S3 credentials (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_S3_ENDPOINT, AWS_DEFAULT_REGION). |
-| `train_data_bucket_name` | `str` | `None` | S3-compatible bucket name containing the tabular data file. |
-| `train_data_file_key` | `str` | `None` | S3 object key of the CSV file (features and target column). |
+| `train_data_secret_name` | `str` | `None` | Kubernetes secret name with S3 credentials (required when data_source="s3"). |
+| `train_data_bucket_name` | `str` | `None` | S3-compatible bucket name (required when data_source="s3"). |
+| `train_data_file_key` | `str` | `None` | S3 object key of the CSV file (required when data_source="s3"). |
 | `label_column` | `str` | `None` | Name of the target/label column in the dataset. |
 | `task_type` | `str` | `None` | "binary", "multiclass", or "regression"; drives metrics and model types. |
+| `data_source` | `str` | `s3` | Data source type ("s3" or "pvc"). Default is "s3". |
+| `pvc_train_data_path` | `str` | `""` | Path to CSV file on PVC (required when data_source="pvc"). Can be absolute or relative to workspace_path. |
 | `top_n` | `int` | `3` | Number of top models to select and refit (default: 3); positive integer from range [1, 10]. |
 
 ## Metadata 🗂️
@@ -62,14 +64,14 @@ The pipeline leverages AutoGluon's unique ensembling strategy that combines mult
 - **Managed**: Yes
 - **Dependencies**:
   - Kubeflow:
-    - Name: Pipelines, Version: 2.16.1
+    - Name: Pipelines, Version: >=2.16.1
     - Name: Kubernetes, Version: >=1.28.0
 - **Tags**:
   - training
   - pipeline
   - automl
   - autogluon-tabular-training-pipeline
-- **Last Verified**: 2026-05-07 12:00:00+00:00
+- **Last Verified**: 2026-05-13 00:00:00+00:00
 - **Owners**:
   - Approvers:
     - LukaszCmielowski

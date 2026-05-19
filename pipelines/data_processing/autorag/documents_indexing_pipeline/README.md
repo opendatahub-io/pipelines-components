@@ -16,6 +16,8 @@ Defines a pipeline to load, sample, extract text, and index documents for AutoRA
 | `input_data_secret_name` | `str` | `None` | Name of the secret with S3 credentials for input data ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_S3_ENDPOINT", "AWS_DEFAULT_REGION"). |
 | `input_data_bucket_name` | `str` | `None` | Name of the S3 bucket containing input data. |
 | `input_data_key` | `Optional[str]` | `None` | Path to folder with input documents within bucket. |
+| `input_data_source` | `str` | `s3` | Data source type ("s3" or "pvc"). Default is "s3". |
+| `pvc_input_data_path` | `str` | `""` | Directory path on PVC containing documents (required when input_data_source="pvc"). |
 | `collection_name` | `str` | `None` | Optional name of the collection to reuse; omit to create a new one. |
 | `embedding_params` | `Optional[dict]` | `None` | Dict passed to OGXEmbeddingParams (default: {}). |
 | `distance_metric` | `str` | `cosine` | Vector distance metric (e.g. "cosine"). |
