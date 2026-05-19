@@ -13,15 +13,11 @@ https://github.com/hermetoproject/hermeto/blob/main/docs/generic.md
 from __future__ import annotations
 
 import argparse
-import base64
 import json
 import os
-import re
 import shutil
+import subprocess
 import sys
-import urllib.error
-import urllib.parse
-import urllib.request
 from pathlib import Path
 
 LAYOUT_OCI_REF = "registry.stage.redhat.io/rhai/docling-project-docling-layout-heron:3.0"
@@ -31,202 +27,121 @@ LAYOUT_DIR = "docling-project--docling-layout-heron"
 MODELS_DIR = "docling-project--docling-models"
 
 _LAYER_TITLE_KEY = "org.opencontainers.image.title"
-_MANIFEST_ACCEPT = ", ".join(
-    (
-        "application/vnd.oci.image.manifest.v1+json",
-        "application/vnd.docker.distribution.manifest.v2+json",
-    )
-)
 
 
-def _parse_ref(ref: str) -> tuple[str, str, str]:
-    host, path = ref.split("/", 1)
-    repo, tag = path.rsplit(":", 1)
-    return host, repo, tag
+def _digest_filename(digest: str) -> str:
+    return digest.split(":", 1)[-1] if ":" in digest else digest
 
 
-def _read_docker_config_file(path: Path) -> dict:
-    if not path.is_file():
-        return {}
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
-        return {}
-    return data if isinstance(data, dict) else {}
-
-
-def _load_docker_config() -> dict:
-    """Resolve registry credentials from env or standard container-auth locations."""
+def _skopeo_authfile() -> str | None:
     raw = os.environ.get("OCI_PULL_SECRET_MODEL_DOWNLOAD", "").strip()
     if raw:
-        try:
-            data = json.loads(raw)
-        except json.JSONDecodeError as exc:
-            raise ValueError(
-                "OCI_PULL_SECRET_MODEL_DOWNLOAD is set but is not valid JSON (expected Docker config.json)."
-            ) from exc
-        if not isinstance(data, dict):
-            raise ValueError("OCI_PULL_SECRET_MODEL_DOWNLOAD must be a JSON object.")
-        return data
-
-    candidates = [
-        Path(os.environ.get("REGISTRY_AUTH_FILE", "")),
-        Path.home() / ".docker" / "config.json",
-        Path("/run/containers/0/auth.json"),
-    ]
+        path = Path("/tmp/skopeo-auth.json")
+        path.write_text(raw, encoding="utf-8")
+        return str(path)
+    for candidate in (
+        os.environ.get("REGISTRY_AUTH_FILE", ""),
+        str(Path.home() / ".docker" / "config.json"),
+        "/run/containers/0/auth.json",
+    ):
+        if candidate and Path(candidate).is_file():
+            return candidate
     xdg_runtime = os.environ.get("XDG_RUNTIME_DIR")
     if xdg_runtime:
-        candidates.append(Path(xdg_runtime) / "containers" / "auth.json")
-
-    for path in candidates:
-        if path and path.is_file():
-            config = _read_docker_config_file(path)
-            if config.get("auths"):
-                return config
-    return {}
-
-
-def _basic_auth_for_host(host: str, docker_config: dict) -> str | None:
-    auths = docker_config.get("auths") or {}
-    entry = auths.get(host) or auths.get(f"https://{host}")
-    if not entry:
-        return None
-    if isinstance(entry, dict) and entry.get("auth"):
-        return f"Basic {entry['auth']}"
-    if isinstance(entry, dict) and entry.get("username") and entry.get("password"):
-        token = base64.b64encode(f"{entry['username']}:{entry['password']}".encode()).decode()
-        return f"Basic {token}"
+        auth = Path(xdg_runtime) / "containers" / "auth.json"
+        if auth.is_file():
+            return str(auth)
     return None
 
 
-def _parse_www_authenticate(header: str) -> dict[str, str]:
-    if not header.lower().startswith("bearer "):
-        return {}
-    params: dict[str, str] = {}
-    for match in re.finditer(r'(\w+)="([^"]*)"', header[7:]):
-        params[match.group(1)] = match.group(2)
-    return params
+def _skopeo_copy(ref: str, dest: Path) -> None:
+    if not shutil.which("skopeo"):
+        print("error: skopeo not found in PATH (expected from Containerfile skopeo stage)", file=sys.stderr)
+        sys.exit(1)
+    dest.mkdir(parents=True, exist_ok=True)
+    target_arch = os.environ.get("TARGETARCH", "amd64")
+    cmd = [
+        "skopeo",
+        "copy",
+        "--override-os",
+        "linux",
+        "--override-arch",
+        target_arch,
+    ]
+    authfile = _skopeo_authfile()
+    if authfile:
+        cmd.extend(["--authfile", authfile])
+    cmd.extend([f"docker://{ref}", f"dir:{dest}"])
+    result = subprocess.run(cmd, text=True, capture_output=True, check=False)
+    if result.returncode != 0:
+        print(f"error: skopeo copy failed for {ref}:\n{result.stderr}", file=sys.stderr)
+        sys.exit(1)
 
 
-def _http_get(url: str, headers: dict[str, str]) -> bytes:
-    request = urllib.request.Request(url, headers=headers, method="GET")
-    try:
-        with urllib.request.urlopen(request, timeout=600) as response:  # noqa: S310
-            return response.read()
-    except urllib.error.HTTPError as exc:
-        if exc.code == 401:
-            print(
-                "error: registry authentication failed (HTTP 401). "
-                "Log in to registry.stage.redhat.io (podman login / Konflux registry secret) "
-                "or set OCI_PULL_SECRET_MODEL_DOWNLOAD to Docker config.json content.",
-                file=sys.stderr,
-            )
-        raise
-
-
-def _get_bearer_token(host: str, repository: str, basic_auth: str | None) -> str | None:
-    probe_url = f"https://{host}/v2/"
-    probe_headers: dict[str, str] = {}
-    if basic_auth:
-        probe_headers["Authorization"] = basic_auth
-    try:
-        _http_get(probe_url, probe_headers)
-        return None
-    except urllib.error.HTTPError as exc:
-        if exc.code != 401:
-            raise
-        www_auth = exc.headers.get("WWW-Authenticate", "")
-    params = _parse_www_authenticate(www_auth)
-    realm = params.get("realm")
-    if not realm:
-        return None
-    service = params.get("service", "docker-registry")
-    scope = params.get("scope", f"repository:{repository}:pull")
-    token_url = f"{realm}?{urllib.parse.urlencode({'service': service, 'scope': scope})}"
-    token_headers = dict(probe_headers)
-    token_body = _http_get(token_url, token_headers)
-    token_data = json.loads(token_body.decode("utf-8"))
-    token = token_data.get("token") or token_data.get("access_token")
-    return f"Bearer {token}" if token else None
-
-
-def _registry_headers(host: str, repository: str, docker_config: dict, extra: dict[str, str]) -> dict[str, str]:
-    headers = dict(extra)
-    basic_auth = _basic_auth_for_host(host, docker_config)
-    bearer = _get_bearer_token(host, repository, basic_auth)
-    if bearer:
-        headers["Authorization"] = bearer
-    elif basic_auth:
-        headers["Authorization"] = basic_auth
-    return headers
-
-
-def _fetch_manifest(ref: str, docker_config: dict) -> dict:
-    host, repository, tag = _parse_ref(ref)
-    url = f"https://{host}/v2/{repository}/manifests/{tag}"
-    headers = _registry_headers(
-        host,
-        repository,
-        docker_config,
-        {"Accept": _MANIFEST_ACCEPT},
-    )
-    body = _http_get(url, headers)
-    return json.loads(body.decode("utf-8"))
-
-
-def _fetch_blob(ref: str, digest: str, docker_config: dict) -> bytes:
-    host, repository, _tag = _parse_ref(ref)
-    algo, digest_hex = digest.split(":", 1)
-    url = f"https://{host}/v2/{repository}/blobs/{algo}:{digest_hex}"
-    headers = _registry_headers(
-        host,
-        repository,
-        docker_config,
-        {"Accept": "application/octet-stream, */*"},
-    )
-    return _http_get(url, headers)
-
-
-def _pull_oci_artifact(ref: str, dest_subdir: Path, docker_config: dict) -> int:
-    manifest = _fetch_manifest(ref, docker_config)
-    dest_subdir.mkdir(parents=True, exist_ok=True)
+def _extract_oci_artifact_dir(artifact_dir: Path, dest_subdir: Path) -> int:
+    """Extract files from a skopeo dir using manifest layer title annotations."""
+    manifest_path = artifact_dir / "manifest.json"
+    if not manifest_path.is_file():
+        print(f"error: missing manifest.json under {artifact_dir}", file=sys.stderr)
+        sys.exit(1)
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     copied = 0
     for layer in manifest.get("layers") or []:
         title = (layer.get("annotations") or {}).get(_LAYER_TITLE_KEY)
         digest = layer.get("digest")
         if not title or not digest:
             continue
+        blob = artifact_dir / _digest_filename(digest)
+        if not blob.is_file():
+            print(f"error: missing blob {blob} for {title}", file=sys.stderr)
+            sys.exit(1)
         target = dest_subdir / title
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(_fetch_blob(ref, digest, docker_config))
+        shutil.copy2(blob, target)
         copied += 1
     return copied
 
 
 def _from_oci(dest: Path) -> None:
-    docker_config = _load_docker_config()
     dest.mkdir(parents=True, exist_ok=True)
+    work = dest.parent / ".oci-fetch"
+    if work.exists():
+        shutil.rmtree(work)
+    work.mkdir(parents=True, exist_ok=True)
     refs = (
         (LAYOUT_OCI_REF, LAYOUT_DIR),
         (MODELS_OCI_REF, MODELS_DIR),
     )
     total = 0
     for ref, dirname in refs:
-        copied = _pull_oci_artifact(ref, dest / dirname, docker_config)
+        artifact_dir = work / dirname
+        _skopeo_copy(ref, artifact_dir)
+        copied = _extract_oci_artifact_dir(artifact_dir, dest / dirname)
         if copied == 0:
             print(f"error: no layers extracted from {ref}", file=sys.stderr)
             sys.exit(1)
         total += copied
+    shutil.rmtree(work, ignore_errors=True)
     print(f"Seeded {total} files from OCI artifacts into {dest}")
 
 
-def _from_hermeto(source: Path, dest: Path) -> None:
-    """Hermeto stores files under deps/generic/ using lockfile ``filename`` (may include subdirs).
+def _rel_from_docling_component(rel: Path) -> Path | None:
+    """Return path relative to first ``docling-project--*`` directory component."""
+    for idx, part in enumerate(rel.parts):
+        if part.startswith("docling-project--"):
+            return Path(*rel.parts[idx:])
+    return None
 
-    Only paths whose first component starts with ``docling-project--`` are copied so other generic
-    artifacts (e.g. SQLite source tarballs) can share the same Hermeto lockfile without landing
-    under ``DOCLING_ARTIFACTS_PATH``.
-    """
+
+def hermeto_has_docling_models(source: Path) -> bool:
+    """Return True if Hermeto output contains docling layout model config."""
+    if not source.is_dir():
+        return False
+    return any(source.rglob(f"{LAYOUT_DIR}/config.json"))
+
+
+def _from_hermeto(source: Path, dest: Path) -> None:
+    """Copy docling files from Hermeto generic output (may be nested under package path)."""
     if not source.is_dir():
         print(f"error: Hermeto directory not found: {source}", file=sys.stderr)
         sys.exit(1)
@@ -236,14 +151,19 @@ def _from_hermeto(source: Path, dest: Path) -> None:
         if not path.is_file():
             continue
         rel = path.relative_to(source)
-        if rel.parts and not rel.parts[0].startswith("docling-project--"):
+        docling_rel = _rel_from_docling_component(rel)
+        if docling_rel is None:
             continue
-        target = dest / rel
+        target = dest / docling_rel
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(path, target)
         copied += 1
     if copied == 0:
-        print(f"error: no docling files under {source}", file=sys.stderr)
+        print(
+            f"error: no docling files under {source}. "
+            "Ensure Hermeto generic prefetch ran and registry.stage.redhat.io is reachable.",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
 

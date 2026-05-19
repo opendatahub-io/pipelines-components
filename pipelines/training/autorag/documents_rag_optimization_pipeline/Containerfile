@@ -2,7 +2,11 @@
 
 ARG BASE_IMAGE="quay.io/aipcc/base-images/cpu:3.4"
 
+# skopeo for --oci fallback (aipcc base has no DNF repos to install packages).
+FROM quay.io/skopeo/stable AS skopeo-bin
+
 FROM ${BASE_IMAGE}
+COPY --from=skopeo-bin /usr/bin/skopeo /usr/bin/skopeo
 
 # Build context must be this directory (see .tekton/odh-autorag-ci-* path-context).
 COPY requirements.txt requirements-pypi.txt requirements-pypi-whl.txt /tmp/
@@ -28,7 +32,7 @@ RUN pip install --index-url https://pypi.org/simple --no-cache-dir -r /tmp/requi
 ENV DOCLING_ARTIFACTS_PATH=/opt/app-root/docling-artifacts/models
 USER root
 RUN mkdir -p /opt/app-root/docling-artifacts \
-    && if [ -f "${HERMETO_GENERIC_DEPS}/docling-project--docling-layout-heron/config.json" ]; then \
+    && if find "${HERMETO_GENERIC_DEPS}" -path '*/docling-project--docling-layout-heron/config.json' -print -quit 2>/dev/null | grep -q .; then \
       python3 /tmp/seed_docling_models.py --dest /opt/app-root/docling-artifacts/models --hermeto-dir "${HERMETO_GENERIC_DEPS}"; \
     else \
       python3 /tmp/seed_docling_models.py --dest /opt/app-root/docling-artifacts/models --oci; \
