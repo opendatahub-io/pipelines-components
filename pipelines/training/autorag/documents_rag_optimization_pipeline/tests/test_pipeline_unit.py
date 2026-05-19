@@ -9,7 +9,6 @@ from ..pipeline import documents_rag_optimization_pipeline
 _EXPECTED_ROOT_DAG_TASK_IDS = (
     "documents-discovery",
     "leaderboard-evaluation",
-    "prepare-responses-api-requests",
     "rag-templates-optimization",
     "search-space-preparation",
     "test-data-loader",

@@ -11,9 +11,6 @@ from kfp_components.components.data_processing.autorag.test_data_loader import (
 from kfp_components.components.data_processing.autorag.text_extraction import (
     text_extraction,
 )
-from kfp_components.components.deployment.autorag.build_responses_request_bodies.component import (
-    prepare_responses_api_requests,
-)
 from kfp_components.components.training.autorag.leaderboard_evaluation import (
     leaderboard_evaluation,
 )
@@ -167,22 +164,6 @@ def documents_rag_optimization_pipeline(
     )
     use_secret_as_env(
         hpo_task,
-        ogx_secret_name,
-        {
-            "OGX_CLIENT_BASE_URL": "OGX_CLIENT_BASE_URL",
-            "OGX_CLIENT_API_KEY": "OGX_CLIENT_API_KEY",
-        },
-    )
-
-    prepare_responses_api_requests_task = prepare_responses_api_requests(
-        rag_patterns=hpo_task.outputs["rag_patterns"],
-    )
-    prepare_responses_api_requests_task.set_caching_options(False)
-    prepare_responses_api_requests_task.set_cpu_request("500m").set_memory_request("2Gi").set_cpu_limit(
-        MAX_CPUS
-    ).set_memory_limit(MAX_MEMORY)
-    use_secret_as_env(
-        prepare_responses_api_requests_task,
         ogx_secret_name,
         {
             "OGX_CLIENT_BASE_URL": "OGX_CLIENT_BASE_URL",
