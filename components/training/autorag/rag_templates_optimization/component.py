@@ -1,4 +1,3 @@
-from pathlib import Path
 from typing import Optional
 
 from kfp import dsl
@@ -7,7 +6,8 @@ from kfp_components.utils.consts import AUTORAG_IMAGE  # pyright: ignore[reportM
 
 @dsl.component(
     base_image=AUTORAG_IMAGE,  # noqa: E501
-    embedded_artifact_path=str((Path(__file__).parent / "notebook_templates")),
+    embedded_artifact_path=("components/training/autorag/shared"),
+    install_kfp_package=False,
 )
 def rag_templates_optimization(
     extracted_text: dsl.InputPath(dsl.Artifact),
@@ -65,7 +65,7 @@ def rag_templates_optimization(
     from json import load as json_load
     from pathlib import Path
     from re import search
-    from string import Formatter
+    from string import Formatter, Template
     from typing import Any, Literal, Self
 
     import httpx
@@ -333,7 +333,7 @@ def rag_templates_optimization(
             --------
             >>> nb = Notebook.load("existing_notebook.ipynb")
             """
-            with open(Path(embedded_artifact.path) / notebook_name, "r") as f:
+            with open(Path(embedded_artifact.path) / "notebook_templates" / notebook_name, "r") as f:
                 nb_dict = json_load(f)
 
             loaded_cells = []
@@ -593,8 +593,6 @@ def rag_templates_optimization(
 
     rag_patterns_dir = Path(rag_patterns.path)
 
-    ## create responses-related files in each pattern dir (?)
-
     rag_patterns.metadata["name"] = "rag_patterns_artifact"
     rag_patterns.metadata["uri"] = rag_patterns.uri
     rag_patterns.metadata["metadata"] = {"patterns": []}
@@ -618,14 +616,27 @@ def rag_templates_optimization(
         )
 
         rag_patterns.metadata["metadata"]["patterns"].append(pattern_data["payload"])
-        with (patt_dir / "pattern.json").open("w+", encoding="utf-8") as pattern_details:
-            json_dump(pattern_data["payload"], pattern_details, indent=2)
+
+        with (patt_dir / "pattern.json").open("w+", encoding="utf-8") as f:
+            json_dump(pattern_data["payload"], f, indent=2)
+
+        template_context = {
+            "response_template": pattern_data["payload"]["settings"]["responses_template"],
+        }
+        with (Path(embedded_artifact.path) / "script_templates" / "create_model_response.py.templ").open(
+            "r", encoding="utf-8"
+        ) as f:
+            model_responses_templ = Template(f.read())
+            with (patt_dir / "create_model_response.py").open("w+", encoding="utf-8") as ff:
+                ff.write(model_responses_templ.substitute(template_context))
 
         with (patt_dir / "evaluation_results.json").open("w+", encoding="utf-8") as f:
             json_dump(pattern_data["evaluation_results"], f, indent=2)
 
     # TODO autorag_run_artifact
 
+
+temp_embedded_artifacts_dir.cleanup()
 
 if __name__ == "__main__":
     from kfp.compiler import Compiler
