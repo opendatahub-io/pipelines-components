@@ -46,8 +46,12 @@ def documents_rag_optimization_pipeline(
     embedding_models: Optional[List] = None,
     test_data_source: str = "s3",
     pvc_test_data_path: str = "",
+    test_pvc_name: str = "",
+    test_pvc_mount_path: str = "/mnt/test-data",
     input_data_source: str = "s3",
     pvc_input_data_path: str = "",
+    input_pvc_name: str = "",
+    input_pvc_mount_path: str = "/mnt/input-data",
     generation_models: Optional[List] = None,
     optimization_metric: str = "faithfulness",
     optimization_max_rag_patterns: int = 8,
@@ -87,11 +91,24 @@ def documents_rag_optimization_pipeline(
         input_data_bucket_name: S3 (or compatible) bucket name for the input documents (required when
             input_data_source="s3").
         test_data_source: Data source type for test data ("s3" or "pvc"). Default is "s3".
-        pvc_test_data_path: Path to JSON file on PVC (required when test_data_source="pvc").
-            Can be absolute or relative to current directory.
+        pvc_test_data_path: Path to JSON file on PVC relative to test_pvc_mount_path
+            (required when test_data_source="pvc"). Example: "test.json" will be accessed
+            at {test_pvc_mount_path}/test.json.
+        test_pvc_name: Name of existing PVC to mount for test data
+            (required when test_data_source="pvc"). This PVC must already exist in the
+            same namespace as the pipeline.
+        test_pvc_mount_path: Path where the test data PVC will be mounted
+            (default: "/mnt/test-data"). The pvc_test_data_path will be relative to this
+            mount path.
         input_data_source: Data source type for input documents ("s3" or "pvc"). Default is "s3".
-        pvc_input_data_path: Directory path on PVC containing documents (required when input_data_source="pvc").
-            Can be absolute or relative to current directory.
+        pvc_input_data_path: Directory path on PVC relative to input_pvc_mount_path containing
+            documents (required when input_data_source="pvc"). Example: "documents/" will be
+            accessed at {input_pvc_mount_path}/documents/.
+        input_pvc_name: Name of existing PVC to mount for input documents
+            (required when input_data_source="pvc"). This PVC must already exist in the
+            same namespace as the pipeline.
+        input_pvc_mount_path: Path where the input data PVC will be mounted (default: "/mnt/input-data").
+            The pvc_input_data_path will be relative to this mount path.
         generation_models: Optional list of foundation/generation model identifiers to use in the
             search space.
         optimization_metric: Quality metric used to optimize RAG patterns. Supported values:
@@ -99,11 +116,24 @@ def documents_rag_optimization_pipeline(
         optimization_max_rag_patterns: Maximum number of RAG patterns to generate. Passed to ai4rag
             (max_number_of_rag_patterns). Defaults to 8.
     """
+    # Construct full PVC paths for external PVC mounts (mount_path + relative_path)
+    # Components expect absolute paths when using external PVC mounts
+    test_pvc_full_path = (
+        f"{test_pvc_mount_path}/{pvc_test_data_path}"
+        if test_data_source == "pvc" and pvc_test_data_path
+        else pvc_test_data_path
+    )
+    input_pvc_full_path = (
+        f"{input_pvc_mount_path}/{pvc_input_data_path}"
+        if input_data_source == "pvc" and pvc_input_data_path
+        else pvc_input_data_path
+    )
+
     test_data_loader_task = test_data_loader(
         test_data_bucket_name=test_data_bucket_name,
         test_data_path=test_data_key,
         data_source=test_data_source,
-        pvc_data_path=pvc_test_data_path,
+        pvc_data_path=test_pvc_full_path,
     )
 
     test_data_loader_task.set_caching_options(False)
@@ -116,7 +146,7 @@ def documents_rag_optimization_pipeline(
         input_data_path=input_data_key,
         test_data=test_data_loader_task.outputs["test_data"],
         data_source=input_data_source,
-        pvc_data_path=pvc_input_data_path,
+        pvc_data_path=input_pvc_full_path,
     )
 
     documents_discovery_task.set_caching_options(False)
@@ -133,7 +163,7 @@ def documents_rag_optimization_pipeline(
         MAX_MEMORY
     )
 
-    # Only inject S3 credentials when using S3 data sources
+    # Configure data sources: inject S3 credentials or mount PVCs
     if test_data_source == "s3":
         use_secret_as_env(
             test_data_loader_task,
@@ -145,6 +175,14 @@ def documents_rag_optimization_pipeline(
                 "AWS_DEFAULT_REGION": "AWS_DEFAULT_REGION",
             },
             optional=True,
+        )
+    elif test_data_source == "pvc":
+        from kfp.kubernetes import use_pvc
+
+        use_pvc(
+            test_data_loader_task,
+            pvc_name=test_pvc_name,
+            mount_path=test_pvc_mount_path,
         )
 
     if input_data_source == "s3":
@@ -169,6 +207,19 @@ def documents_rag_optimization_pipeline(
                 "AWS_DEFAULT_REGION": "AWS_DEFAULT_REGION",
             },
             optional=True,
+        )
+    elif input_data_source == "pvc":
+        from kfp.kubernetes import use_pvc
+
+        use_pvc(
+            documents_discovery_task,
+            pvc_name=input_pvc_name,
+            mount_path=input_pvc_mount_path,
+        )
+        use_pvc(
+            text_extraction_task,
+            pvc_name=input_pvc_name,
+            mount_path=input_pvc_mount_path,
         )
 
     mps_task = search_space_preparation(

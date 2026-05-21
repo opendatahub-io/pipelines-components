@@ -28,8 +28,9 @@ notebook). Parallelism is **one** concurrent refit pod because the workspace PVC
 Args: train_data_secret_name: Kubernetes secret name containing S3 credentials (required when data_source="s3"). train_data_bucket_name: S3-compatible bucket name (required when data_source="s3"). train_data_file_key: S3 object key of the data file (required when data_source="s3"). target: Name of
 the column containing the numeric values to forecast. Corresponds to :attr:`~autogluon.timeseries.TimeSeriesDataFrame` target column. id_column: Name of the column that identifies each time series (e.g. product_id, store_id). Passed as ``id_column`` when constructing TimeSeriesDataFrame; result uses
 ``item_id``. timestamp_column: Name of the column containing the timestamp/datetime for each observation. Passed as ``timestamp_column`` when constructing TimeSeriesDataFrame; result uses ``timestamp`` as the second index level. data_source: Data source type ("s3" or "pvc"). Default is "s3".
-pvc_train_data_path: Path to CSV file on PVC (required when data_source="pvc"). Can be absolute or relative to workspace_path. known_covariates_names: Optional list of column names known in advance for the forecast horizon (e.g. holidays, promotions). See
-:attr:`~autogluon.timeseries.TimeSeriesPredictor.known_covariates_names`. prediction_length: Number of time steps to forecast (horizon length). Positive integer (default: 1). top_n: Number of top models to select for the leaderboard and output (default: 3).
+pvc_train_data_path: Path to CSV file on PVC relative to pvc_mount_path (required when data_source="pvc"). Example: "datasets/train.csv" will be accessed at {pvc_mount_path}/datasets/train.csv. pvc_name: Name of existing PVC to mount (required when data_source="pvc"). This PVC must already exist in
+the same namespace as the pipeline. pvc_mount_path: Path where the PVC will be mounted in the container (default: "/mnt/data"). The pvc_train_data_path will be relative to this mount path. known_covariates_names: Optional list of column names known in advance for the forecast horizon (e.g. holidays,
+promotions). See :attr:`~autogluon.timeseries.TimeSeriesPredictor.known_covariates_names`. prediction_length: Number of time steps to forecast (horizon length). Positive integer (default: 1). top_n: Number of top models to select for the leaderboard and output (default: 3).
 
 Returns: This pipeline wires task outputs between components; compiled runs expose artifacts from the refit tasks (Model artifacts with predictor, metrics, notebook paths) and the leaderboard evaluation task (HTML leaderboard and aggregated metrics), subject to Kubeflow Pipelines UI and artifact
 configuration.
@@ -51,6 +52,8 @@ prediction_length=14, top_n=3, )
 | `timestamp_column` | `str` | `None` |  |
 | `data_source` | `str` | `s3` |  |
 | `pvc_train_data_path` | `str` | `""` |  |
+| `pvc_name` | `str` | `""` |  |
+| `pvc_mount_path` | `str` | `/mnt/data` |  |
 | `known_covariates_names` | `Optional[List[str]]` | `None` |  |
 | `prediction_length` | `int` | `1` |  |
 | `top_n` | `int` | `3` |  |

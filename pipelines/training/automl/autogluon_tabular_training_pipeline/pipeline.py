@@ -38,6 +38,8 @@ def autogluon_tabular_training_pipeline(
     task_type: str,
     data_source: str = "s3",
     pvc_train_data_path: str = "",
+    pvc_name: str = "",
+    pvc_mount_path: str = "/mnt/data",
     top_n: int = 3,
 ):
     """AutoGluon Tabular Training Pipeline.
@@ -113,8 +115,12 @@ def autogluon_tabular_training_pipeline(
         label_column: Name of the target/label column in the dataset.
         task_type: "binary", "multiclass", or "regression"; drives metrics and model types.
         data_source: Data source type ("s3" or "pvc"). Default is "s3".
-        pvc_train_data_path: Path to CSV file on PVC (required when data_source="pvc").
-            Can be absolute or relative to workspace_path.
+        pvc_train_data_path: Path to CSV file on PVC relative to pvc_mount_path (required when data_source="pvc").
+            Example: "datasets/train.csv" will be accessed at {pvc_mount_path}/datasets/train.csv.
+        pvc_name: Name of existing PVC to mount (required when data_source="pvc").
+            This PVC must already exist in the same namespace as the pipeline.
+        pvc_mount_path: Path where the PVC will be mounted in the container (default: "/mnt/data").
+            The pvc_train_data_path will be relative to this mount path.
         top_n: Number of top models to select and refit (default: 3); positive integer from range [1, 10].
 
     Returns:
@@ -143,6 +149,14 @@ def autogluon_tabular_training_pipeline(
     """  # noqa: E501
     from kfp.kubernetes import use_secret_as_env
 
+    # Construct full PVC path for external PVC (mount_path + relative_path)
+    # Component expects absolute path when using external PVC mount
+    pvc_full_path = (
+        f"{pvc_mount_path}/{pvc_train_data_path}"
+        if data_source == "pvc" and pvc_train_data_path
+        else pvc_train_data_path
+    )
+
     data_loader_task = automl_data_loader(
         bucket_name=train_data_bucket_name,
         file_key=train_data_file_key,
@@ -150,12 +164,12 @@ def autogluon_tabular_training_pipeline(
         label_column=label_column,
         task_type=task_type,
         data_source=data_source,
-        pvc_data_path=pvc_train_data_path,
+        pvc_data_path=pvc_full_path,
     )
     data_loader_task.set_caching_options(False)
     data_loader_task.set_cpu_request("2").set_memory_request("8Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(MAX_MEMORY)
 
-    # Only inject S3 credentials when using S3 data source
+    # Configure data source: inject S3 credentials or mount PVC
     if data_source == "s3":
         use_secret_as_env(
             data_loader_task,
@@ -167,6 +181,14 @@ def autogluon_tabular_training_pipeline(
                 "AWS_DEFAULT_REGION": "AWS_DEFAULT_REGION",
             },
             optional=True,  # Mark as optional to not block the pipeline. If needed, error will be raised by component
+        )
+    elif data_source == "pvc":
+        from kfp.kubernetes import use_pvc
+
+        use_pvc(
+            data_loader_task,
+            pvc_name=pvc_name,
+            mount_path=pvc_mount_path,
         )
 
     # Stage 1 + 2: Model selection and sequential refit of top N models

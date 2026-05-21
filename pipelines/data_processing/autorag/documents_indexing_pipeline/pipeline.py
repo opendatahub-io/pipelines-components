@@ -20,6 +20,8 @@ def documents_indexing_pipeline(
     input_data_key: Optional[str] = None,
     input_data_source: str = "s3",
     pvc_input_data_path: str = "",
+    pvc_name: str = "",
+    pvc_mount_path: str = "/mnt/data",
     collection_name: str = None,
     embedding_params: Optional[dict] = None,
     distance_metric: str = "cosine",
@@ -35,15 +37,21 @@ def documents_indexing_pipeline(
             ("OGX_CLIENT_BASE_URL", "OGX_CLIENT_API_KEY").
         embedding_model_id: Embedding model ID for the vector store.
         vector_io_provider_id: Optional OGX provider ID.
-        input_data_secret_name: Name of the secret with S3 credentials (required when input_data_source="s3").
-        input_data_bucket_name: S3 bucket containing input data (required when input_data_source="s3").
-        input_data_key: For S3: prefix; for PVC: directory path within workspace.
-        input_data_source: Data source type ("s3" or "pvc"). Default is "s3".
-        pvc_input_data_path: Directory path on PVC containing documents (required when input_data_source="pvc").
         input_data_secret_name: Name of the secret with S3 credentials for input data
-            ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_S3_ENDPOINT", "AWS_DEFAULT_REGION").
-        input_data_bucket_name: Name of the S3 bucket containing input data.
-        input_data_key: Path to folder with input documents within bucket.
+            (required when input_data_source="s3"). Must contain: "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY", "AWS_S3_ENDPOINT", "AWS_DEFAULT_REGION".
+        input_data_bucket_name: S3 bucket containing input data
+            (required when input_data_source="s3").
+        input_data_key: S3 prefix / directory path within bucket
+            (required when input_data_source="s3").
+        input_data_source: Data source type ("s3" or "pvc"). Default is "s3".
+        pvc_input_data_path: Directory path on PVC relative to pvc_mount_path containing
+            documents (required when input_data_source="pvc"). Example: "documents/" will be
+            accessed at {pvc_mount_path}/documents/.
+        pvc_name: Name of existing PVC to mount (required when input_data_source="pvc").
+            This PVC must already exist in the same namespace as the pipeline.
+        pvc_mount_path: Path where the PVC will be mounted in the container (default: "/mnt/data").
+            The pvc_input_data_path will be relative to this mount path.
         collection_name: Optional name of the collection to reuse; omit to create a new one.
         embedding_params: Dict passed to OGXEmbeddingParams (default: {}).
         distance_metric: Vector distance metric (e.g. "cosine").
@@ -52,11 +60,19 @@ def documents_indexing_pipeline(
         chunk_overlap: Chunk overlap in characters.
         batch_size: Number of documents per batch (0 = process all at once).
     """
+    # Construct full PVC path for external PVC (mount_path + relative_path)
+    # Component expects absolute path when using external PVC mount
+    pvc_full_path = (
+        f"{pvc_mount_path}/{pvc_input_data_path}"
+        if input_data_source == "pvc" and pvc_input_data_path
+        else pvc_input_data_path
+    )
+
     documents_discovery_task = documents_discovery(
         input_data_bucket_name=input_data_bucket_name,
         input_data_path=input_data_key,
         data_source=input_data_source,
-        pvc_data_path=pvc_input_data_path,
+        pvc_data_path=pvc_full_path,
     )
 
     text_extraction_task = text_extraction(
@@ -76,7 +92,7 @@ def documents_indexing_pipeline(
         collection_name=collection_name,
     )
 
-    # Only inject S3 credentials when using S3 data source
+    # Configure data source: inject S3 credentials or mount PVC
     if input_data_source == "s3":
 
         def set_input_data_secrets(task, secret_name):
@@ -93,6 +109,20 @@ def documents_indexing_pipeline(
 
         set_input_data_secrets(documents_discovery_task, input_data_secret_name)
         set_input_data_secrets(text_extraction_task, input_data_secret_name)
+
+    elif input_data_source == "pvc":
+        from kfp.kubernetes import use_pvc
+
+        use_pvc(
+            documents_discovery_task,
+            pvc_name=pvc_name,
+            mount_path=pvc_mount_path,
+        )
+        use_pvc(
+            text_extraction_task,
+            pvc_name=pvc_name,
+            mount_path=pvc_mount_path,
+        )
 
     use_secret_as_env(
         documents_indexing_task,

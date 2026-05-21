@@ -54,7 +54,9 @@ The pipeline leverages AutoGluon's unique ensembling strategy that combines mult
 | `label_column` | `str` | `None` | Name of the target/label column in the dataset. |
 | `task_type` | `str` | `None` | "binary", "multiclass", or "regression"; drives metrics and model types. |
 | `data_source` | `str` | `s3` | Data source type ("s3" or "pvc"). Default is "s3". |
-| `pvc_train_data_path` | `str` | `""` | Path to CSV file on PVC (required when data_source="pvc"). Can be absolute or relative to workspace_path. |
+| `pvc_train_data_path` | `str` | `""` | Path to CSV file on PVC relative to pvc_mount_path (required when data_source="pvc"). Example: "datasets/train.csv" will be accessed at {pvc_mount_path}/datasets/train.csv. |
+| `pvc_name` | `str` | `""` | Name of existing PVC to mount (required when data_source="pvc"). This PVC must already exist in the same namespace as the pipeline. |
+| `pvc_mount_path` | `str` | `/mnt/data` | Path where the PVC will be mounted in the container (default: "/mnt/data"). The pvc_train_data_path will be relative to this mount path. |
 | `top_n` | `int` | `3` | Number of top models to select and refit (default: 3); positive integer from range [1, 10]. |
 
 ## Metadata 🗂️

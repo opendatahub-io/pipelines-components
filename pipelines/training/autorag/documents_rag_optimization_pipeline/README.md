@@ -26,9 +26,13 @@ The system integrates with OGX API for inference and vector database operations,
 | `input_data_key` | `str` | `""` | Object key (path) of the input documents in the input data bucket. |
 | `embedding_models` | `Optional[List]` | `None` | Optional list of embedding model identifiers to use in the search space. |
 | `test_data_source` | `str` | `s3` | Data source type for test data ("s3" or "pvc"). Default is "s3". |
-| `pvc_test_data_path` | `str` | `""` | Path to JSON file on PVC (required when test_data_source="pvc"). Can be absolute or relative to current directory. |
+| `pvc_test_data_path` | `str` | `""` | Path to JSON file on PVC relative to test_pvc_mount_path (required when test_data_source="pvc"). Example: "test.json" will be accessed at {test_pvc_mount_path}/test.json. |
+| `test_pvc_name` | `str` | `""` | Name of existing PVC to mount for test data (required when test_data_source="pvc"). This PVC must already exist in the same namespace as the pipeline. |
+| `test_pvc_mount_path` | `str` | `/mnt/test-data` | Path where the test data PVC will be mounted (default: "/mnt/test-data"). The pvc_test_data_path will be relative to this mount path. |
 | `input_data_source` | `str` | `s3` | Data source type for input documents ("s3" or "pvc"). Default is "s3". |
-| `pvc_input_data_path` | `str` | `""` | Directory path on PVC containing documents (required when input_data_source="pvc"). Can be absolute or relative to current directory. |
+| `pvc_input_data_path` | `str` | `""` | Directory path on PVC relative to input_pvc_mount_path containing documents (required when input_data_source="pvc"). Example: "documents/" will be accessed at {input_pvc_mount_path}/documents/. |
+| `input_pvc_name` | `str` | `""` | Name of existing PVC to mount for input documents (required when input_data_source="pvc"). This PVC must already exist in the same namespace as the pipeline. |
+| `input_pvc_mount_path` | `str` | `/mnt/input-data` | Path where the input data PVC will be mounted (default: "/mnt/input-data"). The pvc_input_data_path will be relative to this mount path. |
 | `generation_models` | `Optional[List]` | `None` | Optional list of foundation/generation model identifiers to use in the search space. |
 | `optimization_metric` | `str` | `faithfulness` | Quality metric used to optimize RAG patterns. Supported values: "faithfulness", "answer_correctness", "context_correctness". |
 | `optimization_max_rag_patterns` | `int` | `8` | Maximum number of RAG patterns to generate. Passed to ai4rag (max_number_of_rag_patterns). Defaults to 8. |
@@ -40,7 +44,7 @@ The system integrates with OGX API for inference and vector database operations,
 - **Managed**: Yes
 - **Dependencies**:
   - Kubeflow:
-    - Name: Pipelines, Version: 2.16.1
+    - Name: Pipelines, Version: >=2.16.1
   - External Services:
     - Name: ai4rag, Version: ~=0.6.1
     - Name: OGX API, Version: >=1.0.0
@@ -54,7 +58,7 @@ The system integrates with OGX API for inference and vector database operations,
   - pipeline
   - autorag
   - rag-optimization
-- **Last Verified**: 2026-05-14 00:00:00+00:00
+- **Last Verified**: 2026-05-20 00:00:00+00:00
 - **Owners**:
   - Approvers:
     - LukaszCmielowski

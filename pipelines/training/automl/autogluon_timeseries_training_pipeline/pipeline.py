@@ -45,6 +45,8 @@ def autogluon_timeseries_training_pipeline(
     timestamp_column: str,
     data_source: str = "s3",
     pvc_train_data_path: str = "",
+    pvc_name: str = "",
+    pvc_mount_path: str = "/mnt/data",
     known_covariates_names: Optional[List[str]] = None,
     prediction_length: int = 1,
     top_n: int = 3,
@@ -96,8 +98,12 @@ def autogluon_timeseries_training_pipeline(
             Passed as ``timestamp_column`` when constructing TimeSeriesDataFrame; result uses
             ``timestamp`` as the second index level.
         data_source: Data source type ("s3" or "pvc"). Default is "s3".
-        pvc_train_data_path: Path to CSV file on PVC (required when data_source="pvc").
-            Can be absolute or relative to workspace_path.
+        pvc_train_data_path: Path to CSV file on PVC relative to pvc_mount_path (required when data_source="pvc").
+            Example: "datasets/train.csv" will be accessed at {pvc_mount_path}/datasets/train.csv.
+        pvc_name: Name of existing PVC to mount (required when data_source="pvc").
+            This PVC must already exist in the same namespace as the pipeline.
+        pvc_mount_path: Path where the PVC will be mounted in the container (default: "/mnt/data").
+            The pvc_train_data_path will be relative to this mount path.
         known_covariates_names: Optional list of column names known in advance for the forecast
             horizon (e.g. holidays, promotions). See
             :attr:`~autogluon.timeseries.TimeSeriesPredictor.known_covariates_names`.
@@ -129,6 +135,14 @@ def autogluon_timeseries_training_pipeline(
             top_n=3,
         )
     """
+    # Construct full PVC path for external PVC (mount_path + relative_path)
+    # Component expects absolute path when using external PVC mount
+    pvc_full_path = (
+        f"{pvc_mount_path}/{pvc_train_data_path}"
+        if data_source == "pvc" and pvc_train_data_path
+        else pvc_train_data_path
+    )
+
     # Stage 1: Data Loading & Splitting
     data_loader_task = timeseries_data_loader(
         bucket_name=train_data_bucket_name,
@@ -138,12 +152,12 @@ def autogluon_timeseries_training_pipeline(
         id_column=id_column,
         timestamp_column=timestamp_column,
         data_source=data_source,
-        pvc_data_path=pvc_train_data_path,
+        pvc_data_path=pvc_full_path,
     )
     data_loader_task.set_caching_options(False)
     data_loader_task.set_cpu_request("2").set_memory_request("8Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(MAX_MEMORY)
 
-    # Configure S3 secret for data loader (only when using S3)
+    # Configure data source: inject S3 credentials or mount PVC
     from kfp.kubernetes import use_secret_as_env
 
     if data_source == "s3":
@@ -157,6 +171,14 @@ def autogluon_timeseries_training_pipeline(
                 "AWS_DEFAULT_REGION": "AWS_DEFAULT_REGION",
             },
             optional=True,
+        )
+    elif data_source == "pvc":
+        from kfp.kubernetes import use_pvc
+
+        use_pvc(
+            data_loader_task,
+            pvc_name=pvc_name,
+            mount_path=pvc_mount_path,
         )
 
     # Stage 2: Model Selection

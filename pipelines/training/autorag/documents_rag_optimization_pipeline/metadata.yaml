@@ -5,7 +5,7 @@ managed: true
 dependencies:
   kubeflow:
     - name: Pipelines
-      version: '2.16.1'
+      version: '>=2.16.1'
   external_services:
     - name: ai4rag
       version: "~=0.6.1"
@@ -26,4 +26,4 @@ tags:
   - pipeline
   - autorag
   - rag-optimization
-lastVerified: 2026-05-14T00:00:00Z
+lastVerified: 2026-05-20T00:00:00Z
