@@ -24,6 +24,10 @@ def inject_workspace_path(monkeypatch, tmp_path):
         run_status.path = str(tmp_path / "run_status_out")
         run_status.metadata = {}
         kwargs.setdefault("run_status_artifact", run_status)
+        if "embedded_artifact" not in kwargs:
+            embedded = mock.MagicMock()
+            embedded.path = _shared_dir
+            kwargs["embedded_artifact"] = embedded
         return original(*args, **kwargs)
 
     monkeypatch.setattr(leaderboard_evaluation, "python_func", wrapper)

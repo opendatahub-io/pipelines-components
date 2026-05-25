@@ -20,6 +20,12 @@ def _make_run_status_artifact():
     return art
 
 
+def _make_embedded_artifact():
+    art = mock.MagicMock()
+    art.path = _shared_dir
+    return art
+
+
 @pytest.fixture(autouse=True)
 def inject_run_status_defaults(monkeypatch):
     """Inject KFP placeholder args when tests omit pipeline_name and run_id."""
@@ -32,6 +38,7 @@ def inject_run_status_defaults(monkeypatch):
         kwargs.setdefault("run_id", "test-run-id")
         kwargs.setdefault("run_status_pipeline_id", PIPELINE_TABULAR_TRAINING)
         kwargs.setdefault("run_status_artifact", _make_run_status_artifact())
+        kwargs.setdefault("embedded_artifact", _make_embedded_artifact())
         return original(*args, **kwargs)
 
     monkeypatch.setattr(automl_data_loader, "python_func", wrapper)

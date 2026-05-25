@@ -18,6 +18,7 @@ def automl_data_loader(  # noqa: D417
     label_column: str,
     sampled_test_dataset: dsl.Output[dsl.Dataset],
     run_status_artifact: dsl.Output[dsl.Artifact],
+    embedded_artifact: dsl.EmbeddedInput[dsl.Dataset],
     pipeline_name: str,
     run_id: str,
     run_status_pipeline_id: str,
@@ -72,6 +73,7 @@ def automl_data_loader(  # noqa: D417
         label_column: Name of the label/target column in the dataset.
         sampled_test_dataset: Output dataset artifact for the test split.
         run_status_artifact: KFP artifact with a snapshot of ``.automl/run_status.json``.
+        embedded_artifact: Embedded shared files (``run_status_templates/``); injected by the runtime.
         pipeline_name: KFP pipeline job resource name (``dsl.PIPELINE_JOB_RESOURCE_NAME_PLACEHOLDER``).
         run_id: KFP run ID (``dsl.PIPELINE_JOB_ID_PLACEHOLDER``); used for workspace run status.
         run_status_pipeline_id: Static ``@dsl.pipeline`` name for the run-status manifest
@@ -139,13 +141,15 @@ def automl_data_loader(  # noqa: D417
         RunStatusRecorder,
     )
 
+    templates_root = embedded_artifact.path
     RunStatusRecorder.init_pipeline_run(
         workspace_path,
         kfp_run_id=run_id,
         pipeline_name=pipeline_name,
         run_status_pipeline_id=run_status_pipeline_id,
+        templates_root=templates_root,
     )
-    run_status = RunStatusRecorder(workspace_path, COMPONENT_DATA_LOADER)
+    run_status = RunStatusRecorder(workspace_path, COMPONENT_DATA_LOADER, templates_root=templates_root)
     run_status.begin()
     run_status.record("validate_inputs", "completed")
 
