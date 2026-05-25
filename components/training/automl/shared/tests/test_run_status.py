@@ -10,10 +10,8 @@ from run_status import (
     DOCUMENT_PIPELINE_ID_FIELD,
     PIPELINE_TABULAR_TRAINING,
     RUN_STATUS_ARTIFACT_FILENAME,
-    RUN_STATUS_REL_PATH,
     STATUS_COMPLETED,
     STATUS_PENDING,
-    STATUS_RUNNING,
     RunStatusRecorder,
     begin_component,
     complete_component,
@@ -35,11 +33,13 @@ _SHARED_ROOT = str(Path(__file__).resolve().parents[1])
 
 
 def test_pipeline_manifest_json_exists():
+    """Tabular pipeline manifest JSON is present under the embedded templates tree."""
     manifest_path = resolve_templates_dir(_SHARED_ROOT) / "pipelines" / f"{PIPELINE_TABULAR_TRAINING}.json"
     assert manifest_path.is_file()
 
 
 def test_tabular_pipeline_manifest_covers_all_components():
+    """Manifest lists all three tabular pipeline components with at least one stage each."""
     manifest = load_pipeline_run_status_manifest(PIPELINE_TABULAR_TRAINING, templates_root=_SHARED_ROOT)
     assert manifest["pipeline_id"] == PIPELINE_TABULAR_TRAINING
     component_ids = pipeline_component_ids(PIPELINE_TABULAR_TRAINING, templates_root=_SHARED_ROOT)
@@ -61,6 +61,7 @@ def test_tabular_pipeline_manifest_covers_all_components():
 
 
 def test_init_seeds_full_pipeline_as_pending(tmp_path):
+    """``init_run_status`` seeds every manifest component and stage as ``pending``."""
     ws = str(tmp_path)
     init_run_status(
         ws,
@@ -88,6 +89,7 @@ def test_init_seeds_full_pipeline_as_pending(tmp_path):
 
 
 def test_ensure_pipeline_plan_preserves_progress(tmp_path):
+    """``ensure_pipeline_plan`` adds missing components without overwriting completed stages."""
     ws = str(tmp_path)
     init_run_status(
         ws,
@@ -110,6 +112,7 @@ def test_ensure_pipeline_plan_preserves_progress(tmp_path):
 
 
 def test_record_stage_with_optional_steps(tmp_path):
+    """``record_stage`` upserts a stage and stores optional ``steps`` on completion."""
     ws = str(tmp_path)
     init_run_status(
         ws,
@@ -140,6 +143,7 @@ def test_record_stage_with_optional_steps(tmp_path):
 
 
 def test_expected_stage_steps_from_manifest():
+    """``model_selection`` exposes optional steps; stages without steps return ``None``."""
     steps = expected_stage_steps(
         COMPONENT_MODELS_TRAINING,
         "model_selection",
@@ -164,6 +168,7 @@ def test_expected_stage_steps_from_manifest():
 
 
 def test_validate_component_stages_warns_on_missing_steps(caplog):
+    """Validation warns when a completed stage omits manifest ``steps``."""
     document = {
         DOCUMENT_PIPELINE_ID_FIELD: PIPELINE_TABULAR_TRAINING,
         "components": {
@@ -184,6 +189,7 @@ def test_validate_component_stages_warns_on_missing_steps(caplog):
 
 
 def test_init_and_stages(tmp_path):
+    """Init, stage records, and complete update the workspace JSON as expected."""
     ws = str(tmp_path)
     init_run_status(
         ws,
@@ -206,6 +212,7 @@ def test_init_and_stages(tmp_path):
 
 
 def test_run_status_recorder(tmp_path):
+    """``RunStatusRecorder`` wraps init, begin, record, complete, and publish."""
     ws = str(tmp_path)
     RunStatusRecorder.init_pipeline_run(
         ws,
@@ -224,10 +231,12 @@ def test_run_status_recorder(tmp_path):
 
 
 def test_load_empty_returns_empty_dict(tmp_path):
+    """Missing run status file yields an empty document."""
     assert load_run_status(str(tmp_path)) == {}
 
 
 def test_publish_run_status_artifact(tmp_path):
+    """Publish copies workspace JSON into the artifact output path."""
     ws = str(tmp_path / "ws")
     artifact_dir = str(tmp_path / "artifact")
     init_run_status(
@@ -246,6 +255,7 @@ def test_publish_run_status_artifact(tmp_path):
 
 
 def test_validate_component_stages_warns_on_missing(caplog):
+    """Validation warns when manifest stage slots are missing from the document."""
     document = {
         DOCUMENT_PIPELINE_ID_FIELD: PIPELINE_TABULAR_TRAINING,
         "components": {
@@ -260,6 +270,7 @@ def test_validate_component_stages_warns_on_missing(caplog):
 
 
 def test_validate_component_stages_warns_on_unknown(caplog):
+    """Validation warns when recorded stage ids are not in the manifest."""
     document = {
         DOCUMENT_PIPELINE_ID_FIELD: PIPELINE_TABULAR_TRAINING,
         "components": {

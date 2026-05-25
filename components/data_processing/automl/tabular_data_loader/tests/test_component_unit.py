@@ -8,7 +8,6 @@ import csv
 import io
 import json
 import sys
-from pathlib import Path
 from contextlib import contextmanager
 from pathlib import Path
 from unittest import mock
@@ -147,6 +146,7 @@ class TestRunStatusArtifact:
 
     @mock.patch.dict("os.environ", mocked_env_variables)
     def test_writes_run_status_json(self, tmp_path, monkeypatch):
+        """Write ``.automl/run_status.json`` on the workspace with completed loader stages."""
         monkeypatch.delenv("MLFLOW_TRACKING_URI", raising=False)
         csv_content = "a,b,c\n1,2,3\n4,5,6\n"
         body_stream = io.BytesIO(csv_content.encode("utf-8"))
@@ -174,6 +174,7 @@ class TestRunStatusArtifact:
 
     @mock.patch.dict("os.environ", mocked_env_variables)
     def test_publishes_run_status_kfp_artifact(self, tmp_path):
+        """Copy run status JSON into the KFP ``run_status_artifact`` output directory."""
         csv_content = "a,b,c\n1,2,3\n4,5,6\n"
         body_stream = io.BytesIO(csv_content.encode("utf-8"))
         sampled_test = _make_test_artifact(tmp_path)

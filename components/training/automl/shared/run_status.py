@@ -496,6 +496,7 @@ class RunStatusRecorder:
         *,
         templates_root: str | None = None,
     ) -> None:
+        """Bind a workspace path and component id for stage updates."""
         self.workspace_path = workspace_path
         self.component_name = component_name
         self.templates_root = templates_root
@@ -519,6 +520,7 @@ class RunStatusRecorder:
         )
 
     def begin(self) -> None:
+        """Mark this component ``running`` and merge any missing manifest stages."""
         begin_component(
             self.workspace_path,
             self.component_name,
@@ -533,6 +535,7 @@ class RunStatusRecorder:
         steps: list[str] | None = None,
         **details: Any,
     ) -> None:
+        """Record or update a stage (optional ``steps`` and detail fields)."""
         record_stage(
             self.workspace_path,
             self.component_name,
@@ -544,6 +547,7 @@ class RunStatusRecorder:
         )
 
     def complete(self, *, state: str = STATUS_COMPLETED) -> None:
+        """Mark this component ``completed`` or ``failed``."""
         complete_component(
             self.workspace_path,
             self.component_name,
@@ -552,6 +556,7 @@ class RunStatusRecorder:
         )
 
     def publish_artifact(self, artifact_path: str, *, validate: bool = True) -> dict[str, Any]:
+        """Write the workspace run status JSON into a KFP output artifact directory."""
         return publish_run_status_artifact(
             artifact_path,
             self.workspace_path,

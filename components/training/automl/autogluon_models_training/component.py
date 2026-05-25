@@ -58,6 +58,7 @@ def autogluon_models_training(
         run_id: Pipeline run ID written into the generated notebook.
         sample_row: JSON array of row dicts for the notebook example input; label column is stripped.
         models_artifact: Output Model artifact containing all refitted model subdirectories.
+        run_status_artifact: KFP artifact with a snapshot of ``.automl/run_status.json``.
         notebooks: Embedded notebook templates injected by the KFP runtime.
         sampling_config: Data sampling config stored in artifact metadata.
         split_config: Data split config stored in artifact metadata.
