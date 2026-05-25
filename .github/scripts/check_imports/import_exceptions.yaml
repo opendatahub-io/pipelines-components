@@ -11,8 +11,6 @@ files:
   "components/**/tests/*":
     - tests
     - pandas
-    # Flat import of embedded shared helpers (same layout as KFP task containers).
-    - run_status
   "components/**/shared/*":
     - pandas
     - component

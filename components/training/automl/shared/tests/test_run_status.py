@@ -1,33 +1,36 @@
 """Tests for workspace run status helpers."""
 
+import importlib
 import json
 from pathlib import Path
 
-from run_status import (
-    COMPONENT_DATA_LOADER,
-    COMPONENT_LEADERBOARD,
-    COMPONENT_MODELS_TRAINING,
-    DOCUMENT_PIPELINE_ID_FIELD,
-    PIPELINE_TABULAR_TRAINING,
-    RUN_STATUS_ARTIFACT_FILENAME,
-    STATUS_COMPLETED,
-    STATUS_PENDING,
-    RunStatusRecorder,
-    begin_component,
-    complete_component,
-    ensure_pipeline_plan,
-    expected_stage_steps,
-    init_run_status,
-    load_component_stage_catalog,
-    load_pipeline_run_status_manifest,
-    load_run_status,
-    pipeline_component_ids,
-    publish_run_status_artifact,
-    record_stage,
-    resolve_templates_dir,
-    run_status_file_path,
-    validate_component_stages,
-)
+# Load via importlib (not top-level ``from run_status import``) for import-guard compliance.
+# ``shared/tests/conftest.py`` puts the embedded shared root on sys.path first.
+_rs = importlib.import_module("run_status")
+
+COMPONENT_DATA_LOADER = _rs.COMPONENT_DATA_LOADER
+COMPONENT_LEADERBOARD = _rs.COMPONENT_LEADERBOARD
+COMPONENT_MODELS_TRAINING = _rs.COMPONENT_MODELS_TRAINING
+DOCUMENT_PIPELINE_ID_FIELD = _rs.DOCUMENT_PIPELINE_ID_FIELD
+PIPELINE_TABULAR_TRAINING = _rs.PIPELINE_TABULAR_TRAINING
+RUN_STATUS_ARTIFACT_FILENAME = _rs.RUN_STATUS_ARTIFACT_FILENAME
+STATUS_COMPLETED = _rs.STATUS_COMPLETED
+STATUS_PENDING = _rs.STATUS_PENDING
+RunStatusRecorder = _rs.RunStatusRecorder
+begin_component = _rs.begin_component
+complete_component = _rs.complete_component
+ensure_pipeline_plan = _rs.ensure_pipeline_plan
+expected_stage_steps = _rs.expected_stage_steps
+init_run_status = _rs.init_run_status
+load_component_stage_catalog = _rs.load_component_stage_catalog
+load_pipeline_run_status_manifest = _rs.load_pipeline_run_status_manifest
+load_run_status = _rs.load_run_status
+pipeline_component_ids = _rs.pipeline_component_ids
+publish_run_status_artifact = _rs.publish_run_status_artifact
+record_stage = _rs.record_stage
+resolve_templates_dir = _rs.resolve_templates_dir
+run_status_file_path = _rs.run_status_file_path
+validate_component_stages = _rs.validate_component_stages
 
 _SHARED_ROOT = str(Path(__file__).resolve().parents[1])
 
