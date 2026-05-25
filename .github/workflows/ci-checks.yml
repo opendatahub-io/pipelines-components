@@ -6,8 +6,13 @@ on:
   pull_request_target:
     types: [opened, synchronize, reopened, labeled]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.number }}-${{ github.event.label.name || 'ci' }}
+  cancel-in-progress: true
+
 jobs:
   check_ci_status:
+    if: github.event.action != 'labeled' || github.event.label.name == 'ok-to-test'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -39,7 +44,7 @@ jobs:
             --author-login "$AUTHOR_LOGIN" \
             --head-sha "$HEAD_SHA" \
             --check-name "check_ci_status" \
-            --ignore-checks "Agent" \
+            --ignore-checks "Agent,check_ci_status" \
             --delay 5 \
             --retries 10 \
             --polling-interval 5 \

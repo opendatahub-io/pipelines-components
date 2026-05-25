@@ -522,16 +522,18 @@ def rag_templates_optimization(
         if path.is_dir():
             for doc_path in path.iterdir():
                 with doc_path.open("r", encoding="utf-8") as doc:
+                    doc_id = doc_path.stem if doc_path.suffix == ".md" else doc_path.name
                     documents.append(
                         Document(
                             page_content=doc.read(),
-                            metadata={"document_id": doc_path.stem},
+                            metadata={"document_id": doc_id},
                         )
                     )
 
         elif path.is_file():
+            doc_id = path.stem if path.suffix == ".md" else path.name
             with path.open("r", encoding="utf-8") as doc:
-                documents.append(Document(page_content=doc.read(), metadata={"document_id": path.stem}))
+                documents.append(Document(page_content=doc.read(), metadata={"document_id": doc_id}))
 
         return documents
 

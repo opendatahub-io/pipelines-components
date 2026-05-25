@@ -54,7 +54,7 @@ The pipeline leverages AutoGluon's unique ensembling strategy that combines mult
 | `label_column` | `str` | `None` | Name of the target/label column in the dataset. |
 | `task_type` | `str` | `None` | "binary", "multiclass", or "regression"; drives metrics and model types. |
 | `top_n` | `int` | `3` | Number of top models to select and refit (default: 3); positive integer from range [1, 10]. |
-| `positive_class` | `Optional[str]` | `None` | Optional label value for the positive class in binary classification (e.g. ``"1"`` or ``"yes"``). If omitted (``None``), AutoGluon infers it at ``TabularPredictor.fit`` time as the **second unique class after sorting** label values (see AutoGluon ``TabularPredictor`` docs). Ignored for multiclass and regression. |
+| `positive_class` | `Optional[str]` | `None` | Optional label value for the positive class in binary classification. Defaults to the second unique class after sorting label values. |
 
 ## Metadata 🗂️
 

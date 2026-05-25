@@ -42,11 +42,22 @@ class GhClient:
         return json.loads(result.stdout)
 
     def get_own_check_run_id(self, repo: str, head_sha: str, check_name: str) -> int:
-        """Return the ID of the check run matching *check_name*."""
+        """Return the ID of the check run matching *check_name*.
+
+        Prefers an in-progress instance over completed ones to avoid
+        misidentifying a stale run when multiple runs share the same name.
+        Falls back to the first completed run if none is in-progress.
+        """
         data = self.get_check_runs(repo, head_sha)
+        fallback: int | None = None
         for cr in data.get("check_runs", []):
             if cr["name"] == check_name:
-                return cr["id"]
+                if cr["status"] == "in_progress":
+                    return cr["id"]
+                if fallback is None:
+                    fallback = cr["id"]
+        if fallback is not None:
+            return fallback
         raise ChecksError(f"Check run '{check_name}' not found")
 
 

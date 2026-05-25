@@ -137,7 +137,8 @@ def documents_indexing(
         api_key=ogx_api_key,
     )
 
-    paths = sorted(Path(extracted_text.path).glob("*.md"))
+    base = Path(extracted_text.path)
+    paths = sorted(p for p in base.iterdir() if p.is_file() and p.suffix.lower() == ".md")
     total_documents = len(paths)
     logger.info("Found %s documents to index", total_documents)
 

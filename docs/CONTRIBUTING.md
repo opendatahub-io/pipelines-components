@@ -1158,6 +1158,23 @@ MYIMAGE_IMAGE = os.getenv("RELATED_IMAGE_ODH_MYIMAGE_IMAGE", DEFAULT_MYIMAGE_IMA
 
 **C. DSPO** ([data-science-pipelines-operator](https://github.com/opendatahub-io/data-science-pipelines-operator)):
 
+In `config/base/params.env` (loaded into the dspo-parameters ConfigMap) add:
+
+```env
+RELATED_IMAGE_ODH_MYIMAGE_IMAGE=quay.io/opendatahub/odh-myimage:odh-stable
+```
+
+```yaml
+# In config/base/kustomization.yaml (vars)
+- name: RELATED_IMAGE_ODH_MYIMAGE_IMAGE
+  objref:
+    kind: ConfigMap
+    name: dspo-parameters
+    apiVersion: v1
+  fieldref:
+    fieldpath: data.RELATED_IMAGE_ODH_MYIMAGE_IMAGE
+```
+
 ```yaml
 # In config/manager/manager.yaml
 - name: RELATED_IMAGE_ODH_MYIMAGE_IMAGE

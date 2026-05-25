@@ -11,11 +11,13 @@ import pytest
 
 @pytest.fixture(autouse=True, scope="module")
 def isolated_sys_modules():
-    """Patch autogluon in sys.modules for this module; restored on teardown.
+    """Patch autogluon and sklearn in sys.modules for this module; restored on teardown.
 
-    Note: pandas is NOT mocked - the component needs real pandas for sklearn operations
-    and DataFrame/Series manipulation in curve generation.
+    Note: pandas is NOT mocked - the component needs real pandas for DataFrame/Series
+    manipulation in curve generation.
     """
+    import numpy as np
+
     with mock.patch.dict(sys.modules, clear=False) as mocked_modules:
         _ag = mock.MagicMock()
         _ag.__path__ = []
@@ -27,6 +29,28 @@ def isolated_sys_modules():
             if sub == "autogluon.core":
                 _m.__path__ = []
             mocked_modules[sub] = _m
+
+        def _roc_auc_score_side_effect(y_true, y_score):
+            arr = np.asarray(y_true)
+            if len(np.unique(arr)) < 2:
+                raise ValueError("Only one class present in y_true. ROC AUC score is not defined.")
+            return 0.85
+
+        _sklearn_metrics = mock.MagicMock()
+        _sklearn_metrics.roc_curve.return_value = (
+            np.array([0.0, 0.5, 1.0]),
+            np.array([0.0, 0.8, 1.0]),
+            np.array([1.0, 0.5]),
+        )
+        _sklearn_metrics.roc_auc_score.side_effect = _roc_auc_score_side_effect
+        _sklearn_metrics.precision_recall_curve.return_value = (
+            np.array([1.0, 0.8, 0.0]),
+            np.array([0.0, 0.5, 1.0]),
+            np.array([0.8, 0.5]),
+        )
+        _sklearn_metrics.average_precision_score.return_value = 0.75
+        mocked_modules["sklearn"] = mock.MagicMock()
+        mocked_modules["sklearn.metrics"] = _sklearn_metrics
         yield
 
 
@@ -420,7 +444,6 @@ class TestAutogluonModelsTrainingUnitTests:
         mock_models_artifact.path = models_output_dir
         mock_models_artifact.metadata = {}
 
-        pytest.importorskip("sklearn")
         call_kwargs = _base_call_kwargs(
             workspace_path, mock_models_artifact, mock.MagicMock(path="/tmp/test.csv"), mock_notebooks, tmp_path
         )
@@ -546,7 +569,6 @@ class TestAutogluonModelsTrainingUnitTests:
         mock_models_artifact.path = models_output_dir
         mock_models_artifact.metadata = {}
 
-        pytest.importorskip("sklearn")
         autogluon_models_training.python_func(
             label_column="target",
             task_type="binary",
@@ -644,7 +666,6 @@ class TestAutogluonModelsTrainingUnitTests:
         mock_models_artifact.path = models_output_dir
         mock_models_artifact.metadata = {}
 
-        pytest.importorskip("sklearn")
         autogluon_models_training.python_func(
             label_column="target",
             task_type="multiclass",
@@ -722,7 +743,6 @@ class TestAutogluonModelsTrainingUnitTests:
         mock_models_artifact.path = models_output_dir
         mock_models_artifact.metadata = {}
 
-        pytest.importorskip("sklearn")
         autogluon_models_training.python_func(
             label_column="target",
             task_type="multiclass",
