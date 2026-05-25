@@ -178,8 +178,11 @@ You do not need to refer to config ids.
 Current configs:
 
 1. **regression** – `task_type=regression`, label `price`; tags: `regression`, `smoke`.
+   Uses `data/regression.csv` (250 rows).
 2. **classification_binary** – `task_type=binary`, label `target`; tags: `classification`, `binary`, `smoke`.
+   Uses `data/classification.csv` (250 rows).
 3. **classification_multiclass** – `task_type=multiclass`, label `target`; tags: `classification`, `multiclass`.
+   Uses `data/multiclass.csv` (150 rows, no full-row duplicates).
 
 ## Running the tests
 

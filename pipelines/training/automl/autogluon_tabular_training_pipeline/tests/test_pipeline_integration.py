@@ -68,6 +68,44 @@ def _run_succeeded(detail):
     return False
 
 
+def _format_run_failure(detail, run_id: str) -> str:
+    """Build an assertion message including failed task names when available."""
+    run = getattr(detail, "run", detail)
+    state = getattr(run, "state", None)
+    if state is None and hasattr(run, "status"):
+        state = getattr(run.status, "state", None)
+    lines = [f"Pipeline run {run_id} did not succeed (state={state!r})."]
+    run_error = getattr(run, "error", None)
+    if run_error:
+        lines.append(f"  run error: {run_error!r}")
+    for attr in ("tasks", "child_tasks", "task_details"):
+        tasks = getattr(run, attr, None) or getattr(detail, attr, None)
+        if not tasks:
+            continue
+        for task in tasks:
+            task_state = getattr(task, "state", None)
+            if task_state is None and hasattr(task, "status"):
+                task_state = getattr(task.status, "state", None)
+            if str(task_state).upper() not in {"FAILED", "ERROR"}:
+                continue
+            name = (
+                getattr(task, "display_name", None)
+                or getattr(task, "task_name", None)
+                or getattr(task, "name", None)
+                or str(task)
+            )
+            err = getattr(task, "error", None)
+            if err is None and hasattr(task, "status"):
+                err = getattr(task.status, "message", None)
+            lines.append(f"  failed task: {name!r} state={task_state!r} error={err!r}")
+        break
+    lines.append(
+        "Inspect executor logs in the DSP UI (often automl-data-loader for "
+        "'at least 100 valid records' if the cluster image is stale)."
+    )
+    return "\n".join(lines)
+
+
 def _find_artifacts_in_s3(s3_client, bucket, prefix):
     """List object keys under prefix; return lists of keys by type (.pkl, .ipynb, .json, leaderboard)."""
     pkl_keys = []
@@ -128,7 +166,7 @@ class TestAutogluonPipelineIntegration:
             pytest.skip(f"Dataset not available for path: {test_config.dataset_path}")
 
         run_id, detail = _run_pipeline_and_wait(kfp_client, compiled_pipeline_path, arguments, pipeline_run_timeout)
-        assert _run_succeeded(detail), f"Pipeline run {run_id} did not succeed; state={getattr(detail, 'run', detail)}"
+        assert _run_succeeded(detail), _format_run_failure(detail, run_id)
 
         if s3_client and config.get("s3_bucket_artifacts"):
             bucket = config["s3_bucket_artifacts"]
