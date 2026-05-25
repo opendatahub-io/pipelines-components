@@ -44,7 +44,13 @@
         },
         {
           "id": "model_selection",
-          "description": "Run AutoGluon model selection (fit) with presets and time limits."
+          "description": "Run AutoGluon model selection (fit) with presets and time limits.",
+          "steps": [
+            "feature_engineering",
+            "model_training",
+            "stacking",
+            "model_evaluation"
+          ]
         },
         {
           "id": "refit_full",

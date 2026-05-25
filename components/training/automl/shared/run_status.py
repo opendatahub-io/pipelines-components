@@ -32,6 +32,11 @@ COMPONENT_DATA_LOADER = "automl_data_loader"
 COMPONENT_MODELS_TRAINING = "autogluon_models_training"
 COMPONENT_LEADERBOARD = "leaderboard_evaluation"
 
+STATUS_PENDING = "pending"
+STATUS_RUNNING = "running"
+STATUS_COMPLETED = "completed"
+STATUS_FAILED = "failed"
+
 _DEFAULT_INITIAL_DOCUMENT: dict[str, Any] = {
     "run_status_rel_path": RUN_STATUS_REL_PATH,
     "components": {},
@@ -111,6 +116,41 @@ def expected_stage_ids(
     return [stage["id"] for stage in catalog.get("stages", [])]
 
 
+def expected_stage_steps(
+    component_name: str,
+    stage_id: str,
+    *,
+    pipeline_id: str | None = None,
+    workspace_path: str | None = None,
+    templates_root: str | None = None,
+) -> list[str] | None:
+    """Optional ordered step ids for a stage from the pipeline manifest (``None`` if undefined)."""
+    catalog = load_component_stage_catalog(
+        component_name,
+        pipeline_id=pipeline_id,
+        workspace_path=workspace_path,
+        templates_root=templates_root,
+    )
+    for stage in catalog.get("stages", []):
+        if stage.get("id") == stage_id:
+            steps = stage.get("steps")
+            if isinstance(steps, list) and steps:
+                return [str(step) for step in steps]
+            return None
+    return None
+
+
+def _normalize_steps(steps: list[str]) -> list[str]:
+    if not isinstance(steps, list) or not steps:
+        raise TypeError("steps must be a non-empty list of strings.")
+    normalized: list[str] = []
+    for step in steps:
+        if not isinstance(step, str) or not step.strip():
+            raise TypeError("each step must be a non-empty string.")
+        normalized.append(step)
+    return normalized
+
+
 def resolve_run_status_pipeline_id(workspace_path: str) -> str | None:
     """Read the static pipeline manifest id stored at run init."""
     document = load_run_status(workspace_path)
@@ -151,6 +191,83 @@ def _initial_document_from_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
     return copy.deepcopy(_DEFAULT_INITIAL_DOCUMENT)
 
 
+def _pending_stage_entry(stage_def: dict[str, Any]) -> dict[str, Any]:
+    stage_id = stage_def.get("id")
+    if not stage_id:
+        raise ValueError("manifest stage entry requires an id")
+    return {"id": stage_id, "status": STATUS_PENDING}
+
+
+def _pending_component_entry(comp_def: dict[str, Any]) -> dict[str, Any]:
+    stages = [
+        _pending_stage_entry(stage_def)
+        for stage_def in comp_def.get("stages", [])
+        if stage_def.get("id")
+    ]
+    return {"state": STATUS_PENDING, "stages": stages}
+
+
+def _build_pipeline_plan_from_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
+    """All pipeline components and stages from the manifest, initially ``pending``."""
+    components: dict[str, Any] = {}
+    for comp_def in sorted(manifest.get("components", []), key=lambda c: c.get("order", 0)):
+        component_id = comp_def.get("id")
+        if component_id:
+            components[component_id] = _pending_component_entry(comp_def)
+    return components
+
+
+def _merge_component_stages(entry: dict[str, Any], comp_def: dict[str, Any]) -> None:
+    """Add manifest stages missing from ``entry`` as ``pending``; preserve unknown stage ids."""
+    existing_by_id = {
+        stage["id"]: stage for stage in entry.get("stages", []) if stage.get("id")
+    }
+    manifest_ids = {stage_def.get("id") for stage_def in comp_def.get("stages", []) if stage_def.get("id")}
+    merged: list[dict[str, Any]] = []
+    for stage_def in comp_def.get("stages", []):
+        stage_id = stage_def.get("id")
+        if not stage_id:
+            continue
+        merged.append(existing_by_id.get(stage_id) or _pending_stage_entry(stage_def))
+    for stage_id, stage in existing_by_id.items():
+        if stage_id not in manifest_ids:
+            merged.append(stage)
+    entry["stages"] = merged
+    entry.setdefault("state", STATUS_PENDING)
+
+
+def ensure_pipeline_plan(
+    workspace_path: str,
+    *,
+    templates_root: str | None = None,
+) -> None:
+    """Ensure the document lists every manifest component and stage (unrun items stay ``pending``)."""
+    document = load_run_status(workspace_path)
+    if not document:
+        return
+    pipeline_id = document.get(DOCUMENT_PIPELINE_ID_FIELD)
+    if not isinstance(pipeline_id, str) or not pipeline_id:
+        return
+    manifest = load_pipeline_run_status_manifest(pipeline_id, templates_root=templates_root)
+    components = document.setdefault("components", {})
+    for comp_def in sorted(manifest.get("components", []), key=lambda c: c.get("order", 0)):
+        component_id = comp_def.get("id")
+        if not component_id:
+            continue
+        if component_id not in components:
+            components[component_id] = _pending_component_entry(comp_def)
+        else:
+            _merge_component_stages(components[component_id], comp_def)
+    save_run_status(workspace_path, document)
+
+
+def _stage_index(stages: list[dict[str, Any]], stage_id: str) -> int | None:
+    for index, stage in enumerate(stages):
+        if stage.get("id") == stage_id:
+            return index
+    return None
+
+
 def _log_pipeline_flow(pipeline_id: str, *, templates_root: str | None = None) -> None:
     component_ids = pipeline_component_ids(pipeline_id, templates_root=templates_root)
     if component_ids:
@@ -176,6 +293,7 @@ def init_run_status(
     document["pipeline_name"] = pipeline_name
     document[DOCUMENT_PIPELINE_ID_FIELD] = run_status_pipeline_id
     document["run_status_rel_path"] = RUN_STATUS_REL_PATH
+    document["components"] = _build_pipeline_plan_from_manifest(manifest)
     save_run_status(workspace_path, document)
     _log_pipeline_flow(run_status_pipeline_id, templates_root=templates_root)
 
@@ -214,9 +332,11 @@ def validate_component_stages(
     if not expected:
         return
     entry = document.get("components", {}).get(component_name, {})
-    recorded = {stage.get("id") for stage in entry.get("stages", []) if stage.get("id")}
-    missing = expected - recorded
-    unknown = recorded - expected
+    stages_by_id = {
+        stage.get("id"): stage for stage in entry.get("stages", []) if stage.get("id")
+    }
+    missing = expected - set(stages_by_id)
+    unknown = set(stages_by_id) - expected
     if missing:
         logger.warning(
             "AUTOML_RUN_STATUS pipeline_id=%s component=%s missing manifest stages: %s",
@@ -231,6 +351,55 @@ def validate_component_stages(
             component_name,
             sorted(unknown),
         )
+    if entry.get("state") == STATUS_COMPLETED:
+        still_pending = [
+            stage_id
+            for stage_id in expected
+            if stages_by_id.get(stage_id, {}).get("status") == STATUS_PENDING
+        ]
+        if still_pending:
+            logger.warning(
+                "AUTOML_RUN_STATUS pipeline_id=%s component=%s completed with pending stages: %s",
+                pipeline_id,
+                component_name,
+                sorted(still_pending),
+            )
+
+    catalog = load_component_stage_catalog(
+        component_name,
+        pipeline_id=pipeline_id,
+        templates_root=templates_root,
+    )
+    for stage_def in catalog.get("stages", []):
+        manifest_steps = stage_def.get("steps")
+        if not isinstance(manifest_steps, list) or not manifest_steps:
+            continue
+        stage_id = stage_def.get("id")
+        if not stage_id:
+            continue
+        expected_step_set = {str(step) for step in manifest_steps}
+        stage_entry = stages_by_id.get(stage_id)
+        if not stage_entry:
+            continue
+        recorded_steps = stage_entry.get("steps")
+        if not isinstance(recorded_steps, list) or not recorded_steps:
+            logger.warning(
+                "AUTOML_RUN_STATUS pipeline_id=%s component=%s stage=%s missing steps (expected %s)",
+                pipeline_id,
+                component_name,
+                stage_id,
+                manifest_steps,
+            )
+            continue
+        unknown_steps = set(recorded_steps) - expected_step_set
+        if unknown_steps:
+            logger.warning(
+                "AUTOML_RUN_STATUS pipeline_id=%s component=%s stage=%s steps not in manifest: %s",
+                pipeline_id,
+                component_name,
+                stage_id,
+                sorted(unknown_steps),
+            )
 
 
 def begin_component(
@@ -240,13 +409,13 @@ def begin_component(
     templates_root: str | None = None,
 ) -> None:
     """Mark a pipeline component as running."""
+    ensure_pipeline_plan(workspace_path, templates_root=templates_root)
     pipeline_id = resolve_run_status_pipeline_id(workspace_path)
     _log_expected_stages(component_name, pipeline_id=pipeline_id, templates_root=templates_root)
     document = load_run_status(workspace_path)
     components = document.setdefault("components", {})
-    entry = components.setdefault(component_name, {})
-    entry["state"] = "running"
-    entry.setdefault("stages", [])
+    entry = components.setdefault(component_name, {"state": STATUS_PENDING, "stages": []})
+    entry["state"] = STATUS_RUNNING
     save_run_status(workspace_path, document)
 
 
@@ -255,25 +424,52 @@ def record_stage(
     component_name: str,
     stage_id: str,
     status: str,
+    *,
+    steps: list[str] | None = None,
+    templates_root: str | None = None,
     **details: Any,
 ) -> None:
-    """Append a stage entry for a component (e.g. ``read_and_sample``, ``completed``)."""
+    """Append a stage entry for a component (e.g. ``read_and_sample``, ``completed``).
+
+    Optionally include ``steps`` (ordered sub-step ids) on the stage object, typically on
+    a ``completed`` record when the manifest defines ``stages[].steps``.
+    """
+    ensure_pipeline_plan(workspace_path, templates_root=templates_root)
     document = load_run_status(workspace_path)
     components = document.setdefault("components", {})
-    entry = components.setdefault(component_name, {"state": "running", "stages": []})
+    entry = components.setdefault(component_name, {"state": STATUS_RUNNING, "stages": []})
     stage: dict[str, Any] = {
         "id": stage_id,
         "status": status,
         "timestamp": _utc_now_iso(),
     }
+    if steps is not None:
+        stage["steps"] = _normalize_steps(steps)
     stage.update(details)
-    entry.setdefault("stages", []).append(stage)
+    stages = entry.setdefault("stages", [])
+    index = _stage_index(stages, stage_id)
+    if index is None:
+        stages.append(stage)
+    else:
+        stages[index] = stage
     save_run_status(workspace_path, document)
-    logger.info("AUTOML_RUN_STATUS component=%s stage=%s status=%s", component_name, stage_id, status)
+    log_msg = "AUTOML_RUN_STATUS component=%s stage=%s status=%s"
+    log_args: list[Any] = [component_name, stage_id, status]
+    if steps is not None:
+        log_msg += " steps=%s"
+        log_args.append(",".join(stage["steps"]))
+    logger.info(log_msg, *log_args)
 
 
-def complete_component(workspace_path: str, component_name: str, *, state: str = "completed") -> None:
+def complete_component(
+    workspace_path: str,
+    component_name: str,
+    *,
+    state: str = STATUS_COMPLETED,
+    templates_root: str | None = None,
+) -> None:
     """Mark a component finished (``completed`` or ``failed``)."""
+    ensure_pipeline_plan(workspace_path, templates_root=templates_root)
     document = load_run_status(workspace_path)
     components = document.setdefault("components", {})
     entry = components.setdefault(component_name, {"stages": []})
@@ -341,11 +537,31 @@ class RunStatusRecorder:
             templates_root=self.templates_root,
         )
 
-    def record(self, stage_id: str, status: str, **details: Any) -> None:
-        record_stage(self.workspace_path, self.component_name, stage_id, status, **details)
+    def record(
+        self,
+        stage_id: str,
+        status: str,
+        *,
+        steps: list[str] | None = None,
+        **details: Any,
+    ) -> None:
+        record_stage(
+            self.workspace_path,
+            self.component_name,
+            stage_id,
+            status,
+            steps=steps,
+            templates_root=self.templates_root,
+            **details,
+        )
 
-    def complete(self, *, state: str = "completed") -> None:
-        complete_component(self.workspace_path, self.component_name, state=state)
+    def complete(self, *, state: str = STATUS_COMPLETED) -> None:
+        complete_component(
+            self.workspace_path,
+            self.component_name,
+            state=state,
+            templates_root=self.templates_root,
+        )
 
     def publish_artifact(self, artifact_path: str, *, validate: bool = True) -> dict[str, Any]:
         return publish_run_status_artifact(
