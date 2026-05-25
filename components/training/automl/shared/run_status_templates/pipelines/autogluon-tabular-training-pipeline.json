@@ -1,0 +1,71 @@
+{
+  "pipeline_id": "autogluon-tabular-training-pipeline",
+  "description": "Tabular AutoGluon pipeline: load and split data, train and refit models, build leaderboard.",
+  "initial_document": {
+    "run_status_rel_path": ".automl/run_status.json",
+    "components": {}
+  },
+  "components": [
+    {
+      "id": "automl_data_loader",
+      "order": 1,
+      "description": "Load tabular data, sample, cleanse, split, and write train/validation outputs.",
+      "stages": [
+        {
+          "id": "validate_inputs",
+          "description": "Validate pipeline inputs, split config, and sampling parameters."
+        },
+        {
+          "id": "read_and_sample",
+          "description": "Read source data and apply sampling strategy."
+        },
+        {
+          "id": "cleanse",
+          "description": "Apply cleansing rules to the sampled dataset."
+        },
+        {
+          "id": "split",
+          "description": "Split data into selection train/validation sets."
+        },
+        {
+          "id": "write_outputs",
+          "description": "Write train/validation CSVs and metadata to the workspace."
+        }
+      ]
+    },
+    {
+      "id": "autogluon_models_training",
+      "order": 2,
+      "description": "Train AutoGluon tabular models, refit, and evaluate on validation data.",
+      "stages": [
+        {
+          "id": "load_data",
+          "description": "Load train/validation CSVs from the workspace."
+        },
+        {
+          "id": "model_selection",
+          "description": "Run AutoGluon model selection (fit) with presets and time limits."
+        },
+        {
+          "id": "refit_full",
+          "description": "Refit the best models on combined train+validation data."
+        },
+        {
+          "id": "evaluate_models",
+          "description": "Evaluate refit models and write metrics artifacts."
+        }
+      ]
+    },
+    {
+      "id": "leaderboard_evaluation",
+      "order": 3,
+      "description": "Build the AutoML leaderboard HTML from per-model metrics.",
+      "stages": [
+        {
+          "id": "build_leaderboard",
+          "description": "Aggregate model metrics, rank models, and render leaderboard HTML."
+        }
+      ]
+    }
+  ]
+}

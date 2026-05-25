@@ -8,6 +8,9 @@ from kfp_components.components.training.automl.autogluon_models_training import 
 MAX_CPUS = "32"
 MAX_MEMORY = "64Gi"
 
+# Must match @dsl.pipeline name=... and run_status_templates/pipelines/<id>.json
+RUN_STATUS_PIPELINE_ID = "autogluon-tabular-training-pipeline"
+
 
 @dsl.pipeline(
     name="autogluon-tabular-training-pipeline",
@@ -151,6 +154,9 @@ def autogluon_tabular_training_pipeline(
         workspace_path=dsl.WORKSPACE_PATH_PLACEHOLDER,
         label_column=label_column,
         task_type=task_type,
+        pipeline_name=dsl.PIPELINE_JOB_RESOURCE_NAME_PLACEHOLDER,
+        run_id=dsl.PIPELINE_JOB_ID_PLACEHOLDER,
+        run_status_pipeline_id=RUN_STATUS_PIPELINE_ID,
     )
     data_loader_task.set_caching_options(False)
     data_loader_task.set_cpu_request("2").set_memory_request("8Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(MAX_MEMORY)
@@ -190,6 +196,7 @@ def autogluon_tabular_training_pipeline(
     leaderboard_evaluation_task = leaderboard_evaluation(
         models_artifact=training_task.outputs["models_artifact"],
         eval_metric=training_task.outputs["eval_metric"],
+        workspace_path=dsl.WORKSPACE_PATH_PLACEHOLDER,
     )
     leaderboard_evaluation_task.set_caching_options(False)
     leaderboard_evaluation_task.set_cpu_request("1").set_memory_request("4Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(
