@@ -191,10 +191,9 @@ class TestRunStatusArtifact:
         """Write ``.automl/run_status.json`` on the workspace with completed loader stages."""
         monkeypatch.delenv("MLFLOW_TRACKING_URI", raising=False)
         csv_content = "a,b,c\n1,2,3\n4,5,6\n"
-        body_stream = io.BytesIO(csv_content.encode("utf-8"))
         sampled_test = _make_test_artifact(tmp_path)
 
-        with _mock_boto3_and_pandas(get_object_return={"Body": body_stream}):
+        with _mock_boto3_and_pandas(get_object_return={"Body": _csv_body(csv_content)}):
             automl_data_loader.python_func(
                 file_key="data/file.csv",
                 bucket_name="my-bucket",
@@ -218,13 +217,12 @@ class TestRunStatusArtifact:
     def test_publishes_run_status_kfp_artifact(self, tmp_path):
         """Copy run status JSON into the KFP ``run_status_artifact`` output directory."""
         csv_content = "a,b,c\n1,2,3\n4,5,6\n"
-        body_stream = io.BytesIO(csv_content.encode("utf-8"))
         sampled_test = _make_test_artifact(tmp_path)
         run_status = mock.MagicMock()
         run_status.path = str(tmp_path / "run_status_out")
         run_status.metadata = {}
 
-        with _mock_boto3_and_pandas(get_object_return={"Body": body_stream}):
+        with _mock_boto3_and_pandas(get_object_return={"Body": _csv_body(csv_content)}):
             automl_data_loader.python_func(
                 file_key="data/file.csv",
                 bucket_name="my-bucket",
