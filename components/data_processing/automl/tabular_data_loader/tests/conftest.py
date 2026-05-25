@@ -27,6 +27,14 @@ def _make_embedded_artifact():
 
 
 @pytest.fixture(autouse=True)
+def relax_min_valid_records_for_unit_tests(monkeypatch):
+    """Keep existing small CSV fixtures; production still requires 100+ valid rows."""
+    from .. import component as comp
+
+    monkeypatch.setattr(comp, "MIN_VALID_RECORDS_AFTER_CLEANSING", 2)
+
+
+@pytest.fixture(autouse=True)
 def inject_run_status_defaults(monkeypatch):
     """Inject KFP placeholder args when tests omit pipeline_name and run_id."""
     from ..component import automl_data_loader

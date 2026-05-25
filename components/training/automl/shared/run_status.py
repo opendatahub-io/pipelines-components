@@ -199,11 +199,7 @@ def _pending_stage_entry(stage_def: dict[str, Any]) -> dict[str, Any]:
 
 
 def _pending_component_entry(comp_def: dict[str, Any]) -> dict[str, Any]:
-    stages = [
-        _pending_stage_entry(stage_def)
-        for stage_def in comp_def.get("stages", [])
-        if stage_def.get("id")
-    ]
+    stages = [_pending_stage_entry(stage_def) for stage_def in comp_def.get("stages", []) if stage_def.get("id")]
     return {"state": STATUS_PENDING, "stages": stages}
 
 
@@ -219,9 +215,7 @@ def _build_pipeline_plan_from_manifest(manifest: dict[str, Any]) -> dict[str, An
 
 def _merge_component_stages(entry: dict[str, Any], comp_def: dict[str, Any]) -> None:
     """Add manifest stages missing from ``entry`` as ``pending``; preserve unknown stage ids."""
-    existing_by_id = {
-        stage["id"]: stage for stage in entry.get("stages", []) if stage.get("id")
-    }
+    existing_by_id = {stage["id"]: stage for stage in entry.get("stages", []) if stage.get("id")}
     manifest_ids = {stage_def.get("id") for stage_def in comp_def.get("stages", []) if stage_def.get("id")}
     merged: list[dict[str, Any]] = []
     for stage_def in comp_def.get("stages", []):
@@ -326,15 +320,11 @@ def validate_component_stages(
     pipeline_id = document.get(DOCUMENT_PIPELINE_ID_FIELD)
     if not isinstance(pipeline_id, str) or not pipeline_id:
         return
-    expected = set(
-        expected_stage_ids(component_name, pipeline_id=pipeline_id, templates_root=templates_root)
-    )
+    expected = set(expected_stage_ids(component_name, pipeline_id=pipeline_id, templates_root=templates_root))
     if not expected:
         return
     entry = document.get("components", {}).get(component_name, {})
-    stages_by_id = {
-        stage.get("id"): stage for stage in entry.get("stages", []) if stage.get("id")
-    }
+    stages_by_id = {stage.get("id"): stage for stage in entry.get("stages", []) if stage.get("id")}
     missing = expected - set(stages_by_id)
     unknown = set(stages_by_id) - expected
     if missing:
@@ -353,9 +343,7 @@ def validate_component_stages(
         )
     if entry.get("state") == STATUS_COMPLETED:
         still_pending = [
-            stage_id
-            for stage_id in expected
-            if stages_by_id.get(stage_id, {}).get("status") == STATUS_PENDING
+            stage_id for stage_id in expected if stages_by_id.get(stage_id, {}).get("status") == STATUS_PENDING
         ]
         if still_pending:
             logger.warning(

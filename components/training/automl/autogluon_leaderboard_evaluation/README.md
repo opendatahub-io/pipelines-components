@@ -21,6 +21,8 @@ models_artifact.path / <model_name>_FULL / metrics / metrics.json predictor / pr
 | `models_artifact` | `dsl.Input[dsl.Model]` | `None` | Combined Model artifact from ``autogluon_models_training`` with ``metadata["model_names"]`` and per-model subdirectories. |
 | `eval_metric` | `str` | `None` | Metric name for ranking (e.g. ``"accuracy"``, ``"root_mean_squared_error"``); leaderboard sorted descending (AutoGluon uses higher-is-better convention). |
 | `html_artifact` | `dsl.Output[dsl.HTML]` | `None` | Output artifact for the HTML-formatted leaderboard. |
+| `run_status_artifact` | `dsl.Output[dsl.Artifact]` | `None` | KFP artifact with the final snapshot of ``.automl/run_status.json``. |
+| `workspace_path` | `str` | `None` | PVC workspace path for ``.automl/run_status.json`` updates. |
 | `embedded_artifact` | `dsl.EmbeddedInput[dsl.Artifact]` | `None` | Embedded component files injected by the KFP runtime; provides ``leaderboard_html_template.html``. |
 
 ## Outputs 📤
@@ -56,6 +58,7 @@ def example_pipeline(
     leaderboard_evaluation(
         models_artifact=models_artifact.output,
         eval_metric=eval_metric,
+        workspace_path=dsl.WORKSPACE_PATH_PLACEHOLDER,
     )
 
 ```

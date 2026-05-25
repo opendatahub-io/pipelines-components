@@ -21,6 +21,8 @@ paths).
 
 After sampling, **+/- infinity** values in the frame are replaced with **NaN** (same idea as AutoAI ``loadXy``), then **full-row duplicates** are dropped before the label drop and train/test split.
 
+After cleansing (infinity replacement, duplicate removal, and label drop), at least **100** valid records must remain; otherwise the component fails with a clear error so downstream AutoML training does not run on datasets too small to split reliably.
+
 Authentication uses AWS-style credentials provided via environment variables (e.g. from a Kubernetes secret).
 
 ## Inputs 📥
@@ -32,6 +34,11 @@ Authentication uses AWS-style credentials provided via environment variables (e.
 | `workspace_path` | `str` | `None` | PVC workspace directory where train CSVs will be written. |
 | `label_column` | `str` | `None` | Name of the label/target column in the dataset. |
 | `sampled_test_dataset` | `dsl.Output[dsl.Dataset]` | `None` | Output dataset artifact for the test split. |
+| `run_status_artifact` | `dsl.Output[dsl.Artifact]` | `None` | KFP artifact with a snapshot of ``.automl/run_status.json``. |
+| `embedded_artifact` | `dsl.EmbeddedInput[dsl.Dataset]` | `None` | Embedded shared files (``run_status_templates/``); injected by the runtime. |
+| `pipeline_name` | `str` | `None` | KFP pipeline job resource name (``dsl.PIPELINE_JOB_RESOURCE_NAME_PLACEHOLDER``). |
+| `run_id` | `str` | `None` | KFP run ID (``dsl.PIPELINE_JOB_ID_PLACEHOLDER``); used for workspace run status. |
+| `run_status_pipeline_id` | `str` | `None` | Static ``@dsl.pipeline`` name for the run-status manifest (e.g. ``autogluon-tabular-training-pipeline``); must match ``run_status_templates/pipelines/<id>.json``. |
 | `sampling_method` | `Optional[str]` | `None` | "first_n_rows", "stratified", or "random"; if None, derived from task_type. |
 | `task_type` | `str` | `regression` | "binary", "multiclass", or "regression" (default); used when sampling_method is None. |
 | `split_config` | `Optional[dict]` | `None` | Split configuration dictionary. Available keys: "test_size" (float), "random_state" (int), "stratify" (bool). |
@@ -50,6 +57,8 @@ Authentication uses AWS-style credentials provided via environment variables (e.
 
 from kfp import dsl
 from kfp_components.components.data_processing.automl.tabular_data_loader import automl_data_loader
+
+RUN_STATUS_PIPELINE_ID = "autogluon-tabular-training-pipeline"
 
 
 @dsl.pipeline(name="tabular-data-loader-example")
@@ -78,6 +87,9 @@ def example_pipeline(
         label_column=label_column,
         task_type=task_type,
         selection_train_size=selection_train_size,
+        pipeline_name=dsl.PIPELINE_JOB_RESOURCE_NAME_PLACEHOLDER,
+        run_id=dsl.PIPELINE_JOB_ID_PLACEHOLDER,
+        run_status_pipeline_id=RUN_STATUS_PIPELINE_ID,
     )
 
 ```
