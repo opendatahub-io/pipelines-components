@@ -104,13 +104,13 @@ _MINIMAL_NOTEBOOK = {
 @pytest.fixture()
 def mock_notebooks(tmp_path):
     """Temp directory with minimal regression and classification notebook templates."""
-    notebooks_dir = tmp_path / "notebooks_input"
-    notebooks_dir.mkdir()
+    notebooks_dir = tmp_path / "notebooks_input" / "notebook_templates"
+    notebooks_dir.mkdir(parents=True)
     for name in ("regression_notebook.ipynb", "classification_notebook.ipynb"):
         with open(notebooks_dir / name, "w") as f:
             json.dump(_MINIMAL_NOTEBOOK, f)
     artifact = mock.MagicMock()
-    artifact.path = str(notebooks_dir)
+    artifact.path = str(tmp_path / "notebooks_input")
     return artifact
 
 
@@ -138,7 +138,7 @@ def _base_call_kwargs(workspace_path, models_artifact, test_data, notebooks):
     )
 
 
-_NOTEBOOK_TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "notebook_templates"
+_NOTEBOOK_TEMPLATES_DIR = Path(__file__).resolve().parents[2] / "shared" / "notebook_templates"
 
 
 class TestAutogluonModelsTrainingUnitTests:
@@ -306,6 +306,48 @@ class TestAutogluonModelsTrainingUnitTests:
             # label column stripped from sample row
             assert "feature1" in nb_text
             assert "'target'" not in nb_text
+
+    @mock.patch("mlflow_tracking.log_tabular_training_to_mlflow")
+    @mock.patch("pandas.read_csv")
+    @mock.patch("autogluon.tabular.TabularPredictor")
+    def test_mlflow_logging_invoked(
+        self, mock_predictor_class, mock_read_csv, mock_log, mock_notebooks, tmp_path
+    ):
+        """MLflow helper is called after training completes (no-op when env is unset)."""
+        top_models = ["LightGBM_BAG_L1"]
+        mock_predictor = mock.MagicMock()
+        mock_predictor_clone = mock.MagicMock()
+        mock_predictor_class.return_value.fit.return_value = mock_predictor
+        mock_predictor.clone.return_value = mock_predictor_clone
+        mock_predictor.problem_type = "regression"
+        mock_predictor.label = "target"
+        mock_predictor.eval_metric = "r2"
+        _mock_leaderboard_top_models(mock_predictor, top_models)
+        mock_predictor_clone.evaluate_predictions.return_value = {"r2": 0.9}
+        mock_predictor_clone.feature_importance.return_value = mock.MagicMock(to_dict=lambda: {"f": 0.1})
+        mock_predictor_clone.predict.return_value = mock.MagicMock()
+        mock_read_csv.side_effect = [_mock_csv_frame(), _mock_csv_frame(), _mock_csv_frame()]
+
+        workspace_path = str(tmp_path / "ws")
+        Path(workspace_path).mkdir()
+        models_output_dir = str(tmp_path / "out")
+        Path(models_output_dir).mkdir()
+        mock_models_artifact = mock.MagicMock()
+        mock_models_artifact.path = models_output_dir
+        mock_models_artifact.uri = "s3://artifacts/models"
+        mock_models_artifact.metadata = {}
+        mock_test_data = mock.MagicMock()
+        mock_test_data.path = "/tmp/test.csv"
+
+        autogluon_models_training.python_func(
+            **_base_call_kwargs(workspace_path, mock_models_artifact, mock_test_data, mock_notebooks),
+        )
+
+        mock_log.assert_called_once()
+        call_kwargs = mock_log.call_args.kwargs
+        assert call_kwargs["eval_metric"] == "r2"
+        assert call_kwargs["model_names"] == ["LightGBM_BAG_L1_FULL"]
+        assert call_kwargs["models_artifact_uri"] == "s3://artifacts/models"
 
     @mock.patch("pandas.read_csv")
     @mock.patch("autogluon.tabular.TabularPredictor")

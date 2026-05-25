@@ -148,6 +148,8 @@ def autogluon_tabular_training_pipeline(
         workspace_path=dsl.WORKSPACE_PATH_PLACEHOLDER,
         label_column=label_column,
         task_type=task_type,
+        pipeline_name=dsl.PIPELINE_JOB_RESOURCE_NAME_PLACEHOLDER,
+        run_id=dsl.PIPELINE_JOB_ID_PLACEHOLDER,
     )
     data_loader_task.set_caching_options(False)
     data_loader_task.set_cpu_request("2").set_memory_request("8Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(MAX_MEMORY)

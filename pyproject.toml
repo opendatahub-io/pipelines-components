@@ -39,6 +39,7 @@ test = [
     # Once KFP fixes this, these can be removed and tests can use
     # SubprocessRunner(use_venv=True) instead.
     "sdg-hub>=0.7.0,<1.0",
+    "mlflow>=2.14.0,<4",
     # Required for pipeline validation (validate_examples, validate_base_images)
     "kfp-kubernetes",
 ]
@@ -136,9 +137,8 @@ packages = [
 
 [tool.setuptools.package-data]
 "*" = ["*.yaml", "*.yml", "*.json"]
-"kfp_components.components.training.automl.autogluon_models_training" = ["notebook_templates/*.ipynb"]
 "kfp_components.components.training.automl.autogluon_timeseries_models_full_refit" = ["notebook_templates/*.ipynb"]
-"kfp_components.components.training.automl.shared" = ["*.html"]
+"kfp_components.components.training.automl.shared" = ["*.html", "notebook_templates/*.ipynb"]
 "kfp_components.components.training.autorag.rag_templates_optimization" = ["notebook_templates/*.ipynb"]
 
 [tool.ruff]

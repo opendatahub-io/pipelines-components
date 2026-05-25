@@ -6,6 +6,7 @@ Tests use the stdlib csv module for asserting on output CSV content.
 
 import csv
 import io
+import json
 import sys
 from contextlib import contextmanager
 from pathlib import Path
@@ -138,6 +139,64 @@ def _make_test_artifact(tmp_path, name="test_output.csv"):
     art.path = str(tmp_path / name)
     art.uri = "/artifacts/test"
     return art
+
+
+class TestMlflowTrackingArtifact:
+    """Tests for the MLflow tracking artifact output."""
+
+    @mock.patch.dict("os.environ", mocked_env_variables, clear=False)
+    def test_writes_disabled_tracking_payload(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("MLFLOW_TRACKING_URI", raising=False)
+        csv_content = "a,b,c\n1,2,3\n"
+        body_stream = io.BytesIO(csv_content.encode("utf-8"))
+        sampled_test = _make_test_artifact(tmp_path)
+        tracking = mock.MagicMock()
+        tracking.path = str(tmp_path / "mlflow_tracking")
+
+        with _mock_boto3_and_pandas(get_object_return={"Body": body_stream}):
+            automl_data_loader.python_func(
+                file_key="data/file.csv",
+                bucket_name="my-bucket",
+                workspace_path=str(tmp_path),
+                label_column="c",
+                sampled_test_dataset=sampled_test,
+                mlflow_tracking_artifact=tracking,
+                pipeline_name="tabular-pipeline",
+                run_id="run-abc",
+            )
+
+        tracking_file = Path(tracking.path) / "mlflow_tracking.json"
+        assert tracking_file.exists()
+        payload = json.loads(tracking_file.read_text())
+        assert payload["tracking_enabled"] is False
+        assert payload["kfp_run_id"] == "run-abc"
+        assert payload["pipeline_name"] == "tabular-pipeline"
+
+    @mock.patch.dict("os.environ", {**mocked_env_variables, "MLFLOW_TRACKING_URI": "https://mlflow.test"}, clear=False)
+    def test_writes_enabled_tracking_payload(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("MLFLOW_EXPERIMENT_ID", "1")
+        monkeypatch.setenv("MLFLOW_RUN_ID", "parent-1")
+        csv_content = "a,b,c\n1,2,3\n"
+        body_stream = io.BytesIO(csv_content.encode("utf-8"))
+        sampled_test = _make_test_artifact(tmp_path)
+        tracking = mock.MagicMock()
+        tracking.path = str(tmp_path / "mlflow_tracking")
+
+        with _mock_boto3_and_pandas(get_object_return={"Body": body_stream}):
+            automl_data_loader.python_func(
+                file_key="data/file.csv",
+                bucket_name="my-bucket",
+                workspace_path=str(tmp_path),
+                label_column="c",
+                sampled_test_dataset=sampled_test,
+                mlflow_tracking_artifact=tracking,
+                pipeline_name="tabular-pipeline",
+                run_id="run-abc",
+            )
+
+        payload = json.loads((Path(tracking.path) / "mlflow_tracking.json").read_text())
+        assert payload["tracking_enabled"] is True
+        assert payload["mlflow_run_id"] == "parent-1"
 
 
 class TestAutomlDataLoaderUnitTests:

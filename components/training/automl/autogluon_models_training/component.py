@@ -4,12 +4,12 @@ from typing import NamedTuple, Optional
 from kfp import dsl
 from kfp_components.utils.consts import AUTOML_IMAGE  # pyright: ignore[reportMissingImports]
 
-_NOTEBOOKS_DIR = str(pathlib.Path(__file__).parent / "notebook_templates")
+_SHARED_DIR = str(pathlib.Path(__file__).parent.parent / "shared")
 
 
 @dsl.component(
     base_image=AUTOML_IMAGE,  # noqa: E501
-    embedded_artifact_path=_NOTEBOOKS_DIR,
+    embedded_artifact_path=_SHARED_DIR,
 )
 def autogluon_models_training(
     label_column: str,
@@ -549,7 +549,7 @@ def autogluon_models_training(
                     str(e),
                 )
 
-        with (Path(notebooks.path) / notebook_file).open("r", encoding="utf-8") as f:
+        with (Path(notebooks.path) / "notebook_templates" / notebook_file).open("r", encoding="utf-8") as f:
             notebook = json.load(f)
         replacements = {
             "<REPLACE_RUN_ID>": run_id,
@@ -610,6 +610,22 @@ def autogluon_models_training(
         "model_config": model_config,
         "models": models_metadata,
     }
+
+    from mlflow_tracking import log_tabular_training_to_mlflow
+
+    log_tabular_training_to_mlflow(
+        models_artifact_path=models_artifact.path,
+        models_artifact_uri=models_artifact.uri,
+        model_names=model_names_full,
+        eval_results_by_model=eval_results_by_model,
+        eval_metric=str(predictor.eval_metric),
+        task_type=problem_type,
+        pipeline_name=pipeline_name_trimmed,
+        run_id=run_id,
+        model_config=model_config,
+        top_n=top_n,
+        label_column=str(predictor.label),
+    )
 
     return NamedTuple("outputs", eval_metric=str)(eval_metric=str(predictor.eval_metric))
 

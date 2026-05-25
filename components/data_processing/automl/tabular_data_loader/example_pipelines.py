@@ -30,4 +30,6 @@ def example_pipeline(
         label_column=label_column,
         task_type=task_type,
         selection_train_size=selection_train_size,
+        pipeline_name=dsl.PIPELINE_JOB_RESOURCE_NAME_PLACEHOLDER,
+        run_id=dsl.PIPELINE_JOB_ID_PLACEHOLDER,
     )

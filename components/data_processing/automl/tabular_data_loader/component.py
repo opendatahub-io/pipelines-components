@@ -1,11 +1,15 @@
+import pathlib
 from typing import NamedTuple, Optional
 
 from kfp import dsl
 from kfp_components.utils.consts import AUTOML_IMAGE  # pyright: ignore[reportMissingImports]
 
+_MLFLOW_SHARED_DIR = str(pathlib.Path(__file__).resolve().parents[3] / "training" / "automl" / "shared")
+
 
 @dsl.component(
     base_image=AUTOML_IMAGE,  # noqa: E501
+    embedded_artifact_path=_MLFLOW_SHARED_DIR,
 )
 def automl_data_loader(  # noqa: D417
     file_key: str,
@@ -13,6 +17,9 @@ def automl_data_loader(  # noqa: D417
     workspace_path: str,
     label_column: str,
     sampled_test_dataset: dsl.Output[dsl.Dataset],
+    mlflow_tracking_artifact: dsl.Output[dsl.Artifact],
+    pipeline_name: str,
+    run_id: str,
     sampling_method: Optional[str] = None,
     task_type: str = "regression",
     split_config: Optional[dict] = None,
@@ -411,6 +418,11 @@ def automl_data_loader(  # noqa: D417
 
     # Sample row for downstream use (JSON string to avoid NaN issues)
     sample_row = X_y_test.head(1).to_json(orient="records")
+
+    from mlflow_tracking import build_tracking_artifact_payload, write_tracking_artifact
+
+    tracking_payload = build_tracking_artifact_payload(kfp_run_id=run_id, pipeline_name=pipeline_name)
+    write_tracking_artifact(mlflow_tracking_artifact.path, tracking_payload)
 
     return NamedTuple(
         "outputs",

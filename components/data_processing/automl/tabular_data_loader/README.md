@@ -32,6 +32,9 @@ Authentication uses AWS-style credentials provided via environment variables (e.
 | `workspace_path` | `str` | `None` | PVC workspace directory where train CSVs will be written. |
 | `label_column` | `str` | `None` | Name of the label/target column in the dataset. |
 | `sampled_test_dataset` | `dsl.Output[dsl.Dataset]` | `None` | Output dataset artifact for the test split. |
+| `mlflow_tracking_artifact` | `dsl.Output[dsl.Artifact]` | `None` |  |
+| `pipeline_name` | `str` | `None` |  |
+| `run_id` | `str` | `None` |  |
 | `sampling_method` | `Optional[str]` | `None` | "first_n_rows", "stratified", or "random"; if None, derived from task_type. |
 | `task_type` | `str` | `regression` | "binary", "multiclass", or "regression" (default); used when sampling_method is None. |
 | `split_config` | `Optional[dict]` | `None` | Split configuration dictionary. Available keys: "test_size" (float), "random_state" (int), "stratify" (bool). |
@@ -78,6 +81,8 @@ def example_pipeline(
         label_column=label_column,
         task_type=task_type,
         selection_train_size=selection_train_size,
+        pipeline_name=dsl.PIPELINE_JOB_RESOURCE_NAME_PLACEHOLDER,
+        run_id=dsl.PIPELINE_JOB_ID_PLACEHOLDER,
     )
 
 ```
@@ -91,7 +96,7 @@ def example_pipeline(
     - Name: Pipelines, Version: >=2.15.2
 - **Tags**:
   - data-processing
-- **Last Verified**: 2026-04-02 00:00:00+00:00
+- **Last Verified**: 2026-05-20 00:00:00+00:00
 - **Owners**:
   - Approvers:
     - LukaszCmielowski
