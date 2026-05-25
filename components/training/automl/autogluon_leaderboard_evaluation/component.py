@@ -79,7 +79,11 @@ def leaderboard_evaluation(
     )
 
     logger = logging.getLogger(__name__)
-    run_status = RunStatusRecorder(workspace_path, COMPONENT_LEADERBOARD)
+    run_status = RunStatusRecorder(
+        workspace_path,
+        COMPONENT_LEADERBOARD,
+        templates_root=embedded_artifact.path,
+    )
     run_status.begin()
     run_status.record("build_leaderboard", "started")
 

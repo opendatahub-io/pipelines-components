@@ -127,14 +127,21 @@ _MINIMAL_NOTEBOOK = {
 
 @pytest.fixture()
 def mock_notebooks(tmp_path):
-    """Temp directory with minimal regression and classification notebook templates."""
-    notebooks_dir = tmp_path / "notebooks_input" / "notebook_templates"
+    """Temp directory with minimal notebooks and pipeline run-status templates."""
+    import shutil
+
+    embed_root = tmp_path / "notebooks_input"
+    notebooks_dir = embed_root / "notebook_templates"
     notebooks_dir.mkdir(parents=True)
     for name in ("regression_notebook.ipynb", "classification_notebook.ipynb"):
         with open(notebooks_dir / name, "w") as f:
             json.dump(_MINIMAL_NOTEBOOK, f)
+    shared_root = Path(__file__).resolve().parents[2] / "shared"
+    run_status_templates = shared_root / "run_status_templates"
+    if run_status_templates.is_dir():
+        shutil.copytree(run_status_templates, embed_root / "run_status_templates")
     artifact = mock.MagicMock()
-    artifact.path = str(tmp_path / "notebooks_input")
+    artifact.path = str(embed_root)
     return artifact
 
 

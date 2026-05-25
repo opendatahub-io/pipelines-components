@@ -146,7 +146,11 @@ def autogluon_models_training(
         RunStatusRecorder,
     )
 
-    run_status = RunStatusRecorder(workspace_path, COMPONENT_MODELS_TRAINING)
+    run_status = RunStatusRecorder(
+        workspace_path,
+        COMPONENT_MODELS_TRAINING,
+        templates_root=notebooks.path,
+    )
     run_status.begin()
     run_status.record("load_data", "completed")
 

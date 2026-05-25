@@ -1,6 +1,0 @@
-{
-  "kfp_run_id": "",
-  "pipeline_name": "",
-  "run_status_rel_path": ".automl/run_status.json",
-  "components": {}
-}
