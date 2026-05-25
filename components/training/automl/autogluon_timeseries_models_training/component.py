@@ -295,6 +295,7 @@ def autogluon_timeseries_models_training(
         predictor_refit.fit(
             train_data=full_train_ts_df,
             **additional_fit_params,
+            time_limit=DEFAULT_TIME_LIMIT,
             excluded_model_types=["Chronos", "Chronos2", "Toto"],
         )
         predictor_refit.save()
