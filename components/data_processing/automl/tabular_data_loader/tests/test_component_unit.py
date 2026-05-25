@@ -201,26 +201,6 @@ class TestRunStatusArtifact:
 class TestAutomlDataLoaderUnitTests:
     """Unit tests for component logic."""
 
-    @mock.patch.dict("os.environ", mocked_env_variables)
-    def test_raises_when_too_few_valid_records_after_cleansing(self, tmp_path, monkeypatch):
-        """Production requires MIN_VALID_RECORDS_AFTER_CLEANSING rows after cleanse."""
-        from .. import component as comp
-
-        monkeypatch.setattr(comp, "MIN_VALID_RECORDS_AFTER_CLEANSING", 100)
-        csv_content = "a,b,c\n1,2,3\n4,5,6\n"
-        body_stream = io.BytesIO(csv_content.encode("utf-8"))
-        sampled_test = _make_test_artifact(tmp_path)
-
-        with _mock_boto3_and_pandas(get_object_return={"Body": body_stream}):
-            with pytest.raises(ValueError, match="at least 100"):
-                automl_data_loader.python_func(
-                    file_key="data/file.csv",
-                    bucket_name="my-bucket",
-                    workspace_path=str(tmp_path),
-                    label_column="c",
-                    sampled_test_dataset=sampled_test,
-                )
-
     def test_component_function_exists(self):
         """Test that the component function is properly imported."""
         assert callable(automl_data_loader)

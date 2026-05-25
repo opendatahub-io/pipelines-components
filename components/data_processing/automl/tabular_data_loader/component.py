@@ -6,9 +6,6 @@ from kfp_components.utils.consts import AUTOML_IMAGE  # pyright: ignore[reportMi
 
 _SHARED_DIR = str(pathlib.Path(__file__).resolve().parents[3] / "training" / "automl" / "shared")
 
-# Minimum rows after cleansing before train/test split (AutoML needs enough data to split reliably).
-MIN_VALID_RECORDS_AFTER_CLEANSING = 100
-
 
 @dsl.component(
     base_image=AUTOML_IMAGE,  # noqa: E501
@@ -66,10 +63,6 @@ def automl_data_loader(  # noqa: D417
     idea as AutoAI ``loadXy``), then **full-row duplicates** are dropped before the
     label drop and train/test split.
 
-    After cleansing (infinity replacement, duplicate removal, and label drop), at least
-    **100** valid records must remain; otherwise the component fails with a clear error
-    so downstream AutoML training does not run on datasets too small to split reliably.
-
     Authentication uses AWS-style credentials provided via environment variables
     (e.g. from a Kubernetes secret).
 
@@ -92,8 +85,7 @@ def automl_data_loader(  # noqa: D417
         selection_train_size: Fraction of the train portion used for model selection (default 0.3).
 
     Raises:
-        ValueError: If sampling_method or task_type is invalid, if required parameters are missing,
-            or if fewer than 100 valid records remain after data cleansing.
+        ValueError: If sampling_method or task_type is invalid, or if required parameters are missing.
 
     Returns:
         NamedTuple: Contains sample config, split config, a sample row, and paths to selection-train and extra-train CSVs.
@@ -404,12 +396,6 @@ def automl_data_loader(  # noqa: D417
         )
 
     n_samples = len(sampled_dataframe)
-    if n_samples < MIN_VALID_RECORDS_AFTER_CLEANSING:
-        raise ValueError(
-            f"After data cleansing, only {n_samples} valid record(s) remain; "
-            f"at least {MIN_VALID_RECORDS_AFTER_CLEANSING} are required for AutoML training. "
-            "Provide a larger dataset or reduce missing labels, duplicates, and invalid values."
-        )
     logger.info("Read %d rows from s3://%s/%s (sampling_method=%s)", n_samples, bucket_name, file_key, sampling_method)
     run_status.record(
         "cleanse",

@@ -21,8 +21,6 @@ paths).
 
 After sampling, **+/- infinity** values in the frame are replaced with **NaN** (same idea as AutoAI ``loadXy``), then **full-row duplicates** are dropped before the label drop and train/test split.
 
-After cleansing (infinity replacement, duplicate removal, and label drop), at least **100** valid records must remain; otherwise the component fails with a clear error so downstream AutoML training does not run on datasets too small to split reliably.
-
 Authentication uses AWS-style credentials provided via environment variables (e.g. from a Kubernetes secret).
 
 ## Inputs 📥
