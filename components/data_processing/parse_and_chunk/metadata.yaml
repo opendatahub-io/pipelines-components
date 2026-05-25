@@ -1,0 +1,23 @@
+---
+name: parse_and_chunk
+description: >
+  Parse PDFs with Docling and chunk with HybridChunker using a
+  Ray Data actor pool. Writes JSONL chunk files to S3-compatible bucket (MinIO).
+stability: experimental
+dependencies:
+  kubeflow:
+    - name: Pipelines
+      version: ">=2.15.2"
+  external_services:
+    - name: KubeRay Operator
+      version: ">=1.4.0"
+tags:
+  - data_processing
+  - pdf
+  - docling
+  - ray
+  - chunking
+  - rag
+lastVerified: 2026-04-28T00:00:00Z
+links:
+  documentation: https://github.com/kubeflow/pipelines-components

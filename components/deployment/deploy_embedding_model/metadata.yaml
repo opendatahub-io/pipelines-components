@@ -1,0 +1,21 @@
+---
+name: deploy_embedding_model
+description: >
+  Deploy a text embedding model on OpenShift AI using a KServe
+  InferenceService with a TEI-compatible ServingRuntime.
+stability: experimental
+dependencies:
+  kubeflow:
+    - name: Pipelines
+      version: ">=2.15.2"
+  external_services:
+    - name: OpenShift AI (KServe)
+      version: ">=2.10.0"
+tags:
+  - embeddings
+  - model_serving
+  - kserve
+  - rag
+lastVerified: 2026-04-28T00:00:00Z
+links:
+  documentation: https://github.com/kubeflow/pipelines-components

@@ -235,7 +235,6 @@ def text_extraction(
             input_file = Path(file_path_str)
             output_dir = Path(output_dir_str)
             output_file = output_dir / f"{input_file.name}.md"
-
             if input_file.suffix.lower() == ".txt":
                 output_file.write_text(input_file.read_text(encoding="utf-8"), encoding="utf-8")
                 return True, None
