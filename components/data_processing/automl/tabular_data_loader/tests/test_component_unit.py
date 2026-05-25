@@ -6,7 +6,9 @@ Tests use the stdlib csv module for asserting on output CSV content.
 
 import csv
 import io
+import json
 import sys
+from pathlib import Path
 from contextlib import contextmanager
 from pathlib import Path
 from unittest import mock
@@ -180,6 +182,62 @@ def _make_test_artifact(tmp_path, name="test_output.csv"):
     art.path = str(tmp_path / name)
     art.uri = "/artifacts/test"
     return art
+
+
+class TestRunStatusArtifact:
+    """Tests for workspace run_status.json written by the data loader."""
+
+    @mock.patch.dict("os.environ", mocked_env_variables)
+    def test_writes_run_status_json(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("MLFLOW_TRACKING_URI", raising=False)
+        csv_content = "a,b,c\n1,2,3\n4,5,6\n"
+        body_stream = io.BytesIO(csv_content.encode("utf-8"))
+        sampled_test = _make_test_artifact(tmp_path)
+
+        with _mock_boto3_and_pandas(get_object_return={"Body": body_stream}):
+            automl_data_loader.python_func(
+                file_key="data/file.csv",
+                bucket_name="my-bucket",
+                workspace_path=str(tmp_path),
+                label_column="c",
+                sampled_test_dataset=sampled_test,
+                pipeline_name="tabular-pipeline",
+                run_id="run-abc",
+            )
+
+        status_path = tmp_path / ".automl" / "run_status.json"
+        assert status_path.exists()
+        payload = json.loads(status_path.read_text())
+        assert payload["kfp_run_id"] == "run-abc"
+        assert payload["components"]["automl_data_loader"]["state"] == "completed"
+        stage_ids = [s["id"] for s in payload["components"]["automl_data_loader"]["stages"]]
+        assert "read_and_sample" in stage_ids
+        assert "split" in stage_ids
+
+    @mock.patch.dict("os.environ", mocked_env_variables)
+    def test_publishes_run_status_kfp_artifact(self, tmp_path):
+        csv_content = "a,b,c\n1,2,3\n"
+        body_stream = io.BytesIO(csv_content.encode("utf-8"))
+        sampled_test = _make_test_artifact(tmp_path)
+        run_status = mock.MagicMock()
+        run_status.path = str(tmp_path / "run_status_out")
+        run_status.metadata = {}
+
+        with _mock_boto3_and_pandas(get_object_return={"Body": body_stream}):
+            automl_data_loader.python_func(
+                file_key="data/file.csv",
+                bucket_name="my-bucket",
+                workspace_path=str(tmp_path),
+                label_column="c",
+                sampled_test_dataset=sampled_test,
+                run_status_artifact=run_status,
+                pipeline_name="tabular-pipeline",
+                run_id="run-abc",
+            )
+
+        artifact_file = Path(run_status.path) / "run_status.json"
+        assert artifact_file.exists()
+        assert run_status.metadata["display_name"] == "automl_run_status"
 
 
 class TestAutomlDataLoaderUnitTests:

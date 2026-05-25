@@ -3,6 +3,8 @@
 from kfp import dsl
 from kfp_components.components.data_processing.automl.tabular_data_loader import automl_data_loader
 
+RUN_STATUS_PIPELINE_ID = "autogluon-tabular-training-pipeline"
+
 
 @dsl.pipeline(name="tabular-data-loader-example")
 def example_pipeline(
@@ -30,4 +32,7 @@ def example_pipeline(
         label_column=label_column,
         task_type=task_type,
         selection_train_size=selection_train_size,
+        pipeline_name=dsl.PIPELINE_JOB_RESOURCE_NAME_PLACEHOLDER,
+        run_id=dsl.PIPELINE_JOB_ID_PLACEHOLDER,
+        run_status_pipeline_id=RUN_STATUS_PIPELINE_ID,
     )

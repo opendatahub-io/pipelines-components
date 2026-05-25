@@ -128,13 +128,13 @@ _MINIMAL_NOTEBOOK = {
 @pytest.fixture()
 def mock_notebooks(tmp_path):
     """Temp directory with minimal regression and classification notebook templates."""
-    notebooks_dir = tmp_path / "notebooks_input"
-    notebooks_dir.mkdir()
+    notebooks_dir = tmp_path / "notebooks_input" / "notebook_templates"
+    notebooks_dir.mkdir(parents=True)
     for name in ("regression_notebook.ipynb", "classification_notebook.ipynb"):
         with open(notebooks_dir / name, "w") as f:
             json.dump(_MINIMAL_NOTEBOOK, f)
     artifact = mock.MagicMock()
-    artifact.path = str(notebooks_dir)
+    artifact.path = str(tmp_path / "notebooks_input")
     return artifact
 
 
@@ -144,8 +144,16 @@ def _mock_leaderboard_top_models(mock_predictor, names: list):
     chain.__getitem__.return_value.values.tolist.return_value = names
 
 
-def _base_call_kwargs(workspace_path, models_artifact, test_data, notebooks):
+def _make_run_status_artifact(tmp_path):
+    art = mock.MagicMock()
+    art.path = str(tmp_path / "run_status_out")
+    art.metadata = {}
+    return art
+
+
+def _base_call_kwargs(workspace_path, models_artifact, test_data, notebooks, tmp_path=None):
     """Return minimal valid kwargs for autogluon_models_training.python_func."""
+    rs = _make_run_status_artifact(tmp_path) if tmp_path is not None else mock.MagicMock(path="/tmp/rs", metadata={})
     return dict(
         label_column="target",
         task_type="regression",
@@ -157,12 +165,13 @@ def _base_call_kwargs(workspace_path, models_artifact, test_data, notebooks):
         run_id=RUN_ID,
         sample_row=SAMPLE_ROW,
         models_artifact=models_artifact,
+        run_status_artifact=rs,
         notebooks=notebooks,
         extra_train_data_path="/tmp/extra.csv",
     )
 
 
-_NOTEBOOK_TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "notebook_templates"
+_NOTEBOOK_TEMPLATES_DIR = Path(__file__).resolve().parents[2] / "shared" / "notebook_templates"
 
 
 class TestAutogluonModelsTrainingUnitTests:
@@ -222,7 +231,7 @@ class TestAutogluonModelsTrainingUnitTests:
         mock_test_data.path = "/tmp/test.csv"
 
         result = autogluon_models_training.python_func(
-            **_base_call_kwargs(workspace_path, mock_models_artifact, mock_test_data, mock_notebooks),
+            **_base_call_kwargs(workspace_path, mock_models_artifact, mock_test_data, mock_notebooks, tmp_path),
             sampling_config={"sample": True},
             split_config={"split": 0.8},
         )
@@ -429,7 +438,7 @@ class TestAutogluonModelsTrainingUnitTests:
         mock_models_artifact.metadata = {}
 
         call_kwargs = _base_call_kwargs(
-            workspace_path, mock_models_artifact, mock.MagicMock(path="/tmp/test.csv"), mock_notebooks
+            workspace_path, mock_models_artifact, mock.MagicMock(path="/tmp/test.csv"), mock_notebooks, tmp_path
         )
         call_kwargs["task_type"] = "binary"
         call_kwargs["positive_class"] = "0"
@@ -482,7 +491,7 @@ class TestAutogluonModelsTrainingUnitTests:
 
         autogluon_models_training.python_func(
             **_base_call_kwargs(
-                workspace_path, mock_models_artifact, mock.MagicMock(path="/tmp/test.csv"), mock_notebooks
+                workspace_path, mock_models_artifact, mock.MagicMock(path="/tmp/test.csv"), mock_notebooks, tmp_path
             ),
             positive_class="yes",
         )

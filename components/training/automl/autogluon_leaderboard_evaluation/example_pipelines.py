@@ -22,4 +22,5 @@ def example_pipeline(
     leaderboard_evaluation(
         models_artifact=models_artifact.output,
         eval_metric=eval_metric,
+        workspace_path=dsl.WORKSPACE_PATH_PLACEHOLDER,
     )
