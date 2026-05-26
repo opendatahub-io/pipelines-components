@@ -116,39 +116,26 @@ def expected_stage_ids(
     return [stage["id"] for stage in catalog.get("stages", [])]
 
 
-def expected_stage_steps(
+def _manifest_stage_steps(
     component_name: str,
     stage_id: str,
     *,
-    pipeline_id: str | None = None,
-    workspace_path: str | None = None,
-    templates_root: str | None = None,
+    pipeline_id: str | None,
+    templates_root: str | None,
 ) -> list[str] | None:
-    """Optional ordered step ids for a stage from the pipeline manifest (``None`` if undefined)."""
-    catalog = load_component_stage_catalog(
+    """Ordered step ids from the manifest for a stage, or ``None`` if undefined."""
+    if not pipeline_id:
+        return None
+    for stage in load_component_stage_catalog(
         component_name,
         pipeline_id=pipeline_id,
-        workspace_path=workspace_path,
         templates_root=templates_root,
-    )
-    for stage in catalog.get("stages", []):
+    ).get("stages", []):
         if stage.get("id") == stage_id:
-            steps = stage.get("steps")
-            if isinstance(steps, list) and steps:
-                return [str(step) for step in steps]
-            return None
+            raw = stage.get("steps")
+            if isinstance(raw, list) and raw:
+                return [str(step) for step in raw]
     return None
-
-
-def _normalize_steps(steps: list[str]) -> list[str]:
-    if not isinstance(steps, list) or not steps:
-        raise TypeError("steps must be a non-empty list of strings.")
-    normalized: list[str] = []
-    for step in steps:
-        if not isinstance(step, str) or not step.strip():
-            raise TypeError("each step must be a non-empty string.")
-        normalized.append(step)
-    return normalized
 
 
 def resolve_run_status_pipeline_id(workspace_path: str) -> str | None:
@@ -365,42 +352,6 @@ def validate_component_stages(
                 sorted(still_pending),
             )
 
-    catalog = load_component_stage_catalog(
-        component_name,
-        pipeline_id=pipeline_id,
-        templates_root=templates_root,
-    )
-    for stage_def in catalog.get("stages", []):
-        manifest_steps = stage_def.get("steps")
-        if not isinstance(manifest_steps, list) or not manifest_steps:
-            continue
-        stage_id = stage_def.get("id")
-        if not stage_id:
-            continue
-        expected_step_set = {str(step) for step in manifest_steps}
-        stage_entry = stages_by_id.get(stage_id)
-        if not stage_entry:
-            continue
-        recorded_steps = stage_entry.get("steps")
-        if not isinstance(recorded_steps, list) or not recorded_steps:
-            logger.warning(
-                "AUTOML_RUN_STATUS pipeline_id=%s component=%s stage=%s missing steps (expected %s)",
-                pipeline_id,
-                component_name,
-                stage_id,
-                manifest_steps,
-            )
-            continue
-        unknown_steps = set(recorded_steps) - expected_step_set
-        if unknown_steps:
-            logger.warning(
-                "AUTOML_RUN_STATUS pipeline_id=%s component=%s stage=%s steps not in manifest: %s",
-                pipeline_id,
-                component_name,
-                stage_id,
-                sorted(unknown_steps),
-            )
-
 
 def begin_component(
     workspace_path: str,
@@ -425,17 +376,17 @@ def record_stage(
     stage_id: str,
     status: str,
     *,
-    steps: list[str] | None = None,
     templates_root: str | None = None,
     **details: Any,
 ) -> None:
-    """Append a stage entry for a component (e.g. ``read_and_sample``, ``completed``).
+    """Record or update a stage for a component.
 
-    Optionally include ``steps`` (ordered sub-step ids) on the stage object, typically on
-    a ``completed`` record when the manifest defines ``stages[].steps``.
+    When ``status`` is ``completed``, ``stages[].steps`` from the pipeline manifest are
+    copied onto the stage object automatically (if defined).
     """
     ensure_pipeline_plan(workspace_path, templates_root=templates_root)
     document = load_run_status(workspace_path)
+    pipeline_id = document.get(DOCUMENT_PIPELINE_ID_FIELD)
     components = document.setdefault("components", {})
     entry = components.setdefault(component_name, {"state": STATUS_RUNNING, "stages": []})
     stage: dict[str, Any] = {
@@ -443,9 +394,16 @@ def record_stage(
         "status": status,
         "timestamp": _utc_now_iso(),
     }
-    if steps is not None:
-        stage["steps"] = _normalize_steps(steps)
     stage.update(details)
+    if status == STATUS_COMPLETED and "steps" not in stage:
+        manifest_steps = _manifest_stage_steps(
+            component_name,
+            stage_id,
+            pipeline_id=pipeline_id if isinstance(pipeline_id, str) else None,
+            templates_root=templates_root,
+        )
+        if manifest_steps:
+            stage["steps"] = manifest_steps
     stages = entry.setdefault("stages", [])
     index = _stage_index(stages, stage_id)
     if index is None:
@@ -455,7 +413,7 @@ def record_stage(
     save_run_status(workspace_path, document)
     log_msg = "AUTOML_RUN_STATUS component=%s stage=%s status=%s"
     log_args: list[Any] = [component_name, stage_id, status]
-    if steps is not None:
+    if "steps" in stage:
         log_msg += " steps=%s"
         log_args.append(",".join(stage["steps"]))
     logger.info(log_msg, *log_args)
@@ -537,20 +495,12 @@ class RunStatusRecorder:
             templates_root=self.templates_root,
         )
 
-    def record(
-        self,
-        stage_id: str,
-        status: str,
-        *,
-        steps: list[str] | None = None,
-        **details: Any,
-    ) -> None:
+    def record(self, stage_id: str, status: str, **details: Any) -> None:
         record_stage(
             self.workspace_path,
             self.component_name,
             stage_id,
             status,
-            steps=steps,
             templates_root=self.templates_root,
             **details,
         )

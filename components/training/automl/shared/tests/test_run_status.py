@@ -13,12 +13,10 @@ from run_status import (
     RUN_STATUS_REL_PATH,
     STATUS_COMPLETED,
     STATUS_PENDING,
-    STATUS_RUNNING,
     RunStatusRecorder,
     begin_component,
     complete_component,
     ensure_pipeline_plan,
-    expected_stage_steps,
     init_run_status,
     load_component_stage_catalog,
     load_pipeline_run_status_manifest,
@@ -109,7 +107,8 @@ def test_ensure_pipeline_plan_preserves_progress(tmp_path):
     assert doc["components"][COMPONENT_DATA_LOADER]["stages"][0]["status"] == STATUS_COMPLETED
 
 
-def test_record_stage_with_optional_steps(tmp_path):
+def test_record_stage_autofills_steps_from_manifest_on_completed(tmp_path):
+    """``completed`` stages copy ``steps`` from the pipeline manifest when defined."""
     ws = str(tmp_path)
     init_run_status(
         ws,
@@ -123,13 +122,12 @@ def test_record_stage_with_optional_steps(tmp_path):
         ws,
         COMPONENT_MODELS_TRAINING,
         "model_selection",
-        "completed",
-        steps=["feature_engineering", "model_training", "stacking", "model_evaluation"],
+        STATUS_COMPLETED,
+        templates_root=_SHARED_ROOT,
         top_n=2,
     )
     training = load_run_status(ws)["components"][COMPONENT_MODELS_TRAINING]
     model_selection = next(s for s in training["stages"] if s["id"] == "model_selection")
-    assert len(training["stages"]) == 4
     assert model_selection["steps"] == [
         "feature_engineering",
         "model_training",
@@ -137,52 +135,18 @@ def test_record_stage_with_optional_steps(tmp_path):
         "model_evaluation",
     ]
     assert model_selection["top_n"] == 2
-
-
-def test_expected_stage_steps_from_manifest():
-    steps = expected_stage_steps(
-        COMPONENT_MODELS_TRAINING,
-        "model_selection",
-        pipeline_id=PIPELINE_TABULAR_TRAINING,
+    record_stage(
+        ws,
+        COMPONENT_DATA_LOADER,
+        "validate_inputs",
+        STATUS_COMPLETED,
         templates_root=_SHARED_ROOT,
     )
-    assert steps == [
-        "feature_engineering",
-        "model_training",
-        "stacking",
-        "model_evaluation",
-    ]
-    assert (
-        expected_stage_steps(
-            COMPONENT_DATA_LOADER,
-            "validate_inputs",
-            pipeline_id=PIPELINE_TABULAR_TRAINING,
-            templates_root=_SHARED_ROOT,
-        )
-        is None
+    loader_stage = next(
+        s for s in load_run_status(ws)["components"][COMPONENT_DATA_LOADER]["stages"]
+        if s["id"] == "validate_inputs"
     )
-
-
-def test_validate_component_stages_warns_on_missing_steps(caplog):
-    document = {
-        DOCUMENT_PIPELINE_ID_FIELD: PIPELINE_TABULAR_TRAINING,
-        "components": {
-            COMPONENT_MODELS_TRAINING: {
-                "stages": [
-                    {
-                        "id": "model_selection",
-                        "status": "completed",
-                        "timestamp": "2026-01-01T00:00:00Z",
-                    }
-                ],
-            }
-        },
-    }
-    with caplog.at_level("WARNING"):
-        validate_component_stages(
-            document, COMPONENT_MODELS_TRAINING, templates_root=_SHARED_ROOT
-        )
-    assert "missing steps" in caplog.text
+    assert "steps" not in loader_stage
 
 
 def test_init_and_stages(tmp_path):

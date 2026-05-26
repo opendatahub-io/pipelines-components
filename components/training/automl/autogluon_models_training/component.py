@@ -233,12 +233,6 @@ def autogluon_models_training(
     run_status.record(
         "model_selection",
         "completed",
-        steps=[
-            "feature_engineering",
-            "model_training",
-            "stacking",
-            "model_evaluation",
-        ],
         top_n=top_n,
         selected_models=top_models,
     )
