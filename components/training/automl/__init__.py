@@ -1,6 +1,6 @@
 import os
 
-if os.environ.get('_KFP_RUNTIME', 'false') != 'true':
+if os.environ.get("_KFP_RUNTIME", "false") != "true":
     from . import (
         autogluon_leaderboard_evaluation,
         autogluon_models_training,
