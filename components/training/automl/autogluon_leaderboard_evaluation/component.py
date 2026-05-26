@@ -119,16 +119,17 @@ def leaderboard_evaluation(
     html_table = _build_leaderboard_table(leaderboard_df)
 
     best_model_name = leaderboard_df.iloc[0]["model"]
-    template_path = str(
+    _template_ref = (
         importlib.resources.files("kfp_components.components.training.automl.shared") / "leaderboard_html_template.html"
     )
-    html_content = _build_leaderboard_html(
-        template_path=template_path,
-        table_html=html_table,
-        eval_metric=eval_metric,
-        best_model_name=best_model_name,
-        num_models=len(leaderboard_df),
-    )
+    with importlib.resources.as_file(_template_ref) as template_path:
+        html_content = _build_leaderboard_html(
+            template_path=template_path,
+            table_html=html_table,
+            eval_metric=eval_metric,
+            best_model_name=best_model_name,
+            num_models=len(leaderboard_df),
+        )
     with open(html_artifact.path, "w", encoding="utf-8") as f:
         f.write(html_content)
 
