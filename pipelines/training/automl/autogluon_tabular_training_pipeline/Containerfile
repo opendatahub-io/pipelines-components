@@ -9,3 +9,4 @@ COPY pipelines/training/automl/autogluon_tabular_training_pipeline/requirements.
 ## Ensure build isolation
 RUN pip install --no-cache-dir -r /tmp/requirements.txt
 RUN pip install --index-url https://pypi.org/simple --no-cache-dir -r /tmp/requirements-pypi.txt
+RUN pip install --no-cache-dir git+https://github.com/opendatahub-io/pipelines-components.git

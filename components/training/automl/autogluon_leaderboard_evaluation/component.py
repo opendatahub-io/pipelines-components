@@ -1,21 +1,16 @@
-from pathlib import Path
 from typing import NamedTuple
 
 from kfp import dsl
 from kfp_components.utils.consts import AUTOML_IMAGE  # pyright: ignore[reportMissingImports]
 
-_SHARED_DIR = Path(__file__).parent.parent / "shared"
-
 
 @dsl.component(
     base_image=AUTOML_IMAGE,  # noqa: E501
-    embedded_artifact_path=str(_SHARED_DIR),
 )
 def leaderboard_evaluation(
     models_artifact: dsl.Input[dsl.Model],
     eval_metric: str,
     html_artifact: dsl.Output[dsl.HTML],
-    embedded_artifact: dsl.EmbeddedInput[dsl.Artifact],
 ) -> NamedTuple("outputs", best_model=str):
     """Evaluate refitted AutoGluon models and generate a leaderboard.
 
@@ -62,12 +57,17 @@ def leaderboard_evaluation(
             )
             return leaderboard
     """  # noqa: E501
+    import importlib.resources
     import json
     import logging
     from pathlib import Path
 
     import pandas as pd
-    from leaderboard_utils import _build_leaderboard_html, _build_leaderboard_table, _round_metrics
+    from kfp_components.components.training.automl.shared.leaderboard_utils import (
+        _build_leaderboard_html,
+        _build_leaderboard_table,
+        _round_metrics,
+    )
 
     logger = logging.getLogger(__name__)
 
@@ -119,7 +119,9 @@ def leaderboard_evaluation(
     html_table = _build_leaderboard_table(leaderboard_df)
 
     best_model_name = leaderboard_df.iloc[0]["model"]
-    template_path = Path(embedded_artifact.path) / "leaderboard_html_template.html"
+    template_path = str(
+        importlib.resources.files("kfp_components.components.training.automl.shared") / "leaderboard_html_template.html"
+    )
     html_content = _build_leaderboard_html(
         template_path=template_path,
         table_html=html_table,
