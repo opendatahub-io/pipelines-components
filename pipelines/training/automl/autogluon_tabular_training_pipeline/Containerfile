@@ -12,5 +12,6 @@ RUN pip install --index-url https://pypi.org/simple --no-cache-dir -r /tmp/requi
 
 ## Install kfp-components from local source
 COPY . /tmp/kfp-src/
-RUN pip install --no-cache-dir --no-build-isolation --no-deps /tmp/kfp-src/ && \
+RUN chmod -R a+w /tmp/kfp-src/ && \
+    pip install --no-cache-dir --no-build-isolation --no-deps /tmp/kfp-src/ && \
     rm -rf /tmp/kfp-src/
