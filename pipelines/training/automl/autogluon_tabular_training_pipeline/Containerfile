@@ -1,12 +1,5 @@
 ARG BASE_IMAGE="quay.io/aipcc/base-images/cpu:3.4"
 
-## Build stage: build a kfp-components wheel from the local source tree
-FROM ${BASE_IMAGE} AS builder
-WORKDIR /src
-COPY . .
-RUN pip install --no-cache-dir setuptools wheel build && \
-    python -m build --no-isolation --wheel --outdir /dist
-
 FROM ${BASE_IMAGE}
 
 COPY pipelines/training/automl/autogluon_tabular_training_pipeline/requirements.txt \
@@ -16,5 +9,8 @@ COPY pipelines/training/automl/autogluon_tabular_training_pipeline/requirements.
 ## Ensure build isolation
 RUN pip install --no-cache-dir -r /tmp/requirements.txt
 RUN pip install --index-url https://pypi.org/simple --no-cache-dir -r /tmp/requirements-pypi.txt
-COPY --from=builder /dist/*.whl /tmp/
-RUN pip install --no-cache-dir --no-deps /tmp/*.whl
+
+## Install kfp-components from local source
+COPY . /tmp/kfp-src/
+RUN pip install --no-cache-dir --no-build-isolation --no-deps /tmp/kfp-src/ && \
+    rm -rf /tmp/kfp-src/
