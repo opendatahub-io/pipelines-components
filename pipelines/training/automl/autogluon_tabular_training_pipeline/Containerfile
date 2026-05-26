@@ -4,7 +4,7 @@ ARG BASE_IMAGE="quay.io/aipcc/base-images/cpu:3.4"
 FROM ${BASE_IMAGE} AS builder
 RUN mkdir /tmp/kfp-src /tmp/dist
 COPY . /tmp/kfp-src/
-RUN pip wheel --no-deps --index-url https://console.redhat.com/api/pypi/public-rhai/rhoai/3.4/cpu-ubi9/simple -w /tmp/dist /tmp/kfp-src/
+RUN pip wheel --index-url https://console.redhat.com/api/pypi/public-rhai/rhoai/3.4/cpu-ubi9/simple -w /tmp/dist /tmp/kfp-src/
 
 FROM ${BASE_IMAGE}
 
