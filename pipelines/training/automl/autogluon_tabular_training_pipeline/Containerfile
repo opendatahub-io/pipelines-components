@@ -4,7 +4,8 @@ ARG BASE_IMAGE="quay.io/aipcc/base-images/cpu:3.4"
 FROM ${BASE_IMAGE} AS builder
 WORKDIR /src
 COPY . .
-RUN pip install --no-cache-dir setuptools wheel && pip wheel --no-deps -w /dist .
+RUN pip install --no-cache-dir setuptools wheel build && \
+    python -m build --no-isolation --wheel --outdir /dist
 
 FROM ${BASE_IMAGE}
 
