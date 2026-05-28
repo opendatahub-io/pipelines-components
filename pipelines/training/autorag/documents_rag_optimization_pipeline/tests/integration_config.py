@@ -43,8 +43,8 @@ TEST_DATA_KEY_ENV = "TEST_DATA_KEY"
 INPUT_DATA_SECRET_ENV = "INPUT_DATA_SECRET_NAME"
 INPUT_DATA_BUCKET_ENV = "INPUT_DATA_BUCKET_NAME"
 INPUT_DATA_KEY_ENV = "INPUT_DATA_KEY"
-LLAMA_STACK_SECRET_ENV = "LLAMA_STACK_SECRET_NAME"
-LLAMA_STACK_VECTOR_IO_PROVIDER_ENV = "LLAMA_STACK_VECTOR_IO_PROVIDER_ID"
+OGX_SECRET_ENV = "OGX_SECRET_NAME"
+VECTOR_IO_PROVIDER_ENV = "VECTOR_IO_PROVIDER_ID"
 # S3 for artifact checks (optional)
 S3_ENDPOINT_ENV = "AWS_S3_ENDPOINT"
 S3_ACCESS_KEY_ENV = "AWS_ACCESS_KEY_ID"
@@ -64,10 +64,10 @@ def get_docrag_integration_config():
     i_secret = os.environ.get(INPUT_DATA_SECRET_ENV)
     i_bucket = os.environ.get(INPUT_DATA_BUCKET_ENV)
     i_key = os.environ.get(INPUT_DATA_KEY_ENV)
-    llama_secret = os.environ.get(LLAMA_STACK_SECRET_ENV)
-    llama_vector_io = os.environ.get(LLAMA_STACK_VECTOR_IO_PROVIDER_ENV)
+    ogx_secret = os.environ.get(OGX_SECRET_ENV)
+    vector_io = os.environ.get(VECTOR_IO_PROVIDER_ENV)
 
-    if not all([kfp_url, token, t_secret, t_bucket, t_key, i_secret, i_bucket, i_key, llama_secret, llama_vector_io]):
+    if not all([kfp_url, token, t_secret, t_bucket, t_key, i_secret, i_bucket, i_key, ogx_secret, vector_io]):
         return None
 
     endpoint = os.environ.get(S3_ENDPOINT_ENV)
@@ -86,8 +86,8 @@ def get_docrag_integration_config():
         "input_data_secret_name": i_secret.strip(),
         "input_data_bucket_name": i_bucket.strip(),
         "input_data_key": i_key.strip(),
-        "llama_stack_secret_name": llama_secret.strip(),
-        "llama_stack_vector_io_provider_id": llama_vector_io.strip(),
+        "ogx_secret_name": ogx_secret.strip(),
+        "vector_io_provider_id": vector_io.strip(),
         "s3_endpoint": endpoint.strip() if endpoint else None,
         "s3_access_key": access.strip() if access else None,
         "s3_secret_key": secret.strip() if secret else None,

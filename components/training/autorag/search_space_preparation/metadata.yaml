@@ -7,7 +7,7 @@ dependencies:
       version: '>=2.15.2'
   external_services:
     - name: ai4rag
-      version: ">=1.0.0"
+      version: "~=0.6.1"
     - name: pyYaml
       version: ">=6.0.0"
     - name: pandas
@@ -17,4 +17,4 @@ tags:
   - autorag
   - search-space
   - optimization
-lastVerified: 2026-02-01T23:39:58.58Z
+lastVerified: 2026-05-14T00:00:00Z

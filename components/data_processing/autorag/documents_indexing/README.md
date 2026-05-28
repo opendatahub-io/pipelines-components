@@ -6,7 +6,7 @@
 
 Index extracted text into a vector store with optional batch processing.
 
-Reads markdown files from extracted_text, chunks them, embeds via Llama Stack, and adds them to the vector store. When batch_size > 0, processes documents in batches to limit memory use and allow progress on large inputs.
+Reads markdown files from extracted_text, chunks them, embeds via OGX, and adds them to the vector store. When batch_size > 0, processes documents in batches to limit memory use and allow progress on large inputs.
 
 ## Inputs 📥
 
@@ -14,7 +14,7 @@ Reads markdown files from extracted_text, chunks them, embeds via Llama Stack, a
 | --------- | ---- | ------- | ----------- |
 | `embedding_model_id` | `str` | `None` | Embedding model ID used for the vector store. |
 | `extracted_text` | `dsl.Input[dsl.Artifact]` | `None` | Input artifact (folder) containing .md files from text extraction. |
-| `llama_stack_vector_io_provider_id` | `str` | `None` | Llama Stack provider ID for the vector database. |
+| `vector_io_provider_id` | `str` | `None` | OGX provider ID for the vector database. |
 | `embedding_params` | `Optional[dict]` | `None` | Optional embedding parameters. |
 | `distance_metric` | `str` | `cosine` | Vector distance metric (e.g. "cosine"). |
 | `chunking_method` | `str` | `recursive` | Chunking method. |
@@ -35,7 +35,7 @@ from kfp_components.components.data_processing.autorag.documents_indexing import
 @dsl.pipeline(name="documents-indexing-example")
 def example_pipeline(
     embedding_model_id: str = "all-MiniLM-L6-v2",
-    llama_stack_vector_io_provider_id: str = "milvus",
+    vector_io_provider_id: str = "milvus",
     distance_metric: str = "cosine",
     chunking_method: str = "recursive",
     chunk_size: int = 1024,
@@ -46,7 +46,7 @@ def example_pipeline(
 
     Args:
         embedding_model_id: ID of the embedding model.
-        llama_stack_vector_io_provider_id: Llama Stack provider ID for the vector database.
+        vector_io_provider_id: OGX provider ID for the vector database.
         distance_metric: Distance metric for similarity search.
         chunking_method: Method for text chunking.
         chunk_size: Size of each text chunk.
@@ -60,7 +60,7 @@ def example_pipeline(
     documents_indexing(
         embedding_model_id=embedding_model_id,
         extracted_text=extracted_text.output,
-        llama_stack_vector_io_provider_id=llama_stack_vector_io_provider_id,
+        vector_io_provider_id=vector_io_provider_id,
         distance_metric=distance_metric,
         chunking_method=chunking_method,
         chunk_size=chunk_size,
@@ -79,11 +79,11 @@ def example_pipeline(
     - Name: Pipelines, Version: >=2.15.2
   - External Services:
     - Name: RHOAI Connections API, Version: >=1.0.0
-    - Name: ai4rag, Version: >=1.0.0
+    - Name: ai4rag, Version: ~=0.6.1
 - **Tags**:
   - data-indexing
   - autorag
-- **Last Verified**: 2026-01-23 10:29:35+00:00
+- **Last Verified**: 2026-05-14 00:00:00+00:00
 - **Owners**:
   - Approvers:
     - LukaszCmielowski

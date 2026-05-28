@@ -69,10 +69,11 @@ def _run_succeeded(detail):
 
 
 def _find_artifacts_in_s3(s3_client, bucket, prefix):
-    """List object keys under prefix; return lists of keys ending in .pkl, .ipynb, and keys containing 'leaderboard' or 'html_artifact'."""  # noqa: E501
+    """List object keys under prefix; return lists of keys by type (.pkl, .ipynb, .json, leaderboard)."""
     pkl_keys = []
     ipynb_keys = []
     leaderboard_keys = []
+    json_keys = []
     try:
         paginator = s3_client.get_paginator("list_objects_v2")
         for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
@@ -82,11 +83,13 @@ def _find_artifacts_in_s3(s3_client, bucket, prefix):
                     pkl_keys.append(key)
                 elif key.endswith(".ipynb"):
                     ipynb_keys.append(key)
+                elif key.endswith(".json"):
+                    json_keys.append(key)
                 elif "leaderboard" in key.lower() or "html_artifact" in key.lower():
                     leaderboard_keys.append(key)
     except Exception:
         pass
-    return pkl_keys, ipynb_keys, leaderboard_keys
+    return pkl_keys, ipynb_keys, leaderboard_keys, json_keys
 
 
 @pytest.mark.integration
@@ -130,9 +133,32 @@ class TestAutogluonPipelineIntegration:
         if s3_client and config.get("s3_bucket_artifacts"):
             bucket = config["s3_bucket_artifacts"]
             prefix = f"{PIPELINE_DISPLAY_NAME}/{run_id}"
-            pkl_keys, ipynb_keys, leaderboard_keys = _find_artifacts_in_s3(s3_client, bucket, prefix)
+            pkl_keys, ipynb_keys, leaderboard_keys, json_keys = _find_artifacts_in_s3(s3_client, bucket, prefix)
             assert len(pkl_keys) >= 1, f"Expected at least one .pkl model artifact under {prefix}; found {pkl_keys}"
             assert len(ipynb_keys) >= 1, f"Expected at least one .ipynb notebook under {prefix}; found {ipynb_keys}"
             assert len(leaderboard_keys) >= 1, (
                 f"Expected leaderboard/html artifact under {prefix}; found {leaderboard_keys}"
             )
+
+            # Verify core metric files (all task types)
+            metrics_json = [k for k in json_keys if k.endswith("metrics/metrics.json")]
+            feature_imp_json = [k for k in json_keys if k.endswith("metrics/feature_importance.json")]
+
+            assert len(metrics_json) >= 1, f"Expected at least one metrics.json under {prefix}; found {metrics_json}"
+            assert len(feature_imp_json) >= 1, (
+                f"Expected at least one feature_importance.json under {prefix}; found {feature_imp_json}"
+            )
+
+            # Verify classification-specific metric files
+            if test_config.task_type in {"binary", "multiclass"}:
+                cm_json = [k for k in json_keys if k.endswith("metrics/confusion_matrix.json")]
+                curves_json = [k for k in json_keys if k.endswith("metrics/curves.json")]
+
+                assert len(cm_json) >= 1, (
+                    f"Expected at least one confusion_matrix.json for {test_config.task_type} task "
+                    f"under {prefix}; found {cm_json}"
+                )
+                assert len(curves_json) >= 1, (
+                    f"Expected at least one curves.json for {test_config.task_type} task "
+                    f"under {prefix}; found {curves_json}"
+                )

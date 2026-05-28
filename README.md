@@ -158,7 +158,9 @@ All contributions must:
 - Include metadata with fresh `lastVerified` date
 - Pass automated CI/CD checks
 
-## 📦 Custom Base Images
+## 📦 Custom Base Images & Managed Pipeline Runtime Images
+
+### Custom Base Images
 
 Components can use custom base images with pre-installed dependencies. These images are
 automatically built and pushed to `ghcr.io/kubeflow/pipelines-components-<name>`.
@@ -166,6 +168,15 @@ automatically built and pushed to `ghcr.io/kubeflow/pipelines-components-<name>`
 See [Contributing Guidelines](docs/CONTRIBUTING.md#adding-a-custom-base-image) for instructions on
 adding new base images, and [`docs/examples/Containerfile`](docs/examples/Containerfile) for a complete
 example.
+
+### Managed Pipeline Runtime Images
+
+Managed pipelines deployed by OpenDataHub operators may require specific runtime images
+referenced via RELATED_IMAGE_* environment variables. These are different from custom base images
+and follow a specific approval and implementation process.
+
+See [Contributing Guidelines](docs/CONTRIBUTING.md#requesting-managed-pipeline-runtime-images) for
+the complete process to request managed pipeline runtime images.
 
 ## 🔧 Maintenance
 

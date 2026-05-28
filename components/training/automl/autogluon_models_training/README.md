@@ -9,8 +9,8 @@ Train AutoGluon models, select the top N, and refit each on the full dataset.
 Expects pre-cleaned CSV data from the tabular data loader (infinite values replaced, duplicates removed, missing labels dropped). Reads train/test/extra-train CSVs and validates that the label column exists in each dataset.
 
 This component combines the model selection and full-refit stages into a single step. It trains a TabularPredictor on sampled data, ranks all models on the test set, then refits each of the top N models on the full training data in a single ``refit_full`` call. Post-refit work (predict, evaluate,
-feature importance, confusion matrix, notebook generation) runs concurrently across all top-N models via ``ThreadPoolExecutor``. The deployment clone (``set_model_best`` + ``clone_for_deployment``) is serialized afterward because it mutates predictor state. All artifacts are written under a single
-output artifact so the pipeline does not require a ParallelFor loop. Each model directory contains a ``model.json`` file with model metadata (name, location, metrics).
+feature importance, confusion matrix (via evaluate_predictions detailed_report), classification curves, notebook generation) runs concurrently across all top-N models via ``ThreadPoolExecutor``. The deployment clone (``set_model_best`` + ``clone_for_deployment``) is serialized afterward because it
+mutates predictor state. All artifacts are written under a single output artifact so the pipeline does not require a ParallelFor loop. Each model directory contains a ``model.json`` file with model metadata (name, location, metrics).
 
 ## Inputs 📥
 
@@ -30,6 +30,7 @@ output artifact so the pipeline does not require a ParallelFor loop. Each model 
 | `sampling_config` | `Optional[dict]` | `None` | Data sampling config stored in artifact metadata. |
 | `split_config` | `Optional[dict]` | `None` | Data split config stored in artifact metadata. |
 | `extra_train_data_path` | `str` | `""` | Optional path to extra training CSV passed to ``refit_full``. |
+| `positive_class` | `Optional[str]` | `None` | Optional label value for the positive class in **binary** classification (``int`` or ``str``, e.g. ``"1"`` or ``"yes"``). Passed to ``TabularPredictor`` when set. If ``None`` or empty, AutoGluon infers the positive class when ``fit`` runs (see note below). Ignored for ``multiclass`` and ``regression``. |
 
 ## Outputs 📤
 
@@ -47,7 +48,7 @@ output artifact so the pipeline does not require a ParallelFor loop. Each model 
 - **Tags**:
   - training
   - automl
-- **Last Verified**: 2026-04-21 12:00:00+00:00
+- **Last Verified**: 2026-05-20 12:00:00+00:00
 - **Owners**:
   - Approvers:
     - LukaszCmielowski
@@ -129,7 +130,8 @@ models_artifact/
     ├── metrics/
     │   ├── metrics.json           # Evaluation results on test data (metric names → values)
     │   ├── feature_importance.json
-    │   └── confusion_matrix.json  # Classification tasks only
+    │   ├── confusion_matrix.json  # Classification tasks only
+    │   └── curves.json            # Classification tasks only (ROC + precision-recall)
     └── notebooks/
         └── automl_predictor_notebook.ipynb  # Pre-filled inference notebook
 ```

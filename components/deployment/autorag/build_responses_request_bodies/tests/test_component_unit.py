@@ -58,7 +58,7 @@ def _run_python_func(tmp_path, rag_subdirs: list[tuple[str, dict]]):
     out_art = mock.Mock()
     out_art.path = str(out)
     out_art.metadata = {}
-    with mock.patch.dict(os.environ, {"LLAMA_STACK_CLIENT_BASE_URL": "https://llama-stack.example.com"}, clear=False):
+    with mock.patch.dict(os.environ, {"OGX_CLIENT_BASE_URL": "https://ogx.example.com"}, clear=False):
         prepare_responses_api_requests.python_func(
             rag_patterns=str(rag),
             responses_api_artifacts=out_art,
@@ -66,7 +66,7 @@ def _run_python_func(tmp_path, rag_subdirs: list[tuple[str, dict]]):
     return out, out_art
 
 
-class TestBuildLlamaStackV1ResponsesBody:
+class TestBuildOgxV1ResponsesBody:
     """Assertions on JSON bodies produced via ``python_func`` (logic lives inside the component)."""
 
     def test_maps_model_instructions_input_and_file_search(self, tmp_path):
@@ -102,21 +102,21 @@ class TestBuildLlamaStackV1ResponsesBody:
             "embedding_model_id": "emb-1",
         }
         script = (out / "p1" / SCRIPT_FILENAME).read_text(encoding="utf-8")
-        assert 'LLAMA_STACK_BASE_URL = "https://llama-stack.example.com"' in script
+        assert 'OGX_BASE_URL = "https://ogx.example.com"' in script
         assert "Question (empty line to exit):" in script
         assert "_apply_api_key_to_env" in script
         assert "copy.deepcopy" in script
         assert "while True" in script
         assert "API key" in script
         readme = (out / "p1" / README_FILENAME).read_text(encoding="utf-8")
-        assert readme.startswith("# Call Llama Stack")
+        assert readme.startswith("# Call OGX")
         assert f"python3 {SCRIPT_FILENAME}" in readme
         assert OUTPUT_FILENAME in readme
-        assert 'LLAMA_STACK_BASE_URL = "https://llama-stack.example.com"' in readme
-        assert "LLAMA_STACK_CLIENT_API_KEY" in readme
-        assert ".llama_stack_client_api_key" not in readme
+        assert 'OGX_BASE_URL = "https://ogx.example.com"' in readme
+        assert "OGX_CLIENT_API_KEY" in readme
+        assert ".ogx_client_api_key" not in readme
 
-    def test_body_aligns_with_llama_stack_v1_responses_openapi_shape(self, tmp_path):
+    def test_body_aligns_with_ogx_v1_responses_openapi_shape(self, tmp_path):
         """Top-level fields and nested message/tool shapes match Responses create contract."""
         out, _ = _run_python_func(tmp_path, [("p1", _minimal_pattern())])
         body = json.loads((out / "p1" / OUTPUT_FILENAME).read_text(encoding="utf-8"))
@@ -192,7 +192,7 @@ class TestBuildLlamaStackV1ResponsesBody:
 
         Covers the corporate-PKI / dev-cluster TLS gap: the script must build an
         explicit ``ssl.SSLContext`` that honors ``REQUESTS_CA_BUNDLE`` /
-        ``SSL_CERT_FILE`` for private CAs, and ``LLAMA_STACK_TLS_INSECURE`` as a
+        ``SSL_CERT_FILE`` for private CAs, and ``OGX_TLS_INSECURE`` as a
         dev-only opt-out, then pass that context into ``urlopen``.
         """
         out, _ = _run_python_func(tmp_path, [("p1", _minimal_pattern())])
@@ -202,7 +202,7 @@ class TestBuildLlamaStackV1ResponsesBody:
         assert "_build_ssl_context" in script
         assert "REQUESTS_CA_BUNDLE" in script
         assert "SSL_CERT_FILE" in script
-        assert "LLAMA_STACK_TLS_INSECURE" in script
+        assert "OGX_TLS_INSECURE" in script
         assert "create_default_context" in script
         # Insecure mode actually disables verification and warns on stderr.
         assert "ctx.check_hostname = False" in script
@@ -215,7 +215,7 @@ class TestBuildLlamaStackV1ResponsesBody:
         assert "## TLS / certificates" in readme
         assert "REQUESTS_CA_BUNDLE" in readme
         assert "SSL_CERT_FILE" in readme
-        assert "LLAMA_STACK_TLS_INSECURE" in readme
+        assert "OGX_TLS_INSECURE" in readme
 
 
 class TestBuildResponsesRequestBodiesPythonFunc:

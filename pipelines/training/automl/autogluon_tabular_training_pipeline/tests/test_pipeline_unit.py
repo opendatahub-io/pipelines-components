@@ -52,6 +52,7 @@ class TestAutogluonTabularTrainingPipelineUnitTests:
             "label_column",
             "task_type",
             "top_n",
+            "positive_class",
         }
         inputs = autogluon_tabular_training_pipeline.component_spec.inputs
         params = set(inputs.keys())
@@ -76,6 +77,7 @@ class TestAutogluonTabularTrainingPipelineUnitTests:
                 "label_column",
                 "task_type",
                 "top_n",
+                "positive_class",
             ):
                 assert name in content, f"Expected pipeline input '{name}' in compiled YAML"
         except Exception as e:
@@ -112,6 +114,7 @@ class TestAutogluonTabularTrainingPipelineUnitTests:
         assert "outputParameterKey: split_config" in content
         assert "outputParameterKey: sample_config" in content
         assert "outputParameterKey: extra_train_data_path" in content
+        assert "positive_class" in content
 
     def test_compiled_pipeline_data_loader_declares_task_type_and_label(self):
         """Tabular data loader component exposes task_type and label_column inputs."""

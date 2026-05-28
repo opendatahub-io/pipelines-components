@@ -9,6 +9,7 @@ on:
       - "scripts/tests/**"
       - "scripts/validate_examples/**"
       - ".github/workflows/component-pipeline-tests.yml"
+      - "!**/OWNERS"
   push:
     paths:
       - "components/**"
@@ -16,6 +17,7 @@ on:
       - "scripts/tests/**"
       - "scripts/validate_examples/**"
       - ".github/workflows/component-pipeline-tests.yml"
+      - "!**/OWNERS"
 
 jobs:
   targeted-tests:

@@ -8,7 +8,127 @@ the operations used in ``component.load_timeseries_data_truncate`` and the split
 import csv
 import io
 import json
+import math
+import re
 import types
+
+_DATE_PREFIX = re.compile(r"^\d{4}-\d{2}-\d{2}")
+
+
+class MockSeries:
+    """Column vector with ``map``, ``isna``, boolean ``~``, and ``sum`` (count of True)."""
+
+    def __init__(self, values):
+        """Store cell values as a list."""
+        self._values = list(values)
+
+    def map(self, fn):
+        """Apply ``fn`` to each value; return a new ``MockSeries``."""
+        return MockSeries([fn(v) for v in self._values])
+
+    def isna(self):
+        """Return boolean ``MockSeries`` aligned with ``pandas.Series.isna()``."""
+        return MockSeries([_cell_is_na(v) for v in self._values])
+
+    def notna(self):
+        """Return boolean ``MockSeries`` aligned with ``pandas.Series.notna()``."""
+        return ~self.isna()
+
+    def __invert__(self):
+        """Boolean negation element-wise (for ``~mask``)."""
+        return MockSeries([not bool(x) for x in self._values])
+
+    def sum(self):
+        """Count values that are truthy (used for boolean masks)."""
+        return sum(1 for x in self._values if x)
+
+    def any(self):
+        """Return whether any value is truthy."""
+        return any(self._values)
+
+    def all(self):
+        """Return whether all values are truthy."""
+        return all(self._values)
+
+    def __getitem__(self, key):
+        """Boolean masking or positional indexing."""
+        if isinstance(key, MockSeries):
+            # Boolean mask
+            return MockSeries([v for v, include in zip(self._values, key._values) if include])
+        else:
+            # Positional indexing
+            return self._values[key]
+
+    def __len__(self):
+        """Return the number of values."""
+        return len(self._values)
+
+    def min(self):
+        """Return minimum value."""
+        non_null = [v for v in self._values if not _cell_is_na(v)]
+        return min(non_null) if non_null else None
+
+    def max(self):
+        """Return maximum value."""
+        non_null = [v for v in self._values if not _cell_is_na(v)]
+        return max(non_null) if non_null else None
+
+    def astype(self, dtype):
+        """Type conversion."""
+        if dtype is int:
+            return MockSeries([int(v) if not _cell_is_na(v) else v for v in self._values])
+        elif dtype is str:
+            return MockSeries([str(v) if not _cell_is_na(v) else v for v in self._values])
+        return self
+
+    def round(self):
+        """Round numeric values."""
+        return MockSeries([round(v) if isinstance(v, (int, float)) and not _cell_is_na(v) else v for v in self._values])
+
+
+def _parse_csv_cell(cell):
+    """Parse special float tokens from CSV text (real pandas infers these)."""
+    if not isinstance(cell, str):
+        return cell
+    sl = cell.strip().lower()
+    if sl in ("inf", "+inf", "infinity", "+infinity"):
+        return float("inf")
+    if sl in ("-inf", "-infinity"):
+        return float("-inf")
+    return cell
+
+
+def _to_datetime_scalar(val, errors="coerce"):
+    """Return a sortable value: ISO date strings, or numeric timestamps (e.g. fractional year)."""
+    if val is None:
+        return None
+    if isinstance(val, float) and math.isnan(val):
+        return None
+    if isinstance(val, (int, float)):
+        return float(val)
+    if not isinstance(val, str):
+        return val
+    s = val.strip()
+    if _DATE_PREFIX.match(s):
+        return s[:10] if len(s) >= 10 else s
+    # Numeric timestamps (e.g. 1949.083333) — sort chronologically as floats, like many CSV panels.
+    try:
+        return float(s)
+    except ValueError:
+        pass
+    if errors == "raise":
+        raise ValueError(f"cannot parse datetime from {val!r}")
+    return None
+
+
+def _cell_is_na(val):
+    if val is None:
+        return True
+    if isinstance(val, str) and val.strip() == "":
+        return True
+    if isinstance(val, float) and math.isnan(val):
+        return True
+    return False
 
 
 class MockedDataFrame:
@@ -96,6 +216,72 @@ class MockedDataFrame:
         """Group rows by one column (``by``); yields ``(key, MockedDataFrame)`` like pandas."""
         return MockedGroupBy(self, by, sort=sort)
 
+    def __getitem__(self, key):
+        """Column access (``str``) or boolean row mask (``MockSeries`` of bool)."""
+        if isinstance(key, MockSeries):
+            mask = key._values
+            if len(mask) != len(self._rows):
+                raise ValueError("boolean mask length mismatch")
+            new_rows = [row for row, m in zip(self._rows, mask) if m]
+            return MockedDataFrame(self._columns, new_rows)
+        idx = self._columns.index(key)
+        return MockSeries([row[idx] for row in self._rows])
+
+    def __setitem__(self, key, value):
+        """Assign a column from a list or ``MockSeries`` (same length as frame)."""
+        idx = self._columns.index(key)
+        if isinstance(value, MockSeries):
+            vals = value._values
+        else:
+            vals = value
+        if not isinstance(vals, list):
+            vals = [vals] * len(self._rows)
+        if len(vals) != len(self._rows):
+            raise ValueError("column assign length mismatch")
+        for i, row in enumerate(self._rows):
+            row[idx] = vals[i]
+
+    def replace(self, to_replace, value):
+        """Replace ``±inf`` (or listed values) with ``value`` in every cell."""
+        reps = set(to_replace) if isinstance(to_replace, (list, tuple)) else {to_replace}
+        new_rows = []
+        for row in self._rows:
+            new_row = []
+            for c in row:
+                if c in reps:
+                    new_row.append(value)
+                else:
+                    new_row.append(c)
+            new_rows.append(new_row)
+        return MockedDataFrame(self._columns, new_rows)
+
+    def dropna(self, subset=None, inplace=False):
+        """Drop rows with NA in any of ``subset`` columns."""
+        _ = inplace
+        cols = list(subset) if subset is not None else list(self._columns)
+        idxs = [self._columns.index(c) for c in cols]
+        new_rows = []
+        for row in self._rows:
+            if any(_cell_is_na(row[i]) for i in idxs):
+                continue
+            new_rows.append(row)
+        return MockedDataFrame(self._columns, new_rows)
+
+    def drop_duplicates(self, subset=None, keep="last"):
+        """Drop duplicate keys; ``keep='last'`` keeps the last row per key in row order."""
+        if subset is None:
+            subset = list(self._columns)
+        if keep != "last":
+            raise NotImplementedError("mock only implements keep='last'")
+        idxs = [self._columns.index(c) for c in subset]
+        last_idx = {}
+        for i, row in enumerate(self._rows):
+            key = tuple(row[j] for j in idxs)
+            last_idx[key] = i
+        keep_order = sorted(last_idx.values())
+        new_rows = [self._rows[i] for i in keep_order]
+        return MockedDataFrame(self._columns, new_rows)
+
 
 class MockedGroupBy:
     """Minimal ``DataFrame.groupby`` for a single column."""
@@ -151,7 +337,7 @@ def _read_csv_chunks(text_stream, chunksize):
         yield MockedDataFrame(header, [])
         return
     for start in range(0, len(rows), chunksize):
-        chunk_rows = rows[start : start + chunksize]
+        chunk_rows = [[_parse_csv_cell(c) for c in row] for row in rows[start : start + chunksize]]
         yield MockedDataFrame(header, chunk_rows)
 
 
@@ -171,6 +357,45 @@ def make_mocked_pandas_module():
     """Build a module suitable for ``sys.modules['pandas']``."""
     mod = types.ModuleType("pandas")
 
+    def to_datetime(arg, errors="coerce", utc=False):
+        """Parse timestamp column like ``pandas.to_datetime`` (subset)."""
+        _ = utc
+        if isinstance(arg, MockSeries):
+            return MockSeries([_to_datetime_scalar(v, errors) for v in arg._values])
+        # Handle string datetime (used in fractional year conversion)
+        if isinstance(arg, str):
+            return _to_datetime_scalar(arg, errors)
+        raise TypeError(f"mock to_datetime not implemented for {type(arg)!r}")
+
+    def to_numeric(arg, errors="coerce"):
+        """Convert to numeric like ``pandas.to_numeric``."""
+        if isinstance(arg, MockSeries):
+            result = []
+            for v in arg._values:
+                if _cell_is_na(v):
+                    result.append(None if errors == "coerce" else v)
+                elif isinstance(v, (int, float)):
+                    result.append(float(v))
+                else:
+                    try:
+                        result.append(float(v))
+                    except (ValueError, TypeError):
+                        if errors == "coerce":
+                            result.append(None)
+                        else:
+                            raise
+            return MockSeries(result)
+        raise TypeError(f"mock to_numeric not implemented for {type(arg)!r}")
+
+    def to_timedelta(arg, unit="D"):
+        """Convert to timedelta - simplified for day offsets."""
+        if isinstance(arg, (int, float)):
+            # Just return the numeric value - we'll add it to dates
+            return arg
+        if isinstance(arg, MockSeries):
+            return MockSeries([v if not _cell_is_na(v) else None for v in arg._values])
+        raise TypeError(f"mock to_timedelta not implemented for {type(arg)!r}")
+
     def _read_csv(stream, chunksize=None):
         if chunksize is not None:
             return _read_csv_chunks(stream, chunksize)
@@ -187,4 +412,7 @@ def make_mocked_pandas_module():
     mod.read_csv = _read_csv
     mod.concat = _concat
     mod.DataFrame = _dataframe
+    mod.to_datetime = to_datetime
+    mod.to_numeric = to_numeric
+    mod.to_timedelta = to_timedelta
     return mod

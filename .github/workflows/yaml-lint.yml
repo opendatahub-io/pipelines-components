@@ -12,6 +12,8 @@ on:
       - '.github/workflows/yaml-lint.yml'
       - '.github/actions/setup-python-ci/**'
   push:
+    paths-ignore:
+      - '**/OWNERS'
 
 jobs:
   yaml-lint:

@@ -60,15 +60,6 @@ def html_output_path(tmp_path):
     return str(tmp_path / "leaderboard.html")
 
 
-@pytest.fixture()
-def embedded_artifact():
-    """Provide mock embedded artifact pointing to shared dir (for leaderboard_html_template.html)."""
-    shared_dir = Path(__file__).resolve().parent.parent.parent / "shared"
-    mock_artifact = mock.MagicMock()
-    mock_artifact.path = str(shared_dir)
-    return mock_artifact
-
-
 def _make_mock_sorted_df(rows, columns):
     """Build a mock sorted DataFrame with the given rows and columns."""
     mock_df_sorted = mock.MagicMock()
@@ -86,7 +77,7 @@ class TestLeaderboardEvaluationUnitTests:
     """Unit tests for component logic."""
 
     @mock.patch("pandas.DataFrame")
-    def test_single_model(self, mock_dataframe_class, create_model_dir, html_output_path, embedded_artifact):
+    def test_single_model(self, mock_dataframe_class, create_model_dir, html_output_path):
         """Test leaderboard with a single model: return value, metadata, HTML output."""
         metrics = {"root_mean_squared_error": 0.5, "mean_absolute_error": 0.4, "r2": 0.9}
         model_dir = create_model_dir(metrics, model_name="Model1")
@@ -120,7 +111,6 @@ class TestLeaderboardEvaluationUnitTests:
             models_artifact=models_artifact,
             eval_metric="root_mean_squared_error",
             html_artifact=mock_html,
-            embedded_artifact=embedded_artifact,
         )
 
         # Verify DataFrame was constructed with correct data
@@ -156,7 +146,7 @@ class TestLeaderboardEvaluationUnitTests:
         assert "uri-link" in html
 
     @mock.patch("pandas.DataFrame")
-    def test_multiple_models(self, mock_dataframe_class, tmp_path, html_output_path, embedded_artifact):
+    def test_multiple_models(self, mock_dataframe_class, tmp_path, html_output_path):
         """Test leaderboard with multiple models and best_model selection."""
         metrics_list = [
             {"root_mean_squared_error": 0.8, "mean_absolute_error": 0.6},
@@ -218,7 +208,6 @@ class TestLeaderboardEvaluationUnitTests:
             models_artifact=models_artifact,
             eval_metric="root_mean_squared_error",
             html_artifact=mock_html,
-            embedded_artifact=embedded_artifact,
         )
 
         # Verify all models were passed to DataFrame
@@ -240,7 +229,7 @@ class TestLeaderboardEvaluationUnitTests:
         assert "Model3" in html
         assert "Model1" in html
 
-    def test_empty_model_names_raises(self, html_output_path, embedded_artifact):
+    def test_empty_model_names_raises(self, html_output_path):
         """Empty or missing ``model_names`` in artifact metadata raises ``KeyError``."""
         models_artifact = _make_models_artifact("/tmp/some_path", [], metadata={"model_names": "[]"})
 
@@ -253,7 +242,6 @@ class TestLeaderboardEvaluationUnitTests:
                 models_artifact=models_artifact,
                 eval_metric="rmse",
                 html_artifact=mock_html,
-                embedded_artifact=embedded_artifact,
             )
 
         models_artifact_default = _make_models_artifact("/tmp/some_path", [], metadata={})
@@ -263,10 +251,9 @@ class TestLeaderboardEvaluationUnitTests:
                 models_artifact=models_artifact_default,
                 eval_metric="rmse",
                 html_artifact=mock_html,
-                embedded_artifact=embedded_artifact,
             )
 
-    def test_leaderboard_evaluation_rejects_empty_eval_metric(self, embedded_artifact):
+    def test_leaderboard_evaluation_rejects_empty_eval_metric(self):
         """Test that TypeError is raised when eval_metric is empty or not a string."""
         models_artifact = _make_models_artifact("/tmp/model", ["Model1"])
         mock_html = mock.MagicMock()
@@ -277,7 +264,6 @@ class TestLeaderboardEvaluationUnitTests:
                 models_artifact=models_artifact,
                 eval_metric="",
                 html_artifact=mock_html,
-                embedded_artifact=embedded_artifact,
             )
 
         with pytest.raises(TypeError, match=r"eval_metric must be a non-empty string\."):
@@ -285,10 +271,9 @@ class TestLeaderboardEvaluationUnitTests:
                 models_artifact=models_artifact,
                 eval_metric="   ",
                 html_artifact=mock_html,
-                embedded_artifact=embedded_artifact,
             )
 
-    def test_missing_metrics_file_raises(self, tmp_path, html_output_path, embedded_artifact):
+    def test_missing_metrics_file_raises(self, tmp_path, html_output_path):
         """Missing metrics.json is skipped; if no models remain, raises ValueError."""
         model_dir = tmp_path / "model_artifact_empty"
         model_dir.mkdir()
@@ -304,7 +289,6 @@ class TestLeaderboardEvaluationUnitTests:
                 models_artifact=models_artifact,
                 eval_metric="rmse",
                 html_artifact=mock_html,
-                embedded_artifact=embedded_artifact,
             )
 
     def test_component_imports_correctly(self):

@@ -63,8 +63,8 @@ Variables are loaded from a `.env` file in this directory (or from the current w
 | `INPUT_DATA_SECRET_NAME` | Kubernetes secret name for input documents S3 credentials. |
 | `INPUT_DATA_BUCKET_NAME` | S3 bucket for input documents. |
 | `INPUT_DATA_KEY` | Object key (path) of the input documents in the bucket. |
-| `LLAMA_STACK_SECRET_NAME` | Kubernetes secret name for llama-stack API (e.g. `LLAMA_STACK_CLIENT_API_KEY`, `LLAMA_STACK_CLIENT_BASE_URL`). |
-| `LLAMA_STACK_VECTOR_IO_PROVIDER_ID` | Vector I/O provider id passed to the pipeline (e.g. `milvus`); must match a provider registered in Llama Stack. |
+| `OGX_SECRET_NAME` | Kubernetes secret name for OGX API (e.g. `OGX_CLIENT_API_KEY`, `OGX_CLIENT_BASE_URL`). |
+| `VECTOR_IO_PROVIDER_ID` | Vector I/O provider id passed to the pipeline (e.g. `milvus`); must match a provider registered in OGX. |
 
 ### 3. Optional: artifact validation in S3
 
@@ -85,7 +85,7 @@ To assert that run artifacts (leaderboard HTML, notebooks, rag_patterns) are pre
 | `RHOAI_PIPELINE_RUN_TIMEOUT` | Timeout in seconds for waiting on a run (default `3600`). |
 | `KFP_VERIFY_SSL` | Set to `false` to skip TLS verification for self-signed certs. |
 
-### 5. Optional: Llama Stack response-body artifact in S3
+### 5. Optional: OGX response-body artifact in S3
 
 If S3 settings from [§3](#3-optional-artifact-validation-in-s3) are set, the integration test
 checks that generated artifacts are present under the run prefix, including

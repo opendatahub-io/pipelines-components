@@ -72,11 +72,17 @@ class FakeGhClient(GhClient):
         return response
 
     def get_own_check_run_id(self, repo: str, head_sha: str, check_name: str) -> int:
-        """Return a fixed check run ID by scanning check_runs_responses."""
+        """Return a fixed check run ID, preferring the in-progress instance."""
         if self._check_runs_responses:
+            fallback: int | None = None
             for cr in self._check_runs_responses[0].get("check_runs", []):
                 if cr["name"] == check_name:
-                    return cr["id"]
+                    if cr["status"] == "in_progress":
+                        return cr["id"]
+                    if fallback is None:
+                        fallback = cr["id"]
+            if fallback is not None:
+                return fallback
         raise ChecksError(f"Check run '{check_name}' not found")
 
 
@@ -389,6 +395,69 @@ class TestWaitForChecks:
             wait_for_checks(gh, "owner/repo", "abc123", check_run_id=999, delay=0, retries=2, interval=5)
         assert gh.get_check_runs.call_count == 2
 
+    def test_stale_completed_run_with_same_name_excluded_by_ignore(self):
+        """A stale completed check_ci_status run is excluded via ignore_checks."""
+        gh = MagicMock(spec=GhClient)
+        gh.get_check_runs.return_value = json.loads(
+            _api_response(
+                _make_check_run(800, "check_ci_status", "completed", "failure"),
+                _make_check_run(999, "check_ci_status", "in_progress"),
+                _make_check_run(100, "lint", "completed", "success"),
+            )
+        )
+        wait_for_checks(
+            gh,
+            "owner/repo",
+            "abc123",
+            check_run_id=999,
+            delay=0,
+            retries=1,
+            interval=0,
+            ignore_checks=frozenset({"check_ci_status"}),
+        )
+
+    def test_stale_failed_run_causes_false_failure_without_ignore(self):
+        """Without ignore_checks, a stale failed run with the same name causes failure."""
+        gh = MagicMock(spec=GhClient)
+        gh.get_check_runs.return_value = json.loads(
+            _api_response(
+                _make_check_run(800, "check_ci_status", "completed", "failure"),
+                _make_check_run(999, "check_ci_status", "in_progress"),
+                _make_check_run(100, "lint", "completed", "success"),
+            )
+        )
+        with pytest.raises(ChecksError, match="check_ci_status"):
+            wait_for_checks(
+                gh,
+                "owner/repo",
+                "abc123",
+                check_run_id=999,
+                delay=0,
+                retries=1,
+                interval=0,
+            )
+
+    def test_concurrent_in_progress_run_excluded_by_ignore(self):
+        """Two concurrent in-progress runs with same name don't deadlock when using ignore_checks."""
+        gh = MagicMock(spec=GhClient)
+        gh.get_check_runs.return_value = json.loads(
+            _api_response(
+                _make_check_run(998, "check_ci_status", "in_progress"),
+                _make_check_run(999, "check_ci_status", "in_progress"),
+                _make_check_run(100, "lint", "completed", "success"),
+            )
+        )
+        wait_for_checks(
+            gh,
+            "owner/repo",
+            "abc123",
+            check_run_id=999,
+            delay=0,
+            retries=1,
+            interval=0,
+            ignore_checks=frozenset({"check_ci_status"}),
+        )
+
     def test_many_check_runs_all_evaluated(self):
         """All check runs are evaluated, not just the first page worth."""
         gh = MagicMock(spec=GhClient)
@@ -446,11 +515,22 @@ class TestGhClient:
         assert client.get_own_check_run_id("owner/repo", "abc123", "check_ci_status") == 200
 
     @patch("ci_checks.ci_checks.subprocess.run")
-    def test_get_own_check_run_id_returns_first_match(self, mock_run):
-        """get_own_check_run_id returns the first matching ID when duplicates exist."""
+    def test_get_own_check_run_id_prefers_in_progress(self, mock_run):
+        """get_own_check_run_id prefers the in-progress run over a completed one."""
         response = _api_response(
             _make_check_run(200, "check_ci_status", "completed", "success"),
             _make_check_run(300, "check_ci_status", "in_progress"),
+        )
+        mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0, stdout=response)
+        client = GhClient()
+        assert client.get_own_check_run_id("owner/repo", "abc123", "check_ci_status") == 300
+
+    @patch("ci_checks.ci_checks.subprocess.run")
+    def test_get_own_check_run_id_falls_back_to_completed(self, mock_run):
+        """get_own_check_run_id falls back to completed run when none is in-progress."""
+        response = _api_response(
+            _make_check_run(200, "check_ci_status", "completed", "success"),
+            _make_check_run(300, "check_ci_status", "completed", "success"),
         )
         mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0, stdout=response)
         client = GhClient()

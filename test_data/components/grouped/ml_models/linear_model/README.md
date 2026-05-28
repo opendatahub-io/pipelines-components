@@ -52,3 +52,5 @@ def example_pipeline(data_path: str = "/data/train.csv", target_col: str = "pric
   - Approvers:
     - nsingla
     - hbelmiro
+  - Reviewers:
+    - nsingla

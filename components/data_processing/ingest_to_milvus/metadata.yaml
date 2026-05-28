@@ -1,0 +1,22 @@
+---
+name: ingest_to_milvus
+description: >
+  Read chunked JSONL files, generate embeddings via an embedding
+  service endpoint or local model, and insert into Milvus.
+stability: experimental
+dependencies:
+  kubeflow:
+    - name: Pipelines
+      version: ">=2.15.2"
+  external_services:
+    - name: Milvus
+      version: ">=2.4.0"
+tags:
+  - milvus
+  - embeddings
+  - vector_db
+  - ingestion
+  - rag
+lastVerified: 2026-04-28T00:00:00Z
+links:
+  documentation: https://github.com/kubeflow/pipelines-components

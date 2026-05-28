@@ -12,6 +12,7 @@ on:
       - '.github/actions/setup-python-ci/**'
       - 'pyproject.toml'
       - 'uv.lock'
+      - '!**/OWNERS'
   workflow_dispatch:
 
 jobs:

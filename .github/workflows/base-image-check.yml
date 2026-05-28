@@ -3,6 +3,8 @@ name: Base Image Validation
 
 on:
   push:
+    paths-ignore:
+      - '**/OWNERS'
   pull_request:
     paths:
       - 'components/**'
@@ -13,6 +15,7 @@ on:
       - '.github/actions/setup-python-ci/**'
       - 'pyproject.toml'
       - 'uv.lock'
+      - '!**/OWNERS'
 
 # Cancel in-progress runs when a new commit is pushed to the same PR
 concurrency:

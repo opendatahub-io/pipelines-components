@@ -50,6 +50,10 @@ def automl_data_loader(  # noqa: D417
     or the ``sample_row`` JSON (stratified sampling already dropped per chunk; this
     applies the same rule to random and first-n-rows paths).
 
+    After cleansing (infinity replacement, duplicate removal, and label drop), at least
+    **100** valid records must remain; otherwise the component fails with a clear error
+    so downstream AutoML training does not run on datasets too small to split reliably.
+
     After sampling, **+/- infinity** values in the frame are replaced with **NaN** (same
     idea as AutoAI ``loadXy``), then **full-row duplicates** are dropped before the
     label drop and train/test split.
@@ -69,7 +73,8 @@ def automl_data_loader(  # noqa: D417
         selection_train_size: Fraction of the train portion used for model selection (default 0.3).
 
     Raises:
-        ValueError: If sampling_method or task_type is invalid, or if required parameters are missing.
+        ValueError: If sampling_method or task_type is invalid, if required parameters are missing,
+            or if fewer than 100 valid records remain after data cleansing.
 
     Returns:
         NamedTuple: Contains sample config, split config, a sample row, and paths to selection-train and extra-train CSVs.
@@ -85,6 +90,7 @@ def automl_data_loader(  # noqa: D417
     logger = logging.getLogger(__name__)
 
     MAX_SIZE_BYTES = 100 * 1024 * 1024  # 100 MB limit in bytes
+    MIN_VALID_RECORDS_AFTER_CLEANSING = 100
     PANDAS_CHUNK_SIZE = 10000  # Rows per batch for streaming read
     DEFAULT_RANDOM_STATE = 42
     VALID_SAMPLING_METHODS = {"first_n_rows", "stratified", "random"}
@@ -352,7 +358,15 @@ def automl_data_loader(  # noqa: D417
             "Ensure the dataset has at least one row with a non-null label (e.g. empty cells in the target column)."
         )
 
-    n_samples = len(sampled_dataframe)
+    n_valid = len(sampled_dataframe)
+    if n_valid < MIN_VALID_RECORDS_AFTER_CLEANSING:
+        raise ValueError(
+            f"After data cleansing, only {n_valid} valid record(s) remain; "
+            f"at least {MIN_VALID_RECORDS_AFTER_CLEANSING} are required for AutoML training. "
+            "Provide a larger dataset or reduce missing labels, duplicates, and invalid values."
+        )
+
+    n_samples = n_valid
     logger.info("Read %d rows from s3://%s/%s (sampling_method=%s)", n_samples, bucket_name, file_key, sampling_method)
 
     # --- Train/test split ---

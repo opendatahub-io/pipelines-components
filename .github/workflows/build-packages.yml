@@ -3,7 +3,11 @@ name: Build and Test Python Packages
 
 on:
   push:
+    paths-ignore:
+      - '**/OWNERS'
   pull_request:
+    paths-ignore:
+      - '**/OWNERS'
 
 jobs:
   build:

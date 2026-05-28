@@ -19,6 +19,8 @@ For **regression** tasks the split is random; for **binary** and **multiclass** 
 Rows with a missing label (NaN / empty in ``label_column``) are dropped after load and before splitting, so regression runs do not propagate null targets into splits or the ``sample_row`` JSON (stratified sampling already dropped per chunk; this applies the same rule to random and first-n-rows
 paths).
 
+After cleansing (infinity replacement, duplicate removal, and label drop), at least **100** valid records must remain; otherwise the component fails with a clear error so downstream AutoML training does not run on datasets too small to split reliably.
+
 After sampling, **+/- infinity** values in the frame are replaced with **NaN** (same idea as AutoAI ``loadXy``), then **full-row duplicates** are dropped before the label drop and train/test split.
 
 Authentication uses AWS-style credentials provided via environment variables (e.g. from a Kubernetes secret).
@@ -91,7 +93,7 @@ def example_pipeline(
     - Name: Pipelines, Version: >=2.15.2
 - **Tags**:
   - data-processing
-- **Last Verified**: 2026-04-02 00:00:00+00:00
+- **Last Verified**: 2026-05-22 00:00:00+00:00
 - **Owners**:
   - Approvers:
     - LukaszCmielowski

@@ -40,10 +40,10 @@ def documents_rag_optimization_pipeline(
     test_data_key: str,
     input_data_secret_name: str,
     input_data_bucket_name: str,
-    llama_stack_secret_name: str,
-    llama_stack_vector_io_provider_id: str,
+    ogx_secret_name: str,
+    vector_io_provider_id: str,
     input_data_key: str = "",
-    embeddings_models: Optional[List] = None,
+    embedding_models: Optional[List] = None,
     generation_models: Optional[List] = None,
     optimization_metric: str = "faithfulness",
     optimization_max_rag_patterns: int = 8,
@@ -56,9 +56,9 @@ def documents_rag_optimization_pipeline(
     engine to systematically explore RAG configurations and identify the best performing parameter
     settings based on an upfront-specified quality metric.
 
-    The system integrates with llama-stack API for inference and vector database operations,
+    The system integrates with OGX API for inference and vector database operations,
     producing optimized RAG patterns as artifacts that can be deployed and used for production
-    RAG applications. After optimization, request JSON bodies for Llama Stack ``/v1/responses`` are
+    RAG applications. After optimization, request JSON bodies for OGX ``/v1/responses`` are
     emitted per pattern (``prepare_responses_api_requests``).
 
     Args:
@@ -73,11 +73,11 @@ def documents_rag_optimization_pipeline(
             AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_S3_ENDPOINT.
             AWS_DEFAULT_REGION is optional.
         input_data_bucket_name: S3 (or compatible) bucket name for the input documents.
-        llama_stack_secret_name: Name of the Kubernetes secret for llama-stack API connection.
-            The secret must define: LLAMA_STACK_CLIENT_API_KEY, LLAMA_STACK_CLIENT_BASE_URL.
-        llama_stack_vector_io_provider_id: Vector I/O provider id (e.g., registered in llama-stack Milvus).
+        ogx_secret_name: Name of the Kubernetes secret for OGX API connection.
+            The secret must define: OGX_CLIENT_API_KEY, OGX_CLIENT_BASE_URL.
+        vector_io_provider_id: Vector I/O provider id (e.g., registered in OGX Milvus).
         input_data_key: Object key (path) of the input documents in the input data bucket.
-        embeddings_models: Optional list of embedding model identifiers to use in the search space.
+        embedding_models: Optional list of embedding model identifiers to use in the search space.
         generation_models: Optional list of foundation/generation model identifiers to use in the
             search space.
         optimization_metric: Quality metric used to optimize RAG patterns. Supported values:
@@ -134,7 +134,7 @@ def documents_rag_optimization_pipeline(
     mps_task = search_space_preparation(
         test_data=test_data_loader_task.outputs["test_data"],
         extracted_text=text_extraction_task.outputs["extracted_text"],
-        embeddings_models=embeddings_models,
+        embedding_models=embedding_models,
         generation_models=generation_models,
     )
 
@@ -145,7 +145,7 @@ def documents_rag_optimization_pipeline(
         extracted_text=text_extraction_task.outputs["extracted_text"],
         test_data=test_data_loader_task.outputs["test_data"],
         search_space_prep_report=mps_task.outputs["search_space_prep_report"],
-        llama_stack_vector_io_provider_id=llama_stack_vector_io_provider_id,
+        vector_io_provider_id=vector_io_provider_id,
         optimization_settings={
             "metric": optimization_metric,
             "max_number_of_rag_patterns": optimization_max_rag_patterns,
@@ -159,18 +159,18 @@ def documents_rag_optimization_pipeline(
 
     use_secret_as_env(
         mps_task,
-        llama_stack_secret_name,
+        ogx_secret_name,
         {
-            "LLAMA_STACK_CLIENT_BASE_URL": "LLAMA_STACK_CLIENT_BASE_URL",
-            "LLAMA_STACK_CLIENT_API_KEY": "LLAMA_STACK_CLIENT_API_KEY",
+            "OGX_CLIENT_BASE_URL": "OGX_CLIENT_BASE_URL",
+            "OGX_CLIENT_API_KEY": "OGX_CLIENT_API_KEY",
         },
     )
     use_secret_as_env(
         hpo_task,
-        llama_stack_secret_name,
+        ogx_secret_name,
         {
-            "LLAMA_STACK_CLIENT_BASE_URL": "LLAMA_STACK_CLIENT_BASE_URL",
-            "LLAMA_STACK_CLIENT_API_KEY": "LLAMA_STACK_CLIENT_API_KEY",
+            "OGX_CLIENT_BASE_URL": "OGX_CLIENT_BASE_URL",
+            "OGX_CLIENT_API_KEY": "OGX_CLIENT_API_KEY",
         },
     )
 
@@ -183,10 +183,10 @@ def documents_rag_optimization_pipeline(
     ).set_memory_limit(MAX_MEMORY)
     use_secret_as_env(
         prepare_responses_api_requests_task,
-        llama_stack_secret_name,
+        ogx_secret_name,
         {
-            "LLAMA_STACK_CLIENT_BASE_URL": "LLAMA_STACK_CLIENT_BASE_URL",
-            "LLAMA_STACK_CLIENT_API_KEY": "LLAMA_STACK_CLIENT_API_KEY",
+            "OGX_CLIENT_BASE_URL": "OGX_CLIENT_BASE_URL",
+            "OGX_CLIENT_API_KEY": "OGX_CLIENT_API_KEY",
         },
     )
 

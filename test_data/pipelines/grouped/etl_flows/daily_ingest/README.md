@@ -25,3 +25,5 @@ This pipeline orchestrates the daily ingestion of data from an external source i
   - Approvers:
     - nsingla
     - hbelmiro
+  - Reviewers:
+    - nsingla

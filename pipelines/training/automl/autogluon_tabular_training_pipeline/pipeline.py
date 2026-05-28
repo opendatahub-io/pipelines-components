@@ -1,3 +1,5 @@
+from typing import Optional
+
 from kfp import dsl
 from kfp_components.components.data_processing.automl.tabular_data_loader import automl_data_loader
 from kfp_components.components.training.automl.autogluon_leaderboard_evaluation import leaderboard_evaluation
@@ -37,6 +39,7 @@ def autogluon_tabular_training_pipeline(
     label_column: str,
     task_type: str,
     top_n: int = 3,
+    positive_class: Optional[str] = None,
 ):
     """AutoGluon Tabular Training Pipeline.
 
@@ -111,6 +114,7 @@ def autogluon_tabular_training_pipeline(
         label_column: Name of the target/label column in the dataset.
         task_type: "binary", "multiclass", or "regression"; drives metrics and model types.
         top_n: Number of top models to select and refit (default: 3); positive integer from range [1, 10].
+        positive_class: Optional label value for the positive class in binary classification. Defaults to the second unique class after sorting label values.
 
     Returns:
         HTML artifact with leaderboard of refitted models ranked by task_type metric (e.g. accuracy, r2).
@@ -165,6 +169,7 @@ def autogluon_tabular_training_pipeline(
         label_column=label_column,
         task_type=task_type,
         top_n=top_n,
+        positive_class=positive_class,
         train_data_path=data_loader_task.outputs["models_selection_train_data_path"],
         test_data=data_loader_task.outputs["sampled_test_dataset"],
         workspace_path=dsl.WORKSPACE_PATH_PLACEHOLDER,

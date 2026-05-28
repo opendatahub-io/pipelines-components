@@ -54,6 +54,7 @@ The pipeline leverages AutoGluon's unique ensembling strategy that combines mult
 | `label_column` | `str` | `None` | Name of the target/label column in the dataset. |
 | `task_type` | `str` | `None` | "binary", "multiclass", or "regression"; drives metrics and model types. |
 | `top_n` | `int` | `3` | Number of top models to select and refit (default: 3); positive integer from range [1, 10]. |
+| `positive_class` | `Optional[str]` | `None` | Optional label value for the positive class in binary classification. Defaults to the second unique class after sorting label values. |
 
 ## Metadata 🗂️
 
@@ -69,7 +70,7 @@ The pipeline leverages AutoGluon's unique ensembling strategy that combines mult
   - pipeline
   - automl
   - autogluon-tabular-training-pipeline
-- **Last Verified**: 2026-05-07 12:00:00+00:00
+- **Last Verified**: 2026-05-20 12:00:00+00:00
 - **Owners**:
   - Approvers:
     - LukaszCmielowski
@@ -98,7 +99,8 @@ Pipeline outputs are written to the artifact store (S3-compatible storage config
     │           │   ├── metrics/
     │           │   │   ├── metrics.json         # model evaluation metrics (eval_metric, etc.)
     │           │   │   ├── feature_importance.json
-    │           │   │   └── confusion_matrix.json  # for classification tasks only
+    │           │   │   ├── confusion_matrix.json  # for classification tasks only
+    │           │   │   └── curves.json            # for classification tasks only (ROC + PR)
     │           │   └── notebooks/
     │           │       └── automl_predictor_notebook.ipynb   # Jupyter notebook for inference & exploration
     │           └── <ModelName>_FULL/

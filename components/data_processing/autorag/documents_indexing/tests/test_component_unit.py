@@ -26,15 +26,15 @@ def _make_httpx_module():
     return mod
 
 
-def _make_llama_stack_client_module():
-    """Stub llama_stack_client with a real APIConnectionError (MagicMock breaks except clauses)."""
-    mod = types.ModuleType("llama_stack_client")
+def _make_ogx_client_module():
+    """Stub ogx_client with a real APIConnectionError (MagicMock breaks except clauses)."""
+    mod = types.ModuleType("ogx_client")
 
     class APIConnectionError(Exception):
-        """Stand-in for llama_stack_client.APIConnectionError."""
+        """Stand-in for ogx_client.APIConnectionError."""
 
     mod.APIConnectionError = APIConnectionError
-    mod.LlamaStackClient = mock.MagicMock()
+    mod.OgxClient = mock.MagicMock()
     return mod
 
 
@@ -46,9 +46,9 @@ def _make_all_mocks():
         "ai4rag.rag",
         "ai4rag.rag.chunking",
         "ai4rag.rag.embedding",
-        "ai4rag.rag.embedding.llama_stack",
+        "ai4rag.rag.embedding.ogx",
         "ai4rag.rag.vector_store",
-        "ai4rag.rag.vector_store.llama_stack",
+        "ai4rag.rag.vector_store.ogx",
         "langchain_core",
         "langchain_core.documents",
         "langchain_text_splitters",
@@ -56,22 +56,22 @@ def _make_all_mocks():
         mocks[name] = mock.MagicMock()
 
     mocks["httpx"] = _make_httpx_module()
-    mocks["llama_stack_client"] = _make_llama_stack_client_module()
+    mocks["ogx_client"] = _make_ogx_client_module()
     return mocks
 
 
 def _patch_indexing_dependencies():
-    """Return modules dict to mock ai4rag/langchain/llama-stack imports."""
+    """Return modules dict to mock ai4rag/langchain/ogx imports."""
     mock_chunker_cls = mock.MagicMock()
     mock_chunker = mock.MagicMock()
     mock_chunker.split_documents.return_value = ["chunk-1", "chunk-2"]
     mock_chunker_cls.return_value = mock_chunker
 
-    mock_ls_embedding_params = mock.MagicMock()
-    mock_ls_embedding_model = mock.MagicMock()
-    mock_ls_vector_store = mock.MagicMock()
-    mock_ls_vector_store.add_documents = mock.MagicMock()
-    mock_llama_client = mock.MagicMock()
+    mock_ogx_embedding_params = mock.MagicMock()
+    mock_ogx_embedding_model = mock.MagicMock()
+    mock_ogx_vectorstore = mock.MagicMock()
+    mock_ogx_vectorstore.add_documents = mock.MagicMock()
+    mock_ogx_client = mock.MagicMock()
     mock_document = mock.MagicMock(side_effect=lambda **kwargs: kwargs)
 
     mods = {
@@ -79,21 +79,21 @@ def _patch_indexing_dependencies():
         "ai4rag.rag": mock.MagicMock(),
         "ai4rag.rag.chunking": mock.MagicMock(LangChainChunker=mock_chunker_cls),
         "ai4rag.rag.embedding": mock.MagicMock(),
-        "ai4rag.rag.embedding.llama_stack": mock.MagicMock(
-            LSEmbeddingModel=mock_ls_embedding_model,
-            LSEmbeddingParams=mock_ls_embedding_params,
+        "ai4rag.rag.embedding.ogx": mock.MagicMock(
+            OGXEmbeddingModel=mock_ogx_embedding_model,
+            OGXEmbeddingParams=mock_ogx_embedding_params,
         ),
         "ai4rag.rag.vector_store": mock.MagicMock(),
-        "ai4rag.rag.vector_store.llama_stack": mock.MagicMock(
-            LSVectorStore=mock.MagicMock(return_value=mock_ls_vector_store),
+        "ai4rag.rag.vector_store.ogx": mock.MagicMock(
+            OGXVectorStore=mock.MagicMock(return_value=mock_ogx_vectorstore),
         ),
         "langchain_core": mock.MagicMock(),
         "langchain_core.documents": mock.MagicMock(Document=mock_document),
         "httpx": _make_httpx_module(),
-        "llama_stack_client": _make_llama_stack_client_module(),
+        "ogx_client": _make_ogx_client_module(),
     }
-    mods["llama_stack_client"].LlamaStackClient.return_value = mock_llama_client
-    return mods, mock_ls_vector_store
+    mods["ogx_client"].OgxClient.return_value = mock_ogx_client
+    return mods, mock_ogx_vectorstore
 
 
 class TestDocumentsIndexingUnitTests:
@@ -112,18 +112,18 @@ class TestDocumentsIndexingUnitTests:
         params = list(sig.parameters)
         assert "embedding_model_id" in params
         assert "extracted_text" in params
-        assert "llama_stack_vector_io_provider_id" in params
+        assert "vector_io_provider_id" in params
 
     def test_empty_vector_store_type_raises_value_error(self, tmp_path):
-        """Empty llama_stack_vector_io_provider_id raises ValueError."""
+        """Empty vector_io_provider_id raises ValueError."""
         mods, _ = _patch_indexing_dependencies()
         extracted = mock.MagicMock(path=str(tmp_path))
         with mock.patch.dict(sys.modules, mods):
-            with pytest.raises(ValueError, match="llama_stack_vector_io_provider_id must be a non-empty string"):
+            with pytest.raises(ValueError, match="vector_io_provider_id must be a non-empty string"):
                 documents_indexing.python_func(
                     embedding_model_id="embed-model",
                     extracted_text=extracted,
-                    llama_stack_vector_io_provider_id="",
+                    vector_io_provider_id="",
                 )
 
     def test_empty_embedding_model_id_raises_value_error(self, tmp_path):
@@ -135,7 +135,7 @@ class TestDocumentsIndexingUnitTests:
                 documents_indexing.python_func(
                     embedding_model_id="",
                     extracted_text=extracted,
-                    llama_stack_vector_io_provider_id="milvus",
+                    vector_io_provider_id="milvus",
                 )
 
     def test_invalid_chunk_size_type_raises_type_error(self, tmp_path):
@@ -147,44 +147,44 @@ class TestDocumentsIndexingUnitTests:
                 documents_indexing.python_func(
                     embedding_model_id="embed-model",
                     extracted_text=extracted,
-                    llama_stack_vector_io_provider_id="milvus",
+                    vector_io_provider_id="milvus",
                     chunk_size="1024",
                 )
 
 
 class TestSSLFallbackDocumentsIndexing:
-    """Tests for SSL retry logic in _create_llama_stack_client."""
+    """Tests for SSL retry logic in _create_ogx_client."""
 
     @mock.patch.dict(
         "os.environ",
         {
-            "LLAMA_STACK_CLIENT_BASE_URL": "https://llama-stack.example.com",
-            "LLAMA_STACK_CLIENT_API_KEY": "test-api-key",
+            "OGX_CLIENT_BASE_URL": "https://ogx.example.com",
+            "OGX_CLIENT_API_KEY": "test-api-key",
         },
     )
-    def test_llama_stack_client_ssl_retry_with_verify_false(self, tmp_path):
-        """SSL error on models.list() retries LlamaStackClient with verify=False."""
+    def test_ogx_client_ssl_retry_with_verify_false(self, tmp_path):
+        """SSL error on models.list() retries OgxClient with verify=False."""
         mocks = _make_all_mocks()
 
-        mock_ls_client_fail = mock.MagicMock()
-        mock_ls_client_fail.models.list.side_effect = ssl.SSLCertVerificationError(
+        mock_ogx_client_fail = mock.MagicMock()
+        mock_ogx_client_fail.models.list.side_effect = ssl.SSLCertVerificationError(
             "CERTIFICATE_VERIFY_FAILED: self-signed certificate"
         )
-        mock_ls_client_ok = mock.MagicMock()
-        mock_ls_client_ok.models.list.return_value = []
+        mock_ogx_client_ok = mock.MagicMock()
+        mock_ogx_client_ok.models.list.return_value = []
 
-        ls_call_count = 0
-        ls_kwargs_history = []
+        ogx_call_count = 0
+        ogx_kwargs_history = []
 
-        def fake_ls_client(**kwargs):
-            nonlocal ls_call_count
-            ls_call_count += 1
-            ls_kwargs_history.append(kwargs)
-            if ls_call_count == 1:
-                return mock_ls_client_fail
-            return mock_ls_client_ok
+        def fake_ogx_client(**kwargs):
+            nonlocal ogx_call_count
+            ogx_call_count += 1
+            ogx_kwargs_history.append(kwargs)
+            if ogx_call_count == 1:
+                return mock_ogx_client_fail
+            return mock_ogx_client_ok
 
-        mocks["llama_stack_client"].LlamaStackClient.side_effect = fake_ls_client
+        mocks["ogx_client"].OgxClient.side_effect = fake_ogx_client
 
         # Provide an empty directory — component returns early when no .md files found
         extracted_text_dir = tmp_path / "extracted"
@@ -196,49 +196,49 @@ class TestSSLFallbackDocumentsIndexing:
             documents_indexing.python_func(
                 embedding_model_id="granite-embedding",
                 extracted_text=extracted_text,
-                llama_stack_vector_io_provider_id="ls_milvus",
+                vector_io_provider_id="milvus",
             )
 
-        assert ls_call_count == 2, "LlamaStackClient should be instantiated twice (initial + SSL retry)"
-        assert ls_kwargs_history[0].get("http_client") is None, "First call should not disable SSL"
-        assert isinstance(ls_kwargs_history[1].get("http_client"), mocks["httpx"].Client), (
+        assert ogx_call_count == 2, "OgxClient should be instantiated twice (initial + SSL retry)"
+        assert ogx_kwargs_history[0].get("http_client") is None, "First call should not disable SSL"
+        assert isinstance(ogx_kwargs_history[1].get("http_client"), mocks["httpx"].Client), (
             "Retry call should pass httpx.Client"
         )
-        assert ls_kwargs_history[1]["http_client"].kwargs.get("verify") is False
+        assert ogx_kwargs_history[1]["http_client"].kwargs.get("verify") is False
 
     @mock.patch.dict(
         "os.environ",
         {
-            "LLAMA_STACK_CLIENT_BASE_URL": "https://llama-stack.example.com",
-            "LLAMA_STACK_CLIENT_API_KEY": "test-api-key",
+            "OGX_CLIENT_BASE_URL": "https://ogx.example.com",
+            "OGX_CLIENT_API_KEY": "test-api-key",
         },
     )
-    def test_llama_stack_client_api_connection_error_wrapping_ssl_retries(self, tmp_path):
-        """LSAPIConnectionError wrapping an SSL cause triggers the verify=False retry (production case)."""
+    def test_ogx_client_api_connection_error_wrapping_ssl_retries(self, tmp_path):
+        """OGXAPIConnectionError wrapping an SSL cause triggers the verify=False retry (production case)."""
         mocks = _make_all_mocks()
 
-        LSAPIConnectionError = mocks["llama_stack_client"].APIConnectionError
+        OGXAPIConnectionError = mocks["ogx_client"].APIConnectionError
         ssl_err = ssl.SSLCertVerificationError("CERTIFICATE_VERIFY_FAILED: self-signed certificate")
-        api_err = LSAPIConnectionError("Connection error.")
+        api_err = OGXAPIConnectionError("Connection error.")
         api_err.__cause__ = ssl_err
 
-        mock_ls_client_fail = mock.MagicMock()
-        mock_ls_client_fail.models.list.side_effect = api_err
-        mock_ls_client_ok = mock.MagicMock()
-        mock_ls_client_ok.models.list.return_value = []
+        mock_ogx_client_fail = mock.MagicMock()
+        mock_ogx_client_fail.models.list.side_effect = api_err
+        mock_ogx_client_ok = mock.MagicMock()
+        mock_ogx_client_ok.models.list.return_value = []
 
-        ls_call_count = 0
-        ls_kwargs_history = []
+        ogx_call_count = 0
+        ogx_kwargs_history = []
 
-        def fake_ls_client(**kwargs):
-            nonlocal ls_call_count
-            ls_call_count += 1
-            ls_kwargs_history.append(kwargs)
-            if ls_call_count == 1:
-                return mock_ls_client_fail
-            return mock_ls_client_ok
+        def fake_ogx_client(**kwargs):
+            nonlocal ogx_call_count
+            ogx_call_count += 1
+            ogx_kwargs_history.append(kwargs)
+            if ogx_call_count == 1:
+                return mock_ogx_client_fail
+            return mock_ogx_client_ok
 
-        mocks["llama_stack_client"].LlamaStackClient.side_effect = fake_ls_client
+        mocks["ogx_client"].OgxClient.side_effect = fake_ogx_client
 
         extracted_text_dir = tmp_path / "extracted"
         extracted_text_dir.mkdir()
@@ -249,28 +249,28 @@ class TestSSLFallbackDocumentsIndexing:
             documents_indexing.python_func(
                 embedding_model_id="granite-embedding",
                 extracted_text=extracted_text,
-                llama_stack_vector_io_provider_id="ls_milvus",
+                vector_io_provider_id="milvus",
             )
 
-        assert ls_call_count == 2, "LlamaStackClient should be instantiated twice (initial + SSL retry)"
-        assert ls_kwargs_history[0].get("http_client") is None
-        assert isinstance(ls_kwargs_history[1].get("http_client"), mocks["httpx"].Client)
-        assert ls_kwargs_history[1]["http_client"].kwargs.get("verify") is False
+        assert ogx_call_count == 2, "OgxClient should be instantiated twice (initial + SSL retry)"
+        assert ogx_kwargs_history[0].get("http_client") is None
+        assert isinstance(ogx_kwargs_history[1].get("http_client"), mocks["httpx"].Client)
+        assert ogx_kwargs_history[1]["http_client"].kwargs.get("verify") is False
 
     @mock.patch.dict(
         "os.environ",
         {
-            "LLAMA_STACK_CLIENT_BASE_URL": "https://llama-stack.example.com",
-            "LLAMA_STACK_CLIENT_API_KEY": "test-api-key",
+            "OGX_CLIENT_BASE_URL": "https://ogx.example.com",
+            "OGX_CLIENT_API_KEY": "test-api-key",
         },
     )
-    def test_llama_stack_client_non_ssl_error_is_reraised(self, tmp_path):
+    def test_ogx_client_non_ssl_error_is_reraised(self, tmp_path):
         """Non-SSL error from models.list() propagates without retry."""
         mocks = _make_all_mocks()
 
-        mock_ls_client = mock.MagicMock()
-        mock_ls_client.models.list.side_effect = ConnectionRefusedError("Connection refused")
-        mocks["llama_stack_client"].LlamaStackClient.return_value = mock_ls_client
+        mock_ogx_client = mock.MagicMock()
+        mock_ogx_client.models.list.side_effect = ConnectionRefusedError("Connection refused")
+        mocks["ogx_client"].OgxClient.return_value = mock_ogx_client
 
         extracted_text = mock.MagicMock()
         extracted_text.path = str(tmp_path)
@@ -280,53 +280,53 @@ class TestSSLFallbackDocumentsIndexing:
                 documents_indexing.python_func(
                     embedding_model_id="granite-embedding",
                     extracted_text=extracted_text,
-                    llama_stack_vector_io_provider_id="milvus",
+                    vector_io_provider_id="milvus",
                 )
 
     @mock.patch.dict(
         "os.environ",
         {
-            "LLAMA_STACK_CLIENT_BASE_URL": "https://llama-stack.example.com",
-            "LLAMA_STACK_CLIENT_API_KEY": "test-api-key",
+            "OGX_CLIENT_BASE_URL": "https://ogx.example.com",
+            "OGX_CLIENT_API_KEY": "test-api-key",
         },
     )
-    def test_llama_stack_client_api_connection_error_non_ssl_cause_is_reraised(self, tmp_path):
-        """LSAPIConnectionError whose cause is NOT SSL propagates without retry."""
+    def test_ogx_client_api_connection_error_non_ssl_cause_is_reraised(self, tmp_path):
+        """OGXAPIConnectionError whose cause is NOT SSL propagates without retry."""
         mocks = _make_all_mocks()
 
-        LSAPIConnectionError = mocks["llama_stack_client"].APIConnectionError
-        err = LSAPIConnectionError("Connection timeout")
+        OGXAPIConnectionError = mocks["ogx_client"].APIConnectionError
+        err = OGXAPIConnectionError("Connection timeout")
         err.__cause__ = TimeoutError("timed out")
 
-        mock_ls_client = mock.MagicMock()
-        mock_ls_client.models.list.side_effect = err
-        mocks["llama_stack_client"].LlamaStackClient.return_value = mock_ls_client
+        mock_ogx_client = mock.MagicMock()
+        mock_ogx_client.models.list.side_effect = err
+        mocks["ogx_client"].OgxClient.return_value = mock_ogx_client
 
         extracted_text = mock.MagicMock()
         extracted_text.path = str(tmp_path)
 
         with mock.patch.dict(sys.modules, mocks):
-            with pytest.raises(LSAPIConnectionError):
+            with pytest.raises(OGXAPIConnectionError):
                 documents_indexing.python_func(
                     embedding_model_id="granite-embedding",
                     extracted_text=extracted_text,
-                    llama_stack_vector_io_provider_id="milvus",
+                    vector_io_provider_id="milvus",
                 )
 
     @mock.patch.dict(
         "os.environ",
         {
-            "LLAMA_STACK_CLIENT_BASE_URL": "https://llama-stack.example.com",
-            "LLAMA_STACK_CLIENT_API_KEY": "test-api-key",
+            "OGX_CLIENT_BASE_URL": "https://ogx.example.com",
+            "OGX_CLIENT_API_KEY": "test-api-key",
         },
     )
     def test_no_documents_returns_early(self, tmp_path):
         """Component returns early and skips indexing when no .md files are found."""
         mocks = _make_all_mocks()
 
-        mock_ls_client = mock.MagicMock()
-        mock_ls_client.models.list.return_value = []
-        mocks["llama_stack_client"].LlamaStackClient.return_value = mock_ls_client
+        mock_ogx_client = mock.MagicMock()
+        mock_ogx_client.models.list.return_value = []
+        mocks["ogx_client"].OgxClient.return_value = mock_ogx_client
 
         extracted_text_dir = tmp_path / "extracted"
         extracted_text_dir.mkdir()
@@ -337,26 +337,26 @@ class TestSSLFallbackDocumentsIndexing:
             documents_indexing.python_func(
                 embedding_model_id="granite-embedding",
                 extracted_text=extracted_text,
-                llama_stack_vector_io_provider_id="ls_milvus",
+                vector_io_provider_id="milvus",
             )
 
-        # LSVectorStore.add_documents should never be called if no documents found
-        mocks["ai4rag.rag.vector_store.llama_stack"].LSVectorStore.return_value.add_documents.assert_not_called()
+        # OGXVectorStore.add_documents should never be called if no documents found
+        mocks["ai4rag.rag.vector_store.ogx"].OGXVectorStore.return_value.add_documents.assert_not_called()
 
     @mock.patch.dict(
         "os.environ",
         {
-            "LLAMA_STACK_CLIENT_BASE_URL": "https://llama-stack.example.com",
-            "LLAMA_STACK_CLIENT_API_KEY": "test-api-key",
+            "OGX_CLIENT_BASE_URL": "https://ogx.example.com",
+            "OGX_CLIENT_API_KEY": "test-api-key",
         },
     )
     def test_documents_are_indexed_in_batches(self, tmp_path):
         """Documents are chunked and indexed; add_documents called once per batch."""
         mocks = _make_all_mocks()
 
-        mock_ls_client = mock.MagicMock()
-        mock_ls_client.models.list.return_value = []
-        mocks["llama_stack_client"].LlamaStackClient.return_value = mock_ls_client
+        mock_ogx_client = mock.MagicMock()
+        mock_ogx_client.models.list.return_value = []
+        mocks["ogx_client"].OgxClient.return_value = mock_ogx_client
 
         # Stub chunker to return one chunk per document
         mock_chunker = mock.MagicMock()
@@ -364,7 +364,7 @@ class TestSSLFallbackDocumentsIndexing:
         mocks["ai4rag.rag.chunking"].LangChainChunker.return_value = mock_chunker
 
         mock_vectorstore = mock.MagicMock()
-        mocks["ai4rag.rag.vector_store.llama_stack"].LSVectorStore.return_value = mock_vectorstore
+        mocks["ai4rag.rag.vector_store.ogx"].OGXVectorStore.return_value = mock_vectorstore
 
         # Write 3 .md files; use batch_size=2 → 2 batches
         extracted_text_dir = tmp_path / "extracted"
@@ -379,7 +379,7 @@ class TestSSLFallbackDocumentsIndexing:
             documents_indexing.python_func(
                 embedding_model_id="granite-embedding",
                 extracted_text=extracted_text,
-                llama_stack_vector_io_provider_id="ls_milvus",
+                vector_io_provider_id="milvus",
                 batch_size=2,
             )
 

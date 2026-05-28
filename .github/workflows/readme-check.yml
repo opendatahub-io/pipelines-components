@@ -12,6 +12,7 @@ on:
       - '.github/scripts/**'
       - 'pyproject.toml'
       - 'uv.lock'
+      - '!**/OWNERS'
 
 jobs:
   check-readme-sync:

@@ -7,8 +7,8 @@ dependencies:
       version: '>=2.15.2'
   external_services:
     - name: ai4rag
-      version: ">=1.0.0"
-    - name: llama-stack API
+      version: "~=0.6.1"
+    - name: OGX API
       version: ">=1.0.0"
     - name: Milvus
       version: ">=2.0.0"
@@ -19,4 +19,4 @@ tags:
   - autorag
   - optimization
   - rag-patterns
-lastVerified: 2026-01-23T14:23:12Z
+lastVerified: 2026-05-14T00:00:00Z

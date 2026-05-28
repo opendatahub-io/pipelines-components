@@ -8,8 +8,8 @@ dependencies:
       version: '2.16.1'
   external_services:
     - name: ai4rag
-      version: ">=1.0.0"
-    - name: llama-stack API
+      version: "~=0.6.1"
+    - name: OGX API
       version: ">=1.0.0"
     - name: RHOAI Connections API
       version: ">=1.0.0"
@@ -26,4 +26,4 @@ tags:
   - pipeline
   - autorag
   - rag-optimization
-lastVerified: 2026-05-07T12:00:00Z
+lastVerified: 2026-05-14T00:00:00Z

@@ -3,6 +3,8 @@ name: Scripts Unit Tests
 
 on:
   push:
+    paths-ignore:
+      - '**/OWNERS'
   pull_request:
     paths:
       - '.github/scripts/**'
@@ -11,6 +13,7 @@ on:
       - '.github/actions/setup-python-ci/**'
       - 'pyproject.toml'
       - 'uv.lock'
+      - '!**/OWNERS'
 
 jobs:
   test-scripts:

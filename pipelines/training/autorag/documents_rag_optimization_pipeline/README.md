@@ -9,7 +9,7 @@ Automated system for building and optimizing Retrieval-Augmented Generation (RAG
 The Documents RAG Optimization Pipeline is an automated system for building and optimizing Retrieval-Augmented Generation (RAG) applications within Red Hat OpenShift AI. It leverages Kubeflow Pipelines to orchestrate the optimization workflow, using the ai4rag optimization engine to systematically
 explore RAG configurations and identify the best performing parameter settings based on an upfront-specified quality metric.
 
-The system integrates with llama-stack API for inference and vector database operations, producing optimized RAG patterns as artifacts that can be deployed and used for production RAG applications. After optimization, request JSON bodies for Llama Stack ``/v1/responses`` are emitted per pattern
+The system integrates with OGX API for inference and vector database operations, producing optimized RAG patterns as artifacts that can be deployed and used for production RAG applications. After optimization, request JSON bodies for OGX ``/v1/responses`` are emitted per pattern
 (``prepare_responses_api_requests``).
 
 ## Inputs 📥
@@ -21,10 +21,10 @@ The system integrates with llama-stack API for inference and vector database ope
 | `test_data_key` | `str` | `None` | Object key (path) of the test data JSON file in the test data bucket. |
 | `input_data_secret_name` | `str` | `None` | Name of the Kubernetes secret holding S3-compatible credentials for input document data access. The following environment variables are required: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_S3_ENDPOINT. AWS_DEFAULT_REGION is optional. |
 | `input_data_bucket_name` | `str` | `None` | S3 (or compatible) bucket name for the input documents. |
-| `llama_stack_secret_name` | `str` | `None` | Name of the Kubernetes secret for llama-stack API connection. The secret must define: LLAMA_STACK_CLIENT_API_KEY, LLAMA_STACK_CLIENT_BASE_URL. |
-| `llama_stack_vector_io_provider_id` | `str` | `None` | Vector I/O provider id (e.g., registered in llama-stack Milvus). |
+| `ogx_secret_name` | `str` | `None` | Name of the Kubernetes secret for OGX API connection. The secret must define: OGX_CLIENT_API_KEY, OGX_CLIENT_BASE_URL. |
+| `vector_io_provider_id` | `str` | `None` | Vector I/O provider id (e.g., registered in OGX Milvus). |
 | `input_data_key` | `str` | `""` | Object key (path) of the input documents in the input data bucket. |
-| `embeddings_models` | `Optional[List]` | `None` | Optional list of embedding model identifiers to use in the search space. |
+| `embedding_models` | `Optional[List]` | `None` | Optional list of embedding model identifiers to use in the search space. |
 | `generation_models` | `Optional[List]` | `None` | Optional list of foundation/generation model identifiers to use in the search space. |
 | `optimization_metric` | `str` | `faithfulness` | Quality metric used to optimize RAG patterns. Supported values: "faithfulness", "answer_correctness", "context_correctness". |
 | `optimization_max_rag_patterns` | `int` | `8` | Maximum number of RAG patterns to generate. Passed to ai4rag (max_number_of_rag_patterns). Defaults to 8. |
@@ -38,8 +38,8 @@ The system integrates with llama-stack API for inference and vector database ope
   - Kubeflow:
     - Name: Pipelines, Version: 2.16.1
   - External Services:
-    - Name: ai4rag, Version: >=1.0.0
-    - Name: llama-stack API, Version: >=1.0.0
+    - Name: ai4rag, Version: ~=0.6.1
+    - Name: OGX API, Version: >=1.0.0
     - Name: RHOAI Connections API, Version: >=1.0.0
     - Name: Milvus, Version: >=2.0.0
     - Name: Milvus Lite, Version: >=2.0.0
@@ -50,7 +50,7 @@ The system integrates with llama-stack API for inference and vector database ope
   - pipeline
   - autorag
   - rag-optimization
-- **Last Verified**: 2026-05-07 12:00:00+00:00
+- **Last Verified**: 2026-05-14 00:00:00+00:00
 - **Owners**:
   - Approvers:
     - LukaszCmielowski
@@ -88,7 +88,7 @@ RAG templates with optimal parameter values, which are referred to as RAG Patter
 ### Infrastructure Components
 
 - **Vector Databases**: Milvus, Milvus Lite, ChromaDB
-- **LLM Provider**: Llama-stack-supported models and vendors
+- **LLM Provider**: OGX-supported models and vendors
 - **Experiment Tracking**: MLFlow (optional) - For experiment tracking, metrics logging, and
   artifact management
 

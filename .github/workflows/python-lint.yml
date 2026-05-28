@@ -11,6 +11,8 @@ on:
       - '.github/actions/setup-python-ci/**'
       - '.github/scripts/check_imports/**'
   push:
+    paths-ignore:
+      - '**/OWNERS'
 
 jobs:
   python-lint:

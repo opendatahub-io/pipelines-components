@@ -11,7 +11,7 @@ dependencies:
     - name: boto3
       version: ">=1.42.34"
     - name: ai4rag
-      version: ">=1.0.0"
+      version: "~=0.6.1"
     - name: RHOAI Connections API
       version: ">=1.0.0"
 tags:
@@ -20,4 +20,4 @@ tags:
   - documents_discovery
   - data_indexing
   - autorag
-lastVerified: 2026-03-05T00:00:00Z
+lastVerified: 2026-05-14T00:00:00Z

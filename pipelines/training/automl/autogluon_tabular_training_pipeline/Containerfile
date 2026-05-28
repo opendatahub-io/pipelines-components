@@ -1,6 +1,18 @@
 ARG BASE_IMAGE="quay.io/aipcc/base-images/cpu:3.4"
 
+## Build stage: build a kfp-components wheel from the local source tree
+FROM ${BASE_IMAGE} AS builder
+RUN mkdir /tmp/kfp-src /tmp/dist
+COPY pyproject.toml __init__.py /tmp/kfp-src/
+COPY components/ /tmp/kfp-src/components/
+COPY pipelines/ /tmp/kfp-src/pipelines/
+COPY utils/ /tmp/kfp-src/utils/
+RUN pip wheel --no-deps --index-url https://console.redhat.com/api/pypi/public-rhai/rhoai/3.4/cpu-ubi9/simple -w /tmp/dist /tmp/kfp-src/
+
 FROM ${BASE_IMAGE}
+
+COPY --from=builder /tmp/dist/kfp_components-*.whl /tmp/
+RUN pip install --no-cache-dir --no-deps /tmp/kfp_components-*.whl
 
 COPY pipelines/training/automl/autogluon_tabular_training_pipeline/requirements.txt \
      pipelines/training/automl/autogluon_tabular_training_pipeline/requirements-pypi.txt \

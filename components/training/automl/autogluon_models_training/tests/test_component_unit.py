@@ -11,9 +11,14 @@ import pytest
 
 @pytest.fixture(autouse=True, scope="module")
 def isolated_sys_modules():
-    """Patch pandas/autogluon in sys.modules for this module; restored on teardown."""
+    """Patch autogluon and sklearn in sys.modules for this module; restored on teardown.
+
+    Note: pandas is NOT mocked - the component needs real pandas for DataFrame/Series
+    manipulation in curve generation.
+    """
+    import numpy as np
+
     with mock.patch.dict(sys.modules, clear=False) as mocked_modules:
-        mocked_modules["pandas"] = mock.MagicMock()
         _ag = mock.MagicMock()
         _ag.__path__ = []
         _ag.__spec__ = None
@@ -24,6 +29,28 @@ def isolated_sys_modules():
             if sub == "autogluon.core":
                 _m.__path__ = []
             mocked_modules[sub] = _m
+
+        def _roc_auc_score_side_effect(y_true, y_score):
+            arr = np.asarray(y_true)
+            if len(np.unique(arr)) < 2:
+                raise ValueError("Only one class present in y_true. ROC AUC score is not defined.")
+            return 0.85
+
+        _sklearn_metrics = mock.MagicMock()
+        _sklearn_metrics.roc_curve.return_value = (
+            np.array([0.0, 0.5, 1.0]),
+            np.array([0.0, 0.8, 1.0]),
+            np.array([1.0, 0.5]),
+        )
+        _sklearn_metrics.roc_auc_score.side_effect = _roc_auc_score_side_effect
+        _sklearn_metrics.precision_recall_curve.return_value = (
+            np.array([1.0, 0.8, 0.0]),
+            np.array([0.0, 0.5, 1.0]),
+            np.array([0.8, 0.5]),
+        )
+        _sklearn_metrics.average_precision_score.return_value = 0.75
+        mocked_modules["sklearn"] = mock.MagicMock()
+        mocked_modules["sklearn.metrics"] = _sklearn_metrics
         yield
 
 
@@ -135,8 +162,26 @@ def _base_call_kwargs(workspace_path, models_artifact, test_data, notebooks):
     )
 
 
+_NOTEBOOK_TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "notebook_templates"
+
+
 class TestAutogluonModelsTrainingUnitTests:
     """Unit tests for the autogluon_models_training component."""
+
+    def test_regression_notebook_template_excludes_curves(self):
+        """Regression template must not reference curves.json (classification-only artifact)."""
+        text = (_NOTEBOOK_TEMPLATES_DIR / "regression_notebook.ipynb").read_text(encoding="utf-8")
+        assert "curves.json" not in text
+        assert "roc-and-precision-recall-curves" not in text
+        assert "confusion_matrix.json" not in text
+
+    def test_classification_notebook_template_includes_curves(self):
+        """Classification template documents and loads curves.json for binary/multiclass."""
+        text = (_NOTEBOOK_TEMPLATES_DIR / "classification_notebook.ipynb").read_text(encoding="utf-8")
+        assert "curves.json" in text
+        assert "roc-and-precision-recall-curves" in text
+        assert 'curves[\\"task_type\\"] == \\"binary\\"' in text
+        assert "confusion_matrix.json" in text
 
     def test_component_imports_correctly(self):
         """Component is callable and has the expected KFP attributes."""
@@ -258,6 +303,7 @@ class TestAutogluonModelsTrainingUnitTests:
             assert (metrics_dir / "metrics.json").exists()
             assert (metrics_dir / "feature_importance.json").exists()
             assert not (metrics_dir / "confusion_matrix.json").exists()  # regression: no CM
+            assert not (metrics_dir / "curves.json").exists()
             # model.json written alongside metrics/, predictor/, notebooks/
             model_json_path = model_dir / "model.json"
             assert model_json_path.exists()
@@ -332,13 +378,16 @@ class TestAutogluonModelsTrainingUnitTests:
         # read_csv called only twice (train + test, no extra)
         assert mock_read_csv.call_count == 2
 
-    @mock.patch("autogluon.core.metrics.confusion_matrix")
     @mock.patch("pandas.read_csv")
     @mock.patch("autogluon.tabular.TabularPredictor")
-    def test_binary_classification_writes_confusion_matrix(
-        self, mock_predictor_class, mock_read_csv, mock_confusion_matrix, mock_notebooks, tmp_path
+    def test_binary_explicit_positive_class_passed_to_tabular_predictor(
+        self,
+        mock_predictor_class,
+        mock_read_csv,
+        mock_notebooks,
+        tmp_path,
     ):
-        """Binary classification writes confusion_matrix.json and uses classification notebook."""
+        """Explicit positive_class is forwarded to TabularPredictor for binary tasks."""
         mock_predictor = mock.MagicMock()
         mock_predictor_clone = mock.MagicMock()
         mock_predictor_class.return_value.fit.return_value = mock_predictor
@@ -347,15 +396,154 @@ class TestAutogluonModelsTrainingUnitTests:
         mock_predictor.label = "target"
         mock_predictor.eval_metric = "accuracy"
         _mock_leaderboard_top_models(mock_predictor, ["LightGBM_BAG_L1"])
-        mock_predictions = mock.MagicMock()
-        mock_predictor_clone.predict.return_value = mock_predictions
-        mock_predictor_clone.evaluate_predictions.return_value = {"accuracy": 0.95}
         mock_predictor_clone.feature_importance.return_value = mock.MagicMock(to_dict=lambda: {"f": 0.1})
+        mock_predictor_clone.positive_class = 0
+        mock_predictor_clone.evaluate_predictions.return_value = {
+            "accuracy": 0.9,
+            "confusion_matrix": mock.MagicMock(to_dict=lambda: {"0": {"0": 1}}),
+            "classification_report": {},
+        }
+
+        mock_test_df = _mock_csv_frame()
+        saved = sys.modules.pop("pandas", None)
+        try:
+            import importlib
+
+            pd = importlib.import_module("pandas")
+            y_true = pd.Series([0, 0, 1, 1])
+            y_proba = pd.DataFrame({0: [0.9, 0.8, 0.2, 0.1], 1: [0.1, 0.2, 0.8, 0.9]})
+        finally:
+            if saved is not None:
+                sys.modules["pandas"] = saved
+        mock_test_df.__getitem__ = lambda self, key: y_true if key == "target" else mock.MagicMock()
+        mock_predictor_clone.predict_proba.return_value = y_proba
+
+        mock_read_csv.side_effect = [_mock_csv_frame(), mock_test_df, _mock_csv_frame()]
+
+        workspace_path = str(tmp_path / "ws")
+        Path(workspace_path).mkdir()
+        models_output_dir = str(tmp_path / "out")
+        Path(models_output_dir).mkdir()
+        mock_models_artifact = mock.MagicMock()
+        mock_models_artifact.path = models_output_dir
+        mock_models_artifact.metadata = {}
+
+        call_kwargs = _base_call_kwargs(
+            workspace_path, mock_models_artifact, mock.MagicMock(path="/tmp/test.csv"), mock_notebooks
+        )
+        call_kwargs["task_type"] = "binary"
+        call_kwargs["positive_class"] = "0"
+        autogluon_models_training.python_func(**call_kwargs)
+
+        mock_predictor_class.assert_called_once_with(
+            problem_type="binary",
+            label="target",
+            eval_metric="accuracy",
+            path=Path(workspace_path) / "autogluon_predictor",
+            verbosity=2,
+            positive_class=0,
+        )
+
+    @mock.patch("pandas.read_csv")
+    @mock.patch("autogluon.tabular.TabularPredictor")
+    def test_regression_positive_class_is_ignored(
+        self,
+        mock_predictor_class,
+        mock_read_csv,
+        mock_notebooks,
+        caplog,
+        tmp_path,
+    ):
+        """positive_class on regression runs is not passed to TabularPredictor."""
+        import logging
+
+        caplog.set_level(logging.WARNING)
+        mock_predictor = mock.MagicMock()
+        mock_predictor_clone = mock.MagicMock()
+        mock_predictor_class.return_value.fit.return_value = mock_predictor
+        mock_predictor.clone.return_value = mock_predictor_clone
+        mock_predictor.problem_type = "regression"
+        mock_predictor.label = "target"
+        mock_predictor.eval_metric = "r2"
+        _mock_leaderboard_top_models(mock_predictor, ["LightGBM_BAG_L1"])
+        mock_predictor_clone.evaluate_predictions.return_value = {"r2": 0.9}
+        mock_predictor_clone.feature_importance.return_value = mock.MagicMock(to_dict=lambda: {"f": 0.1})
+        mock_predictor_clone.predict.return_value = mock.MagicMock()
+
+        mock_read_csv.side_effect = [_mock_csv_frame(), _mock_csv_frame(), _mock_csv_frame()]
+
+        workspace_path = str(tmp_path / "ws")
+        Path(workspace_path).mkdir()
+        models_output_dir = str(tmp_path / "out")
+        Path(models_output_dir).mkdir()
+        mock_models_artifact = mock.MagicMock()
+        mock_models_artifact.path = models_output_dir
+        mock_models_artifact.metadata = {}
+
+        autogluon_models_training.python_func(
+            **_base_call_kwargs(
+                workspace_path, mock_models_artifact, mock.MagicMock(path="/tmp/test.csv"), mock_notebooks
+            ),
+            positive_class="yes",
+        )
+
+        mock_predictor_class.assert_called_once_with(
+            problem_type="regression",
+            label="target",
+            eval_metric="r2",
+            path=Path(workspace_path) / "autogluon_predictor",
+            verbosity=2,
+        )
+        assert "ignored when task_type='regression'" in caplog.text
+
+    @mock.patch("pandas.read_csv")
+    @mock.patch("autogluon.tabular.TabularPredictor")
+    def test_binary_classification_writes_confusion_matrix_and_curves(
+        self,
+        mock_predictor_class,
+        mock_read_csv,
+        mock_notebooks,
+        tmp_path,
+    ):
+        """Binary classification uses predict_proba + detailed_report evaluate_predictions."""
+        mock_predictor = mock.MagicMock()
+        mock_predictor_clone = mock.MagicMock()
+        mock_predictor_class.return_value.fit.return_value = mock_predictor
+        mock_predictor.clone.return_value = mock_predictor_clone
+        mock_predictor.problem_type = "binary"
+        mock_predictor.label = "target"
+        mock_predictor.eval_metric = "accuracy"
+        _mock_leaderboard_top_models(mock_predictor, ["LightGBM_BAG_L1"])
+        mock_predictor_clone.feature_importance.return_value = mock.MagicMock(to_dict=lambda: {"f": 0.1})
+        mock_predictor_clone.positive_class = 1
+
+        def _dataframes_with_real_pandas_for_curves():
+            saved = sys.modules.pop("pandas", None)
+            try:
+                import importlib
+
+                pd = importlib.import_module("pandas")
+                y_true = pd.Series([0, 0, 1, 1])
+                y_proba = pd.DataFrame({0: [0.9, 0.8, 0.2, 0.1], 1: [0.1, 0.2, 0.8, 0.9]})
+                return y_true, y_proba
+            finally:
+                if saved is not None:
+                    sys.modules["pandas"] = saved
+
+        mock_test_df = _mock_csv_frame()
+        y_true, y_proba = _dataframes_with_real_pandas_for_curves()
+        mock_test_df.__getitem__ = lambda self, key: y_true if key == "target" else mock.MagicMock()
+        mock_predictor_clone.predict_proba.return_value = y_proba
 
         confusion_matrix_dict = {"0": {"0": 5, "1": 0}, "1": {"0": 0, "1": 3}}
-        mock_confusion_matrix.return_value = mock.MagicMock(to_dict=lambda: confusion_matrix_dict)
+        mock_predictor_clone.evaluate_predictions.return_value = {
+            "accuracy": 0.95,
+            "roc_auc": 0.99,
+            "confusion_matrix": mock.MagicMock(to_dict=lambda: confusion_matrix_dict),
+            "classification_report": {"0": {"precision": 1.0}},
+        }
 
-        mock_read_csv.side_effect = [_mock_csv_frame(), _mock_csv_frame()]
+        mock_read_csv.side_effect = [_mock_csv_frame(), mock_test_df]
 
         workspace_path = str(tmp_path / "ws")
         Path(workspace_path).mkdir()
@@ -379,16 +567,186 @@ class TestAutogluonModelsTrainingUnitTests:
             notebooks=mock_notebooks,
         )
 
-        # confusion_matrix called with cached predictions (not a second predict() call)
-        mock_confusion_matrix.assert_called_once()
-        cm_call = mock_confusion_matrix.call_args[1]
-        assert cm_call["prediction"] is mock_predictions
-        assert cm_call["output_format"] == "pandas_dataframe"
+        mock_predictor_clone.predict.assert_not_called()
+        mock_predictor_clone.predict_proba.assert_called_once()
+        proba_call = mock_predictor_clone.predict_proba.call_args
+        assert proba_call[1]["model"] == "LightGBM_BAG_L1_FULL"
 
-        # confusion_matrix.json written
+        mock_predictor_clone.evaluate_predictions.assert_called_once()
+        eval_call = mock_predictor_clone.evaluate_predictions.call_args[1]
+        assert eval_call["y_pred"] is y_proba
+        assert eval_call["detailed_report"] is True
+
+        metrics_path = Path(models_output_dir) / "LightGBM_BAG_L1_FULL" / "metrics" / "metrics.json"
+        metrics_payload = json.loads(metrics_path.read_text())
+        assert metrics_payload == {"accuracy": 0.95, "roc_auc": 0.99}
+        assert "confusion_matrix" not in metrics_payload
+
         cm_path = Path(models_output_dir) / "LightGBM_BAG_L1_FULL" / "metrics" / "confusion_matrix.json"
         assert cm_path.exists()
         assert json.loads(cm_path.read_text()) == confusion_matrix_dict
+
+        curves_path = Path(models_output_dir) / "LightGBM_BAG_L1_FULL" / "metrics" / "curves.json"
+        assert curves_path.exists()
+        curves_payload = json.loads(curves_path.read_text())
+        assert curves_payload["task_type"] == "binary"
+        assert "roc_curve" in curves_payload
+        assert "precision_recall_curve" in curves_payload
+
+    @mock.patch("pandas.read_csv")
+    @mock.patch("autogluon.tabular.TabularPredictor")
+    def test_multiclass_writes_curves_json(
+        self,
+        mock_predictor_class,
+        mock_read_csv,
+        mock_notebooks,
+        tmp_path,
+    ):
+        """Multiclass classification writes curves.json with multiclass task_type."""
+        mock_predictor = mock.MagicMock()
+        mock_predictor_clone = mock.MagicMock()
+        mock_predictor_class.return_value.fit.return_value = mock_predictor
+        mock_predictor.clone.return_value = mock_predictor_clone
+        mock_predictor.problem_type = "multiclass"
+        mock_predictor.label = "target"
+        mock_predictor.eval_metric = "accuracy"
+        _mock_leaderboard_top_models(mock_predictor, ["LightGBM_BAG_L1"])
+        mock_predictor_clone.feature_importance.return_value = mock.MagicMock(to_dict=lambda: {"f": 0.1})
+
+        def _multiclass_proba():
+            saved = sys.modules.pop("pandas", None)
+            try:
+                import importlib
+
+                pd = importlib.import_module("pandas")
+                return pd.DataFrame(
+                    {
+                        0: [0.8, 0.1, 0.1],
+                        1: [0.1, 0.8, 0.1],
+                        2: [0.1, 0.1, 0.8],
+                    }
+                )
+            finally:
+                if saved is not None:
+                    sys.modules["pandas"] = saved
+
+        mock_test_df = _mock_csv_frame()
+        y_true = _dataframes_with_real_pandas(lambda pd: pd.Series([0, 1, 2]))
+        mock_test_df.__getitem__ = lambda self, key: y_true if key == "target" else mock.MagicMock()
+        y_proba = _multiclass_proba()
+        mock_predictor_clone.predict_proba.return_value = y_proba
+        mock_predictor_clone.evaluate_predictions.return_value = {
+            "accuracy": 0.8,
+            "confusion_matrix": mock.MagicMock(to_dict=lambda: {"0": {"0": 1}}),
+        }
+
+        mock_read_csv.side_effect = [_mock_csv_frame(), mock_test_df]
+
+        workspace_path = str(tmp_path / "ws")
+        Path(workspace_path).mkdir()
+        models_output_dir = str(tmp_path / "out")
+        Path(models_output_dir).mkdir()
+        mock_models_artifact = mock.MagicMock()
+        mock_models_artifact.path = models_output_dir
+        mock_models_artifact.metadata = {}
+
+        autogluon_models_training.python_func(
+            label_column="target",
+            task_type="multiclass",
+            top_n=1,
+            train_data_path="/tmp/train.csv",
+            test_data=mock.MagicMock(path="/tmp/test.csv"),
+            workspace_path=workspace_path,
+            pipeline_name=PIPELINE_NAME,
+            run_id=RUN_ID,
+            sample_row=SAMPLE_ROW,
+            models_artifact=mock_models_artifact,
+            notebooks=mock_notebooks,
+        )
+
+        mock_predictor_clone.predict.assert_not_called()
+        eval_call = mock_predictor_clone.evaluate_predictions.call_args[1]
+        assert eval_call["y_pred"] is y_proba
+        assert eval_call["detailed_report"] is True
+
+        curves_path = Path(models_output_dir) / "LightGBM_BAG_L1_FULL" / "metrics" / "curves.json"
+        assert curves_path.exists()
+        curves_payload = json.loads(curves_path.read_text())
+        assert curves_payload["task_type"] == "multiclass"
+        assert curves_payload["strategy"] == "ovr"
+
+        cm_path = Path(models_output_dir) / "LightGBM_BAG_L1_FULL" / "metrics" / "confusion_matrix.json"
+        assert cm_path.exists()
+
+    @mock.patch("pandas.read_csv")
+    @mock.patch("autogluon.tabular.TabularPredictor")
+    def test_multiclass_curves_skips_class_with_no_test_examples(
+        self,
+        mock_predictor_class,
+        mock_read_csv,
+        mock_notebooks,
+        tmp_path,
+    ):
+        """OvR curves skip classes absent from test labels but still write curves for others."""
+        mock_predictor = mock.MagicMock()
+        mock_predictor_clone = mock.MagicMock()
+        mock_predictor_class.return_value.fit.return_value = mock_predictor
+        mock_predictor.clone.return_value = mock_predictor_clone
+        mock_predictor.problem_type = "multiclass"
+        mock_predictor.label = "target"
+        mock_predictor.eval_metric = "accuracy"
+        _mock_leaderboard_top_models(mock_predictor, ["LightGBM_BAG_L1"])
+        mock_predictor_clone.feature_importance.return_value = mock.MagicMock(to_dict=lambda: {"f": 0.1})
+
+        y_true, y_proba = _dataframes_with_real_pandas(
+            lambda pd: (
+                pd.Series([1, 1, 2, 2]),
+                pd.DataFrame(
+                    {
+                        0: [0.1, 0.1, 0.1, 0.1],
+                        1: [0.7, 0.8, 0.1, 0.2],
+                        2: [0.2, 0.1, 0.8, 0.7],
+                    }
+                ),
+            )
+        )
+        mock_test_df = _mock_csv_frame()
+        mock_test_df.__getitem__ = lambda self, key: y_true if key == "target" else mock.MagicMock()
+        mock_predictor_clone.predict_proba.return_value = y_proba
+        mock_predictor_clone.evaluate_predictions.return_value = {
+            "accuracy": 0.75,
+            "confusion_matrix": mock.MagicMock(to_dict=lambda: {"1": {"1": 2}}),
+        }
+        mock_read_csv.side_effect = [_mock_csv_frame(), mock_test_df]
+
+        workspace_path = str(tmp_path / "ws")
+        Path(workspace_path).mkdir()
+        models_output_dir = str(tmp_path / "out")
+        Path(models_output_dir).mkdir()
+        mock_models_artifact = mock.MagicMock()
+        mock_models_artifact.path = models_output_dir
+        mock_models_artifact.metadata = {}
+
+        autogluon_models_training.python_func(
+            label_column="target",
+            task_type="multiclass",
+            top_n=1,
+            train_data_path="/tmp/train.csv",
+            test_data=mock.MagicMock(path="/tmp/test.csv"),
+            workspace_path=workspace_path,
+            pipeline_name=PIPELINE_NAME,
+            run_id=RUN_ID,
+            sample_row=SAMPLE_ROW,
+            models_artifact=mock_models_artifact,
+            notebooks=mock_notebooks,
+        )
+
+        curves_path = Path(models_output_dir) / "LightGBM_BAG_L1_FULL" / "metrics" / "curves.json"
+        assert curves_path.exists()
+        curves_payload = json.loads(curves_path.read_text())
+        assert curves_payload["skipped_classes"] == ["0"]
+        assert set(curves_payload["roc_curve"]["per_class"]) == {"1", "2"}
+        assert set(curves_payload["precision_recall_curve"]["per_class"]) == {"1", "2"}
 
     # ── Call order and structural invariants ───────────────────────────────────
 

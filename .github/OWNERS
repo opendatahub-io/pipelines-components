@@ -1,4 +1,9 @@
 approvers:
   - hbelmiro
-  - gmfrasca
   - VaniHaripriya
+reviewers:
+  - hbelmiro
+  - VaniHaripriya
+  - nsingla
+emeritus_approvers:
+  - gmfrasca

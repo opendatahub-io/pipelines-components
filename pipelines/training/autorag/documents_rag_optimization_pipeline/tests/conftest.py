@@ -42,7 +42,14 @@ def kfp_client(docrag_integration_config):
 
 @pytest.fixture(scope="session")
 def compiled_pipeline_path():
-    """Compile the Documents RAG Optimization pipeline to a temp YAML file."""
+    """Use an override YAML when provided, otherwise compile the pipeline locally."""
+    override_path = os.environ.get("RHOAI_COMPILED_PIPELINE_PATH", "").strip()
+    if override_path:
+        if not Path(override_path).is_file():
+            pytest.fail(f"RHOAI_COMPILED_PIPELINE_PATH does not exist: {override_path}")
+        yield override_path
+        return
+
     from kfp import compiler
 
     from ..pipeline import documents_rag_optimization_pipeline
@@ -73,10 +80,13 @@ def s3_client(docrag_integration_config):
     except ImportError:
         return None
     c = docrag_integration_config
+    verify_ssl = os.environ.get("KFP_VERIFY_SSL", "true").strip().lower()
+    verify_ssl = verify_ssl not in ("0", "false", "no")
     return boto3.client(
         "s3",
         endpoint_url=c["s3_endpoint"],
         aws_access_key_id=c["s3_access_key"],
         aws_secret_access_key=c["s3_secret_key"],
         region_name=c["s3_region"],
+        verify=verify_ssl,
     )
