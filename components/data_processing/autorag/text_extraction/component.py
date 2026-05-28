@@ -165,7 +165,7 @@ def text_extraction(
         pdf_pipeline_options = ThreadedPdfPipelineOptions(
             artifacts_path=ap,
             do_ocr=False,
-            do_table_structure=False,
+            do_table_structure=True,
             accelerator_options=AcceleratorOptions(device="cpu", num_threads=2),
         )
         paginated_pipeline_options = PaginatedPipelineOptions(
