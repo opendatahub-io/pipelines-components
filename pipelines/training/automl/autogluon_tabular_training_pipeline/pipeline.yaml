@@ -1,0 +1,1185 @@
+# PIPELINE DEFINITION
+# Name: autogluon-tabular-training-pipeline
+# Description: End-to-end AutoGluon tabular training pipeline implementing a two-stage approach: first builds and selects top-performing models on sampled data, then refits them on the full dataset. The pipeline loads data from S3, splits it into train/test sets, trains multiple AutoGluon models using ensembling (stacking and bagging), selects the top N performers, refits each on the complete training data sequentially, and finally evaluates all refitted models to generate a comprehensive leaderboard with performance metrics.
+# Inputs:
+#    label_column: str
+#    positive_class: str
+#    task_type: str
+#    top_n: int [Default: 3.0]
+#    train_data_bucket_name: str
+#    train_data_file_key: str
+#    train_data_secret_name: str
+components:
+  comp-autogluon-models-training:
+    executorLabel: exec-autogluon-models-training
+    inputDefinitions:
+      artifacts:
+        test_data:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+          description: Dataset artifact (CSV) used for leaderboard ranking and evaluation.
+      parameters:
+        extra_train_data_path:
+          defaultValue: ''
+          description: Optional path to extra training CSV passed to ``refit_full``.
+          isOptional: true
+          parameterType: STRING
+        label_column:
+          description: Target/label column name in train and test datasets.
+          parameterType: STRING
+        pipeline_name:
+          description: Pipeline run name; last dash-segment stripped for the notebook.
+          parameterType: STRING
+        positive_class:
+          description: 'Optional label value for the positive class in **binary**
+            classification
+
+            (``int`` or ``str``, e.g. ``"1"`` or ``"yes"``). Passed to ``TabularPredictor``
+            when set.
+
+            If ``None`` or empty, AutoGluon infers the positive class when ``fit``
+            runs (see note below).
+
+            Ignored for ``multiclass`` and ``regression``.'
+          isOptional: true
+          parameterType: STRING
+        run_id:
+          description: Pipeline run ID written into the generated notebook.
+          parameterType: STRING
+        sample_row:
+          description: JSON array of row dicts for the notebook example input; label
+            column is stripped.
+          parameterType: STRING
+        sampling_config:
+          description: Data sampling config stored in artifact metadata.
+          isOptional: true
+          parameterType: STRUCT
+        split_config:
+          description: Data split config stored in artifact metadata.
+          isOptional: true
+          parameterType: STRUCT
+        task_type:
+          description: 'ML task type: ``"binary"``, ``"multiclass"``, or ``"regression"``.'
+          parameterType: STRING
+        top_n:
+          description: Number of top models to select and refit (1-10).
+          parameterType: NUMBER_INTEGER
+        train_data_path:
+          description: Path to the selection-train CSV on the PVC workspace.
+          parameterType: STRING
+        workspace_path:
+          description: PVC workspace directory; predictor saved at ``workspace_path/autogluon_predictor``.
+          parameterType: STRING
+    outputDefinitions:
+      artifacts:
+        models_artifact:
+          artifactType:
+            schemaTitle: system.Model
+            schemaVersion: 0.0.1
+      parameters:
+        eval_metric:
+          parameterType: STRING
+  comp-automl-data-loader:
+    executorLabel: exec-automl-data-loader
+    inputDefinitions:
+      parameters:
+        bucket_name:
+          description: S3 bucket name containing the file.
+          parameterType: STRING
+        file_key:
+          description: S3 object key of the CSV file.
+          parameterType: STRING
+        label_column:
+          description: Name of the label/target column in the dataset.
+          parameterType: STRING
+        pipeline_name:
+          parameterType: STRING
+        run_id:
+          parameterType: STRING
+        sampling_method:
+          description: '"first_n_rows", "stratified", or "random"; if None, derived
+            from task_type.'
+          isOptional: true
+          parameterType: STRING
+        selection_train_size:
+          defaultValue: 0.3
+          description: Fraction of the train portion used for model selection (default
+            0.3).
+          isOptional: true
+          parameterType: NUMBER_DOUBLE
+        split_config:
+          description: 'Split configuration dictionary. Available keys: "test_size"
+            (float), "random_state" (int), "stratify" (bool).'
+          isOptional: true
+          parameterType: STRUCT
+        task_type:
+          defaultValue: regression
+          description: '"binary", "multiclass", or "regression" (default); used when
+            sampling_method is None.'
+          isOptional: true
+          parameterType: STRING
+        workspace_path:
+          description: PVC workspace directory where train CSVs will be written.
+          parameterType: STRING
+    outputDefinitions:
+      artifacts:
+        mlflow_tracking_artifact:
+          artifactType:
+            schemaTitle: system.Artifact
+            schemaVersion: 0.0.1
+        sampled_test_dataset:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+      parameters:
+        extra_train_data_path:
+          parameterType: STRING
+        models_selection_train_data_path:
+          parameterType: STRING
+        sample_config:
+          parameterType: STRUCT
+        sample_row:
+          parameterType: STRING
+        split_config:
+          parameterType: STRUCT
+  comp-leaderboard-evaluation:
+    executorLabel: exec-leaderboard-evaluation
+    inputDefinitions:
+      artifacts:
+        models_artifact:
+          artifactType:
+            schemaTitle: system.Model
+            schemaVersion: 0.0.1
+          description: 'Combined Model artifact from ``autogluon_models_training``
+
+            with ``metadata["model_names"]`` and per-model subdirectories.'
+      parameters:
+        eval_metric:
+          description: 'Metric name for ranking (e.g. ``"accuracy"``, ``"root_mean_squared_error"``);
+
+            leaderboard sorted descending (AutoGluon uses higher-is-better convention).'
+          parameterType: STRING
+    outputDefinitions:
+      artifacts:
+        html_artifact:
+          artifactType:
+            schemaTitle: system.HTML
+            schemaVersion: 0.0.1
+      parameters:
+        best_model:
+          parameterType: STRING
+deploymentSpec:
+  executors:
+    exec-autogluon-models-training:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - autogluon_models_training
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.16.1'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\n__KFP_EMBEDDED_ARCHIVE_B64 = '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'\n\
+          \nimport base64 as __kfp_b64\nimport io as __kfp_io\nimport os as __kfp_os\n\
+          import sys as __kfp_sys\nimport tarfile as __kfp_tarfile\nimport tempfile\
+          \ as __kfp_tempfile\n\n# Extract embedded archive at import time to ensure\
+          \ sys.path and globals are set\n__kfp_tmpdir = __kfp_tempfile.TemporaryDirectory()\n\
+          __KFP_EMBEDDED_ASSET_DIR = __kfp_tmpdir.name\ntry:\n    __kfp_bytes = __kfp_b64.b64decode(__KFP_EMBEDDED_ARCHIVE_B64.encode('ascii'))\n\
+          \    with __kfp_tarfile.open(fileobj=__kfp_io.BytesIO(__kfp_bytes), mode='r:gz')\
+          \ as __kfp_tar:\n        __kfp_tar.extractall(path=__KFP_EMBEDDED_ASSET_DIR)\n\
+          except Exception as __kfp_e:\n    raise RuntimeError(f'Failed to extract\
+          \ embedded archive: {__kfp_e}')\n\n# Always prepend the extracted directory\
+          \ to sys.path for import resolution\nif __KFP_EMBEDDED_ASSET_DIR not in\
+          \ __kfp_sys.path:\n    __kfp_sys.path.insert(0, __KFP_EMBEDDED_ASSET_DIR)\n\
+          \n\n\n\ndef autogluon_models_training(\n    label_column: str,\n    task_type:\
+          \ str,\n    top_n: int,\n    train_data_path: str,\n    test_data: dsl.Input[dsl.Dataset],\n\
+          \    workspace_path: str,\n    pipeline_name: str,\n    run_id: str,\n \
+          \   sample_row: str,\n    models_artifact: dsl.Output[dsl.Model],\n    notebooks:\
+          \ dsl.EmbeddedInput[dsl.Dataset],\n    sampling_config: Optional[dict] =\
+          \ None,\n    split_config: Optional[dict] = None,\n    extra_train_data_path:\
+          \ str = \"\",\n    positive_class: Optional[str] = None,\n) -> NamedTuple(\"\
+          outputs\", eval_metric=str):\n    \"\"\"Train AutoGluon models, select the\
+          \ top N, and refit each on the full dataset.\n\n    Expects pre-cleaned\
+          \ CSV data from the tabular data loader (infinite values replaced,\n   \
+          \ duplicates removed, missing labels dropped). Reads train/test/extra-train\
+          \ CSVs and\n    validates that the label column exists in each dataset.\n\
+          \n    This component combines the model selection and full-refit stages\
+          \ into a single\n    step. It trains a TabularPredictor on sampled data,\
+          \ ranks all models on the test\n    set, then refits each of the top N models\
+          \ on the full training data in a single\n    ``refit_full`` call. Post-refit\
+          \ work (predict, evaluate, feature importance,\n    confusion matrix (via\
+          \ evaluate_predictions detailed_report), classification curves,\n    notebook\
+          \ generation) runs concurrently across all top-N models\n    via ``ThreadPoolExecutor``.\
+          \ The deployment clone (``set_model_best`` +\n    ``clone_for_deployment``)\
+          \ is serialized afterward because it mutates predictor\n    state. All artifacts\
+          \ are written under a single output artifact so the pipeline\n    does not\
+          \ require a ParallelFor loop. Each model directory contains a ``model.json``\n\
+          \    file with model metadata (name, location, metrics).\n\n    Args:\n\
+          \        label_column: Target/label column name in train and test datasets.\n\
+          \        task_type: ML task type: ``\"binary\"``, ``\"multiclass\"``, or\
+          \ ``\"regression\"``.\n        top_n: Number of top models to select and\
+          \ refit (1-10).\n        train_data_path: Path to the selection-train CSV\
+          \ on the PVC workspace.\n        test_data: Dataset artifact (CSV) used\
+          \ for leaderboard ranking and evaluation.\n        workspace_path: PVC workspace\
+          \ directory; predictor saved at ``workspace_path/autogluon_predictor``.\n\
+          \        pipeline_name: Pipeline run name; last dash-segment stripped for\
+          \ the notebook.\n        run_id: Pipeline run ID written into the generated\
+          \ notebook.\n        sample_row: JSON array of row dicts for the notebook\
+          \ example input; label column is stripped.\n        models_artifact: Output\
+          \ Model artifact containing all refitted model subdirectories.\n       \
+          \ notebooks: Embedded notebook templates injected by the KFP runtime.\n\
+          \        sampling_config: Data sampling config stored in artifact metadata.\n\
+          \        split_config: Data split config stored in artifact metadata.\n\
+          \        extra_train_data_path: Optional path to extra training CSV passed\
+          \ to ``refit_full``.\n        positive_class: Optional label value for the\
+          \ positive class in **binary** classification\n            (``int`` or ``str``,\
+          \ e.g. ``\"1\"`` or ``\"yes\"``). Passed to ``TabularPredictor`` when set.\n\
+          \            If ``None`` or empty, AutoGluon infers the positive class when\
+          \ ``fit`` runs (see note below).\n            Ignored for ``multiclass``\
+          \ and ``regression``.\n\n    Returns:\n        NamedTuple with ``eval_metric``\
+          \ (the metric used for ranking, e.g. ``\"r2\"`` or ``\"accuracy\"``).\n\n\
+          \    Raises:\n        TypeError: If any required string parameter is empty\
+          \ or configs have wrong types.\n        ValueError: If ``task_type`` is\
+          \ invalid, ``top_n`` is out of range, ``sample_row``\n            is not\
+          \ a JSON list, ``problem_type`` is unsupported for notebook generation,\n\
+          \            label column not found in CSV, or train/test data is empty.\n\
+          \        FileNotFoundError: If train/test data or predictor paths cannot\
+          \ be found.\n    \"\"\"  # noqa: E501\n    import json\n    import logging\n\
+          \    import math\n    import shutil\n    from concurrent.futures import\
+          \ ThreadPoolExecutor\n    from pathlib import Path\n    from typing import\
+          \ Any\n\n    import numpy as np\n    import pandas as pd\n    from autogluon.tabular\
+          \ import TabularPredictor\n\n    VALID_TASK_TYPES = {\"binary\", \"multiclass\"\
+          , \"regression\"}\n    TOP_N_MAX = 10\n\n    # Input parameters validation\n\
+          \    if not isinstance(label_column, str) or not label_column.strip():\n\
+          \        raise TypeError(\"label_column must be a non-empty string.\")\n\
+          \    if task_type not in VALID_TASK_TYPES:\n        raise ValueError(f\"\
+          task_type must be one of {VALID_TASK_TYPES}; got {task_type!r}.\")\n   \
+          \ if not train_data_path or not isinstance(train_data_path, str) or not\
+          \ train_data_path.strip():\n        raise TypeError(\"train_data_path must\
+          \ be a non-empty string.\")\n    if not workspace_path or not isinstance(workspace_path,\
+          \ str) or not workspace_path.strip():\n        raise TypeError(\"workspace_path\
+          \ must be a non-empty string.\")\n    if top_n <= 0 or top_n > TOP_N_MAX:\n\
+          \        raise ValueError(f\"top_n must be an integer in the range (0, {TOP_N_MAX}];\
+          \ got {top_n}.\")\n    for param, value in (\n        (\"pipeline_name\"\
+          , pipeline_name),\n        (\"run_id\", run_id),\n        (\"sample_row\"\
+          , sample_row),\n    ):\n        if not isinstance(value, str) or not value.strip():\n\
+          \            raise TypeError(f\"{param} must be a non-empty string.\")\n\
+          \    if sampling_config is not None and not isinstance(sampling_config,\
+          \ dict):\n        raise TypeError(\"sampling_config must be a dictionary\
+          \ or None.\")\n    if split_config is not None and not isinstance(split_config,\
+          \ dict):\n        raise TypeError(\"split_config must be a dictionary or\
+          \ None.\")\n    if positive_class is not None and not isinstance(positive_class,\
+          \ str):\n        raise TypeError(\"positive_class must be a string or None.\"\
+          )\n\n    sampling_config = sampling_config or {}\n    split_config = split_config\
+          \ or {}\n\n    def _coerce_positive_class(value: Optional[str]) -> str |\
+          \ int | None:\n        \"\"\"Normalize pipeline input; empty string means\
+          \ unset (AutoGluon will infer).\"\"\"\n        if value is None:\n     \
+          \       return None\n        stripped = value.strip()\n        if not stripped:\n\
+          \            return None\n        if stripped.lstrip(\"-\").isdigit():\n\
+          \            return int(stripped)\n        return stripped\n\n    try:\n\
+          \        sample_row_list = json.loads(sample_row)\n    except json.JSONDecodeError\
+          \ as e:\n        raise TypeError(f\"sample_row must be valid JSON array:\
+          \ {e}\") from e\n    if not isinstance(sample_row_list, list):\n       \
+          \ raise ValueError(\"sample_row must be a JSON array list of row objects.\"\
+          )\n\n    logger = logging.getLogger(__name__)\n\n    DEFAULT_PRESET = \"\
+          medium_quality\"\n    DEFAULT_TIME_LIMIT = 30 * 60  # 30 minutes\n\n   \
+          \ # 1. models selection stage\n\n    train_data_df = pd.read_csv(train_data_path)\n\
+          \    if label_column not in train_data_df.columns:\n        raise ValueError(\n\
+          \            f\"Label column {label_column!r} not found in train CSV. Available\
+          \ columns: {list(train_data_df.columns)}\"\n        )\n    if train_data_df.empty:\n\
+          \        raise ValueError(\"Training CSV is empty. Ensure the data loader\
+          \ produced valid training data.\")\n\n    test_data_df = pd.read_csv(test_data.path)\n\
+          \    if label_column not in test_data_df.columns:\n        raise ValueError(\n\
+          \            f\"Label column {label_column!r} not found in test CSV. Available\
+          \ columns: {list(test_data_df.columns)}\"\n        )\n    if test_data_df.empty:\n\
+          \        raise ValueError(\"Test CSV is empty. Ensure the data loader produced\
+          \ valid test data.\")\n\n    extra_train_df = None\n    if extra_train_data_path.strip():\n\
+          \        extra_train_df = pd.read_csv(extra_train_data_path)\n        if\
+          \ label_column not in extra_train_df.columns:\n            raise ValueError(\n\
+          \                f\"Label column {label_column!r} not found in extra-train\
+          \ CSV. \"\n                f\"Available columns: {list(extra_train_df.columns)}\"\
+          \n            )\n        if extra_train_df.empty:\n            logger.warning(\"\
+          Extra train CSV is empty; passing train_data_extra=None to refit_full.\"\
+          )\n            extra_train_df = None\n\n    eval_metric = \"r2\" if task_type\
+          \ == \"regression\" else \"accuracy\"\n\n    coerced_positive_class = _coerce_positive_class(positive_class)\n\
+          \    if coerced_positive_class is not None and task_type != \"binary\":\n\
+          \        logger.warning(\n            \"positive_class=%r is ignored when\
+          \ task_type=%r (only used for binary classification).\",\n            coerced_positive_class,\n\
+          \            task_type,\n        )\n\n    predictor_path = Path(workspace_path)\
+          \ / \"autogluon_predictor\"\n    predictor_init_kwargs: dict[str, Any] =\
+          \ {\n        \"problem_type\": task_type,\n        \"label\": label_column,\n\
+          \        \"eval_metric\": eval_metric,\n        \"path\": predictor_path,\n\
+          \        \"verbosity\": 2,\n    }\n    if task_type == \"binary\" and coerced_positive_class\
+          \ is not None:\n        predictor_init_kwargs[\"positive_class\"] = coerced_positive_class\n\
+          \        logger.info(\"Using explicit positive_class=%r for TabularPredictor.\"\
+          , coerced_positive_class)\n    elif task_type == \"binary\":\n        logger.info(\n\
+          \            \"positive_class not set; AutoGluon will infer it when fit\
+          \ runs as the second unique \"\n            \"label value after sorting\
+          \ classes (e.g. classes [0, 1] -> positive_class=1; \"\n            \"classes\
+          \ ['abc', 'def'] -> positive_class='def').\"\n        )\n\n    predictor\
+          \ = TabularPredictor(**predictor_init_kwargs).fit(\n        train_data=train_data_df,\n\
+          \        num_stack_levels=1,\n        num_bag_folds=4,\n        use_bag_holdout=True,\n\
+          \        holdout_frac=0.2,\n        time_limit=DEFAULT_TIME_LIMIT,\n   \
+          \     presets=DEFAULT_PRESET,\n    )\n\n    # Select top N models\n    leaderboard\
+          \ = predictor.leaderboard(test_data_df)\n    logger.info(\"Leaderboard:\\\
+          n\\n %s\", leaderboard.head(top_n).to_string())\n    top_models = leaderboard.head(top_n)[\"\
+          model\"].values.tolist()\n\n    model_config = {\n        \"preset\": DEFAULT_PRESET,\n\
+          \        \"eval_metric\": eval_metric,\n        \"time_limit\": DEFAULT_TIME_LIMIT,\n\
+          \    }\n\n    def retrieve_pipeline_name(name: str) -> str:\n        \"\"\
+          \"Strip the last dash-separated segment (run id / suffix) from a pipeline\
+          \ name.\"\"\"\n        if not name:\n            return name\n        name\
+          \ = name.rstrip(\"-\")\n        if \"-\" not in name:\n            return\
+          \ name\n        tokens = name.split(\"-\")\n        return \"-\".join(tokens[:-1])\
+          \ if len(tokens) > 1 else tokens[0]\n\n    pipeline_name_trimmed = retrieve_pipeline_name(pipeline_name)\n\
+          \n    # Strip label column from sample row -- same for all models\n    sample_row_formatted\
+          \ = [\n        {col: value for col, value in row.items() if col != predictor.label}\
+          \ for row in sample_row_list\n    ]\n\n    problem_type = predictor.problem_type\n\
+          \    match problem_type:\n        case \"regression\":\n            notebook_file\
+          \ = \"regression_notebook.ipynb\"\n        case \"binary\" | \"multiclass\"\
+          :\n            notebook_file = \"classification_notebook.ipynb\"\n     \
+          \   case _:\n            raise ValueError(f\"Invalid problem type: {problem_type}\"\
+          )\n\n    model_names_full = [m + \"_FULL\" for m in top_models]\n\n    #\
+          \ 2. models refit stage\n\n    # Clone once to PVC (same filesystem as predictor_path)\
+          \ to avoid S3 FUSE file-dropping\n    # during shutil.copytree inside predictor.clone().\n\
+          \    work_path = predictor_path.parent / \"refit_work\"\n    predictor_clone\
+          \ = predictor.clone(path=work_path, return_clone=True, dirs_exist_ok=True)\n\
+          \n    # Refit all top models in a single call:  AutoGluon resolves stacking\
+          \ dependencies internally.\n    predictor_clone.refit_full(model=top_models,\
+          \ train_data_extra=extra_train_df)\n\n    def replace_placeholder_in_notebook(notebook,\
+          \ replacements):\n        for cell in notebook.get(\"cells\", []):\n   \
+          \         if cell.get(\"cell_type\") != \"code\":\n                continue\n\
+          \            new_source = []\n            for line in cell.get(\"source\"\
+          , []):\n                for placeholder, value in replacements.items():\n\
+          \                    line = line.replace(placeholder, value)\n         \
+          \       new_source.append(line)\n            cell[\"source\"] = new_source\n\
+          \        return notebook\n\n    def _scalar_eval_metrics(eval_results: dict)\
+          \ -> dict:\n        \"\"\"Keep only finite scalar scores for metrics.json\
+          \ (KFP-safe).\"\"\"\n        metrics = {}\n        for key, value in eval_results.items():\n\
+          \            if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):\n\
+          \                continue\n            if hasattr(value, \"item\"):\n  \
+          \              value = float(value)\n                if math.isnan(value)\
+          \ or math.isinf(value):\n                    continue\n            if isinstance(value,\
+          \ (int, float)):\n                metrics[key] = value\n        return metrics\n\
+          \n    def _confusion_matrix_to_dict(confusion_matrix_res) -> dict | None:\n\
+          \        if confusion_matrix_res is None:\n            return None\n   \
+          \     if hasattr(confusion_matrix_res, \"to_dict\"):\n            return\
+          \ confusion_matrix_res.to_dict()\n        if isinstance(confusion_matrix_res,\
+          \ dict):\n            return confusion_matrix_res\n        raise TypeError(f\"\
+          Unexpected confusion_matrix type: {type(confusion_matrix_res)!r}\")\n\n\
+          \    def _serialize_curve_array(values: Any) -> list[float]:\n        return\
+          \ [float(v) for v in np.asarray(values).tolist()]\n\n    def _serialize_curve_thresholds(values:\
+          \ Any) -> list[float | str]:\n        serialized: list[float | str] = []\n\
+          \        for value in np.asarray(values).tolist():\n            if isinstance(value,\
+          \ (float, np.floating)) and np.isposinf(value):\n                serialized.append(\"\
+          inf\")\n            elif isinstance(value, (float, np.floating)) and np.isneginf(value):\n\
+          \                serialized.append(\"-inf\")\n            else:\n      \
+          \          serialized.append(float(value))\n        return serialized\n\n\
+          \    def _binarize_labels(y_true, positive_label: Any) -> np.ndarray:\n\
+          \        import pandas as pd\n\n        labels = y_true if isinstance(y_true,\
+          \ pd.Series) else pd.Series(y_true)\n        return (labels == positive_label).astype(int).to_numpy()\n\
+          \n    def _resolve_positive_column(classes: list[Any], positive_class: Any\
+          \ | None) -> Any:\n        if positive_class is not None and positive_class\
+          \ in classes:\n            return positive_class\n        if len(classes)\
+          \ == 2:\n            logger.warning(\n                \"positive_class not\
+          \ specified for binary classification; defaulting to %r as positive class\
+          \ \"\n                \"(available classes: %r). Set positive_class explicitly\
+          \ for clarity.\",\n                classes[1],\n                classes,\n\
+          \            )\n            return classes[1]\n        raise ValueError(\n\
+          \            f\"Cannot resolve positive class from proba columns {classes!r};\
+          \ \"\n            f\"pass positive_class explicitly (got {positive_class!r}).\"\
+          \n        )\n\n    def _roc_curve_block(y_true_binary: np.ndarray, y_score:\
+          \ np.ndarray) -> dict[str, Any]:\n        import math\n\n        from sklearn.metrics\
+          \ import roc_auc_score, roc_curve\n\n        fpr, tpr, thresholds = roc_curve(y_true_binary,\
+          \ y_score)\n        auc = float(roc_auc_score(y_true_binary, y_score))\n\
+          \n        if math.isnan(auc):\n            raise ValueError(\n         \
+          \       \"Cannot compute ROC AUC: only one class present in test data. \"\
+          \n                \"ROC curves require both positive and negative examples.\"\
+          \n            )\n\n        return {\n            \"auc\": auc,\n       \
+          \     \"fpr\": _serialize_curve_array(fpr),\n            \"tpr\": _serialize_curve_array(tpr),\n\
+          \            \"thresholds\": _serialize_curve_thresholds(thresholds),\n\
+          \        }\n\n    def _pr_curve_block(y_true_binary: np.ndarray, y_score:\
+          \ np.ndarray, baseline_precision: float) -> dict[str, Any]:\n        import\
+          \ math\n\n        from sklearn.metrics import average_precision_score, precision_recall_curve\n\
+          \n        precision, recall, thresholds = precision_recall_curve(y_true_binary,\
+          \ y_score)\n        average_precision = float(average_precision_score(y_true_binary,\
+          \ y_score))\n\n        if math.isnan(average_precision):\n            raise\
+          \ ValueError(\n                \"Cannot compute precision-recall curve:\
+          \ only one class present in test data. \"\n                \"Precision-recall\
+          \ curves require both positive and negative examples.\"\n            )\n\
+          \n        return {\n            \"average_precision\": average_precision,\n\
+          \            \"precision\": _serialize_curve_array(precision),\n       \
+          \     \"recall\": _serialize_curve_array(recall),\n            \"thresholds\"\
+          : _serialize_curve_array(thresholds),\n            \"baseline_precision\"\
+          : baseline_precision,\n        }\n\n    def _macro_weighted_curve_metric(values:\
+          \ list[float], weights: list[int]) -> float:\n        if not values:\n \
+          \           return 0.0\n        if sum(weights) == 0:\n            return\
+          \ float(np.mean(values))\n        return float(np.average(values, weights=weights))\n\
+          \n    def _build_binary_curves_json(y_true, proba_df, positive_class: Any\
+          \ | None) -> dict[str, Any]:\n        classes = list(proba_df.columns)\n\
+          \        positive_label = _resolve_positive_column(classes, positive_class)\n\
+          \        y_true_binary = _binarize_labels(y_true, positive_label)\n    \
+          \    y_score = proba_df[positive_label].to_numpy()\n        num_positive\
+          \ = int(y_true_binary.sum())\n        num_samples = len(y_true_binary)\n\
+          \        roc_block = _roc_curve_block(y_true_binary, y_score)\n        roc_block[\"\
+          support\"] = num_positive\n        pr_block = _pr_curve_block(\n       \
+          \     y_true_binary,\n            y_score,\n            baseline_precision=num_positive\
+          \ / num_samples if num_samples else 0.0,\n        )\n        pr_block[\"\
+          support\"] = num_positive\n        return {\n            \"task_type\":\
+          \ \"binary\",\n            \"positive_class\": positive_label.item() if\
+          \ hasattr(positive_label, \"item\") else positive_label,\n            \"\
+          num_samples\": num_samples,\n            \"num_positive\": num_positive,\n\
+          \            \"num_negative\": num_samples - num_positive,\n           \
+          \ \"roc_curve\": roc_block,\n            \"precision_recall_curve\": pr_block,\n\
+          \        }\n\n    def _build_multiclass_curves_json(y_true, proba_df) ->\
+          \ dict[str, Any]:\n        classes = list(proba_df.columns)\n        num_samples\
+          \ = len(y_true)\n        per_class_roc: dict[str, dict[str, Any]] = {}\n\
+          \        per_class_pr: dict[str, dict[str, Any]] = {}\n        roc_aucs:\
+          \ list[float] = []\n        ap_scores: list[float] = []\n        weights:\
+          \ list[int] = []\n        skipped_classes: list[str] = []\n\n        for\
+          \ label in classes:\n            key = str(label.item() if hasattr(label,\
+          \ \"item\") else label)\n            y_true_binary = _binarize_labels(y_true,\
+          \ label)\n            support = int(y_true_binary.sum())\n            y_score\
+          \ = proba_df[label].to_numpy()\n            try:\n                roc =\
+          \ _roc_curve_block(y_true_binary, y_score)\n                roc[\"support\"\
+          ] = support\n                per_class_roc[key] = roc\n                roc_aucs.append(roc[\"\
+          auc\"])\n                pr = _pr_curve_block(\n                    y_true_binary,\n\
+          \                    y_score,\n                    baseline_precision=support\
+          \ / num_samples if num_samples else 0.0,\n                )\n          \
+          \      per_class_pr[key] = pr\n                ap_scores.append(pr[\"average_precision\"\
+          ])\n                weights.append(support)\n            except ValueError\
+          \ as e:\n                logger.warning(\n                    \"Skipping\
+          \ ROC/PR curves for class %r: %s\",\n                    key,\n        \
+          \            e,\n                )\n                skipped_classes.append(key)\n\
+          \n        if not per_class_roc:\n            raise ValueError(\n       \
+          \         \"Cannot compute multiclass curves: no class had both positive\
+          \ and negative \"\n                f\"examples in test data (skipped: {skipped_classes}).\"\
+          \n            )\n\n        serializable_classes = [c.item() if hasattr(c,\
+          \ \"item\") else c for c in classes]\n\n        payload: dict[str, Any]\
+          \ = {\n            \"task_type\": \"multiclass\",\n            \"strategy\"\
+          : \"ovr\",\n            \"num_classes\": len(classes),\n            \"classes\"\
+          : serializable_classes,\n            \"num_samples\": num_samples,\n   \
+          \         \"roc_curve\": {\n                \"auc_macro\": float(np.mean(roc_aucs)),\n\
+          \                \"auc_weighted\": _macro_weighted_curve_metric(roc_aucs,\
+          \ weights),\n                \"per_class\": per_class_roc,\n           \
+          \ },\n            \"precision_recall_curve\": {\n                \"average_precision_macro\"\
+          : float(np.mean(ap_scores)),\n                \"average_precision_weighted\"\
+          : _macro_weighted_curve_metric(ap_scores, weights),\n                \"\
+          per_class\": per_class_pr,\n            },\n        }\n        if skipped_classes:\n\
+          \            payload[\"skipped_classes\"] = skipped_classes\n        return\
+          \ payload\n\n    def build_curves_json(\n        y_true,\n        y_proba,\n\
+          \        curves_task_type: str,\n        positive_class: Any | None = None,\n\
+          \    ) -> dict[str, Any]:\n        \"\"\"Build curves.json for binary or\
+          \ multiclass classification.\"\"\"\n        import pandas as pd\n\n    \
+          \    if curves_task_type not in {\"binary\", \"multiclass\"}:\n        \
+          \    raise ValueError(f\"task_type must be 'binary' or 'multiclass'; got\
+          \ {curves_task_type!r}.\")\n\n        y_true_series = pd.Series(y_true)\n\
+          \        proba_df = y_proba if hasattr(y_proba, \"columns\") else pd.DataFrame(y_proba)\n\
+          \n        if curves_task_type == \"binary\":\n            return _build_binary_curves_json(y_true_series,\
+          \ proba_df, positive_class)\n        return _build_multiclass_curves_json(y_true_series,\
+          \ proba_df)\n\n    def _process_model(model_name_full: str) -> tuple[str,\
+          \ dict]:\n        \"\"\"Compute metrics and write metric files + notebook\
+          \ for one refitted model.\n\n        Safe to run concurrently across models:\
+          \ only reads from the shared predictor\n        and test data, and writes\
+          \ to isolated per-model directories under\n        models_artifact.path.\
+          \ Does NOT call set_model_best / clone_for_deployment,\n        which mutate\
+          \ predictor state and must stay sequential.\n\n        Returns (model_name_full,\
+          \ eval_results).\n        \"\"\"\n        output_path = Path(models_artifact.path)\
+          \ / model_name_full\n        y_true = test_data_df[predictor.label]\n\n\
+          \        if problem_type in {\"binary\", \"multiclass\"}:\n            y_proba\
+          \ = predictor_clone.predict_proba(test_data_df, model=model_name_full)\n\
+          \            eval_results = predictor_clone.evaluate_predictions(\n    \
+          \            y_true=y_true,\n                y_pred=y_proba,\n         \
+          \       detailed_report=True,\n            )\n            confusion_matrix_dict\
+          \ = _confusion_matrix_to_dict(eval_results.pop(\"confusion_matrix\", None))\n\
+          \            eval_results.pop(\"classification_report\", None)\n       \
+          \ else:\n            y_proba = None\n            predictions = predictor_clone.predict(test_data_df,\
+          \ model=model_name_full)\n            eval_results = predictor_clone.evaluate_predictions(y_true=y_true,\
+          \ y_pred=predictions)\n            confusion_matrix_dict = None\n\n    \
+          \    feature_importance = predictor_clone.feature_importance(\n        \
+          \    test_data_df, model=model_name_full, subsample_size=2000\n        )\n\
+          \        metrics_for_json = _scalar_eval_metrics(eval_results)\n\n     \
+          \   (output_path / \"metrics\").mkdir(parents=True, exist_ok=True)\n   \
+          \     with (output_path / \"metrics\" / \"metrics.json\").open(\"w\") as\
+          \ f:\n            json.dump(metrics_for_json, f)\n        with (output_path\
+          \ / \"metrics\" / \"feature_importance.json\").open(\"w\") as f:\n     \
+          \       json.dump(feature_importance.to_dict(), f)\n\n        if confusion_matrix_dict\
+          \ is not None:\n            with (output_path / \"metrics\" / \"confusion_matrix.json\"\
+          ).open(\"w\") as f:\n                json.dump(confusion_matrix_dict, f)\n\
+          \n        if y_proba is not None:\n            try:\n                curves_payload\
+          \ = build_curves_json(\n                    y_true=y_true,\n           \
+          \         y_proba=y_proba,\n                    curves_task_type=problem_type,\n\
+          \                    positive_class=getattr(predictor_clone, \"positive_class\"\
+          , None),\n                )\n                with (output_path / \"metrics\"\
+          \ / \"curves.json\").open(\"w\") as f:\n                    json.dump(curves_payload,\
+          \ f)\n            except ValueError as e:\n                logger.warning(\n\
+          \                    \"Could not generate curves.json for model %r: %s.\
+          \ Skipping curve generation.\",\n                    model_name_full,\n\
+          \                    str(e),\n                )\n\n        with (Path(notebooks.path)\
+          \ / \"notebook_templates\" / notebook_file).open(\"r\", encoding=\"utf-8\"\
+          ) as f:\n            notebook = json.load(f)\n        replacements = {\n\
+          \            \"<REPLACE_RUN_ID>\": run_id,\n            \"<REPLACE_PIPELINE_NAME>\"\
+          : pipeline_name_trimmed,\n            \"<REPLACE_MODEL_NAME>\": model_name_full,\n\
+          \            \"<REPLACE_SAMPLE_ROW>\": str(sample_row_formatted),\n    \
+          \    }\n        notebook = replace_placeholder_in_notebook(notebook, replacements)\n\
+          \        notebook_path = output_path / \"notebooks\"\n        notebook_path.mkdir(parents=True,\
+          \ exist_ok=True)\n        with (notebook_path / \"automl_predictor_notebook.ipynb\"\
+          ).open(\"w\", encoding=\"utf-8\") as f:\n            json.dump(notebook,\
+          \ f)\n\n        return model_name_full, metrics_for_json\n\n    # Phase\
+          \ A: metrics + notebooks - all models run concurrently.\n    with ThreadPoolExecutor(max_workers=len(model_names_full))\
+          \ as executor:\n        futures = [executor.submit(_process_model, name)\
+          \ for name in model_names_full]\n        eval_results_by_model = dict(f.result()\
+          \ for f in futures)\n\n    # Phase B: clone for deployment - sequential\
+          \ because set_model_best mutates predictor state.\n    for model_name_full\
+          \ in model_names_full:\n        output_path = Path(models_artifact.path)\
+          \ / model_name_full\n        predictor_clone.set_model_best(model=model_name_full,\
+          \ save_trainer=True)\n        predictor_clone.clone_for_deployment(path=output_path\
+          \ / \"predictor\", dirs_exist_ok=True)\n\n    shutil.rmtree(work_path, ignore_errors=True)\n\
+          \n    # Build ordered models_metadata (preserves top-N ranking order).\n\
+          \    models_metadata = []\n    for model_name_full in model_names_full:\n\
+          \        eval_results = eval_results_by_model[model_name_full]\n       \
+          \ model_metadata = {\n            \"name\": model_name_full,\n         \
+          \   \"location\": {\n                \"model_directory\": model_name_full,\n\
+          \                \"predictor\": str(Path(model_name_full) / \"predictor\"\
+          ),\n                \"notebook\": str(Path(model_name_full) / \"notebooks\"\
+          \ / \"automl_predictor_notebook.ipynb\"),\n                \"metrics\":\
+          \ str(Path(model_name_full) / \"metrics\"),\n            },\n          \
+          \  \"metrics\": {\n                \"test_data\": eval_results,\n      \
+          \      },\n        }\n        models_metadata.append(model_metadata)\n \
+          \       with (Path(models_artifact.path) / model_name_full / \"model.json\"\
+          ).open(\"w\", encoding=\"utf-8\") as f:\n            json.dump(model_metadata,\
+          \ f, indent=2)\n\n    # Serialize as a JSON string and parse back in downstream\
+          \ components.\n    models_artifact.metadata[\"model_names\"] = json.dumps(model_names_full)\n\
+          \    models_artifact.metadata[\"context\"] = {\n        \"data_config\"\
+          : {\n            \"sampling_config\": sampling_config,\n            \"split_config\"\
+          : split_config,\n        },\n        \"task_type\": problem_type,\n    \
+          \    \"label_column\": predictor.label,\n        \"model_config\": model_config,\n\
+          \        \"models\": models_metadata,\n    }\n\n    from mlflow_tracking\
+          \ import log_tabular_training_to_mlflow\n\n    log_tabular_training_to_mlflow(\n\
+          \        models_artifact_path=models_artifact.path,\n        models_artifact_uri=models_artifact.uri,\n\
+          \        model_names=model_names_full,\n        eval_results_by_model=eval_results_by_model,\n\
+          \        eval_metric=str(predictor.eval_metric),\n        task_type=problem_type,\n\
+          \        pipeline_name=pipeline_name_trimmed,\n        run_id=run_id,\n\
+          \        model_config=model_config,\n        top_n=top_n,\n        label_column=str(predictor.label),\n\
+          \    )\n\n    return NamedTuple(\"outputs\", eval_metric=str)(eval_metric=str(predictor.eval_metric))\n\
+          \n"
+        image: quay.io/opendatahub/odh-automl:odh-stable
+        resources:
+          cpuLimit: 32.0
+          cpuRequest: 4.0
+          memoryLimit: 68.719476736
+          memoryRequest: 17.179869184
+          resourceCpuLimit: '32'
+          resourceCpuRequest: '4'
+          resourceMemoryLimit: 64Gi
+          resourceMemoryRequest: 16Gi
+    exec-automl-data-loader:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - automl_data_loader
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.16.1'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\n__KFP_EMBEDDED_ARCHIVE_B64 = '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'\n\
+          \nimport base64 as __kfp_b64\nimport io as __kfp_io\nimport os as __kfp_os\n\
+          import sys as __kfp_sys\nimport tarfile as __kfp_tarfile\nimport tempfile\
+          \ as __kfp_tempfile\n\n# Extract embedded archive at import time to ensure\
+          \ sys.path and globals are set\n__kfp_tmpdir = __kfp_tempfile.TemporaryDirectory()\n\
+          __KFP_EMBEDDED_ASSET_DIR = __kfp_tmpdir.name\ntry:\n    __kfp_bytes = __kfp_b64.b64decode(__KFP_EMBEDDED_ARCHIVE_B64.encode('ascii'))\n\
+          \    with __kfp_tarfile.open(fileobj=__kfp_io.BytesIO(__kfp_bytes), mode='r:gz')\
+          \ as __kfp_tar:\n        __kfp_tar.extractall(path=__KFP_EMBEDDED_ASSET_DIR)\n\
+          except Exception as __kfp_e:\n    raise RuntimeError(f'Failed to extract\
+          \ embedded archive: {__kfp_e}')\n\n# Always prepend the extracted directory\
+          \ to sys.path for import resolution\nif __KFP_EMBEDDED_ASSET_DIR not in\
+          \ __kfp_sys.path:\n    __kfp_sys.path.insert(0, __KFP_EMBEDDED_ASSET_DIR)\n\
+          \n\n\n\ndef automl_data_loader(  # noqa: D417\n    file_key: str,\n    bucket_name:\
+          \ str,\n    workspace_path: str,\n    label_column: str,\n    sampled_test_dataset:\
+          \ dsl.Output[dsl.Dataset],\n    mlflow_tracking_artifact: dsl.Output[dsl.Artifact],\n\
+          \    pipeline_name: str,\n    run_id: str,\n    sampling_method: Optional[str]\
+          \ = None,\n    task_type: str = \"regression\",\n    split_config: Optional[dict]\
+          \ = None,\n    selection_train_size: float = 0.3,\n) -> NamedTuple(\n  \
+          \  \"outputs\",\n    sample_config=dict,\n    split_config=dict,\n    sample_row=str,\n\
+          \    models_selection_train_data_path=str,\n    extra_train_data_path=str,\n\
+          ):\n    \"\"\"Automl Data Loader component.\n\n    Loads tabular (CSV) data\
+          \ from S3 in batches, sampling up to 100 MB of data,\n    then splits the\
+          \ sampled data into test, selection-train, and extra-train sets.\n\n   \
+          \ The component reads data in chunks to efficiently handle large files without\n\
+          \    loading the entire dataset into memory at once. After sampling, it\
+          \ performs\n    a two-stage split:\n\n    1. **Primary split** (default\
+          \ 80/20): separates a *test set* (20%, written to\n       the ``sampled_test_dataset``\
+          \ S3 artifact) from the *train portion* (80%).\n\n    2. **Secondary split**\
+          \ (default 30/70 of the train portion): produces\n       ``models_selection_train_dataset.csv``\
+          \ (30%, used for model selection) and\n       ``extra_train_dataset.csv``\
+          \ (70%, passed to ``refit_full`` as extra data).\n       Both are written\
+          \ to the PVC workspace under ``{workspace_path}/datasets/``.\n\n    For\
+          \ **regression** tasks the split is random; for **binary** and **multiclass**\n\
+          \    tasks the split is **stratified** by the label column by default.\n\
+          \n    Rows with a missing label (NaN / empty in ``label_column``) are dropped\
+          \ after load\n    and before splitting, so regression runs do not propagate\
+          \ null targets into splits\n    or the ``sample_row`` JSON (stratified sampling\
+          \ already dropped per chunk; this\n    applies the same rule to random and\
+          \ first-n-rows paths).\n\n    After sampling, **+/- infinity** values in\
+          \ the frame are replaced with **NaN** (same\n    idea as AutoAI ``loadXy``),\
+          \ then **full-row duplicates** are dropped before the\n    label drop and\
+          \ train/test split.\n\n    Authentication uses AWS-style credentials provided\
+          \ via environment variables\n    (e.g. from a Kubernetes secret).\n\n  \
+          \  Args:\n        file_key: S3 object key of the CSV file.\n        bucket_name:\
+          \ S3 bucket name containing the file.\n        workspace_path: PVC workspace\
+          \ directory where train CSVs will be written.\n        label_column: Name\
+          \ of the label/target column in the dataset.\n        sampled_test_dataset:\
+          \ Output dataset artifact for the test split.\n        sampling_method:\
+          \ \"first_n_rows\", \"stratified\", or \"random\"; if None, derived from\
+          \ task_type.\n        task_type: \"binary\", \"multiclass\", or \"regression\"\
+          \ (default); used when sampling_method is None.\n        split_config: Split\
+          \ configuration dictionary. Available keys: \"test_size\" (float), \"random_state\"\
+          \ (int), \"stratify\" (bool).\n        selection_train_size: Fraction of\
+          \ the train portion used for model selection (default 0.3).\n\n    Raises:\n\
+          \        ValueError: If sampling_method or task_type is invalid, or if required\
+          \ parameters are missing.\n\n    Returns:\n        NamedTuple: Contains\
+          \ sample config, split config, a sample row, and paths to selection-train\
+          \ and extra-train CSVs.\n    \"\"\"  # noqa: E501\n    import io\n    import\
+          \ logging\n    import math\n    import os\n\n    import boto3\n    import\
+          \ pandas as pd\n\n    logger = logging.getLogger(__name__)\n\n    MAX_SIZE_BYTES\
+          \ = 100 * 1024 * 1024  # 100 MB limit in bytes\n    PANDAS_CHUNK_SIZE =\
+          \ 10000  # Rows per batch for streaming read\n    DEFAULT_RANDOM_STATE =\
+          \ 42\n    VALID_SAMPLING_METHODS = {\"first_n_rows\", \"stratified\", \"\
+          random\"}\n    VALID_TASK_TYPES = {\"binary\", \"multiclass\", \"regression\"\
+          }\n\n    # Input validation\n    for param, value in (\n        (\"bucket_name\"\
+          , bucket_name),\n        (\"file_key\", file_key),\n        (\"workspace_path\"\
+          , workspace_path),\n        (\"label_column\", label_column),\n    ):\n\
+          \        if not isinstance(value, str) or not value.strip():\n         \
+          \   raise TypeError(f\"{param} must be a non-empty string.\")\n\n    if\
+          \ task_type not in VALID_TASK_TYPES:\n        raise ValueError(f\"task_type\
+          \ must be one of {VALID_TASK_TYPES}; got {task_type!r}.\")\n    if split_config\
+          \ is not None and not isinstance(split_config, dict):\n        raise TypeError(\"\
+          split_config must be a dictionary with possible keys test_size, random_state,\
+          \ stratify.\")\n    if isinstance(split_config, dict):\n        test_size\
+          \ = split_config.get(\"test_size\")\n        if test_size is not None and\
+          \ (not isinstance(test_size, (int, float)) or test_size <= 0 or test_size\
+          \ >= 1):\n            raise TypeError(\"split_config['test_size'] must be\
+          \ a number in (0, 1) when provided.\")\n        random_state = split_config.get(\"\
+          random_state\")\n        if random_state is not None and (not isinstance(random_state,\
+          \ int)):\n            raise TypeError(\"split_config['random_state'] must\
+          \ be an integer when provided.\")\n        stratify = split_config.get(\"\
+          stratify\")\n        if stratify is not None and not isinstance(stratify,\
+          \ bool):\n            raise TypeError(\"split_config['stratify'] must be\
+          \ a boolean when provided.\")\n    if not isinstance(selection_train_size,\
+          \ (int, float)):\n        raise TypeError(\"selection_train_size must be\
+          \ a numerical value.\")\n    elif selection_train_size <= 0 or selection_train_size\
+          \ >= 1:\n        raise ValueError(\"selection_train_size must be in a range\
+          \ 0 to 1.\")\n\n    if sampling_method is None:\n        if task_type in\
+          \ (\"binary\", \"multiclass\"):\n            sampling_method = \"stratified\"\
+          \n        else:\n            sampling_method = \"random\"\n        logger.info(\"\
+          Sampling method derived from task_type=%s: using %s\", task_type, sampling_method)\n\
+          \    else:\n        if sampling_method not in VALID_SAMPLING_METHODS:\n\
+          \            raise ValueError(\n                f\"sampling_method must\
+          \ be one of {VALID_SAMPLING_METHODS} or None; got {sampling_method!r}.\"\
+          \n            )\n        if sampling_method == \"stratified\" and task_type\
+          \ not in (\"binary\", \"multiclass\"):\n            raise ValueError(\n\
+          \                \"Stratified sampling is only available when task_type\
+          \ is \"\n                \"'binary' or 'multiclass' (classification tasks).\
+          \ \"\n                f\"Got task_type='{task_type}'.\"\n            )\n\
+          \        logger.info(\"Performing sampling: method=%s\", sampling_method)\n\
+          \n    def get_s3_client(verify=True):\n        \"\"\"Create and return an\
+          \ S3 client using credentials from environment variables.\"\"\"\n      \
+          \  access_key = os.environ.get(\"AWS_ACCESS_KEY_ID\")\n        secret_key\
+          \ = os.environ.get(\"AWS_SECRET_ACCESS_KEY\")\n        endpoint_url = os.environ.get(\"\
+          AWS_S3_ENDPOINT\")\n        region_name = os.environ.get(\"AWS_DEFAULT_REGION\"\
+          )\n\n        if (access_key and not secret_key) or (secret_key and not access_key):\n\
+          \            raise ValueError(\n                \"S3 credentials misconfigured:\
+          \ AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY must either \"\n         \
+          \       \"both be set and non-empty, or both be unset. Check the Kubernetes\
+          \ secret or environment configuration.\"\n            )\n        if not\
+          \ access_key and not secret_key:\n            raise ValueError(\n      \
+          \          \"S3 credentials missing: AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY\
+          \ must be provided via \"\n                \"a Kubernetes secret or environment\
+          \ configuration when using s3:// dataset URIs.\"\n            )\n\n    \
+          \    if not endpoint_url:\n            raise ValueError(\n             \
+          \   \"S3 credentials missing: AWS_S3_ENDPOINT must be provided via \"\n\
+          \                \"a Kubernetes secret or environment configuration.\"\n\
+          \            )\n\n        return boto3.client(\n            \"s3\",\n  \
+          \          endpoint_url=endpoint_url,\n            region_name=region_name,\n\
+          \            aws_access_key_id=access_key,\n            aws_secret_access_key=secret_key,\n\
+          \            verify=verify,\n        )\n\n    def _sample_first_n_rows(text_stream,\
+          \ chunk_size, max_size_bytes):\n        \"\"\"Take rows from the start of\
+          \ the stream until the size limit is reached.\"\"\"\n        chunk_list\
+          \ = []\n        accumulated_size = 0\n\n        try:\n            for chunk_df\
+          \ in pd.read_csv(text_stream, chunksize=chunk_size):\n                chunk_memory\
+          \ = chunk_df.memory_usage(deep=True).sum()\n\n                if accumulated_size\
+          \ + chunk_memory > max_size_bytes:\n                    remaining_bytes\
+          \ = max_size_bytes - accumulated_size\n                    if remaining_bytes\
+          \ <= 0:\n                        # No remaining budget; do not take any\
+          \ more rows\n                        break\n                    bytes_per_row\
+          \ = chunk_memory / len(chunk_df) if len(chunk_df) > 0 else 0\n         \
+          \           if bytes_per_row > 0:\n                        rows_to_take\
+          \ = int(remaining_bytes / bytes_per_row)\n                        if rows_to_take\
+          \ > 0:\n                            chunk_df = chunk_df.head(rows_to_take)\n\
+          \                            chunk_list.append(chunk_df)\n             \
+          \       break\n\n                chunk_list.append(chunk_df)\n         \
+          \       accumulated_size += chunk_memory\n\n                if accumulated_size\
+          \ >= max_size_bytes:\n                    break\n        except Exception\
+          \ as e:\n            if not chunk_list:\n                raise ValueError(f\"\
+          Error reading CSV from S3: {str(e)}\") from e\n\n        return pd.concat(chunk_list,\
+          \ ignore_index=True) if chunk_list else pd.DataFrame()\n\n    def _sample_stratified(text_stream,\
+          \ chunk_size, max_size_bytes, label_column):\n        \"\"\"Merge batches\
+          \ and subsample proportionally by target column to stay under the size limit.\"\
+          \"\"\n        subsampled_data = None\n\n        try:\n            for chunk_df\
+          \ in pd.read_csv(text_stream, chunksize=chunk_size):\n                if\
+          \ label_column not in chunk_df.columns:\n                    raise ValueError(\n\
+          \                        f\"Target column '{label_column}' not found in\
+          \ the dataset. \"\n                        f\"Available columns: {list(chunk_df.columns)}\"\
+          \n                    )\n                chunk_df = chunk_df.dropna(subset=[label_column])\n\
+          \                if chunk_df.empty:\n                    continue\n\n  \
+          \              combined_data = (\n                    pd.concat([subsampled_data,\
+          \ chunk_df], ignore_index=True)\n                    if subsampled_data\
+          \ is not None\n                    else chunk_df\n                )\n  \
+          \              combined_memory = combined_data.memory_usage(deep=True).sum()\n\
+          \n                if combined_memory <= max_size_bytes:\n              \
+          \      subsampled_data = combined_data\n                else:\n        \
+          \            sampling_frac = max_size_bytes / combined_memory\n        \
+          \            subsampled_data = (\n                        combined_data.groupby(label_column,\
+          \ group_keys=False)\n                        .apply(lambda x: x.sample(frac=sampling_frac,\
+          \ random_state=DEFAULT_RANDOM_STATE))\n                        .reset_index(drop=True)\n\
+          \                    )\n\n        except Exception as e:\n            logger.debug(\"\
+          Error reading CSV and stratified sampling: %s\", e, exc_info=True)\n   \
+          \         if subsampled_data is None or subsampled_data.empty:\n       \
+          \         raise ValueError(f\"Error reading CSV from S3: {str(e)}\") from\
+          \ e\n\n        if subsampled_data is None:\n            return pd.DataFrame()\n\
+          \        return subsampled_data.sample(frac=1, random_state=DEFAULT_RANDOM_STATE).reset_index(drop=True)\n\
+          \n    def _sample_random(text_stream, chunk_size, max_size_bytes):\n   \
+          \     \"\"\"Iterate all batches, merge with accumulated data, randomly subsample\
+          \ when over the limit.\"\"\"\n        subsampled_data = None\n\n       \
+          \ try:\n            for chunk_df in pd.read_csv(text_stream, chunksize=chunk_size):\n\
+          \                data = (\n                    pd.concat([subsampled_data,\
+          \ chunk_df], ignore_index=True)\n                    if subsampled_data\
+          \ is not None\n                    else chunk_df\n                )\n  \
+          \              combined_memory = data.memory_usage(deep=True).sum()\n\n\
+          \                if combined_memory <= max_size_bytes:\n               \
+          \     subsampled_data = data\n                else:\n                  \
+          \  sampling_frac = max_size_bytes / combined_memory\n                  \
+          \  subsampled_data = data.sample(frac=sampling_frac, random_state=DEFAULT_RANDOM_STATE).reset_index(\n\
+          \                        drop=True\n                    )\n\n          \
+          \  return subsampled_data if subsampled_data is not None else pd.DataFrame()\n\
+          \n        except Exception as e:\n            if subsampled_data is None\
+          \ or subsampled_data.empty:\n                raise ValueError(f\"Error reading\
+          \ CSV from S3: {str(e)}\") from e\n            return subsampled_data\n\n\
+          \    def load_data_in_batches(\n        s3_client,\n        bucket_name,\n\
+          \        file_key,\n        max_size_bytes,\n        sampling_method,\n\
+          \        label_column,\n    ):\n        \"\"\"Load CSV from S3 in batches\
+          \ and return a sampled dataframe using the chosen strategy.\"\"\"\n    \
+          \    from botocore.exceptions import SSLError\n\n        if sampling_method\
+          \ == \"stratified\" and label_column is None:\n            raise ValueError(\"\
+          label_column must be provided when sampling_method='stratified'\")\n\n \
+          \       try:\n            response = s3_client.get_object(Bucket=bucket_name,\
+          \ Key=file_key)\n        except SSLError:\n            logger.warning(\n\
+          \                \"SSL error when downloading s3://%s/%s, retrying with\
+          \ verify=False\",\n                bucket_name,\n                file_key,\n\
+          \            )\n            no_verify_client = get_s3_client(verify=False)\n\
+          \            response = no_verify_client.get_object(Bucket=bucket_name,\
+          \ Key=file_key)\n        text_stream = io.TextIOWrapper(response[\"Body\"\
+          ], encoding=\"utf-8\")\n\n        if sampling_method == \"stratified\":\n\
+          \            return _sample_stratified(text_stream, PANDAS_CHUNK_SIZE, max_size_bytes,\
+          \ label_column)\n        if sampling_method == \"random\":\n           \
+          \ return _sample_random(text_stream, PANDAS_CHUNK_SIZE, max_size_bytes)\n\
+          \        return _sample_first_n_rows(text_stream, PANDAS_CHUNK_SIZE, max_size_bytes)\n\
+          \n    s3_client = get_s3_client()\n    sampled_dataframe = load_data_in_batches(\n\
+          \        s3_client,\n        bucket_name,\n        file_key,\n        max_size_bytes=MAX_SIZE_BYTES,\n\
+          \        sampling_method=sampling_method,\n        label_column=label_column,\n\
+          \    )\n\n    if label_column not in sampled_dataframe.columns:\n      \
+          \  raise ValueError(\n            f\"Label column {label_column!r} not found\
+          \ in the dataset. \"\n            f\"Available columns: {list(sampled_dataframe.columns)}\"\
+          \n        )\n\n    sampled_dataframe.replace([math.inf, -math.inf], float(\"\
+          nan\"), inplace=True)\n\n    n_before_dedup = len(sampled_dataframe)\n \
+          \   sampled_dataframe.drop_duplicates(inplace=True)\n    n_dup_dropped =\
+          \ n_before_dedup - len(sampled_dataframe)\n    if n_dup_dropped:\n     \
+          \   logger.info(\"Dropped %s full-row duplicate(s) (%s rows remaining).\"\
+          , n_dup_dropped, len(sampled_dataframe))\n\n    if sampled_dataframe.empty:\n\
+          \        raise ValueError(\n            \"No valid data rows remain after\
+          \ replacing infinite values and dropping duplicates. \"\n            \"\
+          The source CSV may contain only infinite/NaN values or duplicate rows.\"\
+          \n        )\n\n    n_before_drop = len(sampled_dataframe)\n    sampled_dataframe\
+          \ = sampled_dataframe.dropna(subset=[label_column])\n    n_dropped = n_before_drop\
+          \ - len(sampled_dataframe)\n    if n_dropped:\n        logger.info(\n  \
+          \          \"Dropped %s row(s) with missing label in column %r before splitting\
+          \ (loaded %s rows, %s remaining).\",\n            n_dropped,\n         \
+          \   label_column,\n            n_before_drop,\n            len(sampled_dataframe),\n\
+          \        )\n    if sampled_dataframe.empty:\n        raise ValueError(\n\
+          \            f\"No rows remain after removing missing values in label column\
+          \ {label_column!r}. \"\n            \"Ensure the dataset has at least one\
+          \ row with a non-null label (e.g. empty cells in the target column).\"\n\
+          \        )\n\n    n_samples = len(sampled_dataframe)\n    logger.info(\"\
+          Read %d rows from s3://%s/%s (sampling_method=%s)\", n_samples, bucket_name,\
+          \ file_key, sampling_method)\n\n    # --- Train/test split ---\n    from\
+          \ pathlib import Path\n\n    from sklearn.model_selection import train_test_split\n\
+          \n    DEFAULT_TEST_SIZE = 0.2\n    DEFAULT_SPLIT_RANDOM_STATE = 42\n\n \
+          \   split_config = split_config or {}\n    test_size = split_config.get(\"\
+          test_size\", DEFAULT_TEST_SIZE)\n    random_state = split_config.get(\"\
+          random_state\", DEFAULT_SPLIT_RANDOM_STATE)\n\n    if not sampled_test_dataset.uri\
+          \ or not sampled_test_dataset.uri.endswith(\".csv\"):\n        sampled_test_dataset.uri\
+          \ = (sampled_test_dataset.uri or \"sampled_test_dataset\") + \".csv\"\n\n\
+          \    # Features and target\n    X = sampled_dataframe.drop(columns=[label_column],\
+          \ inplace=False)\n    y = sampled_dataframe[label_column]\n\n    stratify_effective\
+          \ = task_type != \"regression\" and split_config.get(\"stratify\", True)\n\
+          \n    # Primary split: train vs test\n    X_train, X_test, y_train, y_test\
+          \ = train_test_split(\n        X,\n        y,\n        test_size=test_size,\n\
+          \        stratify=(y if stratify_effective else None),\n        random_state=random_state,\n\
+          \    )\n\n    # Secondary split: selection train vs extra train\n    X_sel,\
+          \ X_extra, y_sel, y_extra = train_test_split(\n        X_train,\n      \
+          \  y_train,\n        test_size=(1 - selection_train_size),\n        stratify=(y_train\
+          \ if stratify_effective else None),\n        random_state=random_state,\n\
+          \    )\n\n    X_y_sel = pd.concat([X_sel, y_sel], axis=1)\n    X_y_extra\
+          \ = pd.concat([X_extra, y_extra], axis=1)\n    X_y_test = pd.concat([X_test,\
+          \ y_test], axis=1)\n\n    # Write selection train and extra train to PVC\
+          \ workspace\n    datasets_dir = Path(workspace_path) / \"datasets\"\n  \
+          \  datasets_dir.mkdir(parents=True, exist_ok=True)\n    models_selection_train_data_path\
+          \ = str(datasets_dir / \"models_selection_train_dataset.csv\")\n    extra_train_data_path\
+          \ = str(datasets_dir / \"extra_train_dataset.csv\")\n    X_y_sel.to_csv(models_selection_train_data_path,\
+          \ index=False)\n    X_y_extra.to_csv(extra_train_data_path, index=False)\n\
+          \n    # Write test to S3 artifact\n    X_y_test.to_csv(sampled_test_dataset.path,\
+          \ index=False)\n\n    # Sample row for downstream use (JSON string to avoid\
+          \ NaN issues)\n    sample_row = X_y_test.head(1).to_json(orient=\"records\"\
+          )\n\n    from mlflow_tracking import build_tracking_artifact_payload, write_tracking_artifact\n\
+          \n    tracking_payload = build_tracking_artifact_payload(kfp_run_id=run_id,\
+          \ pipeline_name=pipeline_name)\n    write_tracking_artifact(mlflow_tracking_artifact.path,\
+          \ tracking_payload)\n\n    return NamedTuple(\n        \"outputs\",\n  \
+          \      sample_config=dict,\n        split_config=dict,\n        sample_row=str,\n\
+          \        models_selection_train_data_path=str,\n        extra_train_data_path=str,\n\
+          \    )(\n        sample_config={\"n_samples\": n_samples},\n        split_config={\n\
+          \            \"test_size\": test_size,\n            \"random_state\": random_state,\n\
+          \            \"stratify\": stratify_effective,\n        },\n        sample_row=sample_row,\n\
+          \        models_selection_train_data_path=models_selection_train_data_path,\n\
+          \        extra_train_data_path=extra_train_data_path,\n    )\n\n"
+        image: quay.io/opendatahub/odh-automl:odh-stable
+        resources:
+          cpuLimit: 32.0
+          cpuRequest: 2.0
+          memoryLimit: 68.719476736
+          memoryRequest: 8.589934592
+          resourceCpuLimit: '32'
+          resourceCpuRequest: '2'
+          resourceMemoryLimit: 64Gi
+          resourceMemoryRequest: 8Gi
+    exec-leaderboard-evaluation:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - leaderboard_evaluation
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.16.1'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\n__KFP_EMBEDDED_ARCHIVE_B64 = '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'\n\
+          \nimport base64 as __kfp_b64\nimport io as __kfp_io\nimport os as __kfp_os\n\
+          import sys as __kfp_sys\nimport tarfile as __kfp_tarfile\nimport tempfile\
+          \ as __kfp_tempfile\n\n# Extract embedded archive at import time to ensure\
+          \ sys.path and globals are set\n__kfp_tmpdir = __kfp_tempfile.TemporaryDirectory()\n\
+          __KFP_EMBEDDED_ASSET_DIR = __kfp_tmpdir.name\ntry:\n    __kfp_bytes = __kfp_b64.b64decode(__KFP_EMBEDDED_ARCHIVE_B64.encode('ascii'))\n\
+          \    with __kfp_tarfile.open(fileobj=__kfp_io.BytesIO(__kfp_bytes), mode='r:gz')\
+          \ as __kfp_tar:\n        __kfp_tar.extractall(path=__KFP_EMBEDDED_ASSET_DIR)\n\
+          except Exception as __kfp_e:\n    raise RuntimeError(f'Failed to extract\
+          \ embedded archive: {__kfp_e}')\n\n# Always prepend the extracted directory\
+          \ to sys.path for import resolution\nif __KFP_EMBEDDED_ASSET_DIR not in\
+          \ __kfp_sys.path:\n    __kfp_sys.path.insert(0, __KFP_EMBEDDED_ASSET_DIR)\n\
+          \n\n\n\ndef leaderboard_evaluation(\n    models_artifact: dsl.Input[dsl.Model],\n\
+          \    eval_metric: str,\n    html_artifact: dsl.Output[dsl.HTML],\n    embedded_artifact:\
+          \ dsl.EmbeddedInput[dsl.Artifact],\n) -> NamedTuple(\"outputs\", best_model=str):\n\
+          \    \"\"\"Evaluate refitted AutoGluon models and generate a leaderboard.\n\
+          \n    This component reads pre-computed metrics from a combined models artifact\n\
+          \    produced by ``autogluon_models_training`` and generates an HTML-formatted\n\
+          \    leaderboard ranking the models by their performance metric.\n\n   \
+          \ The artifact layout expected under ``models_artifact.path``::\n\n    \
+          \    models_artifact.path /\n          <model_name>_FULL /\n           \
+          \ metrics / metrics.json\n            predictor / predictor.pkl\n      \
+          \      notebooks / automl_predictor_notebook.ipynb\n\n    ``models_artifact.metadata[\"\
+          model_names\"]`` must contain the list of\n    refitted model display names\
+          \ (e.g. ``[\"LightGBM_BAG_L1_FULL\", ...]``).\n\n    Args:\n        models_artifact:\
+          \ Combined Model artifact from ``autogluon_models_training``\n         \
+          \   with ``metadata[\"model_names\"]`` and per-model subdirectories.\n \
+          \       eval_metric: Metric name for ranking (e.g. ``\"accuracy\"``, ``\"\
+          root_mean_squared_error\"``);\n            leaderboard sorted descending\
+          \ (AutoGluon uses higher-is-better convention).\n        html_artifact:\
+          \ Output artifact for the HTML-formatted leaderboard.\n        embedded_artifact:\
+          \ Embedded component files injected by the KFP runtime;\n            provides\
+          \ ``leaderboard_html_template.html``.\n\n    Raises:\n        FileNotFoundError:\
+          \ If any model metrics path cannot be found.\n        KeyError: If ``metadata[\"\
+          model_names\"]`` is missing or metrics JSON lacks\n            the ``eval_metric``\
+          \ key.\n\n    Example:\n        from kfp import dsl\n        from components.training.automl.autogluon_leaderboard_evaluation\
+          \ import (\n            leaderboard_evaluation\n        )\n\n        @dsl.pipeline(name=\"\
+          model-evaluation-pipeline\")\n        def evaluation_pipeline(models_artifact):\n\
+          \            leaderboard = leaderboard_evaluation(\n                models_artifact=models_artifact,\n\
+          \                eval_metric=\"root_mean_squared_error\",\n            )\n\
+          \            return leaderboard\n    \"\"\"  # noqa: E501\n    import json\n\
+          \    import logging\n    from pathlib import Path\n\n    import pandas as\
+          \ pd\n    from leaderboard_utils import _build_leaderboard_html, _build_leaderboard_table,\
+          \ _round_metrics\n\n    logger = logging.getLogger(__name__)\n\n    # Input\
+          \ validation\n    if not isinstance(eval_metric, str) or not eval_metric.strip():\n\
+          \        raise TypeError(\"eval_metric must be a non-empty string.\")\n\
+          \    model_names_raw = models_artifact.metadata.get(\"model_names\", \"\
+          []\")\n    # KFP/MLMD serializes lists as JSON strings to avoid the {\"\
+          list\": [...]} round-trip bug.\n    model_names = json.loads(model_names_raw)\
+          \ if isinstance(model_names_raw, str) else list(model_names_raw)\n    if\
+          \ not model_names:\n        raise KeyError(\"models_artifact.metadata must\
+          \ contain a non-empty 'model_names' list.\")\n\n    results = []\n    base_uri\
+          \ = models_artifact.uri.rstrip(\"/\")\n    for display_name in model_names:\n\
+          \        metrics_path = Path(models_artifact.path) / display_name / \"metrics\"\
+          \ / \"metrics.json\"\n        if not metrics_path.exists():\n          \
+          \  logger.warning(\n                \"Skipping model '%s': no metrics/metrics.json\
+          \ found. The refit task may have failed for this model.\",\n           \
+          \     display_name,\n            )\n            continue\n        with metrics_path.open(\"\
+          r\") as f:\n            eval_results = json.load(f)\n        model_uri =\
+          \ f\"{base_uri}/{display_name}\"\n        predictor_uri = f\"{model_uri}/predictor\"\
+          \n        notebook_uri = f\"{model_uri}/notebooks/automl_predictor_notebook.ipynb\"\
+          \n        results.append(\n            {\n                \"model\": display_name,\n\
+          \                **_round_metrics(eval_results),\n                \"notebook\"\
+          : notebook_uri,\n                \"predictor\": predictor_uri,\n       \
+          \     }\n        )\n\n    if not results:\n        raise ValueError(\n \
+          \           \"No valid model artifacts found. All models may have failed\
+          \ or produced no metrics/metrics.json output.\"\n        )\n\n    # Notice:\
+          \ AutoGluon follows the \"higher is better\" strategy for all metrics.\n\
+          \    # This means that some metrics\u2014like log_loss and root_mean_squared_error\u2014\
+          will have their signs FLIPPED and are shown as negative. # noqa: E501\n\
+          \    # This is to ensure that a higher value always means a better model,\
+          \ so users do not need to know about the metric's normal directionality\
+          \ when interpreting the leaderboard. # noqa: E501\n    leaderboard_df =\
+          \ pd.DataFrame(results).sort_values(by=eval_metric, ascending=False)\n \
+          \   n = len(leaderboard_df)\n    leaderboard_df.index = pd.RangeIndex(start=1,\
+          \ stop=n + 1, name=\"rank\")\n\n    html_table = _build_leaderboard_table(leaderboard_df)\n\
+          \n    best_model_name = leaderboard_df.iloc[0][\"model\"]\n    template_path\
+          \ = Path(embedded_artifact.path) / \"leaderboard_html_template.html\"\n\
+          \    html_content = _build_leaderboard_html(\n        template_path=template_path,\n\
+          \        table_html=html_table,\n        eval_metric=eval_metric,\n    \
+          \    best_model_name=best_model_name,\n        num_models=len(leaderboard_df),\n\
+          \    )\n    with open(html_artifact.path, \"w\", encoding=\"utf-8\") as\
+          \ f:\n        f.write(html_content)\n\n    html_artifact.metadata[\"data\"\
+          ] = leaderboard_df.to_dict()\n    html_artifact.metadata[\"display_name\"\
+          ] = \"automl_leaderboard\"\n    return NamedTuple(\"outputs\", best_model=str)(best_model=best_model_name)\n\
+          \n"
+        image: quay.io/opendatahub/odh-automl:odh-stable
+        resources:
+          cpuLimit: 32.0
+          cpuRequest: 1.0
+          memoryLimit: 68.719476736
+          memoryRequest: 4.294967296
+          resourceCpuLimit: '32'
+          resourceCpuRequest: '1'
+          resourceMemoryLimit: 64Gi
+          resourceMemoryRequest: 4Gi
+pipelineInfo:
+  description: 'End-to-end AutoGluon tabular training pipeline implementing a two-stage
+    approach: first builds and selects top-performing models on sampled data, then
+    refits them on the full dataset. The pipeline loads data from S3, splits it into
+    train/test sets, trains multiple AutoGluon models using ensembling (stacking and
+    bagging), selects the top N performers, refits each on the complete training data
+    sequentially, and finally evaluates all refitted models to generate a comprehensive
+    leaderboard with performance metrics.'
+  name: autogluon-tabular-training-pipeline
+root:
+  dag:
+    tasks:
+      autogluon-models-training:
+        cachingOptions: {}
+        componentRef:
+          name: comp-autogluon-models-training
+        dependentTasks:
+        - automl-data-loader
+        inputs:
+          artifacts:
+            test_data:
+              taskOutputArtifact:
+                outputArtifactKey: sampled_test_dataset
+                producerTask: automl-data-loader
+          parameters:
+            extra_train_data_path:
+              taskOutputParameter:
+                outputParameterKey: extra_train_data_path
+                producerTask: automl-data-loader
+            label_column:
+              componentInputParameter: label_column
+            pipeline_name:
+              runtimeValue:
+                constant: '{{$.pipeline_job_resource_name}}'
+            positive_class:
+              componentInputParameter: positive_class
+            run_id:
+              runtimeValue:
+                constant: '{{$.pipeline_job_uuid}}'
+            sample_row:
+              taskOutputParameter:
+                outputParameterKey: sample_row
+                producerTask: automl-data-loader
+            sampling_config:
+              taskOutputParameter:
+                outputParameterKey: sample_config
+                producerTask: automl-data-loader
+            split_config:
+              taskOutputParameter:
+                outputParameterKey: split_config
+                producerTask: automl-data-loader
+            task_type:
+              componentInputParameter: task_type
+            top_n:
+              componentInputParameter: top_n
+            train_data_path:
+              taskOutputParameter:
+                outputParameterKey: models_selection_train_data_path
+                producerTask: automl-data-loader
+            workspace_path:
+              runtimeValue:
+                constant: '{{$.workspace_path}}'
+        taskInfo:
+          name: autogluon-models-training
+      automl-data-loader:
+        cachingOptions: {}
+        componentRef:
+          name: comp-automl-data-loader
+        inputs:
+          parameters:
+            bucket_name:
+              componentInputParameter: train_data_bucket_name
+            file_key:
+              componentInputParameter: train_data_file_key
+            label_column:
+              componentInputParameter: label_column
+            pipeline_name:
+              runtimeValue:
+                constant: '{{$.pipeline_job_resource_name}}'
+            run_id:
+              runtimeValue:
+                constant: '{{$.pipeline_job_uuid}}'
+            task_type:
+              componentInputParameter: task_type
+            workspace_path:
+              runtimeValue:
+                constant: '{{$.workspace_path}}'
+        taskInfo:
+          name: automl-data-loader
+      leaderboard-evaluation:
+        cachingOptions: {}
+        componentRef:
+          name: comp-leaderboard-evaluation
+        dependentTasks:
+        - autogluon-models-training
+        inputs:
+          artifacts:
+            models_artifact:
+              taskOutputArtifact:
+                outputArtifactKey: models_artifact
+                producerTask: autogluon-models-training
+          parameters:
+            eval_metric:
+              taskOutputParameter:
+                outputParameterKey: eval_metric
+                producerTask: autogluon-models-training
+        taskInfo:
+          name: leaderboard-evaluation
+  inputDefinitions:
+    parameters:
+      label_column:
+        description: Name of the target/label column in the dataset.
+        parameterType: STRING
+      positive_class:
+        description: Optional label value for the positive class in binary classification.
+          Defaults to the second unique class after sorting label values.
+        isOptional: true
+        parameterType: STRING
+      task_type:
+        description: '"binary", "multiclass", or "regression"; drives metrics and
+          model types.'
+        parameterType: STRING
+      top_n:
+        defaultValue: 3.0
+        description: 'Number of top models to select and refit (default: 3); positive
+          integer from range [1, 10].'
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+      train_data_bucket_name:
+        description: S3-compatible bucket name containing the tabular data file.
+        parameterType: STRING
+      train_data_file_key:
+        description: S3 object key of the CSV file (features and target column).
+        parameterType: STRING
+      train_data_secret_name:
+        description: Kubernetes secret name with S3 credentials (AWS_ACCESS_KEY_ID,
+          AWS_SECRET_ACCESS_KEY, AWS_S3_ENDPOINT, AWS_DEFAULT_REGION).
+        parameterType: STRING
+schemaVersion: 2.1.0
+sdkVersion: kfp-2.16.1
+---
+platforms:
+  kubernetes:
+    deploymentSpec:
+      executors:
+        exec-automl-data-loader:
+          secretAsEnv:
+          - keyToEnv:
+            - envVar: AWS_ACCESS_KEY_ID
+              secretKey: AWS_ACCESS_KEY_ID
+            - envVar: AWS_SECRET_ACCESS_KEY
+              secretKey: AWS_SECRET_ACCESS_KEY
+            - envVar: AWS_S3_ENDPOINT
+              secretKey: AWS_S3_ENDPOINT
+            - envVar: AWS_DEFAULT_REGION
+              secretKey: AWS_DEFAULT_REGION
+            optional: true
+            secretNameParameter:
+              componentInputParameter: train_data_secret_name
+    pipelineConfig:
+      workspace:
+        kubernetes:
+          pvcSpecPatch:
+            accessModes:
+            - ReadWriteOnce
+        size: 12Gi

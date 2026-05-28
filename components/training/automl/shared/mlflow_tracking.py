@@ -17,10 +17,61 @@ logger = logging.getLogger(__name__)
 
 TRACKING_ARTIFACT_FILENAME = "mlflow_tracking.json"
 
+# Local cluster testing only: paste your MLflow route here OR set AUTOML_DEV_MLFLOW_TRACKING_URI in the pod.
+# Leave empty in git. When non-empty, dev fallback is on automatically (override: AUTOML_DEV_MLFLOW_FALLBACK=false).
+_DEV_MLFLOW_TRACKING_URI = "https://rh-ai.apps.rosa.automl-crc-ng.n399.p3.openshiftapps.com/mlflow/"
+
+
+def _dev_mlflow_fallback_enabled() -> bool:
+    raw = (os.getenv("AUTOML_DEV_MLFLOW_FALLBACK") or "").strip().lower()
+    if raw in ("0", "false", "no"):
+        return False
+    if raw in ("1", "true", "yes"):
+        return True
+    return bool(_DEV_MLFLOW_TRACKING_URI.strip())
+
+
+def resolve_tracking_uri() -> str:
+    """Tracking URI from platform env, or optional dev fallback when injection is not available yet."""
+    uri = (os.getenv("MLFLOW_TRACKING_URI") or "").strip()
+    if uri:
+        return uri
+    if not _dev_mlflow_fallback_enabled():
+        return ""
+    dev_uri = (os.getenv("AUTOML_DEV_MLFLOW_TRACKING_URI") or _DEV_MLFLOW_TRACKING_URI).strip()
+    if dev_uri:
+        logger.warning(
+            "AUTOML_DEV_MLFLOW_FALLBACK: using dev MLFLOW_TRACKING_URI (len=%d); remove before production",
+            len(dev_uri),
+        )
+    return dev_uri
+
+
+def _log_mlflow_env_status(context: str) -> None:
+    """Log whether MLflow env vars are visible in this pod (URI is safe to log)."""
+    raw_uri = os.getenv("MLFLOW_TRACKING_URI")
+    tracking_uri = (raw_uri or "").strip()
+    if tracking_uri:
+        logger.info(
+            "%s: MLFLOW_TRACKING_URI is set (len=%d): %s",
+            context,
+            len(tracking_uri),
+            tracking_uri,
+        )
+    else:
+        logger.info("%s: MLFLOW_TRACKING_URI is unset or empty (raw=%r)", context, raw_uri)
+    logger.info(
+        "%s: MLFLOW_RUN_ID=%s, MLFLOW_EXPERIMENT_ID=%s, MLFLOW_WORKSPACE=%s",
+        context,
+        "set" if os.getenv("MLFLOW_RUN_ID") else "unset",
+        "set" if os.getenv("MLFLOW_EXPERIMENT_ID") else "unset",
+        "set" if os.getenv("MLFLOW_WORKSPACE") else "unset",
+    )
+
 
 def mlflow_enabled() -> bool:
-    """Return True when MLflow tracking URI is configured."""
-    return bool(os.getenv("MLFLOW_TRACKING_URI", "").strip())
+    """Return True when MLflow tracking URI is configured (platform env or dev fallback)."""
+    return bool(resolve_tracking_uri())
 
 
 def build_mlflow_run_url(
@@ -45,7 +96,8 @@ def build_tracking_artifact_payload(
     pipeline_name: str,
 ) -> dict[str, Any]:
     """Build the JSON payload for the KFP ``mlflow_tracking_artifact`` output."""
-    tracking_uri = os.getenv("MLFLOW_TRACKING_URI", "").strip()
+    _log_mlflow_env_status("build_tracking_artifact_payload")
+    tracking_uri = resolve_tracking_uri()
     enabled = bool(tracking_uri)
     payload: dict[str, Any] = {
         "tracking_enabled": enabled,
@@ -114,17 +166,32 @@ def log_tabular_training_to_mlflow(
     label_column: str,
 ) -> None:
     """Resume the KFP parent run and log parent + nested child runs for refitted models."""
+    _log_mlflow_env_status("log_tabular_training_to_mlflow")
     if not mlflow_enabled():
-        return
-
-    parent_run_id = os.getenv("MLFLOW_RUN_ID")
-    if not parent_run_id:
-        logger.info("MLFLOW_TRACKING_URI is set but MLFLOW_RUN_ID is missing; skipping MLflow logging.")
+        logger.info("log_tabular_training_to_mlflow: MLflow logging disabled (no tracking URI)")
         return
 
     import mlflow
 
-    mlflow.set_tracking_uri(os.environ["MLFLOW_TRACKING_URI"])
+    tracking_uri = resolve_tracking_uri()
+    mlflow.set_tracking_uri(tracking_uri)
+    logger.info("log_tabular_training_to_mlflow: mlflow.set_tracking_uri applied (len=%d)", len(tracking_uri))
+
+    parent_run_id = (os.getenv("MLFLOW_RUN_ID") or "").strip()
+    if parent_run_id:
+        run_context = mlflow.start_run(run_id=parent_run_id)
+    elif _dev_mlflow_fallback_enabled():
+        experiment_name = (os.getenv("MLFLOW_EXPERIMENT_NAME") or pipeline_name).strip()
+        mlflow.set_experiment(experiment_name)
+        run_context = mlflow.start_run(run_name=f"{pipeline_name}-{run_id}")
+        logger.warning(
+            "AUTOML_DEV_MLFLOW_FALLBACK: created MLflow parent run id=%s experiment=%s",
+            run_context.info.run_id,
+            experiment_name,
+        )
+    else:
+        logger.info("MLFLOW_TRACKING_URI is set but MLFLOW_RUN_ID is missing; skipping MLflow logging.")
+        return
 
     try:
         import autogluon
@@ -133,7 +200,7 @@ def log_tabular_training_to_mlflow(
     except Exception:
         ag_version = "unknown"
 
-    with mlflow.start_run(run_id=parent_run_id):
+    with run_context:
         mlflow.set_tags(
             {
                 "pipeline_name": pipeline_name,

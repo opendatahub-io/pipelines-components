@@ -1,4 +1,1 @@
 #catboost==1.2.10
-# MLflow tracking for AutoML pipelines (RHOAI 3.5+ KFP integration)
-mlflow>=2.14.0,<4
-

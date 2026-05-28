@@ -1,0 +1,1367 @@
+# PIPELINE DEFINITION
+# Name: autogluon-tabular-training-pipeline
+# Description: End-to-end AutoGluon tabular training pipeline implementing a two-stage approach: first builds and selects top-performing models on sampled data, then refits them on the full dataset. The pipeline loads data from S3, splits it into train/test sets, trains multiple AutoGluon models using ensembling (stacking and bagging), selects the top N performers, refits each on the complete training data in parallel, and finally evaluates all refitted models to generate a comprehensive leaderboard with performance metrics.
+# Inputs:
+#    label_column: str
+#    task_type: str
+#    top_n: int [Default: 3.0]
+#    train_data_bucket_name: str
+#    train_data_file_key: str
+#    train_data_secret_name: str
+components:
+  comp-autogluon-models-full-refit:
+    executorLabel: exec-autogluon-models-full-refit
+    inputDefinitions:
+      artifacts:
+        full_dataset:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+          description: 'Dataset artifact (CSV) with the complete training data.
+
+            Used for evaluation and for writing metrics; the dataset format
+
+            should match the data used during initial training.'
+      parameters:
+        model_config:
+          description: 'Configuration dictionary for model training (stored
+
+            in artifact metadata).'
+          parameterType: STRUCT
+        model_name:
+          description: 'The name of the model to refit. Must match a model name
+
+            in the predictor. The refitted model is saved with the suffix
+
+            "_FULL" appended to this name.'
+          parameterType: STRING
+        pipeline_name:
+          description: 'Name of the pipeline run. The last hyphen-separated
+
+            segment is stripped for use in the generated notebook.'
+          parameterType: STRING
+        predictor_path:
+          description: 'Path to a trained AutoGluon TabularPredictor that
+
+            includes the model specified by model_name.'
+          parameterType: STRING
+        run_id:
+          description: ID of the pipeline run (used in the generated notebook).
+          parameterType: STRING
+        sample_row:
+          description: 'JSON string of a list of row objects (e.g.
+
+            ''[{"feature1": 1, "target": 0}]''). Used as example input in the
+
+            generated notebook; the label column is removed from each row.'
+          parameterType: STRING
+        sampling_config:
+          description: 'Configuration dictionary for data sampling (stored
+
+            in artifact metadata).'
+          parameterType: STRUCT
+        split_config:
+          description: 'Configuration dictionary for data splitting (stored
+
+            in artifact metadata).'
+          parameterType: STRUCT
+    outputDefinitions:
+      artifacts:
+        model_artifact:
+          artifactType:
+            schemaTitle: system.Model
+            schemaVersion: 0.0.1
+      parameters:
+        model_name:
+          parameterType: STRING
+  comp-automl-data-loader:
+    executorLabel: exec-automl-data-loader
+    inputDefinitions:
+      parameters:
+        bucket_name:
+          description: The S3 bucket containing the dataset file.
+          parameterType: STRING
+        file_key:
+          description: The S3 object key (path) for the dataset file.
+          parameterType: STRING
+    outputDefinitions:
+      artifacts:
+        full_dataset:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+      parameters:
+        sample_config:
+          parameterType: STRUCT
+  comp-for-loop-1:
+    dag:
+      outputs:
+        artifacts:
+          pipelinechannel--autogluon-models-full-refit-model_artifact:
+            artifactSelectors:
+            - outputArtifactKey: model_artifact
+              producerSubtask: autogluon-models-full-refit
+      tasks:
+        autogluon-models-full-refit:
+          cachingOptions:
+            enableCache: true
+          componentRef:
+            name: comp-autogluon-models-full-refit
+          inputs:
+            artifacts:
+              full_dataset:
+                componentInputArtifact: pipelinechannel--automl-data-loader-full_dataset
+            parameters:
+              model_config:
+                componentInputParameter: pipelinechannel--models-selection-model_config
+              model_name:
+                componentInputParameter: pipelinechannel--models-selection-top_models-loop-item
+              pipeline_name:
+                runtimeValue:
+                  constant: '{{$.pipeline_job_resource_name}}'
+              predictor_path:
+                componentInputParameter: pipelinechannel--models-selection-predictor_path
+              run_id:
+                runtimeValue:
+                  constant: '{{$.pipeline_job_uuid}}'
+              sample_row:
+                componentInputParameter: pipelinechannel--tabular-train-test-split-sample_row
+              sampling_config:
+                componentInputParameter: pipelinechannel--automl-data-loader-sample_config
+              split_config:
+                componentInputParameter: pipelinechannel--tabular-train-test-split-split_config
+          taskInfo:
+            name: autogluon-models-full-refit
+    inputDefinitions:
+      artifacts:
+        pipelinechannel--automl-data-loader-full_dataset:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+      parameters:
+        pipelinechannel--automl-data-loader-sample_config:
+          parameterType: STRUCT
+        pipelinechannel--models-selection-model_config:
+          parameterType: STRUCT
+        pipelinechannel--models-selection-predictor_path:
+          parameterType: STRING
+        pipelinechannel--models-selection-top_models:
+          parameterType: LIST
+        pipelinechannel--models-selection-top_models-loop-item:
+          parameterType: STRING
+        pipelinechannel--tabular-train-test-split-sample_row:
+          parameterType: STRING
+        pipelinechannel--tabular-train-test-split-split_config:
+          parameterType: STRUCT
+    outputDefinitions:
+      artifacts:
+        pipelinechannel--autogluon-models-full-refit-model_artifact:
+          artifactType:
+            schemaTitle: system.Model
+            schemaVersion: 0.0.1
+          isArtifactList: true
+  comp-leaderboard-evaluation:
+    executorLabel: exec-leaderboard-evaluation
+    inputDefinitions:
+      artifacts:
+        models:
+          artifactType:
+            schemaTitle: system.Model
+            schemaVersion: 0.0.1
+          description: 'A list of Model artifacts. Each should have metadata containing
+
+            a "display_name" field and metrics file at
+
+            model.path / model_name / metrics / metrics.json.'
+          isArtifactList: true
+      parameters:
+        eval_metric:
+          description: 'The name of the evaluation metric to use for ranking.
+
+            Must match a key in the metrics JSON (e.g., "accuracy" for
+
+            classification, "root_mean_squared_error" for regression).
+
+            The leaderboard is sorted by this metric in descending order.'
+          parameterType: STRING
+    outputDefinitions:
+      artifacts:
+        html_artifact:
+          artifactType:
+            schemaTitle: system.HTML
+            schemaVersion: 0.0.1
+      parameters:
+        best_model:
+          parameterType: STRING
+  comp-models-selection:
+    executorLabel: exec-models-selection
+    inputDefinitions:
+      artifacts:
+        test_data:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+          description: 'A Dataset artifact containing the test data in
+
+            CSV format. This data is used to evaluate model performance and
+
+            generate the leaderboard. The dataset should match the schema of
+
+            the training data.'
+        train_data:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+          description: 'A Dataset artifact containing the training data
+
+            in CSV format. This data is used to train the AutoGluon models.
+
+            The dataset should include the label_column and all feature columns.'
+      parameters:
+        label_column:
+          description: 'The name of the target/label column in the training
+
+            and test datasets. This column will be used as the prediction target.'
+          parameterType: STRING
+        task_type:
+          description: 'The type of machine learning task. Supported values
+
+            include "binary", "multiclass" (classification) or "regression". This
+
+            determines the evaluation metrics and model types AutoGluon will use.'
+          parameterType: STRING
+        top_n:
+          description: 'The number of top-performing models to select from the leaderboard.
+
+            Only the top N models will be returned and promoted to the refit stage.
+
+            Must be a positive integer.'
+          parameterType: NUMBER_INTEGER
+        workspace_path:
+          description: 'Path (string) to the workspace directory where the
+
+            trained TabularPredictor will be saved (under workspace_path /
+
+            autogluon_predictor). This path is also returned as predictor_path
+
+            for use by downstream components.'
+          parameterType: STRING
+    outputDefinitions:
+      parameters:
+        eval_metric:
+          parameterType: STRING
+        model_config:
+          parameterType: STRUCT
+        predictor_path:
+          parameterType: STRING
+        top_models:
+          parameterType: LIST
+  comp-tabular-train-test-split:
+    executorLabel: exec-tabular-train-test-split
+    inputDefinitions:
+      artifacts:
+        dataset:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+          description: Input CSV dataset to split.
+      parameters:
+        test_size:
+          defaultValue: 0.3
+          description: Proportion of the data to include in the test split.
+          isOptional: true
+          parameterType: NUMBER_DOUBLE
+    outputDefinitions:
+      artifacts:
+        sampled_test_dataset:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+        sampled_train_dataset:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+      parameters:
+        sample_row:
+          parameterType: STRING
+        split_config:
+          parameterType: STRUCT
+deploymentSpec:
+  executors:
+    exec-autogluon-models-full-refit:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - autogluon_models_full_refit
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'autogluon.tabular==1.5.0'\
+          \ 'catboost==1.2.8' 'fastai==2.8.5' 'lightgbm==4.6.0' 'torch==2.9.1' 'xgboost==3.1.3'\
+          \  &&  python3 -m pip install --quiet --no-warn-script-location 'kfp==2.15.2'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef autogluon_models_full_refit(\n    model_name: str,\n    full_dataset:\
+          \ dsl.Input[dsl.Dataset],\n    predictor_path: str,\n    sampling_config:\
+          \ dict,\n    split_config: dict,\n    model_config: dict,\n    pipeline_name:\
+          \ str,\n    run_id: str,\n    sample_row: str,\n    model_artifact: dsl.Output[dsl.Model],\n\
+          ) -> NamedTuple(\"outputs\", model_name=str):\n    \"\"\"Refit a specific\
+          \ AutoGluon model on the full training dataset.\n\n    This component takes\
+          \ a trained AutoGluon TabularPredictor, loaded from\n    predictor_path,\
+          \ and refits a specific model, identified by model_name, on\n    the full\
+          \ training data. By default AutoGluon refit_full uses the\n    predictor's\
+          \ training and validation data; the full_dataset is used for\n    evaluation\
+          \ and for writing metrics. The refitted model is saved with the\n    suffix\
+          \ \"_FULL\" appended to model_name.\n\n    The component clones the predictor\
+          \ to model_artifact.path / model_name_FULL\n    / predictor, keeps only\
+          \ the specified model and its refitted version,\n    sets the refitted model\
+          \ as best, and saves space by removing other models.\n    Evaluation metrics,\
+          \ feature importance, and (for classification) confusion\n    matrix are\
+          \ written under model_artifact.path / model_name_FULL / metrics.\n    A\
+          \ Jupyter notebook (automl_predictor_notebook.ipynb) is written under\n\
+          \    model_artifact.path / model_name_FULL / notebooks for inference and\n\
+          \    exploration; pipeline_name, run_id, and sample_row are used to fill\
+          \ in\n    run context and example input (the label column is stripped from\
+          \ sample_row\n    in the notebook). Artifact metadata includes display_name,\
+          \ context\n    (data_config, task_type, label_column, model_config, location,\
+          \ metrics),\n    and context.location.notebook. Supported problem types\
+          \ are regression,\n    binary, and multiclass; any other type raises ValueError.\n\
+          \n    This component is typically used in a two-stage training pipeline\
+          \ where\n    models are first trained on sampled data for exploration, then\
+          \ the best\n    candidates are refitted on the full dataset for optimal\
+          \ performance.\n\n    Args:\n        model_name: The name of the model to\
+          \ refit. Must match a model name\n            in the predictor. The refitted\
+          \ model is saved with the suffix\n            \"_FULL\" appended to this\
+          \ name.\n        full_dataset: Dataset artifact (CSV) with the complete\
+          \ training data.\n            Used for evaluation and for writing metrics;\
+          \ the dataset format\n            should match the data used during initial\
+          \ training.\n        predictor_path: Path to a trained AutoGluon TabularPredictor\
+          \ that\n            includes the model specified by model_name.\n      \
+          \  sampling_config: Configuration dictionary for data sampling (stored\n\
+          \            in artifact metadata).\n        split_config: Configuration\
+          \ dictionary for data splitting (stored\n            in artifact metadata).\n\
+          \        model_config: Configuration dictionary for model training (stored\n\
+          \            in artifact metadata).\n        pipeline_name: Name of the\
+          \ pipeline run. The last hyphen-separated\n            segment is stripped\
+          \ for use in the generated notebook.\n        run_id: ID of the pipeline\
+          \ run (used in the generated notebook).\n        sample_row: JSON string\
+          \ of a list of row objects (e.g.\n            '[{\"feature1\": 1, \"target\"\
+          : 0}]'). Used as example input in the\n            generated notebook; the\
+          \ label column is removed from each row.\n        model_artifact: Output\
+          \ Model artifact. The refitted predictor is\n            saved under model_artifact.path\
+          \ / model_name_FULL / predictor;\n            metrics under model_artifact.path\
+          \ / model_name_FULL / metrics;\n            notebook under model_artifact.path\
+          \ / model_name_FULL / notebooks.\n\n    Returns:\n        NamedTuple with\
+          \ field model_name: the refitted model name (model_name\n        with \"\
+          _FULL\" suffix). The refitted predictor and artifacts are also\n       \
+          \ written to model_artifact.\n\n    Raises:\n        FileNotFoundError:\
+          \ If the predictor path or full_dataset path\n            cannot be found.\n\
+          \        ValueError: If the predictor cannot be loaded, model_name is not\n\
+          \            found in the predictor, refit fails, or problem_type is not\n\
+          \            regression, binary, or multiclass.\n        KeyError: If required\
+          \ model files are missing from the predictor.\n\n    Example:\n        from\
+          \ kfp import dsl\n        from components.training.automl.autogluon_models_full_refit\
+          \ import (\n            autogluon_models_full_refit,\n        )\n\n    \
+          \    @dsl.pipeline(name=\"model-refit-pipeline\")\n        def refit_pipeline(train_data,\
+          \ predictor_path, pipeline_name, run_id):\n            refitted = autogluon_models_full_refit(\n\
+          \                model_name=\"LightGBM_BAG_L1\",\n                full_dataset=train_data,\n\
+          \                predictor_path=predictor_path,\n                sampling_config={},\n\
+          \                split_config={},\n                model_config={},\n  \
+          \              pipeline_name=pipeline_name,\n                run_id=run_id,\n\
+          \                sample_row='[{\"feature1\": 1, \"target\": 1.0}]',\n  \
+          \              model_artifact=dsl.Output(type=\"Model\"),\n            )\n\
+          \            return refitted.model_name\n\n    \"\"\"\n    import json\n\
+          \    import os\n    from pathlib import Path\n\n    import pandas as pd\n\
+          \    from autogluon.tabular import TabularPredictor\n\n    full_dataset_df\
+          \ = pd.read_csv(full_dataset.path)\n\n    predictor = TabularPredictor.load(predictor_path)\n\
+          \n    # save refitted model to output artifact\n    model_name_full = model_name\
+          \ + \"_FULL\"\n    output_path = Path(model_artifact.path) / model_name_full\n\
+          \n    # set the name of the model artifact and its metadata\n    model_artifact.metadata[\"\
+          display_name\"] = model_name_full\n    model_artifact.metadata[\"context\"\
+          ] = {}\n    model_artifact.metadata[\"context\"][\"data_config\"] = {\n\
+          \        \"sampling_config\": sampling_config,\n        \"split_config\"\
+          : split_config,\n    }\n\n    model_artifact.metadata[\"context\"][\"task_type\"\
+          ] = predictor.problem_type\n    model_artifact.metadata[\"context\"][\"\
+          label_column\"] = predictor.label\n\n    model_artifact.metadata[\"context\"\
+          ][\"model_config\"] = model_config\n    model_artifact.metadata[\"context\"\
+          ][\"location\"] = {\n        \"model_directory\": f\"{model_name_full}\"\
+          ,\n        \"predictor\": f\"{model_name_full}/predictor.pkl\",\n    }\n\
+          \n    # clone the predictor to the output artifact path and delete unnecessary\
+          \ models\n    predictor_clone = predictor.clone(path=output_path / \"predictor\"\
+          , return_clone=True, dirs_exist_ok=True)\n    predictor_clone.delete_models(models_to_keep=[model_name])\n\
+          \n    # by default, autogluon refit on traing + validation data\n    predictor_clone.refit_full(model=model_name)\n\
+          \n    predictor_clone.set_model_best(model=model_name_full, save_trainer=True)\n\
+          \    predictor_clone.save_space()\n\n    eval_results = predictor_clone.evaluate(full_dataset_df)\n\
+          \    model_artifact.metadata[\"context\"][\"metrics\"] = {\"val_data\":\
+          \ eval_results}\n    feature_importance = predictor_clone.feature_importance(full_dataset_df)\n\
+          \n    # save evaluation results to output artifact\n    os.makedirs(str(output_path\
+          \ / \"metrics\"), exist_ok=True)\n    with (output_path / \"metrics\" /\
+          \ \"metrics.json\").open(\"w\") as f:\n        json.dump(eval_results, f)\n\
+          \n    # save feature importance to output artifact\n    with (output_path\
+          \ / \"metrics\" / \"feature_importance.json\").open(\"w\") as f:\n     \
+          \   json.dump(feature_importance.to_dict(), f)\n\n    # generate confusion\
+          \ matrix for classification problem types\n    if predictor.problem_type\
+          \ in {\"binary\", \"multiclass\"}:\n        from autogluon.core.metrics\
+          \ import confusion_matrix\n\n        confusion_matrix_res = confusion_matrix(\n\
+          \            solution=predictor_clone.predict(full_dataset_df),\n      \
+          \      prediction=full_dataset_df[predictor.label],\n            output_format=\"\
+          pandas_dataframe\",\n        )\n        with (output_path / \"metrics\"\
+          \ / \"confusion_matrix.json\").open(\"w\") as f:\n            json.dump(confusion_matrix_res.to_dict(),\
+          \ f)\n\n    # Notebook generation\n\n    # TODO: Move to build package in\
+          \ next stages\n\n    REGRESSION = {\n        \"cells\": [\n            {\n\
+          \                \"cell_type\": \"markdown\",\n                \"id\": \"\
+          a12d957a-c313-4e92-9578-44f6a48560d5\",\n                \"metadata\": {},\n\
+          \                \"source\": [\n                    \"![AutoML Banner](data:image/svg+xml;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0idXRmLTgiPz4KPHN2ZyB2ZXJzaW9uPSIxLjEiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyIgeG1sbnM6eGxpbms9Imh0dHA6Ly93d3cudzMub3JnLzE5OTkveGxpbmsiIHg9IjBweCIgeT0iMHB4IgoJIHZpZXdCb3g9IjAgMCAxNzk2IDEwMCIgc3R5bGU9ImVuYWJsZS1iYWNrZ3JvdW5kOm5ldyAwIDAgMTc5NiAxMDA7IiB4bWw6c3BhY2U9InByZXNlcnZlIj4KPHN0eWxlIHR5cGU9InRleHQvY3NzIj4KCS5zdDB7ZmlsbC1ydWxlOmV2ZW5vZGQ7Y2xpcC1ydWxlOmV2ZW5vZGQ7ZmlsbDp1cmwoI1NWR0lEXzFfKTt9Cgkuc3Qxe2ZpbGw6bm9uZTtzdHJva2U6I0ZGRkZGRjtzdHJva2Utd2lkdGg6MjtzdHJva2UtbWl0ZXJsaW1pdDoxMDt9Cgkuc3Qye2ZpbGw6bm9uZTtzdHJva2U6I0ZGRkZGRjtzdHJva2Utd2lkdGg6MS41O3N0cm9rZS1taXRlcmxpbWl0OjEwO30KCS5zdDN7ZmlsbDojRkZGRkZGO30KCS5zdDR7Zm9udC1mYW1pbHk6J0hlbHZldGljYSBOZXVlJywgQXJpYWwsIHNhbnMtc2VyaWY7fQoJLnN0NXtmb250LXNpemU6MzJweDt9Cgkuc3Q2e2ZpbGw6IzNEM0QzRDt9Cgkuc3Q3e2ZpbGw6IzkzOTU5ODt9Cgkuc3Q4e29wYWNpdHk6MC4yO2ZpbGw6dXJsKCNTVkdJRF8yXyk7ZW5hYmxlLWJhY2tncm91bmQ6bmV3O30KCS5zdDl7Zm9udC13ZWlnaHQ6NTAwO30KPC9zdHlsZT4KPHJlY3Qgd2lkdGg9IjE3OTYiIGhlaWdodD0iMTAwIiBmaWxsPSIjMTYxNjE2Ii8+CjxsaW5lYXJHcmFkaWVudCBpZD0iU1ZHSURfMV8iIGdyYWRpZW50VW5pdHM9InVzZXJTcGFjZU9uVXNlIiB4MT0iNDIuODYiIHkxPSI1MCIgeDI9Ijc5LjcxIiB5Mj0iNTAiPgoJPHN0b3Agb2Zmc2V0PSIwIiBzdHlsZT0ic3RvcC1jb2xvcjojRkY2QjZCIi8+Cgk8c3RvcCBvZmZzZXQ9IjAuMjEiIHN0eWxlPSJzdG9wLWNvbG9yOiNFRTAwMDAiLz4KCTxzdG9wIG9mZnNldD0iMC43NSIgc3R5bGU9InN0b3AtY29sb3I6I0NDMDAwMCIvPgoJPHN0b3Agb2Zmc2V0PSIxIiBzdHlsZT0ic3RvcC1jb2xvcjojQUEwMDAwIi8+CjwvbGluZWFyR3JhZGllbnQ+CjwhLS0gQXV0b01MIEljb24vTG9nbyBwbGFjZWhvbGRlciAtIHNpbXBsaWZpZWQgZ2VvbWV0cmljIHNoYXBlIC0tPgo8cGF0aCBjbGFzcz0ic3QwIiBkPSJNNTIuNCw0NS45YzAtMi4zLDEuOC00LjEsNC4xLTQuMXM0LjEsMS44LDQuMSw0LjFTNTguOCw1MCw1Ni41LDUwbDAsMGMtMi4yLDAuMS00LTEuNy00LjEtMy45CglDNTIuNCw0Niw1Mi40LDQ2LDUyLjQsNDUuOXogTTc3LjUsNTIuNWMtMC44LTEuMS0xLjQtMi4zLTEuOS0zLjVjMS4yLTQuNSwwLjctOC42LTEuOC0xMS45Yy0yLjktMy44LTguMi02LTE0LjUtNi4xCgljLTQuNS0wLjEtOC44LDEuNy0xMiw0LjhjLTMsMy00LjYsNy4yLTQuNSwxMS41Yy0wLjEsMi45LDAuOSw1LjgsMi43LDguMWMwLjgsMC44LDEuMywxLjksMS40LDN2NC41Yy0wLjgsMC41LTEuNCwxLjMtMS40LDIuMwoJYzAuMiwxLjUsMS41LDIuNiwzLDIuNGMxLjItMC4yLDIuMi0xLjEsMi40LTIuNGMwLTEtMC41LTEuOS0xLjQtMi4zdi00LjVjMC0yLTEtMy4zLTEuOS00LjZjLTEuNS0xLjktMi4yLTQuMi0yLjEtNi41CgljMC0zLjUsMS40LTYuOSwzLjgtOS40YzIuNy0yLjcsNi4zLTQuMSwxMC00LjFjNS41LDAsOS44LDEuOSwxMi4xLDVjMiwyLjgsMi41LDYuMywxLjQsOS42Yy0wLjQsMS4yLDAuNiwyLjcsMi4zLDUuNgoJYzAuNiwwLjksMS4yLDEuOSwxLjYsMi45Yy0wLjksMC43LTIsMS4yLTMuMSwxLjVjLTAuNSwwLjQtMC43LDAuOS0wLjgsMS41VjY1YzAsMC40LTAuMSwwLjgtMC40LDEuMWMtMC4zLDAuMi0wLjcsMC4zLTEuMSwwLjMKCWMtMS42LTAuMy0zLjQtMC43LTUuMi0xLjF2LTQuOGMwLjgtMC41LDEuNC0xLjQsMS40LTIuM2MwLTEuNS0xLjItMi43LTIuNy0yLjdzLTIuNywxLjItMi43LDIuN2MwLDEsMC41LDEuOSwxLjQsMi4zdjQuMQoJYy0wLjQtMC4xLTAuNy0wLjEtMS4xLTAuM2MtNC41LTEuMS00LjUtMi42LTQuNS0zLjR2LTguM2MzLjItMC43LDUuNC0zLjUsNS41LTYuN2MtMC4xLTMuOC0zLjMtNi43LTcuMS02LjZjLTMuNiwwLjEtNi40LDMtNi42LDYuNgoJYzAsMy4yLDIuMyw2LDUuNSw2Ljd2OC4zYzAsMiwwLjcsNC42LDYuNiw2LjFjMywwLjgsNiwxLjUsOS4xLDEuOWMwLjMsMCwwLjYsMC4xLDAuOCwwLjFjMSwwLDEuOS0wLjMsMi42LTEKCWMwLjktMC44LDEuNC0xLjksMS40LTMuMXYtNC41YzItMC44LDQuMS0yLDQuMS0zLjdDNzkuNyw1NS45LDc5LDU0LjYsNzcuNSw1Mi41eiIvPgo8Y2lyY2xlIGNsYXNzPSJzdDEiIGN4PSI1Ni41IiBjeT0iNDUuOSIgcj0iNS40Ii8+CjxjaXJjbGUgY2xhc3M9InN0MiIgY3g9IjQ4LjMiIGN5PSI2NSIgcj0iMS42Ii8+CjxjaXJjbGUgY2xhc3M9InN0MiIgY3g9IjY0LjgiIGN5PSI1OC4yIiByPSIxLjYiLz4KPHRleHQgdHJhbnNmb3JtPSJtYXRyaXgoMSAwIDAgMSAxMDEuMDIgNTkuMzMpIiBjbGFzcz0ic3QzIHN0NCBzdDUiPkF1dG9NTDwvdGV4dD4KPHJlY3QgeD0iMjMxLjEiIHk9IjM0IiBjbGFzcz0ic3Q2IiB3aWR0aD0iMSIgaGVpZ2h0PSIzMiIvPgo8dGV4dCB0cmFuc2Zvcm09Im1hdHJpeCgxIDAgMCAxIDI1Ni4yOSA1OS42NikiIGNsYXNzPSJzdDcgc3Q0IHN0NSI+UGFydCBvZiBSZWQgSGF0IE9wZW5TaGlmdCBBSTwvdGV4dD4KPGxpbmVhckdyYWRpZW50IGlkPSJTVkdJRF8yXyIgZ3JhZGllbnRVbml0cz0idXNlclNwYWNlT25Vc2UiIHgxPSI3NzMuOCIgeTE9IjUwIiB4Mj0iMTc5NiIgeTI9IjUwIj4KCTxzdG9wIG9mZnNldD0iMCIgc3R5bGU9InN0b3AtY29sb3I6IzE2MTYxNiIvPgoJPHN0b3Agb2Zmc2V0PSIwLjUyIiBzdHlsZT0ic3RvcC1jb2xvcjojRkY2QjZCIi8+Cgk8c3RvcCBvZmZzZXQ9IjAuNjIiIHN0eWxlPSJzdG9wLWNvbG9yOiNFRTAwMDAiLz4KCTxzdG9wIG9mZnNldD0iMC44OCIgc3R5bGU9InN0b3AtY29sb3I6I0NDMDAwMCIvPgoJPHN0b3Agb2Zmc2V0PSIxIiBzdHlsZT0ic3RvcC1jb2xvcjojQUEwMDAwIi8+CjwvbGluZWFyR3JhZGllbnQ+CjxyZWN0IHg9Ijc3My44IiBjbGFzcz0ic3Q4IiB3aWR0aD0iMTAyMi4yIiBoZWlnaHQ9IjEwMCIvPgo8dGV4dCB0cmFuc2Zvcm09Im1hdHJpeCgxIDAgMCAxIDE0NDguMTY0MSA1OS40NikiIGNsYXNzPSJzdDMgc3Q0IHN0NSBzdDkiPlByZWRpY3RvciBOb3RlYm9vazwvdGV4dD4KPC9zdmc+Cg==)\"\
+          \  # noqa: E501\n                ],\n            },\n            {\n   \
+          \             \"cell_type\": \"markdown\",\n                \"id\": \"0e9aa72f\"\
+          ,\n                \"metadata\": {},\n                \"source\": [\n  \
+          \                  \"## Notebook content\\n\",\n                    \"\\\
+          n\",\n                    \"This notebook lets you review the experiment\
+          \ leaderboard for insights into trained model evaluation quality, load a\
+          \ chosen AutoGluon model from S3, and run predictions. \\n\",  # noqa: E501\n\
+          \                    \"\\n\",\n                    \"\\n\",\n          \
+          \          \" \\U0001f4a1 **Tips:**\\n\",\n                    \"- Ensure\
+          \ the S3 connection to pipeline run results is configured so the notebook\
+          \ can access run artifacts.\\n\",  # noqa: E501\n                    \"\
+          - The model name must match one of the models listed in the leaderboard\
+          \ (the **model** column).\\n\",\n                    \"\\n\",\n        \
+          \            \"### Contents\\n\",\n                    \"This notebook contains\
+          \ the following parts:\\n\",\n                    \"\\n\",\n           \
+          \         \"**[Setup](#setup)**  \\n\",\n                    \"**[Experiment\
+          \ run details](#experiment-run-details)**  \\n\",\n                    \"\
+          **[Experiment leaderboard](#experiment-leaderboard)**  \\n\",\n        \
+          \            \"**[Download trained model](#download-trained-model)**  \\\
+          n\",\n                    \"**[Model insights](#model-insights)**  \\n\"\
+          ,\n                    \"**[Load the predictor](#load-the-predictor)** \
+          \ \\n\",\n                    \"**[Predict the values](#predict-the-values)**\
+          \  \\n\",\n                    \"**[Summary and next steps](#summary-and-next-steps)**\"\
+          ,\n                ],\n            },\n            {\n                \"\
+          cell_type\": \"markdown\",\n                \"id\": \"a7d9cf2b-18cc-4ac9-87af-a74f8bf60322\"\
+          ,\n                \"metadata\": {},\n                \"source\": ['<a id=\"\
+          setup\"></a>\\n', \"## Setup\"],\n            },\n            {\n      \
+          \          \"cell_type\": \"code\",\n                \"execution_count\"\
+          : None,\n                \"id\": \"5bacd972\",\n                \"metadata\"\
+          : {},\n                \"outputs\": [],\n                \"source\": [\"\
+          import warnings\\n\", \"\\n\", 'warnings.filterwarnings(\"ignore\")'],\n\
+          \            },\n            {\n                \"cell_type\": \"code\"\
+          ,\n                \"execution_count\": None,\n                \"id\": \"\
+          cec84205-8ee9-4aaf-a97e-4ef576e7b9da\",\n                \"metadata\": {},\n\
+          \                \"outputs\": [],\n                \"source\": [\n     \
+          \               \"%pip install autogluon.tabular==1.5.0 | tail -n 1\\n\"\
+          ,\n                    \"%pip install catboost==1.2.8 | tail -n 1\\n\",\n\
+          \                    \"%pip install fastai==2.8.5 | tail -n 1\\n\",\n  \
+          \                  \"%pip install lightgbm==4.6.0 | tail -n 1\\n\",\n  \
+          \                  \"%pip install torch==2.9.1 | tail -n 1\\n\",\n     \
+          \               \"%pip install xgboost==3.1.3 | tail -n 1\\n\",\n      \
+          \          ],\n            },\n            {\n                \"cell_type\"\
+          : \"markdown\",\n                \"id\": \"e8ff506e-f1a3-4990-a979-7790a5105251\"\
+          ,\n                \"metadata\": {},\n                \"source\": [\n  \
+          \                  '<a id=\"experiment-run-details\"></a>\\n',\n       \
+          \             \"## Experiment run details\\n\",\n                    \"\\\
+          n\",\n                    \"Set the pipeline name, and run ID that identify\
+          \ the training run whose artifacts you want to load. These values are typically\
+          \ available from the pipeline run or workbench.\",  # noqa: E501\n     \
+          \           ],\n            },\n            {\n                \"cell_type\"\
+          : \"code\",\n                \"execution_count\": None,\n              \
+          \  \"id\": \"fa7f736d-0b5c-4988-87a5-4d1a5cde0873\",\n                \"\
+          metadata\": {},\n                \"outputs\": [],\n                \"source\"\
+          : ['pipeline_name = \"<PIPELINE_NAME>\"\\n', 'run_id = \"<RUN_ID>\"'],\n\
+          \            },\n            {\n                \"cell_type\": \"markdown\"\
+          ,\n                \"id\": \"00cc5969-0f9b-406d-a6e9-dce42ed64331\",\n \
+          \               \"metadata\": {},\n                \"source\": [\n     \
+          \               '<a id=\"experiment-leaderboard\"></a>\\n',\n          \
+          \          \"## Experiment leaderboard\\n\",\n                    \"\\n\"\
+          ,\n                    \" \\U0001f4cc **Action:** Ensure the S3 connection\
+          \ is added to the workbench so the notebook can access the results.\", \
+          \ # noqa: E501\n                ],\n            },\n            {\n    \
+          \            \"cell_type\": \"code\",\n                \"execution_count\"\
+          : None,\n                \"id\": \"9be1f501-02e4-4107-906b-8f19448768bd\"\
+          ,\n                \"metadata\": {},\n                \"outputs\": [],\n\
+          \                \"source\": [\n                    \"import boto3\\n\"\
+          ,\n                    \"import os\\n\",\n                    \"from IPython.display\
+          \ import HTML\\n\",\n                    \"\\n\",\n                    \"\
+          s3 = boto3.resource('s3', endpoint_url=os.environ['AWS_S3_ENDPOINT'])\\\
+          n\",\n                    \"bucket = s3.Bucket(os.environ['AWS_S3_BUCKET'])\\\
+          n\",\n                    \"leaderboard_prefix = os.path.join(pipeline_name,\
+          \ run_id, 'leaderboard-evaluation')\\n\",\n                    \"leaderboard_artifact_name\
+          \ = 'html_artifact'\\n\",\n                    \"\\n\",\n              \
+          \      \"for obj in bucket.objects.filter(Prefix=leaderboard_prefix):\\\
+          n\",\n                    \"    if leaderboard_artifact_name in obj.key:\\\
+          n\",\n                    \"        bucket.download_file(obj.key, leaderboard_artifact_name)\\\
+          n\",\n                    \"\\n\",\n                    \"HTML(leaderboard_artifact_name)\"\
+          ,\n                ],\n            },\n            {\n                \"\
+          cell_type\": \"markdown\",\n                \"id\": \"54525a94-7799-41cc-822e-91bae88b3b78\"\
+          ,\n                \"metadata\": {},\n                \"source\": [\n  \
+          \                  '<a id=\"download-trained-model\"></a>\\n',\n       \
+          \             \"## Download trained model\\n\",\n                    \"\\\
+          n\",\n                    \" \\U0001f4a1 **Tip:** IF you want to download\
+          \ different model than the best one set `model_name` accordingly (must match\
+          \ a name from the leaderboard **model** column).\",  # noqa: E501\n    \
+          \            ],\n            },\n            {\n                \"cell_type\"\
+          : \"code\",\n                \"execution_count\": None,\n              \
+          \  \"id\": \"55ce6aee-8c0c-445e-8b1b-62585ac7ddd6\",\n                \"\
+          metadata\": {},\n                \"outputs\": [],\n                \"source\"\
+          : ['model_name = \"<MODEL_NAME>\"'],\n            },\n            {\n  \
+          \              \"cell_type\": \"markdown\",\n                \"id\": \"\
+          fba16ca7-b15f-4d7a-95b4-d3cf73163440\",\n                \"metadata\": {},\n\
+          \                \"source\": [\"Download model binaries and metrics.\"],\n\
+          \            },\n            {\n                \"cell_type\": \"code\"\
+          ,\n                \"execution_count\": None,\n                \"id\": \"\
+          e88370df-ecda-453d-913a-9524088ccc36\",\n                \"metadata\": {},\n\
+          \                \"outputs\": [],\n                \"source\": [\n     \
+          \               'full_refit_prefix = os.path.join(pipeline_name, run_id,\
+          \ \"autogluon-models-full-refit\")\\n',\n                    'best_model_subpath\
+          \ = os.path.join(\"model_artifact\", model_name)\\n',\n                \
+          \    \"best_model_path = None\\n\",\n                    \"local_dir = None\\\
+          n\",\n                    \"\\n\",\n                    \"for obj in bucket.objects.filter(Prefix=full_refit_prefix):\\\
+          n\",\n                    \"    if best_model_subpath in obj.key:\\n\",\n\
+          \                    \"        target = obj.key if local_dir is None else\
+          \ os.path.join(local_dir, os.path.relpath(obj.key, s3_folder))\\n\",  #\
+          \ noqa: E501\n                    \"        if not os.path.exists(os.path.dirname(target)):\\\
+          n\",\n                    \"            os.makedirs(os.path.dirname(target))\\\
+          n\",\n                    \"        if obj.key[-1] == '/':\\n\",\n     \
+          \               \"            continue\\n\",\n                    \"   \
+          \     bucket.download_file(obj.key, target)\\n\",\n                    \"\
+          \        best_model_path = os.path.join(obj.key.split(model_name)[0], model_name)\\\
+          n\",\n                    \"\\n\",\n                    'print(\"Model artifact\
+          \ stored under\", best_model_path)',\n                ],\n            },\n\
+          \            {\n                \"cell_type\": \"markdown\",\n         \
+          \       \"id\": \"cf53ddb3-14af-44e2-9c5d-6636095cb2b5\",\n            \
+          \    \"metadata\": {},\n                \"source\": [\n                \
+          \    '<a id=\"model-insights\"></a>\\n',\n                    \"## Model\
+          \ insights\\n\",\n                    \"\\n\",\n                    \"Display\
+          \ the features importances for selected model.\",\n                ],\n\
+          \            },\n            {\n                \"cell_type\": \"markdown\"\
+          ,\n                \"id\": \"cc4f419b-2e28-406c-932b-de43182bef31\",\n \
+          \               \"metadata\": {},\n                \"source\": [\"### Feature\
+          \ importance\\n\", \"Top ten are displayed.\"],\n            },\n      \
+          \      {\n                \"cell_type\": \"code\",\n                \"execution_count\"\
+          : None,\n                \"id\": \"0a7417fa-396f-4d83-ba20-1df01a3c0e2a\"\
+          ,\n                \"metadata\": {},\n                \"outputs\": [],\n\
+          \                \"source\": [\n                    \"import pandas as pd\\\
+          n\",\n                    \"\\n\",\n                    'feature_importance\
+          \ = pd.read_json(os.path.join(best_model_path, \"metrics\", \"feature_importance.json\"\
+          ))\\n',  # noqa: E501\n                    \"feature_importance.head(10)\"\
+          ,\n                ],\n            },\n            {\n                \"\
+          cell_type\": \"markdown\",\n                \"id\": \"6686ef6f-3251-43fa-bc9d-a9e911c7908c\"\
+          ,\n                \"metadata\": {},\n                \"source\": [\n  \
+          \                  '<a id=\"load-the-predictor\"></a>\\n',\n           \
+          \         \"## Load the predictor\\n\",\n                    \"\\n\",\n\
+          \                    \"Load the trained model as a TabularPredictor object.\"\
+          ,\n                ],\n            },\n            {\n                \"\
+          cell_type\": \"code\",\n                \"execution_count\": None,\n   \
+          \             \"id\": \"9ebc576f-17eb-49a7-8dcb-6b237dcc2218\",\n      \
+          \          \"metadata\": {},\n                \"outputs\": [],\n       \
+          \         \"source\": [\n                    \"from autogluon.tabular import\
+          \ TabularPredictor\\n\",\n                    \"\\n\",\n               \
+          \     'predictor = TabularPredictor.load(os.path.join(best_model_path, \"\
+          predictor\"))',\n                ],\n            },\n            {\n   \
+          \             \"cell_type\": \"code\",\n                \"execution_count\"\
+          : None,\n                \"id\": \"57cc1e1a-707f-431f-9cb5-1d24e09d1249\"\
+          ,\n                \"metadata\": {},\n                \"outputs\": [],\n\
+          \                \"source\": [\"predictor.feature_metadata.to_dict()\"],\n\
+          \            },\n            {\n                \"cell_type\": \"markdown\"\
+          ,\n                \"id\": \"064c76e4-1b44-4bba-8f2b-3178633a326a\",\n \
+          \               \"metadata\": {},\n                \"source\": [\n     \
+          \               '<a id=\"predict-the-values\"></a>\\n',\n              \
+          \      \"## Predict the values\\n\",\n                    \"\\n\",\n   \
+          \                 \"Use sample records to predict values. \",\n        \
+          \        ],\n            },\n            {\n                \"cell_type\"\
+          : \"code\",\n                \"execution_count\": None,\n              \
+          \  \"id\": \"d6955253-1891-4ff7-8b3e-ffa338d928f8\",\n                \"\
+          metadata\": {},\n                \"outputs\": [],\n                \"source\"\
+          : [\n                    \"import pandas as pd\\n\",\n                 \
+          \   \"\\n\",\n                    \"score_data = <SAMPLE_ROW>\\n\",\n  \
+          \                  \"score_df = pd.DataFrame(data=score_data)\\n\",\n  \
+          \                  \"score_df.head()\",\n                ],\n          \
+          \  },\n            {\n                \"cell_type\": \"markdown\",\n   \
+          \             \"id\": \"f07e1d71-85e8-4484-877a-5af40547de4f\",\n      \
+          \          \"metadata\": {},\n                \"source\": [\"Predict the\
+          \ values using `predict` method.\"],\n            },\n            {\n  \
+          \              \"cell_type\": \"code\",\n                \"execution_count\"\
+          : None,\n                \"id\": \"8441133b-2984-4ea9-92a1-4e427d25ee1b\"\
+          ,\n                \"metadata\": {},\n                \"outputs\": [],\n\
+          \                \"source\": [\"predictor.predict(score_df)\"],\n      \
+          \      },\n            {\n                \"cell_type\": \"markdown\",\n\
+          \                \"id\": \"7ee6d313-4612-4fb9-bee2-b2dcc83772ef\",\n   \
+          \             \"metadata\": {},\n                \"source\": [\n       \
+          \             '<a id=\"summary-and-next-steps\"></a>\\n',\n            \
+          \        \"## Summary and next steps\\n\",\n                    \"\\n\"\
+          ,\n                    \"**Summary:** This notebook loaded a trained AutoGluon\
+          \ model from S3, displayed the experiment leaderboard, and ran predictions\
+          \ on sample data using `predict_proba`.\\n\",  # noqa: E501\n          \
+          \          \"\\n\",\n                    \"**Next steps:**\\n\",\n     \
+          \               \"- Run predictions on your own data (ensure columns match\
+          \ the training schema).\\n\",\n                    \"- Try another model\
+          \ from the leaderboard by changing `model_name` and re-running the download\
+          \ and load cells.\\n\",  # noqa: E501\n                    \"- Optionally\
+          \ create the Predictor online deployment using Kserve custom runtime.\"\
+          ,\n                ],\n            },\n            {\"cell_type\": \"markdown\"\
+          , \"id\": \"44a650c8-e5cc-4a2e-bebd-becd73944489\", \"metadata\": {}, \"\
+          source\": [\"---\"]},\n        ],\n        \"metadata\": {\n           \
+          \ \"kernelspec\": {\"display_name\": \"Python 3.12\", \"language\": \"python\"\
+          , \"name\": \"python3\"},\n            \"language_info\": {\n          \
+          \      \"codemirror_mode\": {\"name\": \"ipython\", \"version\": 3},\n \
+          \               \"file_extension\": \".py\",\n                \"mimetype\"\
+          : \"text/x-python\",\n                \"name\": \"python\",\n          \
+          \      \"nbconvert_exporter\": \"python\",\n                \"pygments_lexer\"\
+          : \"ipython3\",\n                \"version\": \"3.12.9\",\n            },\n\
+          \        },\n        \"nbformat\": 4,\n        \"nbformat_minor\": 5,\n\
+          \    }\n\n    CLASSIFICATION = {\n        \"cells\": [\n            {\n\
+          \                \"cell_type\": \"markdown\",\n                \"id\": \"\
+          a12d957a-c313-4e92-9578-44f6a48560d5\",\n                \"metadata\": {},\n\
+          \                \"source\": [\n                    \"![AutoML Banner](data:image/svg+xml;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0idXRmLTgiPz4KPHN2ZyB2ZXJzaW9uPSIxLjEiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyIgeG1sbnM6eGxpbms9Imh0dHA6Ly93d3cudzMub3JnLzE5OTkveGxpbmsiIHg9IjBweCIgeT0iMHB4IgoJIHZpZXdCb3g9IjAgMCAxNzk2IDEwMCIgc3R5bGU9ImVuYWJsZS1iYWNrZ3JvdW5kOm5ldyAwIDAgMTc5NiAxMDA7IiB4bWw6c3BhY2U9InByZXNlcnZlIj4KPHN0eWxlIHR5cGU9InRleHQvY3NzIj4KCS5zdDB7ZmlsbC1ydWxlOmV2ZW5vZGQ7Y2xpcC1ydWxlOmV2ZW5vZGQ7ZmlsbDp1cmwoI1NWR0lEXzFfKTt9Cgkuc3Qxe2ZpbGw6bm9uZTtzdHJva2U6I0ZGRkZGRjtzdHJva2Utd2lkdGg6MjtzdHJva2UtbWl0ZXJsaW1pdDoxMDt9Cgkuc3Qye2ZpbGw6bm9uZTtzdHJva2U6I0ZGRkZGRjtzdHJva2Utd2lkdGg6MS41O3N0cm9rZS1taXRlcmxpbWl0OjEwO30KCS5zdDN7ZmlsbDojRkZGRkZGO30KCS5zdDR7Zm9udC1mYW1pbHk6J0hlbHZldGljYSBOZXVlJywgQXJpYWwsIHNhbnMtc2VyaWY7fQoJLnN0NXtmb250LXNpemU6MzJweDt9Cgkuc3Q2e2ZpbGw6IzNEM0QzRDt9Cgkuc3Q3e2ZpbGw6IzkzOTU5ODt9Cgkuc3Q4e29wYWNpdHk6MC4yO2ZpbGw6dXJsKCNTVkdJRF8yXyk7ZW5hYmxlLWJhY2tncm91bmQ6bmV3O30KCS5zdDl7Zm9udC13ZWlnaHQ6NTAwO30KPC9zdHlsZT4KPHJlY3Qgd2lkdGg9IjE3OTYiIGhlaWdodD0iMTAwIiBmaWxsPSIjMTYxNjE2Ii8+CjxsaW5lYXJHcmFkaWVudCBpZD0iU1ZHSURfMV8iIGdyYWRpZW50VW5pdHM9InVzZXJTcGFjZU9uVXNlIiB4MT0iNDIuODYiIHkxPSI1MCIgeDI9Ijc5LjcxIiB5Mj0iNTAiPgoJPHN0b3Agb2Zmc2V0PSIwIiBzdHlsZT0ic3RvcC1jb2xvcjojRkY2QjZCIi8+Cgk8c3RvcCBvZmZzZXQ9IjAuMjEiIHN0eWxlPSJzdG9wLWNvbG9yOiNFRTAwMDAiLz4KCTxzdG9wIG9mZnNldD0iMC43NSIgc3R5bGU9InN0b3AtY29sb3I6I0NDMDAwMCIvPgoJPHN0b3Agb2Zmc2V0PSIxIiBzdHlsZT0ic3RvcC1jb2xvcjojQUEwMDAwIi8+CjwvbGluZWFyR3JhZGllbnQ+CjwhLS0gQXV0b01MIEljb24vTG9nbyBwbGFjZWhvbGRlciAtIHNpbXBsaWZpZWQgZ2VvbWV0cmljIHNoYXBlIC0tPgo8cGF0aCBjbGFzcz0ic3QwIiBkPSJNNTIuNCw0NS45YzAtMi4zLDEuOC00LjEsNC4xLTQuMXM0LjEsMS44LDQuMSw0LjFTNTguOCw1MCw1Ni41LDUwbDAsMGMtMi4yLDAuMS00LTEuNy00LjEtMy45CglDNTIuNCw0Niw1Mi40LDQ2LDUyLjQsNDUuOXogTTc3LjUsNTIuNWMtMC44LTEuMS0xLjQtMi4zLTEuOS0zLjVjMS4yLTQuNSwwLjctOC42LTEuOC0xMS45Yy0yLjktMy44LTguMi02LTE0LjUtNi4xCgljLTQuNS0wLjEtOC44LDEuNy0xMiw0LjhjLTMsMy00LjYsNy4yLTQuNSwxMS41Yy0wLjEsMi45LDAuOSw1LjgsMi43LDguMWMwLjgsMC44LDEuMywxLjksMS40LDN2NC41Yy0wLjgsMC41LTEuNCwxLjMtMS40LDIuMwoJYzAuMiwxLjUsMS41LDIuNiwzLDIuNGMxLjItMC4yLDIuMi0xLjEsMi40LTIuNGMwLTEtMC41LTEuOS0xLjQtMi4zdi00LjVjMC0yLTEtMy4zLTEuOS00LjZjLTEuNS0xLjktMi4yLTQuMi0yLjEtNi41CgljMC0zLjUsMS40LTYuOSwzLjgtOS40YzIuNy0yLjcsNi4zLTQuMSwxMC00LjFjNS41LDAsOS44LDEuOSwxMi4xLDVjMiwyLjgsMi41LDYuMywxLjQsOS42Yy0wLjQsMS4yLDAuNiwyLjcsMi4zLDUuNgoJYzAuNiwwLjksMS4yLDEuOSwxLjYsMi45Yy0wLjksMC43LTIsMS4yLTMuMSwxLjVjLTAuNSwwLjQtMC43LDAuOS0wLjgsMS41VjY1YzAsMC40LTAuMSwwLjgtMC40LDEuMWMtMC4zLDAuMi0wLjcsMC4zLTEuMSwwLjMKCWMtMS42LTAuMy0zLjQtMC43LTUuMi0xLjF2LTQuOGMwLjgtMC41LDEuNC0xLjQsMS40LTIuM2MwLTEuNS0xLjItMi43LTIuNy0yLjdzLTIuNywxLjItMi43LDIuN2MwLDEsMC41LDEuOSwxLjQsMi4zdjQuMQoJYy0wLjQtMC4xLTAuNy0wLjEtMS4xLTAuM2MtNC41LTEuMS00LjUtMi42LTQuNS0zLjR2LTguM2MzLjItMC43LDUuNC0zLjUsNS41LTYuN2MtMC4xLTMuOC0zLjMtNi43LTcuMS02LjZjLTMuNiwwLjEtNi40LDMtNi42LDYuNgoJYzAsMy4yLDIuMyw2LDUuNSw2Ljd2OC4zYzAsMiwwLjcsNC42LDYuNiw2LjFjMywwLjgsNiwxLjUsOS4xLDEuOWMwLjMsMCwwLjYsMC4xLDAuOCwwLjFjMSwwLDEuOS0wLjMsMi42LTEKCWMwLjktMC44LDEuNC0xLjksMS40LTMuMXYtNC41YzItMC44LDQuMS0yLDQuMS0zLjdDNzkuNyw1NS45LDc5LDU0LjYsNzcuNSw1Mi41eiIvPgo8Y2lyY2xlIGNsYXNzPSJzdDEiIGN4PSI1Ni41IiBjeT0iNDUuOSIgcj0iNS40Ii8+CjxjaXJjbGUgY2xhc3M9InN0MiIgY3g9IjQ4LjMiIGN5PSI2NSIgcj0iMS42Ii8+CjxjaXJjbGUgY2xhc3M9InN0MiIgY3g9IjY0LjgiIGN5PSI1OC4yIiByPSIxLjYiLz4KPHRleHQgdHJhbnNmb3JtPSJtYXRyaXgoMSAwIDAgMSAxMDEuMDIgNTkuMzMpIiBjbGFzcz0ic3QzIHN0NCBzdDUiPkF1dG9NTDwvdGV4dD4KPHJlY3QgeD0iMjMxLjEiIHk9IjM0IiBjbGFzcz0ic3Q2IiB3aWR0aD0iMSIgaGVpZ2h0PSIzMiIvPgo8dGV4dCB0cmFuc2Zvcm09Im1hdHJpeCgxIDAgMCAxIDI1Ni4yOSA1OS42NikiIGNsYXNzPSJzdDcgc3Q0IHN0NSI+UGFydCBvZiBSZWQgSGF0IE9wZW5TaGlmdCBBSTwvdGV4dD4KPGxpbmVhckdyYWRpZW50IGlkPSJTVkdJRF8yXyIgZ3JhZGllbnRVbml0cz0idXNlclNwYWNlT25Vc2UiIHgxPSI3NzMuOCIgeTE9IjUwIiB4Mj0iMTc5NiIgeTI9IjUwIj4KCTxzdG9wIG9mZnNldD0iMCIgc3R5bGU9InN0b3AtY29sb3I6IzE2MTYxNiIvPgoJPHN0b3Agb2Zmc2V0PSIwLjUyIiBzdHlsZT0ic3RvcC1jb2xvcjojRkY2QjZCIi8+Cgk8c3RvcCBvZmZzZXQ9IjAuNjIiIHN0eWxlPSJzdG9wLWNvbG9yOiNFRTAwMDAiLz4KCTxzdG9wIG9mZnNldD0iMC44OCIgc3R5bGU9InN0b3AtY29sb3I6I0NDMDAwMCIvPgoJPHN0b3Agb2Zmc2V0PSIxIiBzdHlsZT0ic3RvcC1jb2xvcjojQUEwMDAwIi8+CjwvbGluZWFyR3JhZGllbnQ+CjxyZWN0IHg9Ijc3My44IiBjbGFzcz0ic3Q4IiB3aWR0aD0iMTAyMi4yIiBoZWlnaHQ9IjEwMCIvPgo8dGV4dCB0cmFuc2Zvcm09Im1hdHJpeCgxIDAgMCAxIDE0NDguMTY0MSA1OS40NikiIGNsYXNzPSJzdDMgc3Q0IHN0NSBzdDkiPlByZWRpY3RvciBOb3RlYm9vazwvdGV4dD4KPC9zdmc+Cg==)\"\
+          \  # noqa: E501\n                ],\n            },\n            {\n   \
+          \             \"cell_type\": \"markdown\",\n                \"id\": \"0e9aa72f\"\
+          ,\n                \"metadata\": {},\n                \"source\": [\n  \
+          \                  \"## Notebook content\\n\",\n                    \"\\\
+          n\",\n                    \"This notebook lets you review the experiment\
+          \ leaderboard for insights into trained model evaluation quality, load a\
+          \ chosen AutoGluon model from S3, and run predictions. \\n\",  # noqa: E501\n\
+          \                    \"\\n\",\n                    \"\\n\",\n          \
+          \          \" \\U0001f4a1 **Tips:**\\n\",\n                    \"- Ensure\
+          \ the S3 connection to pipeline run results is configured so the notebook\
+          \ can access run artifacts.\\n\",  # noqa: E501\n                    \"\
+          - The model name must match one of the models listed in the leaderboard\
+          \ (the **model** column).\\n\",\n                    \"\\n\",\n        \
+          \            \"### Contents\\n\",\n                    \"This notebook contains\
+          \ the following parts:\\n\",\n                    \"\\n\",\n           \
+          \         \"**[Setup](#setup)**  \\n\",\n                    \"**[Experiment\
+          \ run details](#experiment-run-details)**  \\n\",\n                    \"\
+          **[Experiment leaderboard](#experiment-leaderboard)**  \\n\",\n        \
+          \            \"**[Download trained model](#download-trained-model)**  \\\
+          n\",\n                    \"**[Model insights](#model-insights)**  \\n\"\
+          ,\n                    \"**[Load the predictor](#load-the-predictor)** \
+          \ \\n\",\n                    \"**[Predict the values](#predict-the-values)**\
+          \  \\n\",\n                    \"**[Summary and next steps](#summary-and-next-steps)**\"\
+          ,\n                ],\n            },\n            {\n                \"\
+          cell_type\": \"markdown\",\n                \"id\": \"a7d9cf2b-18cc-4ac9-87af-a74f8bf60322\"\
+          ,\n                \"metadata\": {},\n                \"source\": ['<a id=\"\
+          setup\"></a>\\n', \"## Setup\"],\n            },\n            {\n      \
+          \          \"cell_type\": \"code\",\n                \"execution_count\"\
+          : None,\n                \"id\": \"5bacd972\",\n                \"metadata\"\
+          : {},\n                \"outputs\": [],\n                \"source\": [\"\
+          import warnings\\n\", \"\\n\", 'warnings.filterwarnings(\"ignore\")'],\n\
+          \            },\n            {\n                \"cell_type\": \"code\"\
+          ,\n                \"execution_count\": None,\n                \"id\": \"\
+          cec84205-8ee9-4aaf-a97e-4ef576e7b9da\",\n                \"metadata\": {},\n\
+          \                \"outputs\": [],\n                \"source\": [\n     \
+          \               \"%pip install autogluon.tabular==1.5.0 | tail -n 1\\n\"\
+          ,\n                    \"%pip install catboost==1.2.8 | tail -n 1\\n\",\n\
+          \                    \"%pip install fastai==2.8.5 | tail -n 1\\n\",\n  \
+          \                  \"%pip install lightgbm==4.6.0 | tail -n 1\\n\",\n  \
+          \                  \"%pip install torch==2.9.1 | tail -n 1\\n\",\n     \
+          \               \"%pip install xgboost==3.1.3 | tail -n 1\\n\",\n      \
+          \          ],\n            },\n            {\n                \"cell_type\"\
+          : \"markdown\",\n                \"id\": \"e8ff506e-f1a3-4990-a979-7790a5105251\"\
+          ,\n                \"metadata\": {},\n                \"source\": [\n  \
+          \                  '<a id=\"experiment-run-details\"></a>\\n',\n       \
+          \             \"## Experiment run details\\n\",\n                    \"\\\
+          n\",\n                    \"Set the pipeline name, run name, and run ID\
+          \ that identify the training run whose artifacts you want to load. These\
+          \ values are typically available from the pipeline run or workbench.\",\
+          \  # noqa: E501\n                ],\n            },\n            {\n   \
+          \             \"cell_type\": \"code\",\n                \"execution_count\"\
+          : None,\n                \"id\": \"fa7f736d-0b5c-4988-87a5-4d1a5cde0873\"\
+          ,\n                \"metadata\": {},\n                \"outputs\": [],\n\
+          \                \"source\": ['pipeline_name = \"<PIPELINE_NAME>\"\\n',\
+          \ 'run_id = \"<RUN_ID>\"'],\n            },\n            {\n           \
+          \     \"cell_type\": \"markdown\",\n                \"id\": \"00cc5969-0f9b-406d-a6e9-dce42ed64331\"\
+          ,\n                \"metadata\": {},\n                \"source\": [\n  \
+          \                  '<a id=\"experiment-leaderboard\"></a>\\n',\n       \
+          \             \"## Experiment leaderboard\\n\",\n                    \"\\\
+          n\",\n                    \" \\U0001f4cc **Action:** Ensure the S3 connection\
+          \ is added to the workbench so the notebook can access the results.\", \
+          \ # noqa: E501\n                ],\n            },\n            {\n    \
+          \            \"cell_type\": \"code\",\n                \"execution_count\"\
+          : None,\n                \"id\": \"9be1f501-02e4-4107-906b-8f19448768bd\"\
+          ,\n                \"metadata\": {},\n                \"outputs\": [],\n\
+          \                \"source\": [\n                    \"import boto3\\n\"\
+          ,\n                    \"import os\\n\",\n                    \"from IPython.display\
+          \ import HTML\\n\",\n                    \"\\n\",\n                    \"\
+          s3 = boto3.resource('s3', endpoint_url=os.environ['AWS_S3_ENDPOINT'])\\\
+          n\",\n                    \"bucket = s3.Bucket(os.environ['AWS_S3_BUCKET'])\\\
+          n\",\n                    \"leaderboard_prefix = os.path.join(pipeline_name,\
+          \ run_id, 'leaderboard-evaluation')\\n\",\n                    \"leaderboard_artifact_name\
+          \ = 'html_artifact'\\n\",\n                    \"\\n\",\n              \
+          \      \"for obj in bucket.objects.filter(Prefix=leaderboard_prefix):\\\
+          n\",\n                    \"    if leaderboard_artifact_name in obj.key:\\\
+          n\",\n                    \"        bucket.download_file(obj.key, leaderboard_artifact_name)\\\
+          n\",\n                    \"\\n\",\n                    \"HTML(leaderboard_artifact_name)\"\
+          ,\n                ],\n            },\n            {\n                \"\
+          cell_type\": \"markdown\",\n                \"id\": \"54525a94-7799-41cc-822e-91bae88b3b78\"\
+          ,\n                \"metadata\": {},\n                \"source\": [\n  \
+          \                  '<a id=\"download-trained-model\"></a>\\n',\n       \
+          \             \"## Download trained model\\n\",\n                    \"\\\
+          n\",\n                    \" \\U0001f4a1 **Tip:** IF you want to download\
+          \ different model than the best one set `model_name` accordingly (must match\
+          \ a name from the leaderboard **model** column).\",  # noqa: E501\n    \
+          \            ],\n            },\n            {\n                \"cell_type\"\
+          : \"code\",\n                \"execution_count\": None,\n              \
+          \  \"id\": \"55ce6aee-8c0c-445e-8b1b-62585ac7ddd6\",\n                \"\
+          metadata\": {},\n                \"outputs\": [],\n                \"source\"\
+          : ['model_name = \"<MODEL_NAME>\"'],\n            },\n            {\n  \
+          \              \"cell_type\": \"markdown\",\n                \"id\": \"\
+          fba16ca7-b15f-4d7a-95b4-d3cf73163440\",\n                \"metadata\": {},\n\
+          \                \"source\": [\"Download model binaries and metrics.\"],\n\
+          \            },\n            {\n                \"cell_type\": \"code\"\
+          ,\n                \"execution_count\": None,\n                \"id\": \"\
+          e88370df-ecda-453d-913a-9524088ccc36\",\n                \"metadata\": {},\n\
+          \                \"outputs\": [],\n                \"source\": [\n     \
+          \               'full_refit_prefix = os.path.join(pipeline_name, run_id,\
+          \ \"autogluon-models-full-refit\")\\n',\n                    'best_model_subpath\
+          \ = os.path.join(\"model_artifact\", model_name)\\n',\n                \
+          \    \"best_model_path = None\\n\",\n                    \"local_dir = None\\\
+          n\",\n                    \"\\n\",\n                    \"for obj in bucket.objects.filter(Prefix=full_refit_prefix):\\\
+          n\",\n                    \"    if best_model_subpath in obj.key:\\n\",\n\
+          \                    \"        target = obj.key if local_dir is None else\
+          \ os.path.join(local_dir, os.path.relpath(obj.key, s3_folder))\\n\",  #\
+          \ noqa: E501\n                    \"        if not os.path.exists(os.path.dirname(target)):\\\
+          n\",\n                    \"            os.makedirs(os.path.dirname(target))\\\
+          n\",\n                    \"        if obj.key[-1] == '/':\\n\",\n     \
+          \               \"            continue\\n\",\n                    \"   \
+          \     bucket.download_file(obj.key, target)\\n\",\n                    \"\
+          \        best_model_path = os.path.join(obj.key.split(model_name)[0], model_name)\\\
+          n\",\n                    \"\\n\",\n                    'print(\"Model artifact\
+          \ stored under\", best_model_path)',\n                ],\n            },\n\
+          \            {\n                \"cell_type\": \"markdown\",\n         \
+          \       \"id\": \"cf53ddb3-14af-44e2-9c5d-6636095cb2b5\",\n            \
+          \    \"metadata\": {},\n                \"source\": [\n                \
+          \    '<a id=\"model-insights\"></a>\\n',\n                    \"## Model\
+          \ insights\\n\",\n                    \"\\n\",\n                    \"Display\
+          \ the confusion matrix and features importances for selected model.\",\n\
+          \                ],\n            },\n            {\n                \"cell_type\"\
+          : \"markdown\",\n                \"id\": \"72345abd-b419-4f63-8b0b-6d023ddae73b\"\
+          ,\n                \"metadata\": {},\n                \"source\": [\"###\
+          \ Confusion matrix\"],\n            },\n            {\n                \"\
+          cell_type\": \"code\",\n                \"execution_count\": None,\n   \
+          \             \"id\": \"bd38da24-a764-48e8-9c0c-9285e5810fe1\",\n      \
+          \          \"metadata\": {},\n                \"outputs\": [],\n       \
+          \         \"source\": [\n                    \"import pandas as pd\\n\"\
+          ,\n                    \"\\n\",\n                    'confusion_matrix =\
+          \ pd.read_json(os.path.join(best_model_path, \"metrics\", \"confusion_matrix.json\"\
+          ))\\n',  # noqa: E501\n                    \"confusion_matrix.head()\",\n\
+          \                ],\n            },\n            {\n                \"cell_type\"\
+          : \"markdown\",\n                \"id\": \"cc4f419b-2e28-406c-932b-de43182bef31\"\
+          ,\n                \"metadata\": {},\n                \"source\": [\"###\
+          \ Feature importance\\n\", \"Top ten are displayed.\"],\n            },\n\
+          \            {\n                \"cell_type\": \"code\",\n             \
+          \   \"execution_count\": None,\n                \"id\": \"0a7417fa-396f-4d83-ba20-1df01a3c0e2a\"\
+          ,\n                \"metadata\": {},\n                \"outputs\": [],\n\
+          \                \"source\": [\n                    'feature_importance\
+          \ = pd.read_json(os.path.join(best_model_path, \"metrics\", \"feature_importance.json\"\
+          ))\\n',  # noqa: E501\n                    \"feature_importance.head(10)\"\
+          ,\n                ],\n            },\n            {\n                \"\
+          cell_type\": \"markdown\",\n                \"id\": \"6686ef6f-3251-43fa-bc9d-a9e911c7908c\"\
+          ,\n                \"metadata\": {},\n                \"source\": [\n  \
+          \                  '<a id=\"load-the-predictor\"></a>\\n',\n           \
+          \         \"## Load the predictor\\n\",\n                    \"\\n\",\n\
+          \                    \"Load the trained model as a TabularPredictor object.\"\
+          ,\n                ],\n            },\n            {\n                \"\
+          cell_type\": \"code\",\n                \"execution_count\": None,\n   \
+          \             \"id\": \"9ebc576f-17eb-49a7-8dcb-6b237dcc2218\",\n      \
+          \          \"metadata\": {},\n                \"outputs\": [],\n       \
+          \         \"source\": [\n                    \"from autogluon.tabular import\
+          \ TabularPredictor\\n\",\n                    \"\\n\",\n               \
+          \     'predictor = TabularPredictor.load(os.path.join(best_model_path, \"\
+          predictor\"))',\n                ],\n            },\n            {\n   \
+          \             \"cell_type\": \"markdown\",\n                \"id\": \"064c76e4-1b44-4bba-8f2b-3178633a326a\"\
+          ,\n                \"metadata\": {},\n                \"source\": [\n  \
+          \                  '<a id=\"predict-the-values\"></a>\\n',\n           \
+          \         \"## Predict the values\\n\",\n                    \"\\n\",\n\
+          \                    \"Use sample records to predict values. \",\n     \
+          \           ],\n            },\n            {\n                \"cell_type\"\
+          : \"code\",\n                \"execution_count\": None,\n              \
+          \  \"id\": \"d6955253-1891-4ff7-8b3e-ffa338d928f8\",\n                \"\
+          metadata\": {},\n                \"outputs\": [],\n                \"source\"\
+          : [\n                    \"import pandas as pd\\n\",\n                 \
+          \   \"\\n\",\n                    \"score_data = <SAMPLE_ROW>\\n\",\n  \
+          \                  \"\\n\",\n                    \"score_df = pd.DataFrame(data=score_data)\\\
+          n\",\n                    \"score_df.head()\",\n                ],\n   \
+          \         },\n            {\n                \"cell_type\": \"markdown\"\
+          ,\n                \"id\": \"f07e1d71-85e8-4484-877a-5af40547de4f\",\n \
+          \               \"metadata\": {},\n                \"source\": [\"Predict\
+          \ the values using `predict_proba` method.\"],\n            },\n       \
+          \     {\n                \"cell_type\": \"code\",\n                \"execution_count\"\
+          : None,\n                \"id\": \"8441133b-2984-4ea9-92a1-4e427d25ee1b\"\
+          ,\n                \"metadata\": {},\n                \"outputs\": [],\n\
+          \                \"source\": [\"predictor.predict_proba(score_df)\"],\n\
+          \            },\n            {\n                \"cell_type\": \"markdown\"\
+          ,\n                \"id\": \"7ee6d313-4612-4fb9-bee2-b2dcc83772ef\",\n \
+          \               \"metadata\": {},\n                \"source\": [\n     \
+          \               '<a id=\"summary-and-next-steps\"></a>\\n',\n          \
+          \          \"## Summary and next steps\\n\",\n                    \"\\n\"\
+          ,\n                    \"**Summary:** This notebook loaded a trained AutoGluon\
+          \ model from S3, displayed the experiment leaderboard, and ran predictions\
+          \ on sample data using `predict_proba`.\\n\",  # noqa: E501\n          \
+          \          \"\\n\",\n                    \"**Next steps:**\\n\",\n     \
+          \               \"- Run predictions on your own data (ensure columns match\
+          \ the training schema).\\n\",\n                    \"- Try another model\
+          \ from the leaderboard by changing `model_name` and re-running the download\
+          \ and load cells.\\n\",  # noqa: E501\n                    \"- Optionally\
+          \ create the Predictor online deployment using Kserve custom runtime.\"\
+          ,\n                ],\n            },\n            {\"cell_type\": \"markdown\"\
+          , \"id\": \"44a650c8-e5cc-4a2e-bebd-becd73944489\", \"metadata\": {}, \"\
+          source\": [\"---\"]},\n        ],\n        \"metadata\": {\n           \
+          \ \"kernelspec\": {\"display_name\": \"Python 3.12\", \"language\": \"python\"\
+          , \"name\": \"python3\"},\n            \"language_info\": {\n          \
+          \      \"codemirror_mode\": {\"name\": \"ipython\", \"version\": 3},\n \
+          \               \"file_extension\": \".py\",\n                \"mimetype\"\
+          : \"text/x-python\",\n                \"name\": \"python\",\n          \
+          \      \"nbconvert_exporter\": \"python\",\n                \"pygments_lexer\"\
+          : \"ipython3\",\n                \"version\": \"3.12.9\",\n            },\n\
+          \        },\n        \"nbformat\": 4,\n        \"nbformat_minor\": 5,\n\
+          \    }\n\n    problem_type = predictor.problem_type\n    match problem_type:\n\
+          \        case \"regression\":\n            notebook = REGRESSION\n     \
+          \   case \"binary\" | \"multiclass\":\n            notebook = CLASSIFICATION\n\
+          \        case _:\n            raise ValueError(f\"Invalid problem type:\
+          \ {problem_type}\")\n\n    def retrieve_pipeline_name(pipeline_name: str)\
+          \ -> str:\n        pipeline_name_elements = pipeline_name.split(\"-\")\n\
+          \        return \"-\".join(pipeline_name_elements[:-1])\n\n    pipeline_name\
+          \ = retrieve_pipeline_name(pipeline_name)\n\n    RUN_ID_INDEX = 6\n    PIPELINE_NAME_INDEX\
+          \ = 6\n    MODEL_NAME_INDEX = 10\n    notebook[\"cells\"][RUN_ID_INDEX][\"\
+          source\"][1] = notebook[\"cells\"][RUN_ID_INDEX][\"source\"][1].replace(\n\
+          \        \"<RUN_ID>\", run_id\n    )\n    notebook[\"cells\"][PIPELINE_NAME_INDEX][\"\
+          source\"][0] = notebook[\"cells\"][PIPELINE_NAME_INDEX][\"source\"][0].replace(\n\
+          \        \"<PIPELINE_NAME>\", pipeline_name\n    )\n    notebook[\"cells\"\
+          ][MODEL_NAME_INDEX][\"source\"][0] = notebook[\"cells\"][MODEL_NAME_INDEX][\"\
+          source\"][0].replace(\n        \"<MODEL_NAME>\", model_name_full\n    )\n\
+          \n    sample_row_list = json.loads(sample_row)\n\n    # remove label column\
+          \ from sample row\n    sample_row_formatted = [\n        {col: value for\
+          \ col, value in row.items() if col != predictor.label} for row in sample_row_list\n\
+          \    ]\n\n    sample_row_idx = 20 + int((problem_type in {\"binary\", \"\
+          multiclass\"}))\n    notebook[\"cells\"][sample_row_idx][\"source\"][2]\
+          \ = notebook[\"cells\"][sample_row_idx][\"source\"][2].replace(\n      \
+          \  \"<SAMPLE_ROW>\", str(sample_row_formatted)\n    )\n    notebook_path\
+          \ = output_path / \"notebooks\"\n    notebook_path.mkdir(parents=True, exist_ok=True)\n\
+          \    with (notebook_path / \"automl_predictor_notebook.ipynb\").open(\"\
+          w\", encoding=\"utf-8\") as f:\n        json.dump(notebook, f)\n\n    model_artifact.metadata[\"\
+          context\"][\"location\"][\"notebook\"] = \"notebooks/automl_predictor_notebook.ipynb\"\
+          \n\n    return NamedTuple(\"outputs\", model_name=str)(model_name=model_name_full)\n\
+          \n"
+        image: registry.redhat.io/rhoai/odh-pipeline-runtime-datascience-cpu-py312-rhel9@sha256:f9844dc150592a9f196283b3645dda92bd80dfdb3d467fa8725b10267ea5bdbc
+    exec-automl-data-loader:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - automl_data_loader
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.15.2'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef automl_data_loader(file_key: str, bucket_name: str, full_dataset:\
+          \ dsl.Output[dsl.Dataset]) -> NamedTuple(\n    \"outputs\", sample_config=dict\n\
+          ):\n    \"\"\"Downloads a dataset from S3, samples 50% of the rows, and\
+          \ saves the sample to the output artifact.\n\n    Args:\n        file_key\
+          \ (str): The S3 object key (path) for the dataset file.\n        bucket_name\
+          \ (str): The S3 bucket containing the dataset file.\n        full_dataset\
+          \ (dsl.Output[dsl.Dataset]): Output artifact where the sampled dataset (CSV)\
+          \ will be written.\n\n    Returns:\n        NamedTuple: Contains a sample\
+          \ configuration dictionary.\n    \"\"\"\n    import os\n\n    import boto3\n\
+          \    import pandas as pd\n\n    # set constants\n    DEFAULT_N_SAMPLES =\
+          \ 500\n    DEFAULT_RANDOM_STATE = 42\n\n    def download_from_s3():\n  \
+          \      access_key = os.environ.get(\"AWS_ACCESS_KEY_ID\")\n        secret_key\
+          \ = os.environ.get(\"AWS_SECRET_ACCESS_KEY\")\n        endpoint_url = os.environ.get(\"\
+          AWS_S3_ENDPOINT\")\n        region_name = os.environ.get(\"AWS_DEFAULT_REGION\"\
+          )\n\n        if (access_key and not secret_key) or (secret_key and not access_key):\n\
+          \            raise ValueError(\n                \"S3 credentials misconfigured:\
+          \ AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY must either \"\n         \
+          \       \"both be set and non-empty, or both be unset. Check the 's3-secret'\
+          \ Kubernetes secret.\"\n            )\n        if not access_key and not\
+          \ secret_key:\n            raise ValueError(\n                \"S3 credentials\
+          \ missing: AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY must be provided\
+          \ via \"\n                \"the 's3-secret' Kubernetes secret when using\
+          \ s3:// dataset URIs.\"\n            )\n\n        s3_client = boto3.client(\n\
+          \            \"s3\",\n            endpoint_url=endpoint_url,\n         \
+          \   region_name=region_name,\n            aws_access_key_id=access_key,\n\
+          \            aws_secret_access_key=secret_key,\n        )\n        s3_client.download_file(bucket_name,\
+          \ file_key, full_dataset.path)\n\n    download_from_s3()\n    full_dataset_df\
+          \ = pd.read_csv(full_dataset.path)\n\n    # Sampling\n    sampled_dataset\
+          \ = full_dataset_df.sample(n=DEFAULT_N_SAMPLES, random_state=DEFAULT_RANDOM_STATE)\n\
+          \n    sampled_dataset.to_csv(full_dataset.path, index=False)\n    return\
+          \ NamedTuple(\"outputs\", sample_config=dict)(sample_config={\"n_samples\"\
+          : DEFAULT_N_SAMPLES})\n\n"
+        image: registry.redhat.io/rhoai/odh-pipeline-runtime-datascience-cpu-py312-rhel9@sha256:f9844dc150592a9f196283b3645dda92bd80dfdb3d467fa8725b10267ea5bdbc
+    exec-leaderboard-evaluation:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - leaderboard_evaluation
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.15.2'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef leaderboard_evaluation(\n    models: List[dsl.Model],\n    eval_metric:\
+          \ str,\n    html_artifact: dsl.Output[dsl.HTML],\n) -> NamedTuple(\"outputs\"\
+          , best_model=str):\n    \"\"\"Evaluate multiple AutoGluon models and generate\
+          \ a leaderboard.\n\n    This component aggregates evaluation results from\
+          \ a list of Model artifacts\n    (reading pre-computed metrics from JSON)\
+          \ and generates an HTML-formatted\n    leaderboard ranking the models by\
+          \ their performance metrics. Each model\n    artifact is expected to contain\
+          \ metrics at\n    model.path / model.metadata[\"display_name\"] / metrics\
+          \ / metrics.json.\n\n    Args:\n        models: A list of Model artifacts.\
+          \ Each should have metadata containing\n            a \"display_name\" field\
+          \ and metrics file at\n            model.path / model_name / metrics / metrics.json.\n\
+          \        eval_metric: The name of the evaluation metric to use for ranking.\n\
+          \            Must match a key in the metrics JSON (e.g., \"accuracy\" for\n\
+          \            classification, \"root_mean_squared_error\" for regression).\n\
+          \            The leaderboard is sorted by this metric in descending order.\n\
+          \        html_artifact: Output artifact where the HTML-formatted leaderboard\n\
+          \            will be written. The leaderboard contains model names and their\n\
+          \            evaluation metrics.\n\n    Raises:\n        FileNotFoundError:\
+          \ If any model metrics path cannot be found.\n        KeyError: If model\
+          \ metadata does not contain \"display_name\" or the\n            metrics\
+          \ JSON does not contain the eval_metric key.\n\n    Example:\n        from\
+          \ kfp import dsl\n        from components.training.automl.autogluon_leaderboard_evaluation\
+          \ import (\n            leaderboard_evaluation\n        )\n\n        @dsl.pipeline(name=\"\
+          model-evaluation-pipeline\")\n        def evaluation_pipeline(trained_models):\n\
+          \            leaderboard = leaderboard_evaluation(\n                models=trained_models,\n\
+          \                eval_metric=\"root_mean_squared_error\",\n            )\n\
+          \            return leaderboard\n    \"\"\"\n    import json\n    from pathlib\
+          \ import Path\n\n    import pandas as pd\n\n    results = []\n    for model\
+          \ in models:\n        eval_results = json.load(\n            (Path(model.path)\
+          \ / model.metadata[\"display_name\"] / \"metrics\" / \"metrics.json\").open(\"\
+          r\")\n        )\n        results.append({\"model\": model.metadata[\"display_name\"\
+          ]} | eval_results)\n\n    leaderboard_df = pd.DataFrame(results).sort_values(by=eval_metric,\
+          \ ascending=False)\n    with open(html_artifact.path, \"w\") as f:\n   \
+          \     f.write(leaderboard_df.to_html())\n\n    html_artifact.metadata[\"\
+          data\"] = leaderboard_df.to_dict()\n    html_artifact.metadata[\"display_name\"\
+          ] = \"automl_leaderboard\"\n    best_model = leaderboard_df.iloc[0][\"model\"\
+          ]\n    return NamedTuple(\"outputs\", best_model=str)(best_model=best_model)\n\
+          \n"
+        image: registry.redhat.io/rhoai/odh-pipeline-runtime-datascience-cpu-py312-rhel9@sha256:f9844dc150592a9f196283b3645dda92bd80dfdb3d467fa8725b10267ea5bdbc
+    exec-models-selection:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - models_selection
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'autogluon.tabular==1.5.0'\
+          \ 'catboost==1.2.8' 'fastai==2.8.5' 'lightgbm==4.6.0' 'torch==2.9.1' 'xgboost==3.1.3'\
+          \  &&  python3 -m pip install --quiet --no-warn-script-location 'kfp==2.15.2'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef models_selection(\n    label_column: str,\n    task_type: str,\n\
+          \    top_n: int,\n    train_data: dsl.Input[dsl.Dataset],\n    test_data:\
+          \ dsl.Input[dsl.Dataset],\n    workspace_path: str,\n) -> NamedTuple(\"\
+          outputs\", top_models=List[str], eval_metric=str, predictor_path=str, model_config=dict):\n\
+          \    \"\"\"Build multiple AutoGluon models and select top performers.\n\n\
+          \    This component trains multiple machine learning models using AutoGluon's\n\
+          \    ensembling approach (stacking and bagging) on sampled training data,\
+          \ then\n    evaluates them on test data to identify the top N performing\
+          \ models.\n\n    The component uses AutoGluon's TabularPredictor which automatically\
+          \ trains\n    various model types (neural networks, tree-based models, linear\
+          \ models, etc.)\n    and combines them using stacking with multiple levels\
+          \ and bagging. After\n    training, models are evaluated on the test dataset\
+          \ and ranked by performance.\n    The top N models are selected and their\
+          \ names are returned for use in\n    subsequent refitting stages. The predictor\
+          \ is saved under workspace_path.\n\n    This component is part of a two-stage\
+          \ training pipeline where models are\n    first built and evaluated on sampled\
+          \ data (for efficiency), then the best\n    candidates are refitted on the\
+          \ full dataset for optimal performance.\n\n    Args:\n        label_column:\
+          \ The name of the target/label column in the training\n            and test\
+          \ datasets. This column will be used as the prediction target.\n       \
+          \ task_type: The type of machine learning task. Supported values\n     \
+          \       include \"binary\", \"multiclass\" (classification) or \"regression\"\
+          . This\n            determines the evaluation metrics and model types AutoGluon\
+          \ will use.\n        top_n: The number of top-performing models to select\
+          \ from the leaderboard.\n            Only the top N models will be returned\
+          \ and promoted to the refit stage.\n            Must be a positive integer.\n\
+          \        train_data: A Dataset artifact containing the training data\n \
+          \           in CSV format. This data is used to train the AutoGluon models.\n\
+          \            The dataset should include the label_column and all feature\
+          \ columns.\n        test_data: A Dataset artifact containing the test data\
+          \ in\n            CSV format. This data is used to evaluate model performance\
+          \ and\n            generate the leaderboard. The dataset should match the\
+          \ schema of\n            the training data.\n        workspace_path: Path\
+          \ (string) to the workspace directory where the\n            trained TabularPredictor\
+          \ will be saved (under workspace_path /\n            autogluon_predictor).\
+          \ This path is also returned as predictor_path\n            for use by downstream\
+          \ components.\n\n    Returns:\n        A NamedTuple with the following fields:\n\
+          \            - top_models (List[str]): A list of model names (strings) representing\n\
+          \              the top N performing models selected from the leaderboard,\
+          \ ranked\n              by performance on the test dataset.\n          \
+          \  - eval_metric (str): The evaluation metric name used by the TabularPredictor\n\
+          \              to assess model performance. This metric is automatically\
+          \ determined\n              based on the task_type (e.g., \"accuracy\" for\
+          \ classification,\n              \"r2\" for regression).\n            -\
+          \ predictor_path (str): The path to the saved TabularPredictor\n       \
+          \       (workspace_path / autogluon_predictor), for use by downstream\n\
+          \              components such as autogluon_models_full_refit.\n       \
+          \     - model_config (dict): The configuration dictionary for the model.\n\
+          \              It includes the preset used for the model training, the evaluation\
+          \ metric used, and the time limit for the model training.\n\n    Raises:\n\
+          \        FileNotFoundError: If the train_data or test_data\n           \
+          \ paths cannot be found.\n        ValueError: If the label_column is not\
+          \ found in the datasets, the\n            task_type is invalid, top_n is\
+          \ not positive, or model training fails.\n        KeyError: If required\
+          \ columns are missing from the datasets.\n\n    Example:\n        from kfp\
+          \ import dsl\n        from components.training.automl.autogluon_models_selection\
+          \ import (\n            models_selection\n        )\n\n        @dsl.pipeline(name=\"\
+          model-selection-pipeline\")\n        def selection_pipeline(train_data,\
+          \ test_data, workspace_path):\n            \"Select top 3 models from training.\"\
+          \n            result = models_selection(\n                label_column=\"\
+          price\",\n                task_type=\"regression\",\n                top_n=3,\n\
+          \                train_data=train_data,\n                test_data=test_data,\n\
+          \                workspace_path=workspace_path,\n            )\n       \
+          \     # result.top_models, result.eval_metric, result.predictor_path\n \
+          \           return result\n    \"\"\"  # noqa: E501\n    from pathlib import\
+          \ Path\n\n    import pandas as pd\n    from autogluon.tabular import TabularPredictor\n\
+          \n    # Set constants\n    DEFAULT_PRESET = \"medium_quality\"\n    DEFAULT_TIME_LIMIT\
+          \ = 60 * 60  # 60 * 60 = 3600 seconds = 1 hour\n\n    # Read the data\n\
+          \    train_data_df = pd.read_csv(train_data.path)\n    test_data_df = pd.read_csv(test_data.path)\n\
+          \n    eval_metric = \"r2\" if task_type == \"regression\" else \"accuracy\"\
+          \n\n    predictor_path = Path(workspace_path) / \"autogluon_predictor\"\n\
+          \    predictor = TabularPredictor(\n        problem_type=task_type,\n  \
+          \      label=label_column,\n        eval_metric=eval_metric,\n        path=predictor_path,\n\
+          \        verbosity=2,\n    ).fit(\n        train_data=train_data_df,\n \
+          \       num_stack_levels=1,  # TODO: discuss optimal value\n        num_bag_folds=2,\n\
+          \        use_bag_holdout=True,\n        holdout_frac=0.2,  # 0.2 = 20% of\
+          \ the data is used for validation\n        time_limit=DEFAULT_TIME_LIMIT,\n\
+          \        presets=DEFAULT_PRESET,\n    )\n\n    leaderboard = predictor.leaderboard(test_data_df)\n\
+          \    top_n_models = leaderboard.head(top_n)[\"model\"].values.tolist()\n\
+          \n    outputs = NamedTuple(\"outputs\", top_models=List[str], eval_metric=str,\
+          \ predictor_path=str, model_config=dict)\n    return outputs(\n        top_models=top_n_models,\n\
+          \        eval_metric=str(predictor.eval_metric),\n        predictor_path=str(predictor_path),\n\
+          \        model_config={\"preset\": DEFAULT_PRESET, \"eval_metric\": eval_metric,\
+          \ \"time_limit\": DEFAULT_TIME_LIMIT},\n    )\n\n"
+        image: registry.redhat.io/rhoai/odh-pipeline-runtime-datascience-cpu-py312-rhel9@sha256:f9844dc150592a9f196283b3645dda92bd80dfdb3d467fa8725b10267ea5bdbc
+    exec-tabular-train-test-split:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - tabular_train_test_split
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.15.2'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef tabular_train_test_split(  # noqa: D417\n    dataset: dsl.Input[dsl.Dataset],\n\
+          \    sampled_train_dataset: dsl.Output[dsl.Dataset],\n    sampled_test_dataset:\
+          \ dsl.Output[dsl.Dataset],\n    test_size: float = 0.3,\n) -> NamedTuple(\"\
+          outputs\", sample_row=str, split_config=dict):\n    \"\"\"Splits a tabular\
+          \ dataset into train and test sets and writes them to output artifacts.\n\
+          \n    Args:\n        dataset: Input CSV dataset to split.\n        sampled_train_dataset:\
+          \ Output dataset artifact for the train split.\n        sampled_test_dataset:\
+          \ Output dataset artifact for the test split.\n        test_size: Proportion\
+          \ of the data to include in the test split.\n\n    Returns:\n        NamedTuple:\
+          \ Contains a sample row and a split configuration dictionary.\n    \"\"\"\
+          \n    import pandas as pd\n    from sklearn.model_selection import train_test_split\n\
+          \n    # Set constants\n    DEFAULT_RANDOM_STATE = 42\n\n    sampled_train_dataset.uri\
+          \ += \".csv\"\n    sampled_test_dataset.uri += \".csv\"\n\n    # Split the\
+          \ data\n    X_train, X_test = train_test_split(\n        pd.read_csv(dataset.path),\
+          \ test_size=test_size, random_state=DEFAULT_RANDOM_STATE\n    )\n\n    X_train.to_csv(sampled_train_dataset.path,\
+          \ index=False)\n    X_test.to_csv(sampled_test_dataset.path, index=False)\n\
+          \n    # Dumps to json string to avoid NaN in the output json\n    # Format:\
+          \ '[{\"col1\": \"val1\",\"col2\":\"val2\"},{\"col1\":\"val3\",\"col2\":\"\
+          val4\"}]'\n    sample_row = X_test.head(1).to_json(orient=\"records\")\n\
+          \    return NamedTuple(\"outputs\", sample_row=Dict, split_config=dict)(\n\
+          \        sample_row=sample_row, split_config={\"test_size\": test_size}\n\
+          \    )\n\n"
+        image: registry.redhat.io/rhoai/odh-pipeline-runtime-datascience-cpu-py312-rhel9@sha256:f9844dc150592a9f196283b3645dda92bd80dfdb3d467fa8725b10267ea5bdbc
+pipelineInfo:
+  description: 'End-to-end AutoGluon tabular training pipeline implementing a two-stage
+    approach: first builds and selects top-performing models on sampled data, then
+    refits them on the full dataset. The pipeline loads data from S3, splits it into
+    train/test sets, trains multiple AutoGluon models using ensembling (stacking and
+    bagging), selects the top N performers, refits each on the complete training data
+    in parallel, and finally evaluates all refitted models to generate a comprehensive
+    leaderboard with performance metrics.'
+  name: autogluon-tabular-training-pipeline
+root:
+  dag:
+    tasks:
+      automl-data-loader:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-automl-data-loader
+        inputs:
+          parameters:
+            bucket_name:
+              componentInputParameter: train_data_bucket_name
+            file_key:
+              componentInputParameter: train_data_file_key
+        taskInfo:
+          name: automl-data-loader
+      for-loop-1:
+        componentRef:
+          name: comp-for-loop-1
+        dependentTasks:
+        - automl-data-loader
+        - models-selection
+        - tabular-train-test-split
+        inputs:
+          artifacts:
+            pipelinechannel--automl-data-loader-full_dataset:
+              taskOutputArtifact:
+                outputArtifactKey: full_dataset
+                producerTask: automl-data-loader
+          parameters:
+            pipelinechannel--automl-data-loader-sample_config:
+              taskOutputParameter:
+                outputParameterKey: sample_config
+                producerTask: automl-data-loader
+            pipelinechannel--models-selection-model_config:
+              taskOutputParameter:
+                outputParameterKey: model_config
+                producerTask: models-selection
+            pipelinechannel--models-selection-predictor_path:
+              taskOutputParameter:
+                outputParameterKey: predictor_path
+                producerTask: models-selection
+            pipelinechannel--models-selection-top_models:
+              taskOutputParameter:
+                outputParameterKey: top_models
+                producerTask: models-selection
+            pipelinechannel--tabular-train-test-split-sample_row:
+              taskOutputParameter:
+                outputParameterKey: sample_row
+                producerTask: tabular-train-test-split
+            pipelinechannel--tabular-train-test-split-split_config:
+              taskOutputParameter:
+                outputParameterKey: split_config
+                producerTask: tabular-train-test-split
+        iteratorPolicy:
+          parallelismLimit: 2
+        parameterIterator:
+          itemInput: pipelinechannel--models-selection-top_models-loop-item
+          items:
+            inputParameter: pipelinechannel--models-selection-top_models
+        taskInfo:
+          name: for-loop-1
+      leaderboard-evaluation:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-leaderboard-evaluation
+        dependentTasks:
+        - for-loop-1
+        - models-selection
+        inputs:
+          artifacts:
+            models:
+              taskOutputArtifact:
+                outputArtifactKey: pipelinechannel--autogluon-models-full-refit-model_artifact
+                producerTask: for-loop-1
+          parameters:
+            eval_metric:
+              taskOutputParameter:
+                outputParameterKey: eval_metric
+                producerTask: models-selection
+        taskInfo:
+          name: leaderboard-evaluation
+      models-selection:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-models-selection
+        dependentTasks:
+        - tabular-train-test-split
+        inputs:
+          artifacts:
+            test_data:
+              taskOutputArtifact:
+                outputArtifactKey: sampled_test_dataset
+                producerTask: tabular-train-test-split
+            train_data:
+              taskOutputArtifact:
+                outputArtifactKey: sampled_train_dataset
+                producerTask: tabular-train-test-split
+          parameters:
+            label_column:
+              componentInputParameter: label_column
+            task_type:
+              componentInputParameter: task_type
+            top_n:
+              componentInputParameter: top_n
+            workspace_path:
+              runtimeValue:
+                constant: '{{$.workspace_path}}'
+        taskInfo:
+          name: models-selection
+      tabular-train-test-split:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-tabular-train-test-split
+        dependentTasks:
+        - automl-data-loader
+        inputs:
+          artifacts:
+            dataset:
+              taskOutputArtifact:
+                outputArtifactKey: full_dataset
+                producerTask: automl-data-loader
+          parameters:
+            test_size:
+              runtimeValue:
+                constant: 0.2
+        taskInfo:
+          name: tabular-train-test-split
+  inputDefinitions:
+    parameters:
+      label_column:
+        description: 'The name of the target/label column in the dataset. This column
+
+          will be used as the prediction target for model training. The column must
+
+          exist in the loaded dataset.'
+        parameterType: STRING
+      task_type:
+        description: 'The type of machine learning task. Supported values:
+
+          - "binary" or "multiclass": For classification tasks
+
+          - "regression": For regression tasks (predicting continuous values)
+
+          This parameter determines the evaluation metrics and model types AutoGluon
+
+          will use during training.'
+        parameterType: STRING
+      top_n:
+        defaultValue: 3.0
+        description: 'The number of top-performing models to select and refit (default:
+          3).
+
+          Must be a positive integer. Only the top N models from the initial training
+
+          stage will be promoted to the refitting stage. Higher values increase pipeline
+
+          execution time but provide more model options for final selection.'
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+      train_data_bucket_name:
+        description: 'The name of the S3-compatible bucket containing the tabular
+          data file.
+
+          The bucket should be accessible using the AWS credentials configured in
+          the
+
+          ''train_data_secret_name'' Kubernetes secret.'
+        parameterType: STRING
+      train_data_file_key:
+        description: 'The key (path) of the data file within the S3 bucket. The file
+          should
+
+          be in CSV format and contain both feature columns and the target column.'
+        parameterType: STRING
+      train_data_secret_name:
+        description: 'The Kubernetes secret name with S3-compatible credentials for
+          tabular data file access.
+
+          The following keys are required:
+
+          AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_S3_ENDPOINT, AWS_DEFAULT_REGION.'
+        parameterType: STRING
+schemaVersion: 2.1.0
+sdkVersion: kfp-2.15.2
+---
+platforms:
+  kubernetes:
+    deploymentSpec:
+      executors:
+        exec-automl-data-loader:
+          secretAsEnv:
+          - keyToEnv:
+            - envVar: AWS_ACCESS_KEY_ID
+              secretKey: AWS_ACCESS_KEY_ID
+            - envVar: AWS_SECRET_ACCESS_KEY
+              secretKey: AWS_SECRET_ACCESS_KEY
+            - envVar: AWS_S3_ENDPOINT
+              secretKey: AWS_S3_ENDPOINT
+            - envVar: AWS_DEFAULT_REGION
+              secretKey: AWS_DEFAULT_REGION
+            optional: false
+            secretNameParameter:
+              componentInputParameter: train_data_secret_name
+    pipelineConfig:
+      workspace:
+        kubernetes:
+          pvcSpecPatch:
+            accessModes:
+            - ReadWriteOnce
+            storageClassName: gp3-csi
+        size: 1Gi

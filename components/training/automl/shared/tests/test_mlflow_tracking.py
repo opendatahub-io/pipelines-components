@@ -7,6 +7,7 @@ from unittest import mock
 
 import pytest
 
+from .. import mlflow_tracking
 from ..mlflow_tracking import (
     TRACKING_ARTIFACT_FILENAME,
     build_mlflow_run_url,
@@ -17,10 +18,21 @@ from ..mlflow_tracking import (
 )
 
 
+@pytest.fixture
+def no_dev_mlflow_uri(monkeypatch):
+    """Disable in-module dev URI so tests can assert platform-only behavior."""
+    monkeypatch.setattr(mlflow_tracking, "_DEV_MLFLOW_TRACKING_URI", "")
+
+
 class TestMlflowEnabled:
-    def test_disabled_when_uri_unset(self, monkeypatch):
+    def test_disabled_when_uri_unset(self, monkeypatch, no_dev_mlflow_uri):
         monkeypatch.delenv("MLFLOW_TRACKING_URI", raising=False)
         assert mlflow_enabled() is False
+
+    def test_enabled_when_dev_const_set(self, monkeypatch):
+        monkeypatch.delenv("MLFLOW_TRACKING_URI", raising=False)
+        monkeypatch.setattr(mlflow_tracking, "_DEV_MLFLOW_TRACKING_URI", "https://mlflow.dev.example/mlflow/")
+        assert mlflow_enabled() is True
 
     def test_enabled_when_uri_set(self, monkeypatch):
         monkeypatch.setenv("MLFLOW_TRACKING_URI", "https://mlflow.example.com")
@@ -42,7 +54,7 @@ class TestBuildMlflowRunUrl:
 
 
 class TestTrackingArtifactPayload:
-    def test_disabled_payload(self, monkeypatch):
+    def test_disabled_payload(self, monkeypatch, no_dev_mlflow_uri):
         monkeypatch.delenv("MLFLOW_TRACKING_URI", raising=False)
         payload = build_tracking_artifact_payload(kfp_run_id="run-1", pipeline_name="my-pipeline")
         assert payload == {
@@ -86,7 +98,7 @@ class TestParseModelDisplayName:
 
 
 class TestLogTabularTrainingToMlflow:
-    def test_skips_when_mlflow_disabled(self, monkeypatch):
+    def test_skips_when_mlflow_disabled(self, monkeypatch, no_dev_mlflow_uri):
         monkeypatch.delenv("MLFLOW_TRACKING_URI", raising=False)
         from ..mlflow_tracking import log_tabular_training_to_mlflow
 
