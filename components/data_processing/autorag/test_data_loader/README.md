@@ -4,9 +4,9 @@
 
 ## Overview 🧾
 
-Download test data json file from S3 into a KFP artifact.
+Download test data JSON from S3 and sample it for benchmarking.
 
-The component reads S3-compatible credentials from environment variables (injected by the pipeline from a Kubernetes secret) and downloads a JSON test data file from the provided bucket and path to the output artifact.
+The component reads S3-compatible credentials from environment variables (injected by the pipeline from a Kubernetes secret), downloads a JSON test data file, and randomly samples up to ``benchmark_sample_size`` records to limit evaluation cost in downstream components.
 
 ## Inputs 📥
 
@@ -14,7 +14,8 @@ The component reads S3-compatible credentials from environment variables (inject
 | --------- | ---- | ------- | ----------- |
 | `test_data_bucket_name` | `str` | `None` | S3 (or compatible) bucket that contains the test data file. |
 | `test_data_path` | `str` | `None` | S3 object key to the JSON test data file. |
-| `test_data` | `dsl.Output[dsl.Artifact]` | `None` | Output artifact that receives the downloaded file. |
+| `benchmark_sample_size` | `int` | `25` | Maximum number of records to keep from the test data. When the dataset exceeds this limit, a reproducible random sample is drawn (seed 42). Set to 0 to disable sampling and keep all records. |
+| `test_data` | `dsl.Output[dsl.Artifact]` | `None` | Output artifact that receives the (possibly sampled) file. |
 
 ## Usage Examples 🧪
 

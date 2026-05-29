@@ -77,7 +77,6 @@ def parse_and_chunk(
     Returns:
         The S3 URI where JSONL chunk files were written.
     """
-    import base64
     import textwrap
     import time
 
@@ -566,6 +565,14 @@ def parse_and_chunk(
                 run()
     ''')
 
+    from kubernetes import client as k8s_client
+    from kubernetes import config as k8s_config
+
+    try:
+        k8s_config.load_incluster_config()
+    except k8s_config.ConfigException:
+        k8s_config.load_kube_config()
+
     from codeflare_sdk import ManagedClusterConfig, RayJob
     from kubernetes.client import (
         V1PersistentVolumeClaimVolumeSource,
@@ -575,10 +582,6 @@ def parse_and_chunk(
     from ray.runtime_env import RuntimeEnv
 
     rayjob_name = f"docling-chunk-{int(time.time())}"
-
-    # Encode entrypoint script as base64 env var to avoid creating
-    # Secrets or ConfigMaps (service account lacks permissions for both).
-    script_b64 = base64.b64encode(_DOCLING_CHUNK_PROCESS_PY.encode()).decode()
 
     shared_mount = V1VolumeMount(pvc_mount_path, name="shared-data", read_only=True)
     data_volume = V1Volume(
@@ -610,7 +613,13 @@ def parse_and_chunk(
 
     job = RayJob(
         job_name=rayjob_name,
-        entrypoint="python -c \"import base64,os;exec(base64.b64decode(os.environ['ENTRYPOINT_SCRIPT']).decode())\"",
+        entrypoint=(
+            'python -c "import os;'
+            "f=open('/tmp/ep.py','w');"
+            "f.write(os.environ['ENTRYPOINT_SCRIPT']);"
+            'f.close()"'
+            " && python /tmp/ep.py"
+        ),
         cluster_config=cluster_config,
         namespace=namespace,
         runtime_env=RuntimeEnv(
@@ -620,7 +629,7 @@ def parse_and_chunk(
                 "boto3>=1.28.0",
             ],
             env_vars={
-                "ENTRYPOINT_SCRIPT": script_b64,
+                "ENTRYPOINT_SCRIPT": _DOCLING_CHUNK_PROCESS_PY,
                 "PVC_MOUNT_PATH": pvc_mount_path,
                 "INPUT_PATH": input_path,
                 "NUM_FILES": str(num_files),
@@ -643,15 +652,40 @@ def parse_and_chunk(
         ttl_seconds_after_finished=300,
     )
 
-    from kubernetes import client as k8s_client
-    from kubernetes import config as k8s_config
+    import os
 
+    # Debug: verify SA token is mounted and K8s auth state
+    token_path = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+    print(f"DEBUG: Token file exists: {os.path.exists(token_path)}")
+    if os.path.exists(token_path):
+        with open(token_path) as f:
+            token = f.read()
+        print(f"DEBUG: Token length: {len(token)}")
+        print(f"DEBUG: Token starts with: {token[:20]}...")
+    else:
+        print("DEBUG: NO SA TOKEN MOUNTED")
+
+    # Check what the SDK's internal client looks like
+    sdk_config = job._api.api.api_client.configuration
+    print(f"DEBUG: SDK api_client host: {sdk_config.host}")
+    print(f"DEBUG: SDK api_client has api_key: {bool(sdk_config.api_key)}")
+    print(f"DEBUG: SDK api_client api_key_prefix: {sdk_config.api_key_prefix}")
+
+    # Re-load in-cluster config after SDK constructor may have overridden it
     try:
         k8s_config.load_incluster_config()
     except k8s_config.ConfigException:
         k8s_config.load_kube_config()
 
     custom_api = k8s_client.CustomObjectsApi()
+    job._api.api = custom_api
+
+    # Verify the replacement client
+    new_config = custom_api.api_client.configuration
+    print(f"DEBUG: New api_client host: {new_config.host}")
+    print(f"DEBUG: New api_client has api_key: {bool(new_config.api_key)}")
+    print(f"DEBUG: New api_client api_key_prefix: {new_config.api_key_prefix}")
+
     rayjob_group = "ray.io"
     rayjob_version = "v1"
     rayjob_plural = "rayjobs"

@@ -21,6 +21,11 @@ MOCKED_ENV_VARIABLES_NO_REGION = {
     "AWS_S3_ENDPOINT": "https://s3.example.com",
 }
 
+VALID_BENCHMARK_RECORDS = [
+    {"question": "What is X?", "correct_answers": ["Answer X"], "correct_answer_document_ids": ["doc_1"]},
+    {"question": "What is Y?", "correct_answers": ["Answer Y"], "correct_answer_document_ids": ["doc_2"]},
+]
+
 
 class _MockSSLError(Exception):
     """Stand-in for botocore.exceptions.SSLError used in unit tests."""
@@ -44,6 +49,16 @@ def _mock_botocore_modules():
     return mock_botocore, mock_botocore_exceptions
 
 
+def _s3_response(content):
+    """Build a mock S3 get_object response with the given content as body."""
+    body = mock.MagicMock()
+    if isinstance(content, str):
+        body.read.return_value = content.encode("utf-8")
+    else:
+        body.read.return_value = json.dumps(content).encode("utf-8")
+    return {"Body": body}
+
+
 class TestTestDataLoaderUnitTests:
     """Unit tests for test_data_loader success and error handling."""
 
@@ -58,22 +73,18 @@ class TestTestDataLoaderUnitTests:
         params = list(sig.parameters)
         assert "test_data_bucket_name" in params
         assert "test_data_path" in params
+        assert "benchmark_sample_size" in params
+        assert sig.parameters["benchmark_sample_size"].default == 25
 
     @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
     def test_successful_download_and_json_validation(self, tmp_path):
         """Successful download with valid JSON returns without raising."""
         mock_boto3 = mock.MagicMock()
         mock_s3 = mock.MagicMock()
-
-        out_path = tmp_path / "test_data.json"
-
-        def _write_valid_json(_bucket, _key, destination):
-            with open(destination, "w", encoding="utf-8") as f:
-                json.dump({"dataset": "ok"}, f)
-
-        mock_s3.download_file.side_effect = _write_valid_json
+        mock_s3.get_object.return_value = _s3_response(VALID_BENCHMARK_RECORDS)
         mock_boto3.client.return_value = mock_s3
 
+        out_path = tmp_path / "test_data.json"
         mock_botocore, mock_botocore_exceptions = _mock_botocore_modules()
         test_data_artifact = mock.MagicMock()
         test_data_artifact.path = str(out_path)
@@ -93,24 +104,19 @@ class TestTestDataLoaderUnitTests:
             )
 
         assert out_path.exists()
-        assert json.loads(out_path.read_text(encoding="utf-8"))["dataset"] == "ok"
-        mock_s3.download_file.assert_called_once()
+        result = json.loads(out_path.read_text(encoding="utf-8"))
+        assert len(result) == len(VALID_BENCHMARK_RECORDS)
+        mock_s3.get_object.assert_called_once()
 
     @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES_NO_REGION, clear=True)
     def test_missing_region_is_allowed(self, tmp_path):
         """Component works when AWS_DEFAULT_REGION is not present."""
         mock_boto3 = mock.MagicMock()
         mock_s3 = mock.MagicMock()
-
-        out_path = tmp_path / "test_data.json"
-
-        def _write_valid_json(_bucket, _key, destination):
-            with open(destination, "w", encoding="utf-8") as f:
-                json.dump({"dataset": "ok"}, f)
-
-        mock_s3.download_file.side_effect = _write_valid_json
+        mock_s3.get_object.return_value = _s3_response(VALID_BENCHMARK_RECORDS)
         mock_boto3.client.return_value = mock_s3
 
+        out_path = tmp_path / "test_data.json"
         mock_botocore, mock_botocore_exceptions = _mock_botocore_modules()
         test_data_artifact = mock.MagicMock()
         test_data_artifact.path = str(out_path)
@@ -142,13 +148,8 @@ class TestTestDataLoaderUnitTests:
 
         out_path = tmp_path / "test_data.json"
 
-        mock_s3_fail.download_file.side_effect = _MockSSLError("SSL validation failed")
-
-        def _write_valid_json(_bucket, _key, destination):
-            with open(destination, "w", encoding="utf-8") as f:
-                json.dump({"retried": True}, f)
-
-        mock_s3_ok.download_file.side_effect = _write_valid_json
+        mock_s3_fail.get_object.side_effect = _MockSSLError("SSL validation failed")
+        mock_s3_ok.get_object.return_value = _s3_response(VALID_BENCHMARK_RECORDS)
 
         call_count = 0
 
@@ -182,7 +183,8 @@ class TestTestDataLoaderUnitTests:
         assert call_count == 2
         second_call_kwargs = mock_boto3.client.call_args_list[1][1]
         assert second_call_kwargs["verify"] is False
-        assert json.loads(out_path.read_text(encoding="utf-8"))["retried"] is True
+        result = json.loads(out_path.read_text(encoding="utf-8"))
+        assert len(result) == len(VALID_BENCHMARK_RECORDS)
 
     def test_empty_bucket_name_raises_type_error(self, tmp_path):
         """Empty test_data_bucket_name raises TypeError."""
@@ -206,7 +208,11 @@ class TestTestDataLoaderUnitTests:
                     test_data=artifact,
                 )
 
-    @mock.patch.dict("os.environ", {"AWS_ACCESS_KEY_ID": "x"}, clear=True)
+    @mock.patch.dict(
+        "os.environ",
+        {"AWS_ACCESS_KEY_ID": "x", "AWS_S3_ENDPOINT": "https://s3.example.com"},
+        clear=True,
+    )
     def test_missing_required_env_variable_raises_value_error(self, tmp_path):
         """Missing S3 env var raises ValueError with variable name."""
         mock_boto3 = mock.MagicMock()
@@ -222,7 +228,7 @@ class TestTestDataLoaderUnitTests:
                 "botocore.exceptions": mock_botocore_exceptions,
             },
         ):
-            with pytest.raises(ValueError, match="AWS_SECRET_ACCESS_KEY environment variable not set"):
+            with pytest.raises(ValueError, match="Missing environment variable"):
                 test_data_loader.python_func(
                     test_data_bucket_name="my-bucket",
                     test_data_path="data/test.json",
@@ -234,7 +240,7 @@ class TestTestDataLoaderUnitTests:
         """S3 404/NoSuchKey maps to FileNotFoundError with key/bucket context."""
         mock_boto3 = mock.MagicMock()
         mock_s3 = mock.MagicMock()
-        mock_s3.download_file.side_effect = _MockClientError(
+        mock_s3.get_object.side_effect = _MockClientError(
             "not found",
             response={"Error": {"Code": "NoSuchKey"}},
         )
@@ -264,12 +270,7 @@ class TestTestDataLoaderUnitTests:
         """Downloaded non-JSON content raises component exception."""
         mock_boto3 = mock.MagicMock()
         mock_s3 = mock.MagicMock()
-
-        def _write_invalid_json(_bucket, _key, destination):
-            with open(destination, "w", encoding="utf-8") as f:
-                f.write("not-json")
-
-        mock_s3.download_file.side_effect = _write_invalid_json
+        mock_s3.get_object.return_value = _s3_response("not-json")
         mock_boto3.client.return_value = mock_s3
         mock_botocore, mock_botocore_exceptions = _mock_botocore_modules()
 
@@ -296,7 +297,7 @@ class TestTestDataLoaderUnitTests:
         """Unexpected download exceptions are wrapped by component exception."""
         mock_boto3 = mock.MagicMock()
         mock_s3 = mock.MagicMock()
-        mock_s3.download_file.side_effect = RuntimeError("network issue")
+        mock_s3.get_object.side_effect = RuntimeError("network issue")
         mock_boto3.client.return_value = mock_s3
         mock_botocore, mock_botocore_exceptions = _mock_botocore_modules()
 
@@ -317,3 +318,152 @@ class TestTestDataLoaderUnitTests:
                     test_data_path="data/test.json",
                     test_data=artifact,
                 )
+
+    @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
+    def test_sampling_reduces_records_to_limit(self, tmp_path):
+        """Records exceeding benchmark_sample_size are sampled down."""
+        mock_boto3 = mock.MagicMock()
+        mock_s3 = mock.MagicMock()
+        full_dataset = [
+            {"question": f"q_{i}", "correct_answers": [f"a_{i}"], "correct_answer_document_ids": [f"d_{i}"]}
+            for i in range(50)
+        ]
+        out_path = tmp_path / "test_data.json"
+
+        mock_s3.get_object.return_value = _s3_response(full_dataset)
+        mock_boto3.client.return_value = mock_s3
+        mock_botocore, mock_botocore_exceptions = _mock_botocore_modules()
+
+        artifact = mock.MagicMock()
+        artifact.path = str(out_path)
+
+        with mock.patch.dict(
+            sys.modules,
+            {
+                "boto3": mock_boto3,
+                "botocore": mock_botocore,
+                "botocore.exceptions": mock_botocore_exceptions,
+            },
+        ):
+            test_data_loader.python_func(
+                test_data_bucket_name="my-bucket",
+                test_data_path="data/test.json",
+                benchmark_sample_size=25,
+                test_data=artifact,
+            )
+
+        result = json.loads(out_path.read_text(encoding="utf-8"))
+        assert len(result) == 25
+        assert all(r in full_dataset for r in result)
+
+    @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
+    def test_sampling_is_reproducible(self, tmp_path):
+        """Same seed produces identical sample across runs."""
+        mock_boto3 = mock.MagicMock()
+        mock_s3 = mock.MagicMock()
+        full_dataset = [
+            {"question": f"q_{i}", "correct_answers": [f"a_{i}"], "correct_answer_document_ids": [f"d_{i}"]}
+            for i in range(100)
+        ]
+
+        results = []
+        for run in range(2):
+            out_path = tmp_path / f"test_data_{run}.json"
+
+            mock_s3.get_object.return_value = _s3_response(full_dataset)
+            mock_boto3.client.return_value = mock_s3
+            mock_botocore, mock_botocore_exceptions = _mock_botocore_modules()
+
+            artifact = mock.MagicMock()
+            artifact.path = str(out_path)
+
+            with mock.patch.dict(
+                sys.modules,
+                {
+                    "boto3": mock_boto3,
+                    "botocore": mock_botocore,
+                    "botocore.exceptions": mock_botocore_exceptions,
+                },
+            ):
+                test_data_loader.python_func(
+                    test_data_bucket_name="my-bucket",
+                    test_data_path="data/test.json",
+                    benchmark_sample_size=25,
+                    test_data=artifact,
+                )
+
+            results.append(json.loads(out_path.read_text(encoding="utf-8")))
+
+        assert results[0] == results[1]
+
+    @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
+    def test_no_sampling_when_data_within_limit(self, tmp_path):
+        """Datasets at or below benchmark_sample_size are kept intact."""
+        mock_boto3 = mock.MagicMock()
+        mock_s3 = mock.MagicMock()
+        small_dataset = [
+            {"question": f"q_{i}", "correct_answers": [f"a_{i}"], "correct_answer_document_ids": [f"d_{i}"]}
+            for i in range(10)
+        ]
+        out_path = tmp_path / "test_data.json"
+
+        mock_s3.get_object.return_value = _s3_response(small_dataset)
+        mock_boto3.client.return_value = mock_s3
+        mock_botocore, mock_botocore_exceptions = _mock_botocore_modules()
+
+        artifact = mock.MagicMock()
+        artifact.path = str(out_path)
+
+        with mock.patch.dict(
+            sys.modules,
+            {
+                "boto3": mock_boto3,
+                "botocore": mock_botocore,
+                "botocore.exceptions": mock_botocore_exceptions,
+            },
+        ):
+            test_data_loader.python_func(
+                test_data_bucket_name="my-bucket",
+                test_data_path="data/test.json",
+                benchmark_sample_size=25,
+                test_data=artifact,
+            )
+
+        result = json.loads(out_path.read_text(encoding="utf-8"))
+        assert result == small_dataset
+
+    @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
+    def test_sampling_disabled_when_zero(self, tmp_path):
+        """benchmark_sample_size=0 disables sampling entirely."""
+        mock_boto3 = mock.MagicMock()
+        mock_s3 = mock.MagicMock()
+        full_dataset = [
+            {"question": f"q_{i}", "correct_answers": [f"a_{i}"], "correct_answer_document_ids": [f"d_{i}"]}
+            for i in range(50)
+        ]
+        out_path = tmp_path / "test_data.json"
+
+        mock_s3.get_object.return_value = _s3_response(full_dataset)
+        mock_boto3.client.return_value = mock_s3
+        mock_botocore, mock_botocore_exceptions = _mock_botocore_modules()
+
+        artifact = mock.MagicMock()
+        artifact.path = str(out_path)
+
+        with mock.patch.dict(
+            sys.modules,
+            {
+                "boto3": mock_boto3,
+                "botocore": mock_botocore,
+                "botocore.exceptions": mock_botocore_exceptions,
+            },
+        ):
+            test_data_loader.python_func(
+                test_data_bucket_name="my-bucket",
+                test_data_path="data/test.json",
+                benchmark_sample_size=0,
+                test_data=artifact,
+            )
+
+        result = json.loads(out_path.read_text(encoding="utf-8"))
+        assert result == full_dataset

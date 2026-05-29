@@ -9,6 +9,7 @@ import yaml
 
 from ..generate_managed_pipelines import (
     METADATA_STABILITY_VALUES,
+    RELATED_IMAGE_ENV_PREFIX,
     STABILITY_TO_MANAGED_DISPLAY,
     ManagedPipelineCompilationError,
     ManagedPipelineMetadataError,
@@ -16,6 +17,7 @@ from ..generate_managed_pipelines import (
     compile_managed_pipeline,
     main,
     managed_pipeline_entry_from_dir,
+    should_recompile_managed_pipelines,
 )
 
 
@@ -238,6 +240,50 @@ class TestCompileManagedPipeline:
                 output_path=output_yaml,
                 repo_root=tmp_path,
             )
+
+
+# ---------------------------------------------------------------------------
+# should_recompile_managed_pipelines (init path)
+# ---------------------------------------------------------------------------
+
+
+def _clear_related_image_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    import os
+
+    for key in list(os.environ):
+        if key.startswith(RELATED_IMAGE_ENV_PREFIX):
+            monkeypatch.delenv(key, raising=False)
+
+
+@pytest.mark.parametrize(
+    ("env", "expected"),
+    [
+        ({}, False),
+        ({"RELATED_IMAGE_ODH_AUTOML_IMAGE": ""}, False),
+        ({"RELATED_IMAGE_ODH_AUTOML_IMAGE": "   "}, False),
+        ({"RELATED_IMAGE_ODH_AUTOML_IMAGE": "quay.io/example/automl-runtime@sha256:aaa"}, True),
+        ({"RELATED_IMAGE_ODH_AUTORAG_IMAGE": "quay.io/example/autorag-runtime@sha256:bbb"}, True),
+        (
+            {
+                "RELATED_IMAGE_ODH_AUTOML_IMAGE": "quay.io/example/automl-runtime@sha256:aaa",
+                "RELATED_IMAGE_ODH_AUTORAG_IMAGE": "quay.io/example/autorag-runtime@sha256:bbb",
+            },
+            True,
+        ),
+        ({"RELATED_IMAGE_ODH_FUTURE_RUNTIME_IMAGE": "quay.io/example/future@sha256:ccc"}, True),
+        ({"UNRELATED_IMAGE_FOO": "quay.io/example/not-related"}, False),
+    ],
+)
+def test_should_recompile_managed_pipelines(
+    monkeypatch: pytest.MonkeyPatch,
+    env: dict[str, str],
+    expected: bool,
+) -> None:
+    """Init recompiles when any non-empty RELATED_IMAGE_* env var is set."""
+    _clear_related_image_env(monkeypatch)
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+    assert should_recompile_managed_pipelines() is expected
 
 
 # ---------------------------------------------------------------------------
