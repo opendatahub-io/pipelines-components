@@ -617,12 +617,32 @@ def rag_templates_optimization(
 
         rag_patterns.metadata["metadata"]["patterns"].append(pattern_data["payload"])
 
+        collection_name = None
+        for eval in rag_exp.results.evaluations:
+            if eval.pattern_name == pattern_data["payload"]["pattern_name"]:
+                collection_name = eval.collection
+
+        template_context = {
+            "response_template": {
+                "model": pattern_data["payload"]["settings"]["generation"]["model_id"],
+                "stream": False,  # Not supported yet
+                "store": True,  # Responses API default
+                "input": pattern_data["payload"]["settings"]["generation"]["user_message_text"],
+                "instructions": pattern_data["payload"]["settings"]["generation"]["system_message_text"],
+                "tools": [
+                    {
+                        "type": "file_search",
+                        "vector_store_ids": [collection_name],
+                    }
+                ],
+                "include": ["file_search_call.results"],
+            }
+        }
+        pattern_data["payload"]["settings"]["responses_template"] = template_context["response_template"]
+
         with (patt_dir / "pattern.json").open("w+", encoding="utf-8") as f:
             json_dump(pattern_data["payload"], f, indent=2)
 
-        template_context = {
-            "response_template": pattern_data["payload"]["settings"]["responses_template"],
-        }
         with (Path(embedded_artifact.path) / "script_templates" / "create_model_response.py.templ").open(
             "r", encoding="utf-8"
         ) as f:
