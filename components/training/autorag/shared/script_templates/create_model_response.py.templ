@@ -8,7 +8,6 @@ import httpx
 
 
 def get_verify_param():
-    # TODO redesign as it might make little sense
     """Determine SSL verification parameter for httpx."""
     insecure = os.environ.get("OGX_TLS_INSECURE", "").lower() in (
         "1",
@@ -19,10 +18,6 @@ def get_verify_param():
     if insecure:
         print("WARNING: TLS verification disabled", file=sys.stderr)
         return False
-
-    ca_bundle = os.environ.get("REQUESTS_CA_BUNDLE", "") or os.environ.get("SSL_CERT_FILE", "")
-    if ca_bundle:
-        return ca_bundle
 
     return True  # Use system trust store
 
@@ -69,7 +64,10 @@ def main():
             try:
                 response = client.post(url, json=body_template, headers=headers)
                 response.raise_for_status()
-                print(response.text)
+                assistant_last_message = [msg for msg in response.json()["output"][::-1] if msg["role"] == "assistant"]
+                output_text = [obj for obj in assistant_last_message[0]["content"] if obj["type"] == "output_text"]
+
+                print(output_text[0]["text"])
             except httpx.HTTPStatusError as e:
                 print(
                     f"HTTP {e.response.status_code}: {e.response.reason_phrase}",
@@ -85,6 +83,9 @@ def main():
         except KeyboardInterrupt: # Ctrl-C
             print()
             break
+
+        except Exception:
+            client.close()
 
     client.close()
     return 0
