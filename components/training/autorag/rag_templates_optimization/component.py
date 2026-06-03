@@ -1,4 +1,3 @@
-from pathlib import Path
 from typing import Optional
 
 from kfp import dsl
@@ -7,14 +6,12 @@ from kfp_components.utils.consts import AUTORAG_IMAGE  # pyright: ignore[reportM
 
 @dsl.component(
     base_image=AUTORAG_IMAGE,  # noqa: E501
-    embedded_artifact_path=str((Path(__file__).parent / "notebook_templates")),
 )
 def rag_templates_optimization(
     extracted_text: dsl.InputPath(dsl.Artifact),
     test_data: dsl.InputPath(dsl.Artifact),
     search_space_prep_report: dsl.InputPath(dsl.Artifact),
     rag_patterns: dsl.Output[dsl.Artifact],
-    embedded_artifact: dsl.EmbeddedInput[dsl.Dataset],
     test_data_key: Optional[str],
     vector_io_provider_id: str,
     component_status: dsl.Output[dsl.Artifact] = None,
@@ -34,8 +31,6 @@ def rag_templates_optimization(
             report on the experiment's first phase (search space preparation).
 
         rag_patterns: kfp-enforced argument specifying an output artifact. Provided by kfp backend automatically.
-
-        embedded_artifact: kfp-enforced argument to allow access of base64 encoded dir with notebook templates.
 
         component_status: Output artifact containing stage-level progress tracking.
 
@@ -84,6 +79,7 @@ def rag_templates_optimization(
     from ai4rag.search_space.src.parameter import Parameter
     from ai4rag.search_space.src.search_space import AI4RAGSearchSpace
     from ai4rag.utils.event_handler.event_handler import BaseEventHandler, LogLevel
+    from kfp_components.components.training.autorag.shared.run_status import shared_autorag_dir
     from langchain_core.documents import Document
     from ogx_client import APIConnectionError as OGXAPIConnectionError
     from ogx_client import OgxClient
@@ -344,7 +340,7 @@ def rag_templates_optimization(
             --------
             >>> nb = Notebook.load("existing_notebook.ipynb")
             """
-            with open(Path(embedded_artifact.path) / notebook_name, "r") as f:
+            with (shared_autorag_dir() / "notebook_templates" / notebook_name).open("r", encoding="utf-8") as f:
                 nb_dict = json_load(f)
 
             loaded_cells = []

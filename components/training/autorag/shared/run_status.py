@@ -1,4 +1,4 @@
-"""AutoRAG pipeline stage-map templates and manifest loading."""
+"""AutoRAG pipeline stage-map templates, notebook templates, and manifest loading."""
 
 from __future__ import annotations
 
