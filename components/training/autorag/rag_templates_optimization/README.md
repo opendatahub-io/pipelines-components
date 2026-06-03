@@ -69,12 +69,6 @@ def example_pipeline(
 
 ```
 
-<!-- custom-content -->
-
-Generated indexing and inference notebooks are built from templates in
-``shared/notebook_templates/`` (installed with ``kfp_components`` on the AutoRAG
-runtime image), matching the AutoML training components pattern.
-
 ## Metadata 🗂️
 
 - **Name**: rag_templates_optimization
@@ -102,3 +96,9 @@ runtime image), matching the AutoML training components pattern.
     - filip-komarzyniec
     - jakub-walaszczyk
     - MichalSteczko
+
+<!-- custom-content -->
+
+Generated indexing and inference notebooks are built from templates in
+``shared/notebook_templates/`` (installed with ``kfp_components`` on the AutoRAG
+runtime image), matching the AutoML training components pattern.
