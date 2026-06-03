@@ -19,6 +19,7 @@ Carries out the iterative RAG optimization process.
 | `embedded_artifact` | `dsl.EmbeddedInput[dsl.Dataset]` | `None` | kfp-enforced argument to allow access of base64 encoded dir with notebook templates. |
 | `test_data_key` | `Optional[str]` | `None` | Path to the benchmark JSON file in object storage used by generated notebooks. |
 | `vector_io_provider_id` | `str` | `None` | Vector I/O provider identifier as registered in OGX. |
+| `component_status` | `dsl.Output[dsl.Artifact]` | `None` | Output artifact containing stage-level progress tracking. |
 | `optimization_settings` | `Optional[dict]` | `None` | Additional settings customising the experiment. |
 | `input_data_key` | `Optional[str]` | `""` | A path to documents dir within a bucket used as an input to AI4RAG experiment. |
 

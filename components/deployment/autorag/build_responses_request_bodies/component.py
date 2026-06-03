@@ -10,6 +10,7 @@ from kfp_components.utils.consts import AUTORAG_IMAGE  # pyright: ignore[reportM
 def prepare_responses_api_requests(
     rag_patterns: dsl.InputPath(dsl.Artifact),
     responses_api_artifacts: dsl.Output[dsl.Artifact],
+    component_status: dsl.Output[dsl.Artifact] = None,
 ):
     """Emit one OGX ``POST /v1/responses`` JSON body per RAG pattern directory.
 
@@ -46,6 +47,7 @@ def prepare_responses_api_requests(
             helper script, and README per pattern).
             Request bodies use ``RESPONSES_BODY_DEFAULT_QUESTION`` as the placeholder user message;
             the interactive script replaces it when you run it locally.
+        component_status: Output artifact containing stage-level progress tracking.
     """
     import json
     import os
@@ -458,37 +460,52 @@ if __name__ == "__main__":
     out_root = Path(responses_api_artifacts.path)
     out_root.mkdir(parents=True, exist_ok=True)
 
-    written: list[dict] = []
-    if not root.is_dir():
-        raise FileNotFoundError(f"rag_patterns path is not a directory: {root}")
+    from kfp_components.components.training.autorag.shared.component_status import component_status_tracker
 
-    for sub in sorted(p for p in root.iterdir() if p.is_dir()):
-        pattern_path = sub / "pattern.json"
-        if not pattern_path.is_file():
-            continue
-        with pattern_path.open(encoding="utf-8") as f:
-            pattern = json.load(f)
-        body = _build_ogx_v1_responses_body(pattern)
-        dest_dir = out_root / sub.name
-        dest_dir.mkdir(parents=True, exist_ok=True)
-        out_file = dest_dir / output_filename
-        with out_file.open("w", encoding="utf-8") as out_f:
-            json.dump(body, out_f, indent=2, ensure_ascii=False)
-        script_file = dest_dir / script_filename
-        script_file.write_text(_request_script_contents(ogx_base_url), encoding="utf-8")
-        readme_file = dest_dir / readme_filename
-        readme_file.write_text(_pattern_readme_contents(ogx_base_url), encoding="utf-8")
-        written.append(
-            {
-                "pattern_dir": sub.name,
-                "body_path": str(out_file),
-                "script_path": str(script_file),
-                "readme_path": str(readme_file),
-            }
-        )
+    status = component_status_tracker(component_status, "prepare_responses_api_requests")
+    try:
+        status.record("validate_inputs", "started")
+        if not root.is_dir():
+            raise FileNotFoundError(f"rag_patterns path is not a directory: {root}")
+        status.record("validate_inputs", "completed")
+        status.record("build_requests", "started")
 
-    responses_api_artifacts.metadata["name"] = "responses_api_artifacts"
-    responses_api_artifacts.metadata["metadata"] = {"patterns": written}
+        written: list[dict] = []
+        for sub in sorted(p for p in root.iterdir() if p.is_dir()):
+            pattern_path = sub / "pattern.json"
+            if not pattern_path.is_file():
+                continue
+            with pattern_path.open(encoding="utf-8") as f:
+                pattern = json.load(f)
+            body = _build_ogx_v1_responses_body(pattern)
+            dest_dir = out_root / sub.name
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            out_file = dest_dir / output_filename
+            with out_file.open("w", encoding="utf-8") as out_f:
+                json.dump(body, out_f, indent=2, ensure_ascii=False)
+            script_file = dest_dir / script_filename
+            script_file.write_text(_request_script_contents(ogx_base_url), encoding="utf-8")
+            readme_file = dest_dir / readme_filename
+            readme_file.write_text(_pattern_readme_contents(ogx_base_url), encoding="utf-8")
+            written.append(
+                {
+                    "pattern_dir": sub.name,
+                    "body_path": str(out_file),
+                    "script_path": str(script_file),
+                    "readme_path": str(readme_file),
+                }
+            )
+
+        status.record("build_requests", "completed")
+        status.record("write_artifacts", "started")
+        responses_api_artifacts.metadata["name"] = "responses_api_artifacts"
+        responses_api_artifacts.metadata["metadata"] = {"patterns": written}
+        status.record("write_artifacts", "completed")
+    except Exception as exc:
+        status.mark_active_failed(str(exc))
+        raise
+    finally:
+        status.save_best_effort()
 
 
 if __name__ == "__main__":

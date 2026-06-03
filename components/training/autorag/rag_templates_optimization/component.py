@@ -17,6 +17,7 @@ def rag_templates_optimization(
     embedded_artifact: dsl.EmbeddedInput[dsl.Dataset],
     test_data_key: Optional[str],
     vector_io_provider_id: str,
+    component_status: dsl.Output[dsl.Artifact] = None,
     optimization_settings: Optional[dict] = None,
     input_data_key: Optional[str] = "",
 ):
@@ -35,6 +36,8 @@ def rag_templates_optimization(
         rag_patterns: kfp-enforced argument specifying an output artifact. Provided by kfp backend automatically.
 
         embedded_artifact: kfp-enforced argument to allow access of base64 encoded dir with notebook templates.
+
+        component_status: Output artifact containing stage-level progress tracking.
 
         test_data_key: Path to the benchmark JSON file in object storage used by generated notebooks.
 
@@ -541,6 +544,11 @@ def rag_templates_optimization(
     ogx_client_base_url = (os.environ.get("OGX_CLIENT_BASE_URL") or "").strip()
     ogx_client_api_key = (os.environ.get("OGX_CLIENT_API_KEY") or "").strip()
 
+    from kfp_components.components.training.autorag.shared.component_status import component_status_tracker
+
+    status = component_status_tracker(component_status, "rag_templates_optimization")
+    status.record("validate_inputs", "started")
+
     if not ogx_client_base_url or not ogx_client_api_key:
         raise ValueError(
             "OGX_CLIENT_BASE_URL and OGX_CLIENT_API_KEY environment variables must be set to non-empty values."
@@ -631,6 +639,9 @@ def rag_templates_optimization(
                 explicit_instruction,
             )
 
+    status.record("validate_inputs", "completed")
+    status.record("run_optimization", "started")
+
     rag_exp = AI4RAGExperiment(
         client=client,
         event_handler=event_handler,
@@ -645,6 +656,9 @@ def rag_templates_optimization(
 
     # retrieve documents && run optimisation loop
     rag_exp.search()
+
+    status.record("run_optimization", "completed")
+    status.record("write_patterns", "started")
 
     def _evaluation_result_fallback(eval_data_list, evaluation_result):
         """Build evaluation_results.json-style list when question_scores missing or incomplete."""
@@ -823,6 +837,9 @@ def rag_templates_optimization(
             evaluation_result_list = _evaluation_result_fallback(eval_data, eval)
         with (patt_dir / "evaluation_results.json").open("w+", encoding="utf-8") as f:
             json_dump(evaluation_result_list, f, indent=2)
+
+    status.record("write_patterns", "completed")
+    status.save()
 
     # TODO autorag_run_artifact
 

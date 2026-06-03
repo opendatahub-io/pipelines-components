@@ -14,6 +14,9 @@ from kfp_components.components.data_processing.autorag.text_extraction import (
 from kfp_components.components.deployment.autorag.build_responses_request_bodies.component import (
     prepare_responses_api_requests,
 )
+from kfp_components.components.training.autorag.component_stage_map_publisher import (
+    publish_component_stage_map,
+)
 from kfp_components.components.training.autorag.leaderboard_evaluation import (
     leaderboard_evaluation,
 )
@@ -29,9 +32,12 @@ MAX_MEMORY = "64Gi"
 
 SUPPORTED_OPTIMIZATION_METRICS = frozenset({"faithfulness", "answer_correctness", "context_correctness"})
 
+# Must match run_status_templates/pipelines/<name>.json
+PIPELINE_NAME = "documents-rag-optimization-pipeline"
+
 
 @dsl.pipeline(
-    name="documents-rag-optimization-pipeline",
+    name=PIPELINE_NAME,
     description="Automated system for building and optimizing Retrieval-Augmented Generation (RAG) applications",
 )
 def documents_rag_optimization_pipeline(
@@ -85,10 +91,20 @@ def documents_rag_optimization_pipeline(
         optimization_max_rag_patterns: Maximum number of RAG patterns to generate. Passed to ai4rag
             (max_number_of_rag_patterns). Defaults to 8.
     """
+    component_stage_map_task = publish_component_stage_map(
+        pipeline_id=PIPELINE_NAME,
+        run_id=dsl.PIPELINE_JOB_ID_PLACEHOLDER,
+    )
+    component_stage_map_task.set_caching_options(False)
+    component_stage_map_task.set_cpu_request("0.5").set_memory_request("512Mi").set_cpu_limit("1").set_memory_limit(
+        "1Gi"
+    )
+
     test_data_loader_task = test_data_loader(
         test_data_bucket_name=test_data_bucket_name,
         test_data_path=test_data_key,
     )
+    test_data_loader_task.after(component_stage_map_task)
 
     test_data_loader_task.set_caching_options(False)
     test_data_loader_task.set_cpu_request("2").set_memory_request("8Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(

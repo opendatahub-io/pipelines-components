@@ -18,6 +18,7 @@ Lists available documents from S3, performs sampling if applied and writes a JSO
 | `sampling_enabled` | `bool` | `True` | Whether to enable sampling or not. |
 | `sampling_max_size` | `float` | `1` | Maximum size of sampled documents (in gigabytes). |
 | `discovered_documents` | `dsl.Output[dsl.Artifact]` | `None` | Output artifact containing the documents descriptor JSON file. |
+| `component_status` | `dsl.Output[dsl.Artifact]` | `None` | Output artifact containing stage-level progress tracking. |
 
 ## Usage Examples 🧪
 

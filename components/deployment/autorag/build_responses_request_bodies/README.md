@@ -23,6 +23,7 @@ identifiers if your deployment does not use the collection name as the store id.
 | --------- | ---- | ------- | ----------- |
 | `rag_patterns` | `dsl.InputPath(dsl.Artifact)` | `None` | Local path to the ``rag_patterns`` directory (same layout as ``leaderboard_evaluation``). |
 | `responses_api_artifacts` | `dsl.Output[dsl.Artifact]` | `None` | Output directory artifact; mirrors pattern folder names (JSON body, helper script, and README per pattern). Request bodies use ``RESPONSES_BODY_DEFAULT_QUESTION`` as the placeholder user message; the interactive script replaces it when you run it locally. |
+| `component_status` | `dsl.Output[dsl.Artifact]` | `None` | Output artifact containing stage-level progress tracking. |
 
 ## Usage Examples 🧪
 

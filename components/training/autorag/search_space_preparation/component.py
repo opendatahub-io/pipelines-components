@@ -12,6 +12,7 @@ def search_space_preparation(
     test_data: dsl.Input[dsl.Artifact],
     extracted_text: dsl.Input[dsl.Artifact],
     search_space_prep_report: dsl.Output[dsl.Artifact],
+    component_status: dsl.Output[dsl.Artifact] = None,
     embedding_models: Optional[List] = None,
     generation_models: Optional[List] = None,
     metric: str = None,
@@ -33,6 +34,7 @@ def search_space_preparation(
 
         search_space_prep_report: kfp-enforced argument specifying an output artifact.
             Provided by kfp backend automatically.
+        component_status: Output artifact containing stage-level progress tracking.
 
         embedding_models: List of embedding model identifiers to try out in the experiment process.
             This list, if too long, will undergo models preselection (limiting).
@@ -317,57 +319,64 @@ def search_space_preparation(
     ogx_client_base_url = os.environ.get("OGX_CLIENT_BASE_URL", None)
     ogx_client_api_key = os.environ.get("OGX_CLIENT_API_KEY", None)
 
-    if not ogx_client_base_url or not ogx_client_api_key:
-        raise ValueError("OGX_CLIENT_BASE_URL and OGX_CLIENT_API_KEY environment variables must be set.")
+    from kfp_components.components.training.autorag.shared.component_status import component_status_tracker
 
-    client = _create_ogx_client(base_url=ogx_client_base_url, api_key=ogx_client_api_key)
+    status = component_status_tracker(component_status, "search_space_preparation")
+    with status:
+        with status.stage("validate_inputs"):
+            if not ogx_client_base_url or not ogx_client_api_key:
+                raise ValueError("OGX_CLIENT_BASE_URL and OGX_CLIENT_API_KEY environment variables must be set.")
 
-    search_space = prepare_ai4rag_search_space()
+            client = _create_ogx_client(base_url=ogx_client_base_url, api_key=ogx_client_api_key)
 
-    benchmark_df = pd.read_json(Path(test_data.path))
-    detected_language = _detect_benchmark_language(benchmark_df, llm_client=client)
-    benchmark_data = BenchmarkData(benchmark_df)
-    documents = load_as_langchain_doc(extracted_text.path)
+        with status.stage("prepare_search_space"):
+            search_space = prepare_ai4rag_search_space()
 
-    if (
-        len(search_space["foundation_model"].values) > TOP_N_GENERATION_MODELS
-        or len(search_space["embedding_model"].values) > TOP_K_EMBEDDING_MODELS
-    ):
-        mps = ModelsPreSelector(
-            benchmark_data=benchmark_data.get_random_sample(n_records=SAMPLE_SIZE, random_seed=SEED),
-            documents=documents,
-            foundation_models=search_space._search_space["foundation_model"].values,
-            embedding_models=search_space._search_space["embedding_model"].values,
-            metric=metric if metric else METRIC,
-        )
-        mps.evaluate_patterns()
-        selected_models = mps.select_models(
-            n_embedding_models=TOP_K_EMBEDDING_MODELS,
-            n_foundation_models=TOP_N_GENERATION_MODELS,
-        )
-        selected_models_names = {
-            "foundation_model": selected_models["foundation_models"],
-            "embedding_model": selected_models["embedding_models"],
-        }
+            benchmark_df = pd.read_json(Path(test_data.path))
+            detected_language = _detect_benchmark_language(benchmark_df, llm_client=client)
+            benchmark_data = BenchmarkData(benchmark_df)
+            documents = load_as_langchain_doc(extracted_text.path)
 
-    else:
-        selected_models_names = {
-            "foundation_model": search_space["foundation_model"].values,
-            "embedding_model": search_space["embedding_model"].values,
-        }
+            if (
+                len(search_space["foundation_model"].values) > TOP_N_GENERATION_MODELS
+                or len(search_space["embedding_model"].values) > TOP_K_EMBEDDING_MODELS
+            ):
+                mps = ModelsPreSelector(
+                    benchmark_data=benchmark_data.get_random_sample(n_records=SAMPLE_SIZE, random_seed=SEED),
+                    documents=documents,
+                    foundation_models=search_space._search_space["foundation_model"].values,
+                    embedding_models=search_space._search_space["embedding_model"].values,
+                    metric=metric if metric else METRIC,
+                )
+                mps.evaluate_patterns()
+                selected_models = mps.select_models(
+                    n_embedding_models=TOP_K_EMBEDDING_MODELS,
+                    n_foundation_models=TOP_N_GENERATION_MODELS,
+                )
+                selected_models_names = {
+                    "foundation_model": selected_models["foundation_models"],
+                    "embedding_model": selected_models["embedding_models"],
+                }
 
-    verbose_search_space_repr = {
-        k: v.all_values()
-        for k, v in search_space._search_space.items()
-        if k not in ("foundation_model", "embedding_model")
-    }
-    verbose_search_space_repr |= selected_models_names
+            else:
+                selected_models_names = {
+                    "foundation_model": search_space["foundation_model"].values,
+                    "embedding_model": search_space["embedding_model"].values,
+                }
 
-    if detected_language:
-        verbose_search_space_repr["detected_language"] = detected_language
+            verbose_search_space_repr = {
+                k: v.all_values()
+                for k, v in search_space._search_space.items()
+                if k not in ("foundation_model", "embedding_model")
+            }
+            verbose_search_space_repr |= selected_models_names
 
-    with open(search_space_prep_report.path, "w") as report_file:
-        yml.safe_dump(verbose_search_space_repr, report_file)
+            if detected_language:
+                verbose_search_space_repr["detected_language"] = detected_language
+
+        with status.stage("write_report"):
+            with open(search_space_prep_report.path, "w") as report_file:
+                yml.safe_dump(verbose_search_space_repr, report_file)
 
 
 if __name__ == "__main__":

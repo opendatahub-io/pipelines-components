@@ -8,6 +8,7 @@ from kfp_components.utils.consts import AUTORAG_IMAGE  # pyright: ignore[reportM
 def leaderboard_evaluation(
     rag_patterns: dsl.InputPath(dsl.Artifact),
     html_artifact: dsl.Output[dsl.HTML],
+    component_status: dsl.Output[dsl.Artifact] = None,
     optimization_metric: str = "faithfulness",
 ):
     """Build an HTML leaderboard artifact from RAG pattern evaluation results.
@@ -25,6 +26,7 @@ def leaderboard_evaluation(
             execution_time, final_score).
         html_artifact: Output HTML artifact; the leaderboard table is written to
             html_artifact.path (single file).
+        component_status: Output artifact containing stage-level progress tracking.
         optimization_metric: Name of the metric used to rank patterns (e.g. faithfulness,
             answer_correctness, context_correctness). Shown in the leaderboard
             subtitle. Defaults to "faithfulness".
@@ -316,6 +318,10 @@ def leaderboard_evaluation(
 </html>"""
 
     rag_patterns_dir = Path(rag_patterns)
+    from kfp_components.components.training.autorag.shared.component_status import component_status_tracker
+
+    status = component_status_tracker(component_status, "leaderboard_evaluation")
+    status.record("build_leaderboard", "started")
     if not rag_patterns_dir.is_dir():
         raise FileNotFoundError("rag_patterns path is not a directory: %s" % rag_patterns_dir)
 
@@ -494,6 +500,8 @@ def leaderboard_evaluation(
     Path(html_artifact.path).parent.mkdir(parents=True, exist_ok=True)
     with open(html_artifact.path, "w", encoding="utf-8") as f:
         f.write(html_content)
+    status.record("build_leaderboard", "completed")
+    status.save()
 
 
 if __name__ == "__main__":
