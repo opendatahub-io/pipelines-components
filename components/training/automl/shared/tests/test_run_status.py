@@ -3,6 +3,7 @@
 import json
 from pathlib import Path
 
+import pytest
 from kfp_components.components.training.automl.shared.run_status import (
     COMPONENT_DATA_LOADER,
     COMPONENT_LEADERBOARD,
@@ -278,3 +279,27 @@ def test_validate_component_stages_warns_on_unknown(caplog):
     with caplog.at_level("WARNING"):
         validate_component_stages(document, COMPONENT_DATA_LOADER)
     assert "stages not in manifest" in caplog.text
+
+
+def test_load_manifest_rejects_path_traversal():
+    """load_pipeline_run_status_manifest rejects pipeline_id with path separators."""
+    with pytest.raises(ValueError, match="must be a simple identifier"):
+        load_pipeline_run_status_manifest("../../../etc/passwd")
+
+    with pytest.raises(ValueError, match="must be a simple identifier"):
+        load_pipeline_run_status_manifest("foo/bar")
+
+    with pytest.raises(ValueError, match="must be a simple identifier"):
+        load_pipeline_run_status_manifest("foo\\bar")
+
+    with pytest.raises(ValueError, match="must be a simple identifier"):
+        load_pipeline_run_status_manifest("..hidden")
+
+
+def test_load_manifest_rejects_empty_pipeline_id():
+    """load_pipeline_run_status_manifest rejects empty pipeline_id."""
+    with pytest.raises(ValueError, match="must be a simple identifier"):
+        load_pipeline_run_status_manifest("")
+
+    with pytest.raises(ValueError, match="must be a simple identifier"):
+        load_pipeline_run_status_manifest("   ")

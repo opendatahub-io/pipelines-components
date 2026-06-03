@@ -82,9 +82,11 @@
           "id": "run_optimization",
           "description": "Execute RAG template optimization with ai4rag.",
           "steps": [
-            "index_documents",
-            "evaluate_patterns",
-            "select_best_patterns"
+            "chunking",
+            "embedding",
+            "retrieval",
+            "generation",
+            "evaluation"
           ]
         },
         {
