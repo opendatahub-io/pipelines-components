@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import Optional
 
 from kfp import dsl
@@ -6,10 +7,14 @@ from kfp_components.utils.consts import AUTORAG_IMAGE  # pyright: ignore[reportM
 
 @dsl.component(
     base_image=AUTORAG_IMAGE,  # noqa: E501
+    embedded_artifact_path=str(Path(__file__).parents[3] / "training" / "autorag" / "shared"),
+    install_kfp_package=False,
 )
 def text_extraction(
     documents_descriptor: dsl.Input[dsl.Artifact],
     extracted_text: dsl.Output[dsl.Artifact],
+    component_status: dsl.Output[dsl.Artifact] = None,
+    embedded_artifact: dsl.EmbeddedInput[dsl.Dataset] = None,
     error_tolerance: Optional[float] = None,
     max_extraction_workers: Optional[int] = None,
 ):
@@ -22,6 +27,7 @@ def text_extraction(
         documents_descriptor: Input artifact containing
             documents_descriptor.json with bucket, prefix, and documents list.
         extracted_text: Output artifact where the extracted text content will be stored.
+        component_status: Output artifact containing stage-level progress tracking.
         error_tolerance: Fraction of documents (0.0–1.0) allowed to fail without
             raising an error. None (the default) means zero tolerance — any failure
             raises immediately after all documents are processed. 0.1 means up to
@@ -357,88 +363,104 @@ def text_extraction(
             lines.append(f"\n  [{i}] {err['file']}\n    {snippet}")
         raise RuntimeError("\n".join(lines))
 
-    with open(descriptor_path) as f:
-        descriptor = json.load(f)
-    bucket = descriptor["bucket"]
-    documents = descriptor["documents"]
+    # Import component_status from embedded artifact
+    import sys
 
-    if not documents:
-        logger.info("No documents to process.")
-        return
+    sys.path.insert(0, str(Path(embedded_artifact.path)))
+    try:
+        from component_status import component_status_tracker
+    finally:
+        sys.path.pop(0)
 
-    documents = sorted(documents, key=lambda d: d.get("size_bytes", 0), reverse=True)
+    status = component_status_tracker(component_status, "text_extraction")
+    with status:
+        with status.stage("load_descriptor"):
+            if not descriptor_path.exists():
+                raise FileNotFoundError(f"documents_descriptor.json not found at {descriptor_path}")
 
-    if max_extraction_workers is not None:
-        effective_workers = max(1, max_extraction_workers)
-    else:
-        effective_workers = min(max(1, (os.cpu_count() or 1) // 2), 8)
-    logger.info(
-        "Starting text extraction for %d documents. extraction_workers=%d, download_threads=%d.",
-        len(documents),
-        effective_workers,
-        DOWNLOAD_MAX_THREADS,
-    )
+            with open(descriptor_path) as f:
+                descriptor = json.load(f)
+            bucket = descriptor["bucket"]
+            documents = descriptor["documents"]
 
-    if _docling_artifacts_path() is not None:
-        os.environ.setdefault("HF_HUB_OFFLINE", "1")
+            if not documents:
+                logger.info("No documents to process.")
+                return
 
-    multiprocessing_context = multiprocessing.get_context("spawn")
-    with (
-        tempfile.TemporaryDirectory() as download_dir,
-        multiprocessing_context.Pool(
-            processes=effective_workers,
-            initializer=_text_extraction_pool_initializer,
-        ) as process_pool,
-    ):
-        download_start_time = time.perf_counter()
-        extraction_tasks, download_error_details = download_and_submit(
-            documents, Path(download_dir), process_pool, output_dir
-        )
-        logger.info(
-            "Downloads finished in %.1fs; %d file(s) queued for extraction, %d download error(s).",
-            time.perf_counter() - download_start_time,
-            len(extraction_tasks),
-            len(download_error_details),
-        )
-        raise_if_threshold_exceeded(download_error_details, len(documents), error_tolerance)
+        with status.stage("extract_documents"):
+            documents = sorted(documents, key=lambda d: d.get("size_bytes", 0), reverse=True)
 
-        extraction_error_details = []
-        processed_count = 0
-        pending = list(extraction_tasks)
-        completed = 0
-        while pending:
-            still_pending = []
-            for file_path, task in pending:
-                if task.ready():
-                    completed += 1
-                    try:
-                        success, tb = task.get()
-                    except Exception:
-                        tb = traceback.format_exc()
-                        logger.error("Worker crashed for %s:\n%s", file_path, tb)
-                        success = False
-                    Path(file_path).unlink(missing_ok=True)
-                    if success:
-                        processed_count += 1
-                    else:
-                        extraction_error_details.append({"file": file_path, "traceback": tb})
-                    logger.info("Extraction progress %d/%d", completed, len(extraction_tasks))
-                else:
-                    still_pending.append((file_path, task))
-            pending = still_pending
-            if pending:
-                time.sleep(0.01)
+            if max_extraction_workers is not None:
+                effective_workers = max(1, max_extraction_workers)
+            else:
+                effective_workers = min(max(1, (os.cpu_count() or 1) // 2), 8)
+            logger.info(
+                "Starting text extraction for %d documents. extraction_workers=%d, download_threads=%d.",
+                len(documents),
+                effective_workers,
+                DOWNLOAD_MAX_THREADS,
+            )
 
-    all_error_details = download_error_details + extraction_error_details
-    total_errors = len(all_error_details)
-    total_docs = len(documents)
-    logger.info(
-        "Text extraction completed. Total processed: %d/%d, Errors: %d",
-        processed_count,
-        total_docs,
-        total_errors,
-    )
-    raise_if_threshold_exceeded(all_error_details, total_docs, error_tolerance)
+            if _docling_artifacts_path() is not None:
+                os.environ.setdefault("HF_HUB_OFFLINE", "1")
+
+            multiprocessing_context = multiprocessing.get_context("spawn")
+            with (
+                tempfile.TemporaryDirectory() as download_dir,
+                multiprocessing_context.Pool(
+                    processes=effective_workers,
+                    initializer=_text_extraction_pool_initializer,
+                ) as process_pool,
+            ):
+                download_start_time = time.perf_counter()
+                extraction_tasks, download_error_details = download_and_submit(
+                    documents, Path(download_dir), process_pool, output_dir
+                )
+                logger.info(
+                    "Downloads finished in %.1fs; %d file(s) queued for extraction, %d download error(s).",
+                    time.perf_counter() - download_start_time,
+                    len(extraction_tasks),
+                    len(download_error_details),
+                )
+                raise_if_threshold_exceeded(download_error_details, len(documents), error_tolerance)
+
+                extraction_error_details = []
+                processed_count = 0
+                pending = list(extraction_tasks)
+                completed = 0
+                while pending:
+                    still_pending = []
+                    for file_path, task in pending:
+                        if task.ready():
+                            completed += 1
+                            try:
+                                success, tb = task.get()
+                            except Exception:
+                                tb = traceback.format_exc()
+                                logger.error("Worker crashed for %s:\n%s", file_path, tb)
+                                success = False
+                            Path(file_path).unlink(missing_ok=True)
+                            if success:
+                                processed_count += 1
+                            else:
+                                extraction_error_details.append({"file": file_path, "traceback": tb})
+                            logger.info("Extraction progress %d/%d", completed, len(extraction_tasks))
+                        else:
+                            still_pending.append((file_path, task))
+                    pending = still_pending
+                    if pending:
+                        time.sleep(0.01)
+
+            all_error_details = download_error_details + extraction_error_details
+            total_errors = len(all_error_details)
+            total_docs = len(documents)
+            logger.info(
+                "Text extraction completed. Total processed: %d/%d, Errors: %d",
+                processed_count,
+                total_docs,
+                total_errors,
+            )
+            raise_if_threshold_exceeded(all_error_details, total_docs, error_tolerance)
 
 
 if __name__ == "__main__":

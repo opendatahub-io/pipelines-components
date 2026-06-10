@@ -1,0 +1,109 @@
+{
+  "pipeline_id": "documents-rag-optimization-pipeline",
+  "description": "AutoRAG pipeline: load test data, discover and extract documents, prepare search space, optimize RAG templates, build leaderboard.",
+  "components": [
+    {
+      "id": "test_data_loader",
+      "description": "Download benchmark test data from S3 and sample records for evaluation.",
+      "stages": [
+        {
+          "id": "validate_inputs",
+          "description": "Validate bucket/path inputs and S3 credentials."
+        },
+        {
+          "id": "download_and_sample",
+          "description": "Download test JSON from S3 and validate benchmark schema."
+        },
+        {
+          "id": "write_output",
+          "description": "Write sampled test data to the output artifact."
+        }
+      ]
+    },
+    {
+      "id": "documents_discovery",
+      "description": "List input documents in S3 and write a documents descriptor manifest.",
+      "stages": [
+        {
+          "id": "validate_inputs",
+          "description": "Validate S3 credentials and input parameters."
+        },
+        {
+          "id": "list_and_sample",
+          "description": "List objects in the input prefix and apply sampling rules."
+        },
+        {
+          "id": "write_descriptor",
+          "description": "Write documents_descriptor.json to the output artifact."
+        }
+      ]
+    },
+    {
+      "id": "text_extraction",
+      "description": "Download listed documents and extract text with docling.",
+      "stages": [
+        {
+          "id": "load_descriptor",
+          "description": "Load documents_descriptor.json and validate S3 credentials."
+        },
+        {
+          "id": "extract_documents",
+          "description": "Download source documents, run docling extraction, and write output artifacts."
+        }
+      ]
+    },
+    {
+      "id": "search_space_preparation",
+      "description": "Prepare the AutoRAG search space and model pre-selection report.",
+      "stages": [
+        {
+          "id": "validate_inputs",
+          "description": "Validate inputs and OGX client configuration."
+        },
+        {
+          "id": "prepare_search_space",
+          "description": "Run search-space preparation and model pre-selection."
+        },
+        {
+          "id": "write_report",
+          "description": "Write search_space_prep_report.yml to the output artifact."
+        }
+      ]
+    },
+    {
+      "id": "rag_templates_optimization",
+      "description": "Run ai4rag optimization and emit RAG pattern artifacts.",
+      "stages": [
+        {
+          "id": "validate_inputs",
+          "description": "Validate optimization settings and input artifacts."
+        },
+        {
+          "id": "run_optimization",
+          "description": "Execute RAG template optimization with ai4rag.",
+          "steps": [
+            "chunking",
+            "embedding",
+            "retrieval",
+            "generation",
+            "evaluation"
+          ]
+        },
+        {
+          "id": "write_patterns",
+          "description": "Write pattern directories, metrics, and notebooks."
+        }
+      ]
+    },
+    {
+      "id": "leaderboard_evaluation",
+      "description": "Build HTML leaderboard from optimized RAG pattern scores.",
+      "stages": [
+        {
+          "id": "build_leaderboard",
+          "description": "Aggregate pattern metrics and render leaderboard HTML."
+        }
+      ]
+    }
+  ]
+}

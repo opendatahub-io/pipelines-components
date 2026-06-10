@@ -16,9 +16,9 @@ Carries out the iterative RAG optimization process.
 | `test_data` | `dsl.InputPath(dsl.Artifact)` | `None` | A path pointing to test data used for evaluating RAG pattern quality. |
 | `search_space_prep_report` | `dsl.InputPath(dsl.Artifact)` | `None` | A path pointing to a .yml file containig short report on the experiment's first phase (search space preparation). |
 | `rag_patterns` | `dsl.Output[dsl.Artifact]` | `None` | kfp-enforced argument specifying an output artifact. Provided by kfp backend automatically. |
-| `embedded_artifact` | `dsl.EmbeddedInput[dsl.Dataset]` | `None` | kfp-enforced argument to allow access of base64 encoded dir with notebook templates. |
 | `test_data_key` | `Optional[str]` | `None` | Path to the benchmark JSON file in object storage used by generated notebooks. |
 | `vector_io_provider_id` | `str` | `None` | Vector I/O provider identifier as registered in OGX. |
+| `component_status` | `dsl.Output[dsl.Artifact]` | `None` | Output artifact containing stage-level progress tracking. |
 | `optimization_settings` | `Optional[dict]` | `None` | Additional settings customising the experiment. |
 | `input_data_key` | `Optional[str]` | `""` | A path to documents dir within a bucket used as an input to AI4RAG experiment. |
 
@@ -86,7 +86,7 @@ def example_pipeline(
   - autorag
   - optimization
   - rag-patterns
-- **Last Verified**: 2026-05-14 00:00:00+00:00
+- **Last Verified**: 2026-05-28 00:00:00+00:00
 - **Owners**:
   - No Parent Owners: Yes
   - Approvers:
@@ -96,3 +96,9 @@ def example_pipeline(
     - filip-komarzyniec
     - jakub-walaszczyk
     - MichalSteczko
+
+<!-- custom-content -->
+
+Generated indexing and inference notebooks are built from templates in
+``shared/notebook_templates/`` (installed with ``kfp_components`` on the AutoRAG
+runtime image), matching the AutoML training components pattern.

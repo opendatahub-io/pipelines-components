@@ -1,4 +1,3 @@
-from pathlib import Path
 from typing import Optional
 
 from kfp import dsl
@@ -18,6 +17,7 @@ def rag_templates_optimization(
     embedded_artifact: dsl.EmbeddedInput[dsl.Dataset],
     test_data_key: Optional[str],
     vector_io_provider_id: str,
+    component_status: dsl.Output[dsl.Artifact] = None,
     optimization_settings: Optional[dict] = None,
     input_data_key: Optional[str] = "",
 ):
@@ -35,7 +35,7 @@ def rag_templates_optimization(
 
         rag_patterns: kfp-enforced argument specifying an output artifact. Provided by kfp backend automatically.
 
-        embedded_artifact: kfp-enforced argument to allow access of base64 encoded dir with notebook templates.
+        component_status: Output artifact containing stage-level progress tracking.
 
         test_data_key: Path to the benchmark JSON file in object storage used by generated notebooks.
 
@@ -62,11 +62,11 @@ def rag_templates_optimization(
 
     import logging
     import os
+    import ssl
     from json import dump as json_dump
     from json import load as json_load
     from pathlib import Path
-    from re import search
-    from string import Formatter, Template
+    from string import Formatter
     from typing import Any, Literal, Self
 
     import httpx
@@ -83,6 +83,7 @@ def rag_templates_optimization(
     from ai4rag.search_space.src.search_space import AI4RAGSearchSpace
     from ai4rag.utils.event_handler.event_handler import BaseEventHandler, LogLevel
     from langchain_core.documents import Document
+    from ogx_client import APIConnectionError as OGXAPIConnectionError
     from ogx_client import OgxClient
 
     DEFAULT_MAX_NUMBER_OF_RAG_PATTERNS = 8
@@ -91,25 +92,38 @@ def rag_templates_optimization(
     SUPPORTED_OPTIMIZATION_METRICS = frozenset({"faithfulness", "answer_correctness", "context_correctness"})
     _ssl_logger = logging.getLogger(__name__)
 
-    def _create_ogx_client(base_url, api_key) -> OgxClient:
-        """Creates OgxClient.
+    def _is_ssl_error(exc: BaseException) -> bool:
+        """Check whether an exception (or its cause/context chain) is an SSL verification failure."""
+        seen = set()
+        current: BaseException | None = exc
+        while current is not None and id(current) not in seen:
+            seen.add(id(current))
+            msg = str(current).upper()
+            if "CERTIFICATE_VERIFY_FAILED" in msg or "SSL" in msg:
+                return True
+            current = current.__cause__ or current.__context__
+        return False
 
-        If self-signed certificate is detected in the certificates chain, then
-        OGXClient is created with `verify=False` option making it (insecurely) NOT validate the server-side certificate.
+    # Mutable container so the nested _create_ogx_client can update the flag
+    # without requiring `nonlocal` or returning the flag.
+    _ogx_ssl_verify = [True]
 
-        Args:
-            base_url: URL pointing to OGX server.
-            api_key: API Key to initialise the OGXClient instance with.
-        """
+    def _create_ogx_client(**kwargs) -> OgxClient:
+        """Create OgxClient, falling back to SSL-unverified if self-signed cert detected."""
+        client = OgxClient(**kwargs)
         try:
-            httpx.get(base_url)
-        except httpx.ConnectError as e:
-            if search(r"\bself.*signed.*certificate\b", str(e)):
-                _ssl_logger.info("OGX server presents a self-signed certificate")
-                _ssl_logger.info("Initialising OGXClient without server-side certificate verification.")
-                return OgxClient(base_url=base_url, api_key=api_key, http_client=httpx.Client(verify=False))
-            raise e
-        return OgxClient(base_url=base_url, api_key=api_key)
+            client.models.list()
+        except (ssl.SSLCertVerificationError, httpx.ConnectError, OGXAPIConnectionError) as exc:
+            if _is_ssl_error(exc):
+                _ssl_logger.warning("SSL verification failed for OgxClient — retrying with verify=False. ")
+                client = OgxClient(
+                    **kwargs,
+                    http_client=httpx.Client(verify=False),
+                )
+                _ogx_ssl_verify[0] = False
+            else:
+                raise
+        return client
 
     if not isinstance(test_data_key, str) or not test_data_key.strip() or not test_data_key.lower().endswith(".json"):
         raise ValueError("test_data_path must point to a JSON file")
@@ -311,6 +325,7 @@ def rag_templates_optimization(
                 "ogx_indexing_template.ipynb",
                 "ogx_inference_template.ipynb",
             ],
+            embedded_artifact_path: Path,
         ) -> "Notebook":
             """Load a Jupyter notebook from a file.
 
@@ -318,6 +333,8 @@ def rag_templates_optimization(
             ----------
             path : str | Path
                 Input file path to the .ipynb file.
+            embedded_artifact_path : Path
+                Path to the embedded artifact containing notebook templates.
 
             Returns:
             -------
@@ -328,7 +345,7 @@ def rag_templates_optimization(
             --------
             >>> nb = Notebook.load("existing_notebook.ipynb")
             """
-            with open(Path(embedded_artifact.path) / "notebook_templates" / notebook_name, "r") as f:
+            with (embedded_artifact_path / "notebook_templates" / notebook_name).open("r", encoding="utf-8") as f:
                 nb_dict = json_load(f)
 
             loaded_cells = []
@@ -371,6 +388,7 @@ def rag_templates_optimization(
         output_data: dict[str, Any],
         test_data_key: str = "",
         input_data_key: str = "",
+        ogx_ssl_verify: bool = True,
     ) -> dict[str, Any]:
         """Create a mapping from placeholder names to their values from output.json.
 
@@ -397,6 +415,7 @@ def rag_templates_optimization(
             output_data: The parsed pattern.json data
             test_data_key: Test data key.
             input_data_key: Input data key.
+            ogx_ssl_verify: Whether OGX SSL verification succeeded.
 
         Returns:
             Dictionary mapping placeholder names to their values.
@@ -437,6 +456,7 @@ def rag_templates_optimization(
         mapping["TEST_DATA_KEY"] = test_data_key
         mapping["INPUT_DATA_KEY"] = input_data_key
 
+        mapping["OGX_SSL_VERIFY"] = ogx_ssl_verify
         mapping["OGX_CLIENT_BASE_URL"] = (os.environ.get("OGX_CLIENT_BASE_URL") or "").strip()
 
         return mapping
@@ -448,8 +468,10 @@ def rag_templates_optimization(
         ],
         output_data: dict[str, Any],
         output_notebook_path: Path,
+        embedded_artifact_path: Path,
         test_data_key: str = "",
         input_data_key: str = "",
+        ogx_ssl_verify: bool = True,
     ) -> None:
         """Generate a filled notebook from templates and output.json.
 
@@ -457,8 +479,11 @@ def rag_templates_optimization(
             notebook_template: One of the allowed template names.
             output_data: The parsed output.json data.
             output_notebook_path: Path where to save the generated notebook.
+            embedded_artifact_path: Path to the embedded artifact containing notebook templates.
             test_data_key: Path to test data file within bucket used as input to AI4RAG.
             input_data_key: Path to documents dir within bucket used as input to AI4RAG.
+            ogx_ssl_verify: Whether OGX SSL verification succeeded; False causes the
+                generated notebook to skip the SSL probe and connect with verify=False directly.
 
         Returns:
             None. The notebook is written to output_notebook_path.
@@ -467,8 +492,12 @@ def rag_templates_optimization(
             output_data,
             test_data_key=test_data_key,
             input_data_key=input_data_key,
+            ogx_ssl_verify=ogx_ssl_verify,
         )
-        notebook = Notebook.load(notebook_name=f"{notebook_template}_template.ipynb")
+        notebook = Notebook.load(
+            notebook_name=f"{notebook_template}_template.ipynb",
+            embedded_artifact_path=embedded_artifact_path,
+        )
         filled_cells = []
         for cell in notebook.cells:
             filled_cell = cell.format_source(placeholder_mapping)
@@ -477,15 +506,6 @@ def rag_templates_optimization(
         notebook = Notebook(cells=filled_cells)
 
         notebook.save(Path(output_notebook_path))
-
-    class TmpEventHandler(BaseEventHandler):
-        """Exists temporarily only for the purpose of satisying type hinting checks"""
-
-        def on_status_change(self, level: LogLevel, message: str, step: str | None = None) -> None:
-            pass
-
-        def on_pattern_creation(self, payload: dict, evaluation_results: list, **kwargs) -> None:
-            pass
 
     def load_as_langchain_doc(path: str | Path) -> list[Document]:
         """Load a text file or folder into a list of langchain Document objects.
@@ -521,12 +541,25 @@ def rag_templates_optimization(
     ogx_client_base_url = (os.environ.get("OGX_CLIENT_BASE_URL") or "").strip()
     ogx_client_api_key = (os.environ.get("OGX_CLIENT_API_KEY") or "").strip()
 
+    # Import component_status from embedded artifact
+    import sys
+
+    embedded_artifact_path = Path(embedded_artifact.path)
+    sys.path.insert(0, str(embedded_artifact_path))
+    try:
+        from component_status import component_status_tracker
+    finally:
+        sys.path.pop(0)
+
+    status = component_status_tracker(component_status, "rag_templates_optimization")
+    status.record("validate_inputs", "started")
+
     if not ogx_client_base_url or not ogx_client_api_key:
         raise ValueError(
             "OGX_CLIENT_BASE_URL and OGX_CLIENT_API_KEY environment variables must be set to non-empty values."
         )
 
-    client = _create_ogx_client(ogx_client_base_url, ogx_client_api_key)
+    client = _create_ogx_client(base_url=ogx_client_base_url, api_key=ogx_client_api_key)
 
     def construct_model_instance(loader, node: yml.MappingNode) -> BaseEmbeddingModel | BaseFoundationModel:
         """Instructs yml.Loader on how to construct "!Model" tag."""
@@ -611,6 +644,9 @@ def rag_templates_optimization(
                 explicit_instruction,
             )
 
+    status.record("validate_inputs", "completed")
+    status.record("run_optimization", "started")
+
     rag_exp = AI4RAGExperiment(
         client=client,
         event_handler=event_handler,
@@ -625,6 +661,9 @@ def rag_templates_optimization(
 
     # retrieve documents && run optimisation loop
     rag_exp.search()
+
+    status.record("run_optimization", "completed")
+    status.record("write_patterns", "started")
 
     def _evaluation_result_fallback(eval_data_list, evaluation_result):
         """Build evaluation_results.json-style list when question_scores missing or incomplete."""
@@ -655,7 +694,7 @@ def rag_templates_optimization(
     def _build_system_message(custom_text: str | None, lang: dict | None) -> str:
         """Build system message with explicit language instruction when detected."""
         base = custom_text if custom_text else _DEFAULT_SYSTEM_MSG
-        if not lang or lang.get("code") == "en":
+        if not lang:
             return base
         lang_name = lang.get("name", "")
         if not lang_name:
@@ -705,26 +744,17 @@ def rag_templates_optimization(
             generation_model_id = rp.get("foundation_model")
         if not generation_model_id and hasattr(rp.get("foundation_model"), "model_id"):
             generation_model_id = getattr(rp.get("foundation_model"), "model_id", None)
-
-        provider = None
-        try:
-            provider = client.providers.retrieve(vector_io_provider_id)
-        except Exception:
-            _ssl_logger.warning(
-                "Could not retrieve provider_type attribute of vector store in use... Fallback to the default value.",
-                exc_info=True,
-            )
-
-        pattern = {
+        return {
             "name": getattr(evaluation_result, "pattern_name", ""),
             "iteration": iteration,
             "max_combinations": max_combinations,
             "duration_seconds": getattr(evaluation_result, "execution_time", 0) or 0,
             "settings": {
-                "vector_store_binding": {
-                    "provider_id": vector_io_provider_id,
-                    "provider_type": getattr(provider, "provider_type", "Unknown"),
-                    "vector_store_id": evaluation_result.collection,
+                "vector_store": {
+                    "datasource_type": idx.get("vector_store", {}).get("datasource_type")
+                    or rp.get("vector_store", {}).get("datasource_type")
+                    or vector_io_provider_id,
+                    "collection_name": getattr(evaluation_result, "collection", "") or "",
                 },
                 "chunking": {
                     "method": chunking.get("method", "recursive"),
@@ -736,17 +766,15 @@ def rag_templates_optimization(
                     "distance_metric": (
                         embeddings.get("distance_metric", "cosine") if isinstance(embeddings, dict) else "cosine"
                     ),
-                    "embedding_params": {
-                        "embedding_dimension": embeddings.get("embedding_params", {}).get("embedding_dimension", None)
-                    },
+                    "embedding_params": embeddings.get("embedding_params", {"embedding_dimension": 768}),
                 },
                 "retrieval": {
                     "method": retrieval_method,
                     "number_of_chunks": number_of_chunks,
                     **({"search_mode": search_mode} if search_mode is not None else {}),
                     **({"ranker_strategy": ranker_strategy} if ranker_strategy is not None else {}),
-                    **({"ranker_k": ranker_k} if ranker_strategy == "rrf" else {}),
-                    **({"ranker_alpha": ranker_alpha} if ranker_strategy == "weighted" else {}),
+                    **({"ranker_k": ranker_k} if ranker_k is not None else {}),
+                    **({"ranker_alpha": ranker_alpha} if ranker_alpha is not None else {}),
                 },
                 "generation": {
                     "model_id": generation_model_id or "",
@@ -766,26 +794,8 @@ def rag_templates_optimization(
                     ),
                     **({"detected_language": detected_language} if detected_language else {}),
                 },
-                "responses_template": {
-                    "model": generation_model_id,
-                    "stream": False,  # Not supported yet
-                    "store": False,  # OGX-client default (but ResponsesAPI default is True)
-                    "input": "<user_query_placeholder>",
-                    "instructions": _build_system_message(generation.get("system_message_text"), detected_language),
-                    "tools": [{"type": "file_search", "vector_store_ids": [evaluation_result.collection]}],
-                    "include": ["file_search_call.results"],
-                },
             },
         }
-
-        if search_mode == "hybrid" and ranker_strategy == "rrf":
-            ranking_options = {"impact_factor": ranker_k}
-            pattern["settings"]["responses_template"]["tools"][0]["ranking_options"] = ranking_options
-        elif search_mode == "hybrid" and ranker_strategy == "weighted":
-            ranking_options = {"alpha": ranker_alpha}
-            pattern["settings"]["responses_template"]["tools"][0]["ranking_options"] = ranking_options
-
-        return pattern
 
     evaluations_list = list(rag_exp.results.evaluations)
     max_combinations = getattr(rag_exp.results, "max_combinations", len(evaluations_list)) or 24
@@ -802,14 +812,18 @@ def rag_templates_optimization(
             "ogx_indexing",
             pattern_data,
             Path(patt_dir, "indexing.ipynb"),
+            embedded_artifact_path=embedded_artifact_path,
             input_data_key=input_data_key,
+            ogx_ssl_verify=_ogx_ssl_verify[0],
         )
 
         generate_notebook_from_templates(
             "ogx_inference",
             pattern_data,
             Path(patt_dir, "inference.ipynb"),
+            embedded_artifact_path=embedded_artifact_path,
             test_data_key=test_data_key,
+            ogx_ssl_verify=_ogx_ssl_verify[0],
         )
 
         # Flat schema: scores = per-metric aggregates (mean, ci_low, ci_high); final_score
@@ -818,16 +832,6 @@ def rag_templates_optimization(
         rag_patterns.metadata["metadata"]["patterns"].append(pattern_data)
         with (patt_dir / "pattern.json").open("w+", encoding="utf-8") as pattern_details:
             json_dump(pattern_data, pattern_details, indent=2)
-
-        template_context = {
-            "responses_template": pattern_data["settings"]["responses_template"],
-        }
-        with (Path(embedded_artifact.path) / "script_templates" / "create_model_response.py.templ").open(
-            "r", encoding="utf-8"
-        ) as f:
-            model_responses_templ = Template(f.read())
-            with (patt_dir / "create_model_response.py").open("w+", encoding="utf-8") as ff:
-                ff.write(model_responses_templ.substitute(template_context))
 
         eval_data = evaluation_data_list[i] if i < len(evaluation_data_list) else []
         try:
@@ -840,6 +844,9 @@ def rag_templates_optimization(
             evaluation_result_list = _evaluation_result_fallback(eval_data, eval)
         with (patt_dir / "evaluation_results.json").open("w+", encoding="utf-8") as f:
             json_dump(evaluation_result_list, f, indent=2)
+
+    status.record("write_patterns", "completed")
+    status.save()
 
     # TODO autorag_run_artifact
 

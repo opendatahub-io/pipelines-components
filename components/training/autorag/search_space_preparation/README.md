@@ -17,6 +17,7 @@ Generates a .yml-formatted report including results of this experiment's phase. 
 | `test_data` | `dsl.Input[dsl.Artifact]` | `None` | A path to a .json file containing questions and expected answers that can be retrieved from input documents. Necessary baseline for calculating quality metrics of RAG pipeline. |
 | `extracted_text` | `dsl.Input[dsl.Artifact]` | `None` | A path to either a single file or a folder of files. The document(s) will be sampled and used during the models selection process. |
 | `search_space_prep_report` | `dsl.Output[dsl.Artifact]` | `None` | kfp-enforced argument specifying an output artifact. Provided by kfp backend automatically. |
+| `component_status` | `dsl.Output[dsl.Artifact]` | `None` | Output artifact containing stage-level progress tracking. |
 | `embedding_models` | `Optional[List]` | `None` | List of embedding model identifiers to try out in the experiment process. This list, if too long, will undergo models preselection (limiting). |
 | `generation_models` | `Optional[List]` | `None` | List of generation model identifiers to try out in the experiment process. This list, if too long, will undergo models preselection (limiting). |
 | `metric` | `str` | `None` | Quality metric to evaluate the intermediate RAG patterns. |

@@ -7,6 +7,7 @@ from kfp_components.utils.pipeline_dag_tasks import (
 from ..pipeline import documents_rag_optimization_pipeline
 
 _EXPECTED_ROOT_DAG_TASK_IDS = (
+    "publish-component-stage-map",
     "documents-discovery",
     "leaderboard-evaluation",
     "rag-templates-optimization",

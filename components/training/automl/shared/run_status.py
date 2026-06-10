@@ -67,7 +67,17 @@ def load_pipeline_run_status_manifest(
     *,
     templates_root: str | None = None,
 ) -> dict[str, Any]:
-    """Load ``pipelines/<pipeline_id>.json`` from the shared package."""
+    """Load ``pipelines/<pipeline_id>.json`` from the shared package.
+
+    Args:
+        pipeline_id: Pipeline identifier (e.g., "autogluon-tabular-training-pipeline").
+                     Must be a simple identifier without path separators.
+        templates_root: Optional directory containing ``run_status_templates`` (tests only).
+    """
+    # Defense-in-depth: prevent path traversal even though pipeline_id is typically hardcoded
+    if not pipeline_id.strip() or "/" in pipeline_id or "\\" in pipeline_id or ".." in pipeline_id:
+        raise ValueError(f"Invalid pipeline_id '{pipeline_id}': must be a simple identifier without path separators")
+
     path = resolve_templates_dir(templates_root) / PIPELINES_SUBDIR / f"{pipeline_id}.json"
     if not path.is_file():
         logger.warning(

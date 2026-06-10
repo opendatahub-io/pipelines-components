@@ -15,6 +15,7 @@ search_mode ("hybrid" | "vector" per ai4rag), ranker_strategy, generation.model_
 | --------- | ---- | ------- | ----------- |
 | `rag_patterns` | `dsl.InputPath(dsl.Artifact)` | `None` | Path to the directory of RAG patterns; each subdir contains pattern.json (pattern_name, indexing_params, rag_params, scores, execution_time, final_score). |
 | `html_artifact` | `dsl.Output[dsl.HTML]` | `None` | Output HTML artifact; the leaderboard table is written to html_artifact.path (single file). |
+| `component_status` | `dsl.Output[dsl.Artifact]` | `None` | Output artifact containing stage-level progress tracking. |
 | `optimization_metric` | `str` | `faithfulness` | Name of the metric used to rank patterns (e.g. faithfulness, answer_correctness, context_correctness). Shown in the leaderboard subtitle. Defaults to "faithfulness". |
 
 ## Usage Examples 🧪
