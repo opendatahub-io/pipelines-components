@@ -209,7 +209,6 @@ class TestRagTemplatesOptimizationUnitTests:
                 "test_data": test_data,
                 "search_space_prep_report": search_space_report,
                 "rag_patterns": mock.MagicMock(path="/tmp/rag_patterns", metadata={}, uri=""),
-                "embedded_artifact": mock.MagicMock(path="/tmp/embedded"),
                 "test_data_key": "small-dataset/benchmark.json",
                 "optimization_settings": {"metric": "faithfulness", "max_number_of_rag_patterns": 8},
             }
@@ -260,7 +259,6 @@ class TestRagTemplatesOptimizationUnitTests:
                         test_data="/tmp/test_data.json",
                         search_space_prep_report="/tmp/report.yml",
                         rag_patterns=mock.MagicMock(path="/tmp/rag_patterns", metadata={}, uri=""),
-                        embedded_artifact=mock.MagicMock(path="/tmp/embedded"),
                         test_data_key="small-dataset/benchmark.json",
                         vector_io_provider_id="milvus",
                         optimization_settings={
@@ -293,7 +291,6 @@ class TestRagTemplatesOptimizationUnitTests:
         test_data_path.write_text("[]")
         test_data = str(test_data_path)
         rag_patterns = mock.MagicMock()
-        embedded_artifact = mock.MagicMock()
 
         with mock.patch.dict(sys.modules, mocks):
             with pytest.raises(_SentinelAbort):
@@ -302,7 +299,6 @@ class TestRagTemplatesOptimizationUnitTests:
                     test_data=test_data,
                     search_space_prep_report=str(search_space_report),
                     rag_patterns=rag_patterns,
-                    embedded_artifact=embedded_artifact,
                     test_data_key="small-dataset/benchmark.json",
                     vector_io_provider_id="milvus",
                     optimization_settings={"metric": "faithfulness", "max_number_of_rag_patterns": "8"},
@@ -320,7 +316,6 @@ class TestRagTemplatesOptimizationUnitTests:
                         test_data="/tmp/test_data.json",
                         search_space_prep_report="/tmp/report.yml",
                         rag_patterns=mock.MagicMock(path="/tmp/rag_patterns", metadata={}, uri=""),
-                        embedded_artifact=mock.MagicMock(path="/tmp/embedded"),
                         test_data_key="small-dataset/benchmark.json",
                         vector_io_provider_id="milvus",
                         optimization_settings={"metric": "faithfulness", "max_number_of_rag_patterns": 8},
@@ -342,8 +337,7 @@ class TestSSLFallbackRagTemplatesOptimization:
 
     def _make_output_artifacts(self):
         rag_patterns = mock.MagicMock()
-        embedded_artifact = mock.MagicMock()
-        return rag_patterns, embedded_artifact
+        return (rag_patterns,)
 
     @mock.patch.dict(
         "os.environ",
@@ -382,7 +376,7 @@ class TestSSLFallbackRagTemplatesOptimization:
         mocks["ai4rag.search_space.src.search_space"].AI4RAGSearchSpace.side_effect = _SentinelAbort
 
         extracted_text, test_data, search_space_report = self._make_paths(tmp_path)
-        rag_patterns, embedded_artifact = self._make_output_artifacts()
+        (rag_patterns,) = self._make_output_artifacts()
 
         with mock.patch.dict(sys.modules, mocks):
             with pytest.raises(_SentinelAbort):
@@ -391,7 +385,6 @@ class TestSSLFallbackRagTemplatesOptimization:
                     test_data=test_data,
                     search_space_prep_report=search_space_report,
                     rag_patterns=rag_patterns,
-                    embedded_artifact=embedded_artifact,
                     test_data_key="small-dataset/benchmark.json",
                     vector_io_provider_id="milvus",
                 )
@@ -430,7 +423,7 @@ class TestSSLFallbackRagTemplatesOptimization:
         mocks["ai4rag.search_space.src.search_space"].AI4RAGSearchSpace.side_effect = _SentinelAbort
 
         extracted_text, test_data, search_space_report = self._make_paths(tmp_path)
-        rag_patterns, embedded_artifact = self._make_output_artifacts()
+        (rag_patterns,) = self._make_output_artifacts()
 
         with mock.patch.dict(sys.modules, mocks):
             with pytest.raises(_SentinelAbort):
@@ -439,7 +432,6 @@ class TestSSLFallbackRagTemplatesOptimization:
                     test_data=test_data,
                     search_space_prep_report=search_space_report,
                     rag_patterns=rag_patterns,
-                    embedded_artifact=embedded_artifact,
                     test_data_key="small-dataset/benchmark.json",
                     vector_io_provider_id="milvus",
                 )
@@ -466,7 +458,7 @@ class TestSSLFallbackRagTemplatesOptimization:
         mocks["ogx_client"] = ogx_mod
 
         extracted_text, test_data, search_space_report = self._make_paths(tmp_path)
-        rag_patterns, embedded_artifact = self._make_output_artifacts()
+        (rag_patterns,) = self._make_output_artifacts()
 
         with mock.patch.dict(sys.modules, mocks):
             with pytest.raises(httpx_mod.ConnectError, match="Connection refused"):
@@ -475,7 +467,6 @@ class TestSSLFallbackRagTemplatesOptimization:
                     test_data=test_data,
                     search_space_prep_report=search_space_report,
                     rag_patterns=rag_patterns,
-                    embedded_artifact=embedded_artifact,
                     test_data_key="small-dataset/benchmark.json",
                     vector_io_provider_id="milvus",
                 )
@@ -505,7 +496,7 @@ class TestSSLFallbackRagTemplatesOptimization:
         mocks["ai4rag.search_space.src.search_space"].AI4RAGSearchSpace.side_effect = _SentinelAbort
 
         extracted_text, test_data, search_space_report = self._make_paths(tmp_path)
-        rag_patterns, embedded_artifact = self._make_output_artifacts()
+        (rag_patterns,) = self._make_output_artifacts()
 
         with mock.patch.dict(sys.modules, mocks):
             with pytest.raises(_SentinelAbort):
@@ -514,7 +505,6 @@ class TestSSLFallbackRagTemplatesOptimization:
                     test_data=test_data,
                     search_space_prep_report=search_space_report,
                     rag_patterns=rag_patterns,
-                    embedded_artifact=embedded_artifact,
                     test_data_key="small-dataset/benchmark.json",
                     vector_io_provider_id="milvus",
                 )
@@ -566,7 +556,6 @@ class TestMultilingualPromptOverrides:
                 test_data=test_data,
                 search_space_prep_report=report,
                 rag_patterns=mock.MagicMock(path="/tmp/rag_patterns", metadata={}, uri=""),
-                embedded_artifact=mock.MagicMock(path="/tmp/embedded"),
                 test_data_key="small-dataset/benchmark.json",
                 vector_io_provider_id="milvus",
                 optimization_settings={"metric": "faithfulness", "max_number_of_rag_patterns": 8},
