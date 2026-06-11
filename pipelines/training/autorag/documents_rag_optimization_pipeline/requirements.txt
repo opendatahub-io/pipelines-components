@@ -66,6 +66,7 @@ jsonref==1.1.0
 jsonschema==4.26.0
 jsonschema-specifications==2025.9.1
 kfp==2.16.1
+kfp-kubernetes==2.16.1
 kfp-pipeline-spec==2.16.1
 kfp-server-api==2.16.1
 kubernetes==36.0.2
