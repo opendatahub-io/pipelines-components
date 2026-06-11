@@ -1,4 +1,3 @@
-from pathlib import Path
 from typing import Optional
 
 from kfp import dsl
@@ -7,7 +6,6 @@ from kfp_components.utils.consts import AUTORAG_IMAGE  # pyright: ignore[reportM
 
 @dsl.component(
     base_image=AUTORAG_IMAGE,  # noqa: E501
-    embedded_artifact_path=str(Path(__file__).parents[1] / "shared"),
     install_kfp_package=False,
 )
 def rag_templates_optimization(
@@ -15,7 +13,6 @@ def rag_templates_optimization(
     test_data: dsl.InputPath(dsl.Artifact),
     search_space_prep_report: dsl.InputPath(dsl.Artifact),
     rag_patterns: dsl.Output[dsl.Artifact],
-    embedded_artifact: dsl.EmbeddedInput[dsl.Dataset],
     test_data_key: Optional[str],
     vector_io_provider_id: str,
     optimization_settings: Optional[dict] = None,
@@ -34,8 +31,6 @@ def rag_templates_optimization(
             report on the experiment's first phase (search space preparation).
 
         rag_patterns: kfp-enforced argument specifying an output artifact. Provided by kfp backend automatically.
-
-        embedded_artifact: kfp-enforced argument to allow access of base64 encoded dir with notebook templates.
 
         test_data_key: Path to the benchmark JSON file in object storage used by generated notebooks.
 
@@ -62,6 +57,7 @@ def rag_templates_optimization(
 
     import logging
     import os
+    import site
     from json import dump as json_dump
     from json import load as json_load
     from pathlib import Path
@@ -328,7 +324,17 @@ def rag_templates_optimization(
             --------
             >>> nb = Notebook.load("existing_notebook.ipynb")
             """
-            with open(Path(embedded_artifact.path) / "notebook_templates" / notebook_name, "r") as f:
+            with open(
+                Path(site.getsitepackages()[0])
+                / "kfp_components"
+                / "components"
+                / "training"
+                / "autorag"
+                / "shared"
+                / "notebook_templates"
+                / notebook_name,
+                "r",
+            ) as f:
                 nb_dict = json_load(f)
 
             loaded_cells = []
@@ -822,9 +828,16 @@ def rag_templates_optimization(
         template_context = {
             "responses_template": pattern_data["settings"]["responses_template"],
         }
-        with (Path(embedded_artifact.path) / "script_templates" / "create_model_response.py.templ").open(
-            "r", encoding="utf-8"
-        ) as f:
+        with (
+            Path(site.getsitepackages()[0])
+            / "kfp_components"
+            / "components"
+            / "training"
+            / "autorag"
+            / "shared"
+            / "script_templates"
+            / "create_model_response.py.templ"
+        ).open("r", encoding="utf-8") as f:
             model_responses_templ = Template(f.read())
             with (patt_dir / "create_model_response.py").open("w+", encoding="utf-8") as ff:
                 ff.write(model_responses_templ.substitute(template_context))

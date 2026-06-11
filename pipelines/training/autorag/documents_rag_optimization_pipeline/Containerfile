@@ -17,6 +17,12 @@ COPY pipelines/training/autorag/documents_rag_optimization_pipeline/artifacts.lo
      pipelines/training/autorag/documents_rag_optimization_pipeline/install_sqlite_from_source.sh \
      /tmp/
 
+USER root
+COPY . /tmp/kfp-components
+RUN pip install --no-deps --no-cache-dir /tmp/kfp-components && \
+    rm -rf /tmp/kfp-components
+USER default
+
 # Build SQLite from sqlite-autoconf (Hermeto generic prefetch or download); replace system libsqlite3.
 # https://github.com/hermetoproject/hermeto/blob/main/docs/generic.md
 ARG HERMETO_GENERIC_DEPS=/cachi2/output/deps/generic
