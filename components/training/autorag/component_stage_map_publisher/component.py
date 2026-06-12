@@ -42,19 +42,25 @@ def publish_component_stage_map(
     import json
     import sys
     from datetime import UTC, datetime
+    from pathlib import Path
 
-    sys.path.insert(0, str(Path(embedded_artifact.path)))
+    shared_root = Path(embedded_artifact.path) if embedded_artifact is not None else None
+    if shared_root is not None:
+        sys.path.insert(0, str(shared_root))
     try:
+        # KFP also prepends the compile-time embedded archive to sys.path at module load.
         from run_status import load_pipeline_run_status_manifest
     finally:
-        sys.path.pop(0)
+        if shared_root is not None:
+            sys.path.pop(0)
 
     if not isinstance(pipeline_id, str) or not pipeline_id.strip():
         raise ValueError("pipeline_id must be a non-empty string")
     if not isinstance(run_id, str) or not run_id.strip():
         raise ValueError("run_id must be a non-empty string")
 
-    stage_map = load_pipeline_run_status_manifest(pipeline_id)
+    templates_root = str(shared_root) if shared_root is not None else None
+    stage_map = load_pipeline_run_status_manifest(pipeline_id, templates_root=templates_root)
     stage_map.pop("initial_document", None)
     if not stage_map.get("components"):
         raise FileNotFoundError(
