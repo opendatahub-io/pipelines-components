@@ -18,6 +18,7 @@ Generates a .yml-formatted report including results of this experiment's phase. 
 | `extracted_text` | `dsl.Input[dsl.Artifact]` | `None` | A path to either a single file or a folder of files. The document(s) will be sampled and used during the models selection process. |
 | `search_space_prep_report` | `dsl.Output[dsl.Artifact]` | `None` | kfp-enforced argument specifying an output artifact. Provided by kfp backend automatically. |
 | `component_status` | `dsl.Output[dsl.Artifact]` | `None` | Output artifact containing stage-level progress tracking. |
+| `embedded_artifact` | `dsl.EmbeddedInput[dsl.Dataset]` | `None` | Embedded ``autorag.shared`` helpers injected by KFP at runtime. |
 | `embedding_models` | `Optional[List]` | `None` | List of embedding model identifiers to try out in the experiment process. This list, if too long, will undergo models preselection (limiting). |
 | `generation_models` | `Optional[List]` | `None` | List of generation model identifiers to try out in the experiment process. This list, if too long, will undergo models preselection (limiting). |
 | `metric` | `str` | `None` | Quality metric to evaluate the intermediate RAG patterns. |

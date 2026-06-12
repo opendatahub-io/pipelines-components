@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import Optional
 
 from kfp import dsl
@@ -14,9 +15,9 @@ def rag_templates_optimization(
     test_data: dsl.InputPath(dsl.Artifact),
     search_space_prep_report: dsl.InputPath(dsl.Artifact),
     rag_patterns: dsl.Output[dsl.Artifact],
-    embedded_artifact: dsl.EmbeddedInput[dsl.Dataset],
     test_data_key: Optional[str],
     vector_io_provider_id: str,
+    embedded_artifact: dsl.EmbeddedInput[dsl.Dataset] = None,
     component_status: dsl.Output[dsl.Artifact] = None,
     optimization_settings: Optional[dict] = None,
     input_data_key: Optional[str] = "",
@@ -36,6 +37,8 @@ def rag_templates_optimization(
         rag_patterns: kfp-enforced argument specifying an output artifact. Provided by kfp backend automatically.
 
         component_status: Output artifact containing stage-level progress tracking.
+
+        embedded_artifact: Embedded ``autorag.shared`` helpers injected by KFP at runtime.
 
         test_data_key: Path to the benchmark JSON file in object storage used by generated notebooks.
 
@@ -541,7 +544,6 @@ def rag_templates_optimization(
     ogx_client_base_url = (os.environ.get("OGX_CLIENT_BASE_URL") or "").strip()
     ogx_client_api_key = (os.environ.get("OGX_CLIENT_API_KEY") or "").strip()
 
-    # Import component_status from embedded artifact
     import sys
 
     embedded_artifact_path = Path(embedded_artifact.path)
@@ -552,301 +554,311 @@ def rag_templates_optimization(
         sys.path.pop(0)
 
     status = component_status_tracker(component_status, "rag_templates_optimization")
-    status.record("validate_inputs", "started")
+    run_optimization_steps = ["chunking", "embedding", "retrieval", "generation", "evaluation"]
 
-    if not ogx_client_base_url or not ogx_client_api_key:
-        raise ValueError(
-            "OGX_CLIENT_BASE_URL and OGX_CLIENT_API_KEY environment variables must be set to non-empty values."
-        )
+    class OptimizationEventHandler(BaseEventHandler):
+        """Updates component status with ai4rag optimization sub-step progress."""
 
-    client = _create_ogx_client(base_url=ogx_client_base_url, api_key=ogx_client_api_key)
+        def on_status_change(self, level: LogLevel, message: str, step: str | None = None) -> None:
+            if step:
+                status.record("run_optimization", "running", current_step=step)
 
-    def construct_model_instance(loader, node: yml.MappingNode) -> BaseEmbeddingModel | BaseFoundationModel:
-        """Instructs yml.Loader on how to construct "!Model" tag."""
-        mapping = loader.construct_mapping(node, deep=True)
+        def on_pattern_creation(self, payload: dict, evaluation_results: list, **kwargs) -> None:
+            pass
 
-        match mapping:
-            case {"type_": "embedding", **id_to_params}:
-                model_id, params = id_to_params.popitem()
-                return OGXEmbeddingModel(client=client, model_id=model_id, params=params)
+    with status:
+        with status.stage("validate_inputs"):
+            if not ogx_client_base_url or not ogx_client_api_key:
+                raise ValueError(
+                    "OGX_CLIENT_BASE_URL and OGX_CLIENT_API_KEY environment variables must be set to non-empty values."
+                )
 
-            case {"type_": "generation", **id_to_params}:
-                model_id, params = id_to_params.popitem()
-                return OGXFoundationModel(client=client, model_id=model_id, params=params)
-            case _:
-                raise ValueError(f"Cannot load the yml-serialized !Model tag: {mapping}")
+            client = _create_ogx_client(base_url=ogx_client_base_url, api_key=ogx_client_api_key)
 
-    yml.add_constructor("!Model", construct_model_instance, Loader=yml.SafeLoader)
+            def construct_model_instance(loader, node: yml.MappingNode) -> BaseEmbeddingModel | BaseFoundationModel:
+                """Instructs yml.Loader on how to construct "!Model" tag."""
+                mapping = loader.construct_mapping(node, deep=True)
 
-    optimization_settings = optimization_settings if optimization_settings else {}
-    if not (optimization_metric := optimization_settings.get("metric", None)):
-        optimization_metric = METRIC
-    if optimization_metric not in SUPPORTED_OPTIMIZATION_METRICS:
-        raise ValueError(
-            "optimization_metric must be one of %s; got %r"
-            % (sorted(SUPPORTED_OPTIMIZATION_METRICS), optimization_metric)
-        )
+                match mapping:
+                    case {"type_": "embedding", **id_to_params}:
+                        model_id, params = id_to_params.popitem()
+                        return OGXEmbeddingModel(client=client, model_id=model_id, params=params)
 
-    documents = load_as_langchain_doc(extracted_text)
+                    case {"type_": "generation", **id_to_params}:
+                        model_id, params = id_to_params.popitem()
+                        return OGXFoundationModel(client=client, model_id=model_id, params=params)
+                    case _:
+                        raise ValueError(f"Cannot load the yml-serialized !Model tag: {mapping}")
 
-    # reload the search space
-    with open(search_space_prep_report, "r") as f:
-        search_space = yml.safe_load(f)
+            yml.add_constructor("!Model", construct_model_instance, Loader=yml.SafeLoader)
 
-    detected_language = search_space.pop("detected_language", None)
+            optimization_settings = optimization_settings if optimization_settings else {}
+            if not (optimization_metric := optimization_settings.get("metric", None)):
+                optimization_metric = METRIC
+            if optimization_metric not in SUPPORTED_OPTIMIZATION_METRICS:
+                raise ValueError(
+                    "optimization_metric must be one of %s; got %r"
+                    % (sorted(SUPPORTED_OPTIMIZATION_METRICS), optimization_metric)
+                )
 
-    search_space = AI4RAGSearchSpace(
-        params=[Parameter(param, "C", values=values) for param, values in search_space.items()]
-    )
+            documents = load_as_langchain_doc(extracted_text)
 
-    event_handler = TmpEventHandler()
-    max_rag_patterns = optimization_settings.get("max_number_of_rag_patterns", DEFAULT_MAX_NUMBER_OF_RAG_PATTERNS)
-    if isinstance(max_rag_patterns, str):
-        try:
-            max_rag_patterns = int(max_rag_patterns.strip())
-        except ValueError as exc:
-            raise ValueError(
-                "optimization_settings.max_number_of_rag_patterns must be a valid integer "
-                f"(e.g. from the pipeline UI); got {max_rag_patterns!r}."
-            ) from exc
-    optimizer_settings = GAMOptSettings(max_evals=max_rag_patterns)
+            # reload the search space
+            with open(search_space_prep_report, "r") as f:
+                search_space = yml.safe_load(f)
 
-    benchmark_data = pd.read_json(Path(test_data))
+            detected_language = search_space.pop("detected_language", None)
 
-    if not isinstance(vector_io_provider_id, str) or not vector_io_provider_id.strip():
-        raise ValueError("vector_io_provider_id must be a non-empty string.")
-    vector_io_provider_id = vector_io_provider_id.strip()
-
-    _DEFAULT_SYSTEM_MSG = (
-        "Please answer the question I provide in the Question section below, "
-        "based solely on the information I provide in the Context section. "
-        "If the question is unanswerable, please say you cannot answer."
-    )
-    _DEFAULT_USER_MSG = (
-        "\n\nContext:\n{reference_documents}:\n\nQuestion: {question}. \n"
-        "Again, please answer the question based on the context provided only. "
-        "If the context is not related to the question, just say you cannot answer. "
-    )
-
-    if detected_language:
-        lang_code = detected_language.get("code", "")
-        lang_name = detected_language.get("name", "")
-        if lang_name and lang_code != "en":
-            explicit_instruction = f"You MUST respond in {lang_name}."
-            for fm in search_space["foundation_model"].values:
-                existing_sys = fm.system_message_text if fm.system_message_text else _DEFAULT_SYSTEM_MSG
-                existing_usr = str(fm.user_message_text) if fm.user_message_text else _DEFAULT_USER_MSG
-                fm.system_message_text = f"{explicit_instruction} {existing_sys}"
-                fm.user_message_text = f"{existing_usr}{explicit_instruction}"
-            _ssl_logger.info(
-                "Set explicit language instruction on %d foundation model(s): %s",
-                len(search_space["foundation_model"].values),
-                explicit_instruction,
+            search_space = AI4RAGSearchSpace(
+                params=[Parameter(param, "C", values=values) for param, values in search_space.items()]
             )
 
-    status.record("validate_inputs", "completed")
-    status.record("run_optimization", "started")
+            max_rag_patterns = optimization_settings.get(
+                "max_number_of_rag_patterns", DEFAULT_MAX_NUMBER_OF_RAG_PATTERNS
+            )
+            if isinstance(max_rag_patterns, str):
+                try:
+                    max_rag_patterns = int(max_rag_patterns.strip())
+                except ValueError as exc:
+                    raise ValueError(
+                        "optimization_settings.max_number_of_rag_patterns must be a valid integer "
+                        f"(e.g. from the pipeline UI); got {max_rag_patterns!r}."
+                    ) from exc
+            optimizer_settings = GAMOptSettings(max_evals=max_rag_patterns)
 
-    rag_exp = AI4RAGExperiment(
-        client=client,
-        event_handler=event_handler,
-        optimizer_settings=optimizer_settings,
-        search_space=search_space,
-        benchmark_data=benchmark_data,
-        vector_store_type="ogx",
-        documents=documents,
-        optimization_metric=optimization_metric,
-        ogx_vector_io_provider_id=vector_io_provider_id,
-    )
+            benchmark_data = pd.read_json(Path(test_data))
 
-    # retrieve documents && run optimisation loop
-    rag_exp.search()
+            if not isinstance(vector_io_provider_id, str) or not vector_io_provider_id.strip():
+                raise ValueError("vector_io_provider_id must be a non-empty string.")
+            vector_io_provider_id = vector_io_provider_id.strip()
 
-    status.record("run_optimization", "completed")
-    status.record("write_patterns", "started")
+            _DEFAULT_SYSTEM_MSG = (
+                "Please answer the question I provide in the Question section below, "
+                "based solely on the information I provide in the Context section. "
+                "If the question is unanswerable, please say you cannot answer."
+            )
+            _DEFAULT_USER_MSG = (
+                "\n\nContext:\n{reference_documents}:\n\nQuestion: {question}. \n"
+                "Again, please answer the question based on the context provided only. "
+                "If the context is not related to the question, just say you cannot answer. "
+            )
 
-    def _evaluation_result_fallback(eval_data_list, evaluation_result):
-        """Build evaluation_results.json-style list when question_scores missing or incomplete."""
-        out = []
-        for ev in eval_data_list:
-            answer_contexts = []
-            if getattr(ev, "contexts", None) and getattr(ev, "context_ids", None):
-                answer_contexts = [{"text": t, "document_id": doc_id} for t, doc_id in zip(ev.contexts, ev.context_ids)]
-            scores = {}
-            q_scores = (evaluation_result.scores or {}).get("question_scores") or {}
-            for key in q_scores:
-                if isinstance(q_scores[key], dict) and getattr(ev, "question_id", None) in q_scores[key]:
-                    scores[key] = q_scores[key][ev.question_id]
-            out.append(
-                {
-                    "question": getattr(ev, "question", ""),
-                    "correct_answers": getattr(ev, "ground_truths", None),
-                    "answer": getattr(ev, "answer", ""),
-                    "answer_contexts": answer_contexts,
-                    "scores": scores,
+            if detected_language:
+                lang_code = detected_language.get("code", "")
+                lang_name = detected_language.get("name", "")
+                if lang_name and lang_code != "en":
+                    explicit_instruction = f"You MUST respond in {lang_name}."
+                    for fm in search_space["foundation_model"].values:
+                        existing_sys = fm.system_message_text if fm.system_message_text else _DEFAULT_SYSTEM_MSG
+                        existing_usr = str(fm.user_message_text) if fm.user_message_text else _DEFAULT_USER_MSG
+                        fm.system_message_text = f"{explicit_instruction} {existing_sys}"
+                        fm.user_message_text = f"{existing_usr}{explicit_instruction}"
+                    _ssl_logger.info(
+                        "Set explicit language instruction on %d foundation model(s): %s",
+                        len(search_space["foundation_model"].values),
+                        explicit_instruction,
+                    )
+        status.record("run_optimization", "started")
+        event_handler = OptimizationEventHandler()
+        rag_exp = AI4RAGExperiment(
+            client=client,
+            event_handler=event_handler,
+            optimizer_settings=optimizer_settings,
+            search_space=search_space,
+            benchmark_data=benchmark_data,
+            vector_store_type="ogx",
+            documents=documents,
+            optimization_metric=optimization_metric,
+            ogx_vector_io_provider_id=vector_io_provider_id,
+        )
+        rag_exp.search()
+        status.record("run_optimization", "completed", steps=run_optimization_steps)
+        with status.stage("write_patterns"):
+
+            def _evaluation_result_fallback(eval_data_list, evaluation_result):
+                """Build evaluation_results.json-style list when question_scores missing or incomplete."""
+                out = []
+                for ev in eval_data_list:
+                    answer_contexts = []
+                    if getattr(ev, "contexts", None) and getattr(ev, "context_ids", None):
+                        answer_contexts = [
+                            {"text": t, "document_id": doc_id} for t, doc_id in zip(ev.contexts, ev.context_ids)
+                        ]
+                    scores = {}
+                    q_scores = (evaluation_result.scores or {}).get("question_scores") or {}
+                    for key in q_scores:
+                        if isinstance(q_scores[key], dict) and getattr(ev, "question_id", None) in q_scores[key]:
+                            scores[key] = q_scores[key][ev.question_id]
+                    out.append(
+                        {
+                            "question": getattr(ev, "question", ""),
+                            "correct_answers": getattr(ev, "ground_truths", None),
+                            "answer": getattr(ev, "answer", ""),
+                            "answer_contexts": answer_contexts,
+                            "scores": scores,
+                        }
+                    )
+                return out
+
+            rag_patterns_dir = Path(rag_patterns.path)
+            evaluation_data_list = getattr(rag_exp.results, "evaluation_data", [])
+
+            def _build_system_message(custom_text: str | None, lang: dict | None) -> str:
+                """Build system message with explicit language instruction when detected."""
+                base = custom_text if custom_text else _DEFAULT_SYSTEM_MSG
+                if not lang:
+                    return base
+                lang_name = lang.get("name", "")
+                if not lang_name:
+                    return base
+                instruction = f"You MUST respond in {lang_name}."
+                if instruction in base:
+                    return base
+                return f"{instruction} {base}"
+
+            def _build_pattern_json(evaluation_result, iteration: int, max_combinations: int) -> dict:
+                """Build pattern.json with flat schema (name, iteration, settings, scores, final_score)."""
+                idx = evaluation_result.indexing_params or {}
+                rp = evaluation_result.rag_params or {}
+                chunking = idx.get("chunking") or {}
+                # ai4rag puts embedding in indexing_params.embedding, not rag_params
+                embedding_from_idx = idx.get("embedding") or idx.get("embeddings") or {}
+                embeddings = rp.get("embeddings") or rp.get("embedding") or embedding_from_idx
+                retrieval = rp.get("retrieval") or {}
+
+                # ai4rag retrieval: search_mode is "hybrid" | "vector"; ranker_* used when search_mode is hybrid
+                def _ret(key: str, default=None):
+                    return retrieval.get(key) if isinstance(retrieval, dict) else default
+
+                def _rp(key: str, default=None):
+                    return rp.get(key) if isinstance(rp, dict) else default
+
+                retrieval_method = _ret("method") or _ret("retrieval_method") or _rp("retrieval_method") or "simple"
+                number_of_chunks = _ret("number_of_chunks") or _rp("number_of_chunks") or 5
+                search_mode = _ret("search_mode") or _rp("search_mode")
+                ranker_strategy = _ret("ranker_strategy") or _rp("ranker_strategy")
+                ranker_k = _ret("ranker_k") if _ret("ranker_k") is not None else _rp("ranker_k")
+                ranker_alpha = _ret("ranker_alpha") if _ret("ranker_alpha") is not None else _rp("ranker_alpha")
+                generation = rp.get("generation") or {}
+                # embedding model_id: from indexing_params.embedding (ai4rag), or rag_params, or flat embedding_model
+                embedding_model_id = None
+                if isinstance(embedding_from_idx, dict) and embedding_from_idx.get("model_id"):
+                    embedding_model_id = embedding_from_idx.get("model_id")
+                if not embedding_model_id and isinstance(embeddings, dict):
+                    embedding_model_id = embeddings.get("model_id")
+                if not embedding_model_id and isinstance(rp.get("embedding_model"), str):
+                    embedding_model_id = rp.get("embedding_model")
+                if not embedding_model_id and hasattr(rp.get("embedding_model"), "model_id"):
+                    embedding_model_id = getattr(rp.get("embedding_model"), "model_id", None)
+                # generation model_id: from rag_params.generation (ai4rag) or flat foundation_model
+                generation_model_id = generation.get("model_id") if isinstance(generation, dict) else None
+                if not generation_model_id and isinstance(rp.get("foundation_model"), str):
+                    generation_model_id = rp.get("foundation_model")
+                if not generation_model_id and hasattr(rp.get("foundation_model"), "model_id"):
+                    generation_model_id = getattr(rp.get("foundation_model"), "model_id", None)
+                return {
+                    "name": getattr(evaluation_result, "pattern_name", ""),
+                    "iteration": iteration,
+                    "max_combinations": max_combinations,
+                    "duration_seconds": getattr(evaluation_result, "execution_time", 0) or 0,
+                    "settings": {
+                        "vector_store": {
+                            "datasource_type": idx.get("vector_store", {}).get("datasource_type")
+                            or rp.get("vector_store", {}).get("datasource_type")
+                            or vector_io_provider_id,
+                            "collection_name": getattr(evaluation_result, "collection", "") or "",
+                        },
+                        "chunking": {
+                            "method": chunking.get("method", "recursive"),
+                            "chunk_size": chunking.get("chunk_size", 2048),
+                            "chunk_overlap": chunking.get("chunk_overlap", 256),
+                        },
+                        "embedding": {
+                            "model_id": embedding_model_id or "",
+                            "distance_metric": (
+                                embeddings.get("distance_metric", "cosine")
+                                if isinstance(embeddings, dict)
+                                else "cosine"
+                            ),
+                            "embedding_params": embeddings.get("embedding_params", {"embedding_dimension": 768}),
+                        },
+                        "retrieval": {
+                            "method": retrieval_method,
+                            "number_of_chunks": number_of_chunks,
+                            **({"search_mode": search_mode} if search_mode is not None else {}),
+                            **({"ranker_strategy": ranker_strategy} if ranker_strategy is not None else {}),
+                            **({"ranker_k": ranker_k} if ranker_k is not None else {}),
+                            **({"ranker_alpha": ranker_alpha} if ranker_alpha is not None else {}),
+                        },
+                        "generation": {
+                            "model_id": generation_model_id or "",
+                            "context_template_text": generation.get("context_template_text", "{document}"),
+                            "user_message_text": generation.get(
+                                "user_message_text",
+                                (
+                                    "\n\nContext:\n{reference_documents}:\n\nQuestion: {question}. \n"
+                                    "Again, please answer "
+                                    "the question based on the context provided only. If the context is not related to "
+                                    "the question, just say you cannot answer. Respond exclusively in the language of "
+                                    "the question."
+                                ),
+                            ),
+                            "system_message_text": _build_system_message(
+                                generation.get("system_message_text"),
+                                detected_language,
+                            ),
+                            **({"detected_language": detected_language} if detected_language else {}),
+                        },
+                    },
                 }
-            )
-        return out
 
-    rag_patterns_dir = Path(rag_patterns.path)
-    evaluation_data_list = getattr(rag_exp.results, "evaluation_data", [])
+            evaluations_list = list(rag_exp.results.evaluations)
+            max_combinations = getattr(rag_exp.results, "max_combinations", len(evaluations_list)) or 24
 
-    def _build_system_message(custom_text: str | None, lang: dict | None) -> str:
-        """Build system message with explicit language instruction when detected."""
-        base = custom_text if custom_text else _DEFAULT_SYSTEM_MSG
-        if not lang:
-            return base
-        lang_name = lang.get("name", "")
-        if not lang_name:
-            return base
-        instruction = f"You MUST respond in {lang_name}."
-        if instruction in base:
-            return base
-        return f"{instruction} {base}"
+            rag_patterns.metadata["name"] = "rag_patterns_artifact"
+            rag_patterns.metadata["uri"] = rag_patterns.uri
+            rag_patterns.metadata["metadata"] = {"patterns": []}
+            for i, eval in enumerate(evaluations_list):
+                patt_dir = rag_patterns_dir / eval.pattern_name
+                patt_dir.mkdir(parents=True, exist_ok=True)
 
-    def _build_pattern_json(evaluation_result, iteration: int, max_combinations: int) -> dict:
-        """Build pattern.json with flat schema (name, iteration, settings, scores, final_score)."""
-        idx = evaluation_result.indexing_params or {}
-        rp = evaluation_result.rag_params or {}
-        chunking = idx.get("chunking") or {}
-        # ai4rag puts embedding in indexing_params.embedding, not rag_params
-        embedding_from_idx = idx.get("embedding") or idx.get("embeddings") or {}
-        embeddings = rp.get("embeddings") or rp.get("embedding") or embedding_from_idx
-        retrieval = rp.get("retrieval") or {}
+                pattern_data = _build_pattern_json(eval, iteration=i, max_combinations=max_combinations)
+                generate_notebook_from_templates(
+                    "ogx_indexing",
+                    pattern_data,
+                    Path(patt_dir, "indexing.ipynb"),
+                    embedded_artifact_path=embedded_artifact_path,
+                    input_data_key=input_data_key,
+                    ogx_ssl_verify=_ogx_ssl_verify[0],
+                )
 
-        # ai4rag retrieval: search_mode is "hybrid" | "vector"; ranker_* used when search_mode is hybrid
-        def _ret(key: str, default=None):
-            return retrieval.get(key) if isinstance(retrieval, dict) else default
+                generate_notebook_from_templates(
+                    "ogx_inference",
+                    pattern_data,
+                    Path(patt_dir, "inference.ipynb"),
+                    embedded_artifact_path=embedded_artifact_path,
+                    test_data_key=test_data_key,
+                    ogx_ssl_verify=_ogx_ssl_verify[0],
+                )
 
-        def _rp(key: str, default=None):
-            return rp.get(key) if isinstance(rp, dict) else default
+                # Flat schema: scores = per-metric aggregates (mean, ci_low, ci_high); final_score
+                pattern_data["scores"] = (getattr(eval, "scores", None) or {}).get("scores") or {}
+                pattern_data["final_score"] = getattr(eval, "final_score", None)
+                rag_patterns.metadata["metadata"]["patterns"].append(pattern_data)
+                with (patt_dir / "pattern.json").open("w+", encoding="utf-8") as pattern_details:
+                    json_dump(pattern_data, pattern_details, indent=2)
 
-        retrieval_method = _ret("method") or _ret("retrieval_method") or _rp("retrieval_method") or "simple"
-        number_of_chunks = _ret("number_of_chunks") or _rp("number_of_chunks") or 5
-        search_mode = _ret("search_mode") or _rp("search_mode")
-        ranker_strategy = _ret("ranker_strategy") or _rp("ranker_strategy")
-        ranker_k = _ret("ranker_k") if _ret("ranker_k") is not None else _rp("ranker_k")
-        ranker_alpha = _ret("ranker_alpha") if _ret("ranker_alpha") is not None else _rp("ranker_alpha")
-        generation = rp.get("generation") or {}
-        # embedding model_id: from indexing_params.embedding (ai4rag), or rag_params, or flat embedding_model
-        embedding_model_id = None
-        if isinstance(embedding_from_idx, dict) and embedding_from_idx.get("model_id"):
-            embedding_model_id = embedding_from_idx.get("model_id")
-        if not embedding_model_id and isinstance(embeddings, dict):
-            embedding_model_id = embeddings.get("model_id")
-        if not embedding_model_id and isinstance(rp.get("embedding_model"), str):
-            embedding_model_id = rp.get("embedding_model")
-        if not embedding_model_id and hasattr(rp.get("embedding_model"), "model_id"):
-            embedding_model_id = getattr(rp.get("embedding_model"), "model_id", None)
-        # generation model_id: from rag_params.generation (ai4rag) or flat foundation_model
-        generation_model_id = generation.get("model_id") if isinstance(generation, dict) else None
-        if not generation_model_id and isinstance(rp.get("foundation_model"), str):
-            generation_model_id = rp.get("foundation_model")
-        if not generation_model_id and hasattr(rp.get("foundation_model"), "model_id"):
-            generation_model_id = getattr(rp.get("foundation_model"), "model_id", None)
-        return {
-            "name": getattr(evaluation_result, "pattern_name", ""),
-            "iteration": iteration,
-            "max_combinations": max_combinations,
-            "duration_seconds": getattr(evaluation_result, "execution_time", 0) or 0,
-            "settings": {
-                "vector_store": {
-                    "datasource_type": idx.get("vector_store", {}).get("datasource_type")
-                    or rp.get("vector_store", {}).get("datasource_type")
-                    or vector_io_provider_id,
-                    "collection_name": getattr(evaluation_result, "collection", "") or "",
-                },
-                "chunking": {
-                    "method": chunking.get("method", "recursive"),
-                    "chunk_size": chunking.get("chunk_size", 2048),
-                    "chunk_overlap": chunking.get("chunk_overlap", 256),
-                },
-                "embedding": {
-                    "model_id": embedding_model_id or "",
-                    "distance_metric": (
-                        embeddings.get("distance_metric", "cosine") if isinstance(embeddings, dict) else "cosine"
-                    ),
-                    "embedding_params": embeddings.get("embedding_params", {"embedding_dimension": 768}),
-                },
-                "retrieval": {
-                    "method": retrieval_method,
-                    "number_of_chunks": number_of_chunks,
-                    **({"search_mode": search_mode} if search_mode is not None else {}),
-                    **({"ranker_strategy": ranker_strategy} if ranker_strategy is not None else {}),
-                    **({"ranker_k": ranker_k} if ranker_k is not None else {}),
-                    **({"ranker_alpha": ranker_alpha} if ranker_alpha is not None else {}),
-                },
-                "generation": {
-                    "model_id": generation_model_id or "",
-                    "context_template_text": generation.get("context_template_text", "{document}"),
-                    "user_message_text": generation.get(
-                        "user_message_text",
-                        (
-                            "\n\nContext:\n{reference_documents}:\n\nQuestion: {question}. \nAgain, please answer "
-                            "the question based on the context provided only. If the context is not related to "
-                            "the question, just say you cannot answer. Respond exclusively in the language of "
-                            "the question."
-                        ),
-                    ),
-                    "system_message_text": _build_system_message(
-                        generation.get("system_message_text"),
-                        detected_language,
-                    ),
-                    **({"detected_language": detected_language} if detected_language else {}),
-                },
-            },
-        }
-
-    evaluations_list = list(rag_exp.results.evaluations)
-    max_combinations = getattr(rag_exp.results, "max_combinations", len(evaluations_list)) or 24
-
-    rag_patterns.metadata["name"] = "rag_patterns_artifact"
-    rag_patterns.metadata["uri"] = rag_patterns.uri
-    rag_patterns.metadata["metadata"] = {"patterns": []}
-    for i, eval in enumerate(evaluations_list):
-        patt_dir = rag_patterns_dir / eval.pattern_name
-        patt_dir.mkdir(parents=True, exist_ok=True)
-
-        pattern_data = _build_pattern_json(eval, iteration=i, max_combinations=max_combinations)
-        generate_notebook_from_templates(
-            "ogx_indexing",
-            pattern_data,
-            Path(patt_dir, "indexing.ipynb"),
-            embedded_artifact_path=embedded_artifact_path,
-            input_data_key=input_data_key,
-            ogx_ssl_verify=_ogx_ssl_verify[0],
-        )
-
-        generate_notebook_from_templates(
-            "ogx_inference",
-            pattern_data,
-            Path(patt_dir, "inference.ipynb"),
-            embedded_artifact_path=embedded_artifact_path,
-            test_data_key=test_data_key,
-            ogx_ssl_verify=_ogx_ssl_verify[0],
-        )
-
-        # Flat schema: scores = per-metric aggregates (mean, ci_low, ci_high); final_score
-        pattern_data["scores"] = (getattr(eval, "scores", None) or {}).get("scores") or {}
-        pattern_data["final_score"] = getattr(eval, "final_score", None)
-        rag_patterns.metadata["metadata"]["patterns"].append(pattern_data)
-        with (patt_dir / "pattern.json").open("w+", encoding="utf-8") as pattern_details:
-            json_dump(pattern_data, pattern_details, indent=2)
-
-        eval_data = evaluation_data_list[i] if i < len(evaluation_data_list) else []
-        try:
-            q_scores = (eval.scores or {}).get("question_scores") or {}
-            if q_scores and all(isinstance(q_scores.get(k), dict) for k in q_scores):
-                evaluation_result_list = ExperimentResults.create_evaluation_results_json(eval_data, eval)
-            else:
-                evaluation_result_list = _evaluation_result_fallback(eval_data, eval)
-        except (KeyError, TypeError):
-            evaluation_result_list = _evaluation_result_fallback(eval_data, eval)
-        with (patt_dir / "evaluation_results.json").open("w+", encoding="utf-8") as f:
-            json_dump(evaluation_result_list, f, indent=2)
-
-    status.record("write_patterns", "completed")
-    status.save()
+                eval_data = evaluation_data_list[i] if i < len(evaluation_data_list) else []
+                try:
+                    q_scores = (eval.scores or {}).get("question_scores") or {}
+                    if q_scores and all(isinstance(q_scores.get(k), dict) for k in q_scores):
+                        evaluation_result_list = ExperimentResults.create_evaluation_results_json(eval_data, eval)
+                    else:
+                        evaluation_result_list = _evaluation_result_fallback(eval_data, eval)
+                except (KeyError, TypeError):
+                    evaluation_result_list = _evaluation_result_fallback(eval_data, eval)
+                with (patt_dir / "evaluation_results.json").open("w+", encoding="utf-8") as f:
+                    json_dump(evaluation_result_list, f, indent=2)
 
     # TODO autorag_run_artifact
 

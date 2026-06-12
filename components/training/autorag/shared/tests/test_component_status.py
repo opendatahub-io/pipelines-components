@@ -54,3 +54,14 @@ class TestComponentStatusTracker:
         data = load_component_status(str(tmp_path))
         assert data["stages"][-1]["status"] == "failed"
         assert "boom" in data["stages"][-1]["error"]
+
+    def test_record_completed_with_steps(self, tmp_path: Path) -> None:
+        """Completed stages can include manifest step ids for dashboard display."""
+        tracker = ComponentStatusTracker(str(tmp_path), "rag_templates_optimization")
+        steps = ["chunking", "embedding", "retrieval", "generation", "evaluation"]
+        tracker.record("run_optimization", "started")
+        tracker.record("run_optimization", "completed", steps=steps)
+        tracker.save()
+
+        data = load_component_status(str(tmp_path))
+        assert data["stages"][-1]["steps"] == steps

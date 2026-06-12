@@ -4,41 +4,50 @@ Publishes the static component-to-stage map as a KFP artifact at pipeline start 
 dashboards know the expected structure before components run.
 """
 
+from pathlib import Path
+
 from kfp import dsl
 from kfp_components.utils.consts import AUTORAG_IMAGE  # pyright: ignore[reportMissingImports]
 
 
 @dsl.component(
     base_image=AUTORAG_IMAGE,
+    embedded_artifact_path=str(Path(__file__).parents[1] / "shared"),
+    install_kfp_package=False,
 )
 def publish_component_stage_map(
     pipeline_id: str,
     run_id: str,
     component_stage_map: dsl.Output[dsl.Artifact],
+    embedded_artifact: dsl.EmbeddedInput[dsl.Dataset] = None,
 ) -> None:
     """Publish the component-to-stage map for dashboard consumption.
 
-    Reads the static JSON template from the package (``run_status_templates/pipelines/``)
-    and publishes it as a KFP artifact. Dashboards use this map to show expected
-    components, stages, and steps before pipeline execution begins.
+    Reads the static JSON template from the embedded artifact
+    (``run_status_templates/pipelines/``) and publishes it as a KFP artifact.
+    Dashboards use this map to show expected components, stages, and steps before
+    pipeline execution begins.
 
     Args:
         pipeline_id: Pipeline identifier matching the template filename
             (e.g. ``documents-rag-optimization-pipeline``).
         run_id: KFP run ID for tracking (from ``dsl.PIPELINE_JOB_ID_PLACEHOLDER``).
         component_stage_map: Output artifact containing the component-to-stage map.
+        embedded_artifact: Embedded ``autorag.shared`` package with pipeline templates.
 
     Raises:
         FileNotFoundError: If the template for ``pipeline_id`` is missing or empty.
         ValueError: If ``pipeline_id`` or ``run_id`` is empty.
     """
     import json
+    import sys
     from datetime import UTC, datetime
-    from pathlib import Path
 
-    from kfp_components.components.training.autorag.shared.run_status import (
-        load_pipeline_run_status_manifest,
-    )
+    sys.path.insert(0, str(Path(embedded_artifact.path)))
+    try:
+        from run_status import load_pipeline_run_status_manifest
+    finally:
+        sys.path.pop(0)
 
     if not isinstance(pipeline_id, str) or not pipeline_id.strip():
         raise ValueError("pipeline_id must be a non-empty string")
@@ -50,7 +59,7 @@ def publish_component_stage_map(
     if not stage_map.get("components"):
         raise FileNotFoundError(
             f"Component stage map not found or empty for pipeline_id='{pipeline_id}'. "
-            "Ensure run_status_templates/pipelines/<pipeline_id>.json is packaged in the AutoRAG image."
+            "Ensure run_status_templates/pipelines/<pipeline_id>.json is packaged in the embedded artifact."
         )
 
     stage_map["kfp_run_id"] = run_id

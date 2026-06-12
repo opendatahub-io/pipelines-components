@@ -35,6 +35,7 @@ def test_data_loader(
             all records.
         test_data: Output artifact that receives the (possibly sampled) file.
         component_status: Output artifact containing stage-level progress tracking.
+        embedded_artifact: Embedded ``autorag.shared`` helpers injected by KFP at runtime.
 
     Environment variables (required when run with pipeline secret injection):
         AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_S3_ENDPOINT.
@@ -62,9 +63,6 @@ def test_data_loader(
 
     class TestDataLoaderException(Exception):
         pass
-
-    # Import component_status from embedded artifact
-    import sys
 
     sys.path.insert(0, str(Path(embedded_artifact.path)))
     try:

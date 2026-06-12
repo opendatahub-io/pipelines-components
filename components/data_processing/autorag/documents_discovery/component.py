@@ -32,6 +32,7 @@ def documents_discovery(
         sampling_max_size: Maximum size of sampled documents (in gigabytes).
         discovered_documents: Output artifact containing the documents descriptor JSON file.
         component_status: Output artifact containing stage-level progress tracking.
+        embedded_artifact: Embedded ``autorag.shared`` helpers injected by KFP at runtime.
 
     Environment variables (required when run with pipeline secret injection):
         AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_S3_ENDPOINT.
@@ -70,9 +71,10 @@ def documents_discovery(
 
         return docs_names
 
+    import sys
+
     from botocore.exceptions import SSLError
 
-    # Import component_status from embedded artifact
     sys.path.insert(0, str(Path(embedded_artifact.path)))
     try:
         from component_status import component_status_tracker

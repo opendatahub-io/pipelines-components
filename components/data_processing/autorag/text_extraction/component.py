@@ -28,6 +28,7 @@ def text_extraction(
             documents_descriptor.json with bucket, prefix, and documents list.
         extracted_text: Output artifact where the extracted text content will be stored.
         component_status: Output artifact containing stage-level progress tracking.
+        embedded_artifact: Embedded ``autorag.shared`` helpers injected by KFP at runtime.
         error_tolerance: Fraction of documents (0.0–1.0) allowed to fail without
             raising an error. None (the default) means zero tolerance — any failure
             raises immediately after all documents are processed. 0.1 means up to
@@ -363,7 +364,6 @@ def text_extraction(
             lines.append(f"\n  [{i}] {err['file']}\n    {snippet}")
         raise RuntimeError("\n".join(lines))
 
-    # Import component_status from embedded artifact
     import sys
 
     sys.path.insert(0, str(Path(embedded_artifact.path)))

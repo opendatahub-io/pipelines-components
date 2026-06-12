@@ -32,6 +32,7 @@ def leaderboard_evaluation(
         html_artifact: Output HTML artifact; the leaderboard table is written to
             html_artifact.path (single file).
         component_status: Output artifact containing stage-level progress tracking.
+        embedded_artifact: Embedded ``autorag.shared`` helpers injected by KFP at runtime.
         optimization_metric: Name of the metric used to rank patterns (e.g. faithfulness,
             answer_correctness, context_correctness). Shown in the leaderboard
             subtitle. Defaults to "faithfulness".
@@ -324,7 +325,6 @@ def leaderboard_evaluation(
 
     rag_patterns_dir = Path(rag_patterns)
 
-    # Import component_status from embedded artifact
     import sys
 
     sys.path.insert(0, str(Path(embedded_artifact.path)))
@@ -340,182 +340,180 @@ def leaderboard_evaluation(
                 raise FileNotFoundError("rag_patterns path is not a directory: %s" % rag_patterns_dir)
 
             evaluations = []
-    for subdir in sorted(rag_patterns_dir.iterdir()):
-        if not subdir.is_dir():
-            continue
-        pattern_file = subdir / "pattern.json"
-        if not pattern_file.is_file():
-            continue
-        with pattern_file.open("r", encoding="utf-8") as f:
-            evaluations.append(json.load(f))
+            for subdir in sorted(rag_patterns_dir.iterdir()):
+                if not subdir.is_dir():
+                    continue
+                pattern_file = subdir / "pattern.json"
+                if not pattern_file.is_file():
+                    continue
+                with pattern_file.open("r", encoding="utf-8") as f:
+                    evaluations.append(json.load(f))
 
-    # Sort by optimization metric score descending (highest first); missing scores last
-    def _optimization_score(e):
-        v = e.get("final_score")
-        if v is not None:
-            try:
-                return (False, -float(v))
-            except (TypeError, ValueError):
-                pass
-        raw = e.get("scores") or {}
-        aggregate = raw.get("scores") if isinstance(raw.get("scores"), dict) else raw
-        for _k, info in (aggregate or {}).items():
-            if isinstance(info, dict):
-                mean = info.get("mean")
-                if mean is not None:
+            # Sort by optimization metric score descending (highest first); missing scores last
+            def _optimization_score(e):
+                v = e.get("final_score")
+                if v is not None:
                     try:
-                        return (False, -float(mean))
+                        return (False, -float(v))
                     except (TypeError, ValueError):
                         pass
-        return (True, 0)
+                raw = e.get("scores") or {}
+                aggregate = raw.get("scores") if isinstance(raw.get("scores"), dict) else raw
+                for _k, info in (aggregate or {}).items():
+                    if isinstance(info, dict):
+                        mean = info.get("mean")
+                        if mean is not None:
+                            try:
+                                return (False, -float(mean))
+                            except (TypeError, ValueError):
+                                pass
+                return (True, 0)
 
-    evaluations.sort(key=_optimization_score)
+            evaluations.sort(key=_optimization_score)
 
-    # Default column order: metrics first, then RAG config (chunking, embeddings, retrieval, generation).
-    leaderboard_metric_columns = [
-        "mean_answer_correctness",
-        "mean_faithfulness",
-        "mean_context_correctness",
-    ]
-    leaderboard_config_columns = [
-        "chunking.method",
-        "chunking.chunk_size",
-        "chunking.chunk_overlap",
-        "embeddings.model_id",
-        "retrieval.method",
-        "retrieval.number_of_chunks",
-        "retrieval.search_mode",
-        "retrieval.ranker_strategy",
-        "generation.model_id",
-    ]
-    # Build metric columns present in data (preferred order above). Support flat scores
-    # (metric dict at top level) or nested scores.scores.
-    all_metric_names = []
-    for e in evaluations:
-        raw = e.get("scores") or {}
-        aggregate = raw.get("scores") if isinstance(raw.get("scores"), dict) else raw
-        for m in aggregate or {}:
-            if m not in all_metric_names:
-                all_metric_names.append(m)
-    metric_columns = [c for c in leaderboard_metric_columns if c.replace("mean_", "", 1) in all_metric_names]
-    for m in all_metric_names:
-        col = _metric_to_mean_key(m)
-        if col not in metric_columns:
-            metric_columns.append(col)
+            # Default column order: metrics first, then RAG config (chunking, embeddings, retrieval, generation).
+            leaderboard_metric_columns = [
+                "mean_answer_correctness",
+                "mean_faithfulness",
+                "mean_context_correctness",
+            ]
+            leaderboard_config_columns = [
+                "chunking.method",
+                "chunking.chunk_size",
+                "chunking.chunk_overlap",
+                "embeddings.model_id",
+                "retrieval.method",
+                "retrieval.number_of_chunks",
+                "retrieval.search_mode",
+                "retrieval.ranker_strategy",
+                "generation.model_id",
+            ]
+            # Build metric columns present in data (preferred order above). Support flat scores
+            # (metric dict at top level) or nested scores.scores.
+            all_metric_names = []
+            for e in evaluations:
+                raw = e.get("scores") or {}
+                aggregate = raw.get("scores") if isinstance(raw.get("scores"), dict) else raw
+                for m in aggregate or {}:
+                    if m not in all_metric_names:
+                        all_metric_names.append(m)
+            metric_columns = [c for c in leaderboard_metric_columns if c.replace("mean_", "", 1) in all_metric_names]
+            for m in all_metric_names:
+                col = _metric_to_mean_key(m)
+                if col not in metric_columns:
+                    metric_columns.append(col)
 
-    # Put optimization metric column second (right after Pattern_Name)
-    opt_metric_col = _metric_to_mean_key(optimization_metric or "faithfulness")
-    if opt_metric_col in metric_columns:
-        other_metrics = [c for c in metric_columns if c != opt_metric_col]
-        metric_columns = [opt_metric_col] + other_metrics
+            # Put optimization metric column second (right after Pattern_Name)
+            opt_metric_col = _metric_to_mean_key(optimization_metric or "faithfulness")
+            if opt_metric_col in metric_columns:
+                other_metrics = [c for c in metric_columns if c != opt_metric_col]
+                metric_columns = [opt_metric_col] + other_metrics
 
-    config_columns = list(leaderboard_config_columns)
-    headers = ["Pattern_Name"] + metric_columns + config_columns
-    header_row = "".join("<th>%s</th>" % _header_two_lines(h) for h in headers)
+            config_columns = list(leaderboard_config_columns)
+            headers = ["Pattern_Name"] + metric_columns + config_columns
+            header_row = "".join("<th>%s</th>" % _header_two_lines(h) for h in headers)
 
-    # Build rows and collect cell values for dynamic column width computation
-    rows_cells = []
-    rows = []
-    for i, e in enumerate(evaluations):
-        pattern_name = e.get("name") or e.get("pattern_name") or (e.get("rag_pattern") or {}).get("name", "—")
-        raw = e.get("scores") or {}
-        scores = raw.get("scores") if isinstance(raw.get("scores"), dict) else raw
-        merged = (
-            _settings_from_rag_pattern(e)
-            or _normalize_flat_settings(e.get("settings"))
-            or _merge_params(e.get("indexing_params") or {}, e.get("rag_params") or {})
-        )
+            # Build rows and collect cell values for dynamic column width computation
+            rows_cells = []
+            rows = []
+            for i, e in enumerate(evaluations):
+                pattern_name = e.get("name") or e.get("pattern_name") or (e.get("rag_pattern") or {}).get("name", "—")
+                raw = e.get("scores") or {}
+                scores = raw.get("scores") if isinstance(raw.get("scores"), dict) else raw
+                merged = (
+                    _settings_from_rag_pattern(e)
+                    or _normalize_flat_settings(e.get("settings"))
+                    or _merge_params(e.get("indexing_params") or {}, e.get("rag_params") or {})
+                )
 
-        cells = [str(pattern_name)]
-        for col in metric_columns:
-            metric_name = col.replace("mean_", "", 1)
-            info = scores.get(metric_name) or {}
-            mean = info.get("mean")
-            if mean is not None:
-                cell = "%.4f" % mean if isinstance(mean, (int, float)) else str(mean)
-            else:
-                cell = ""
-            cells.append(cell)
-        for col in config_columns:
-            val = _get_config_value(merged, col) if merged else None
-            if val is not None and (val != "" or col != "retrieval.ranker_strategy"):
-                if isinstance(val, dict):
-                    cells.append(json.dumps(val, sort_keys=True))
+                cells = [str(pattern_name)]
+                for col in metric_columns:
+                    metric_name = col.replace("mean_", "", 1)
+                    info = scores.get(metric_name) or {}
+                    mean = info.get("mean")
+                    if mean is not None:
+                        cell = "%.4f" % mean if isinstance(mean, (int, float)) else str(mean)
+                    else:
+                        cell = ""
+                    cells.append(cell)
+                for col in config_columns:
+                    val = _get_config_value(merged, col) if merged else None
+                    if val is not None and (val != "" or col != "retrieval.ranker_strategy"):
+                        if isinstance(val, dict):
+                            cells.append(json.dumps(val, sort_keys=True))
+                        else:
+                            cells.append(str(val))
+                    elif col == "retrieval.ranker_strategy":
+                        cells.append("-")
+                    else:
+                        cells.append("")
+                rows_cells.append(cells)
+                tr_class = ' class="rank-1"' if i == 0 else ""
+                rows.append("<tr" + tr_class + ">" + "".join("<td>%s</td>" % html.escape(c) for c in cells) + "</tr>")
+
+            table_body = "".join(rows)
+
+            # Dynamic column widths from content (header + cells); embeddings (7) and generation (12) get higher min
+            ncols = len(headers)
+            column_max_len = [
+                max(
+                    len(headers[i]),
+                    max((len(rows_cells[r][i]) for r in range(len(rows_cells)))) if rows_cells else 0,
+                )
+                for i in range(ncols)
+            ]
+            # Min widths: col 0/1 = name & metric; 7/12 = model IDs; two-line headers need room for longest part
+            width_rem = []
+            for i in range(ncols):
+                if i in (7, 12):
+                    min_rem = 18  # embeddings.model_id, generation.model_id
+                elif i == 0:
+                    min_rem = 10  # Pattern Name – single line
+                elif i == 1:
+                    min_rem = 12  # First metric (e.g. mean faithfulness) – single line
                 else:
-                    cells.append(str(val))
-            elif col == "retrieval.ranker_strategy":
-                cells.append("-")
-            else:
-                cells.append("")
-        rows_cells.append(cells)
-        tr_class = ' class="rank-1"' if i == 0 else ""
-        rows.append("<tr" + tr_class + ">" + "".join("<td>%s</td>" % html.escape(c) for c in cells) + "</tr>")
+                    min_rem = 4
+                # Two-line (or three-line) headers: use max segment length so each line fits
+                if "." in headers[i]:
+                    parts = headers[i].split(".", 1)
+                    line1_len = len(parts[0])
+                    line2 = parts[1].replace("_", " ") if len(parts) > 1 else ""
+                    if " " in line2:
+                        last_space = line2.rfind(" ")
+                        seg_lens = [line1_len, len(line2[:last_space]), len(line2[last_space + 1 :])]
+                    else:
+                        seg_lens = [line1_len, len(line2)] if line2 else [line1_len]
+                    min_for_two_line = max(seg_lens) * 1.0
+                    min_rem = max(min_rem, min_for_two_line)
+                w = max(min_rem, min(32, 0.6 * column_max_len[i]))
+                width_rem.append(w)
+            colgroup_html = (
+                "          <colgroup>\n"
+                + "\n".join('            <col style="width: %.1frem">' % width_rem[i] for i in range(ncols))
+                + "\n          </colgroup>"
+            )
 
-    table_body = "".join(rows)
+            best_pattern_name = "—"
+            if evaluations:
+                best_pattern_name = (
+                    evaluations[0].get("name")
+                    or evaluations[0].get("pattern_name")
+                    or (evaluations[0].get("rag_pattern") or {}).get("name", "—")
+                )
+                best_pattern_name = str(best_pattern_name)
 
-    # Dynamic column widths from content (header + cells); embeddings (7) and generation (12) get higher min
-    ncols = len(headers)
-    column_max_len = [
-        max(
-            len(headers[i]),
-            max((len(rows_cells[r][i]) for r in range(len(rows_cells)))) if rows_cells else 0,
-        )
-        for i in range(ncols)
-    ]
-    # Min widths: col 0/1 = name & metric; 7/12 = model IDs; two-line headers need room for longest part
-    width_rem = []
-    for i in range(ncols):
-        if i in (7, 12):
-            min_rem = 18  # embeddings.model_id, generation.model_id
-        elif i == 0:
-            min_rem = 10  # Pattern Name – single line
-        elif i == 1:
-            min_rem = 12  # First metric (e.g. mean faithfulness) – single line
-        else:
-            min_rem = 4
-        # Two-line (or three-line) headers: use max segment length so each line fits
-        if "." in headers[i]:
-            parts = headers[i].split(".", 1)
-            line1_len = len(parts[0])
-            line2 = parts[1].replace("_", " ") if len(parts) > 1 else ""
-            if " " in line2:
-                last_space = line2.rfind(" ")
-                seg_lens = [line1_len, len(line2[:last_space]), len(line2[last_space + 1 :])]
-            else:
-                seg_lens = [line1_len, len(line2)] if line2 else [line1_len]
-            min_for_two_line = max(seg_lens) * 1.0
-            min_rem = max(min_rem, min_for_two_line)
-        w = max(min_rem, min(32, 0.6 * column_max_len[i]))
-        width_rem.append(w)
-    colgroup_html = (
-        "          <colgroup>\n"
-        + "\n".join('            <col style="width: %.1frem">' % width_rem[i] for i in range(ncols))
-        + "\n          </colgroup>"
-    )
+            html_content = _build_leaderboard_html(
+                header_row=header_row,
+                table_body=table_body,
+                best_pattern_name=best_pattern_name,
+                num_patterns=len(evaluations),
+                eval_metric=optimization_metric or "faithfulness",
+                colgroup_html=colgroup_html,
+            )
 
-    best_pattern_name = "—"
-    if evaluations:
-        best_pattern_name = (
-            evaluations[0].get("name")
-            or evaluations[0].get("pattern_name")
-            or (evaluations[0].get("rag_pattern") or {}).get("name", "—")
-        )
-        best_pattern_name = str(best_pattern_name)
-
-    html_content = _build_leaderboard_html(
-        header_row=header_row,
-        table_body=table_body,
-        best_pattern_name=best_pattern_name,
-        num_patterns=len(evaluations),
-        eval_metric=optimization_metric or "faithfulness",
-        colgroup_html=colgroup_html,
-    )
-
-    Path(html_artifact.path).parent.mkdir(parents=True, exist_ok=True)
-    with open(html_artifact.path, "w", encoding="utf-8") as f:
-        f.write(html_content)
-    status.record("build_leaderboard", "completed")
-    status.save()
+            Path(html_artifact.path).parent.mkdir(parents=True, exist_ok=True)
+            with open(html_artifact.path, "w", encoding="utf-8") as f:
+                f.write(html_content)
 
 
 if __name__ == "__main__":

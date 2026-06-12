@@ -18,6 +18,7 @@ Carries out the iterative RAG optimization process.
 | `rag_patterns` | `dsl.Output[dsl.Artifact]` | `None` | kfp-enforced argument specifying an output artifact. Provided by kfp backend automatically. |
 | `test_data_key` | `Optional[str]` | `None` | Path to the benchmark JSON file in object storage used by generated notebooks. |
 | `vector_io_provider_id` | `str` | `None` | Vector I/O provider identifier as registered in OGX. |
+| `embedded_artifact` | `dsl.EmbeddedInput[dsl.Dataset]` | `None` | Embedded ``autorag.shared`` helpers injected by KFP at runtime. |
 | `component_status` | `dsl.Output[dsl.Artifact]` | `None` | Output artifact containing stage-level progress tracking. |
 | `optimization_settings` | `Optional[dict]` | `None` | Additional settings customising the experiment. |
 | `input_data_key` | `Optional[str]` | `""` | A path to documents dir within a bucket used as an input to AI4RAG experiment. |
@@ -86,7 +87,7 @@ def example_pipeline(
   - autorag
   - optimization
   - rag-patterns
-- **Last Verified**: 2026-05-28 00:00:00+00:00
+- **Last Verified**: 2026-06-10 00:00:00+00:00
 - **Owners**:
   - No Parent Owners: Yes
   - Approvers:

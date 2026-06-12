@@ -39,6 +39,7 @@ def search_space_preparation(
         search_space_prep_report: kfp-enforced argument specifying an output artifact.
             Provided by kfp backend automatically.
         component_status: Output artifact containing stage-level progress tracking.
+        embedded_artifact: Embedded ``autorag.shared`` helpers injected by KFP at runtime.
 
         embedding_models: List of embedding model identifiers to try out in the experiment process.
             This list, if too long, will undergo models preselection (limiting).
@@ -323,7 +324,6 @@ def search_space_preparation(
     ogx_client_base_url = os.environ.get("OGX_CLIENT_BASE_URL", None)
     ogx_client_api_key = os.environ.get("OGX_CLIENT_API_KEY", None)
 
-    # Import component_status from embedded artifact
     import sys
 
     sys.path.insert(0, str(Path(embedded_artifact.path)))
