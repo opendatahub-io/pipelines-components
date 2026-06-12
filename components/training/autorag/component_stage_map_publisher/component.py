@@ -50,14 +50,10 @@ def publish_component_stage_map(
     if not isinstance(run_id, str) or not run_id.strip():
         raise ValueError("run_id must be a non-empty string")
     if "/" in pipeline_id or "\\" in pipeline_id or ".." in pipeline_id:
-        raise ValueError(
-            f"Invalid pipeline_id '{pipeline_id}': must be a simple identifier without path separators"
-        )
+        raise ValueError(f"Invalid pipeline_id '{pipeline_id}': must be a simple identifier without path separators")
 
     templates_root = Path(embedded_artifact.path) if embedded_artifact is not None else None
-    manifest_path = (
-        templates_root / "pipelines" / f"{pipeline_id}.json" if templates_root is not None else None
-    )
+    manifest_path = templates_root / "pipelines" / f"{pipeline_id}.json" if templates_root is not None else None
     if manifest_path is None or not manifest_path.is_file():
         raise FileNotFoundError(
             f"Component stage map not found or empty for pipeline_id='{pipeline_id}'. "
