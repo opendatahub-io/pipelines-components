@@ -49,6 +49,7 @@ def test_data_loader(
     import logging
     import os
     import sys
+    from pathlib import Path
 
     import boto3
     from botocore.exceptions import ClientError, SSLError
