@@ -9,10 +9,12 @@ from pathlib import Path
 from kfp import dsl
 from kfp_components.utils.consts import AUTORAG_IMAGE  # pyright: ignore[reportMissingImports]
 
+_AUTORAG_SHARED = Path(__file__).parents[1] / "shared"
+
 
 @dsl.component(
     base_image=AUTORAG_IMAGE,
-    embedded_artifact_path=str(Path(__file__).parents[1] / "shared"),
+    embedded_artifact_path=str(_AUTORAG_SHARED / "run_status_templates"),
     install_kfp_package=False,
 )
 def publish_component_stage_map(
@@ -40,27 +42,30 @@ def publish_component_stage_map(
         ValueError: If ``pipeline_id`` or ``run_id`` is empty.
     """
     import json
-    import sys
     from datetime import UTC, datetime
     from pathlib import Path
-
-    shared_root = Path(embedded_artifact.path) if embedded_artifact is not None else None
-    if shared_root is not None:
-        sys.path.insert(0, str(shared_root))
-    try:
-        # KFP also prepends the compile-time embedded archive to sys.path at module load.
-        from run_status import load_pipeline_run_status_manifest
-    finally:
-        if shared_root is not None:
-            sys.path.pop(0)
 
     if not isinstance(pipeline_id, str) or not pipeline_id.strip():
         raise ValueError("pipeline_id must be a non-empty string")
     if not isinstance(run_id, str) or not run_id.strip():
         raise ValueError("run_id must be a non-empty string")
+    if "/" in pipeline_id or "\\" in pipeline_id or ".." in pipeline_id:
+        raise ValueError(
+            f"Invalid pipeline_id '{pipeline_id}': must be a simple identifier without path separators"
+        )
 
-    templates_root = str(shared_root) if shared_root is not None else None
-    stage_map = load_pipeline_run_status_manifest(pipeline_id, templates_root=templates_root)
+    templates_root = Path(embedded_artifact.path) if embedded_artifact is not None else None
+    manifest_path = (
+        templates_root / "pipelines" / f"{pipeline_id}.json" if templates_root is not None else None
+    )
+    if manifest_path is None or not manifest_path.is_file():
+        raise FileNotFoundError(
+            f"Component stage map not found or empty for pipeline_id='{pipeline_id}'. "
+            f"Expected embedded template at pipelines/{pipeline_id}.json."
+        )
+
+    with manifest_path.open("r", encoding="utf-8") as f:
+        stage_map = json.load(f)
     stage_map.pop("initial_document", None)
     if not stage_map.get("components"):
         raise FileNotFoundError(

@@ -4,10 +4,12 @@ from typing import Optional
 from kfp import dsl
 from kfp_components.utils.consts import AUTORAG_IMAGE  # pyright: ignore[reportMissingImports]
 
+_AUTORAG_SHARED = Path(__file__).parents[3] / "training" / "autorag" / "shared"
+
 
 @dsl.component(
     base_image=AUTORAG_IMAGE,  # noqa: E501
-    embedded_artifact_path=str(Path(__file__).parents[3] / "training" / "autorag" / "shared"),
+    embedded_artifact_path=str(_AUTORAG_SHARED / "component_status.py"),
     install_kfp_package=False,
 )
 def text_extraction(

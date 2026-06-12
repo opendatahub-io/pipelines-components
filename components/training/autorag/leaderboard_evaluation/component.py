@@ -3,10 +3,12 @@ from pathlib import Path
 from kfp import dsl
 from kfp_components.utils.consts import AUTORAG_IMAGE  # pyright: ignore[reportMissingImports]
 
+_AUTORAG_SHARED = Path(__file__).parents[1] / "shared"
+
 
 @dsl.component(
     base_image=AUTORAG_IMAGE,  # noqa: E501
-    embedded_artifact_path=str(Path(__file__).parents[1] / "shared"),
+    embedded_artifact_path=str(_AUTORAG_SHARED / "component_status.py"),
     install_kfp_package=False,
 )
 def leaderboard_evaluation(
