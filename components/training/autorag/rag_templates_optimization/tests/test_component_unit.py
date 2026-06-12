@@ -1,5 +1,6 @@
 """Tests for the rag_templates_optimization component."""
 
+import json
 import os
 import ssl
 import sys
@@ -604,3 +605,90 @@ class TestMultilingualPromptOverrides:
         param_calls = mocks["ai4rag.search_space.src.parameter"].Parameter.call_args_list
         param_names = [c.args[0] if c.args else c.kwargs.get("name", "") for c in param_calls]
         assert "detected_language" not in param_names
+
+
+def _make_evaluation(pattern_name: str):
+    """Minimal ai4rag evaluation result for run_optimization status tests."""
+    evaluation = mock.MagicMock()
+    evaluation.pattern_name = pattern_name
+    evaluation.indexing_params = {}
+    evaluation.rag_params = {}
+    evaluation.scores = {}
+    evaluation.final_score = 0.9
+    evaluation.execution_time = 1.0
+    evaluation.collection = "test-collection"
+    return evaluation
+
+
+class TestRunOptimizationStatus:
+    """Tests for run_optimization stage progress in component_status."""
+
+    @mock.patch.dict(
+        "os.environ",
+        {
+            "OGX_CLIENT_BASE_URL": "https://ogx.example.com",
+            "OGX_CLIENT_API_KEY": "test-api-key",
+        },
+    )
+    def test_run_optimization_records_max_rag_patterns_and_selected_patterns(self, tmp_path):
+        """run_optimization completed stage records max_rag_patterns and selected_patterns."""
+        mocks = _make_all_mocks()
+        ogx_mod = _make_ogx_client_module()
+        mock_ogx = mock.MagicMock()
+        mock_ogx.models.list.return_value = []
+        ogx_mod.OgxClient.return_value = mock_ogx
+        mocks["ogx_client"] = ogx_mod
+
+        mock_exp = mock.MagicMock()
+        mock_exp.results.evaluations = [
+            _make_evaluation("pattern_alpha"),
+            _make_evaluation("pattern_beta"),
+        ]
+        mock_exp.results.evaluation_data = [[], []]
+        mock_exp.results.max_combinations = 2
+        mocks["ai4rag.core.experiment.experiment"].AI4RAGExperiment.return_value = mock_exp
+
+        search_space_report = tmp_path / "report.yml"
+        search_space_report.write_text("{}")
+        test_data = tmp_path / "test_data.json"
+        test_data.write_text("[]")
+        extracted_text = tmp_path / "extracted_text"
+        extracted_text.mkdir()
+
+        rag_patterns_dir = tmp_path / "rag_patterns"
+        rag_patterns_dir.mkdir()
+        rag_patterns = mock.MagicMock()
+        rag_patterns.path = str(rag_patterns_dir)
+        rag_patterns.uri = "s3://bucket/rag_patterns"
+        rag_patterns.metadata = {}
+
+        component_status = mock.MagicMock()
+        component_status.path = str(tmp_path / "component_status_out")
+        component_status.metadata = {}
+
+        with mock.patch.dict(sys.modules, mocks):
+            rag_templates_optimization.python_func(
+                extracted_text=str(extracted_text),
+                test_data=str(test_data),
+                search_space_prep_report=str(search_space_report),
+                rag_patterns=rag_patterns,
+                component_status=component_status,
+                test_data_key="small-dataset/benchmark.json",
+                vector_io_provider_id="milvus",
+                optimization_settings={"metric": "faithfulness", "max_number_of_rag_patterns": 8},
+            )
+
+        status_file = tmp_path / "component_status_out" / "component_status.json"
+        status_data = json.loads(status_file.read_text())
+        run_stage = next(stage for stage in status_data["stages"] if stage["id"] == "run_optimization")
+        assert run_stage["status"] == "completed"
+        assert run_stage["max_rag_patterns"] == 8
+        assert run_stage["selected_patterns"] == ["pattern_alpha", "pattern_beta"]
+        assert run_stage["steps"] == [
+            "chunking",
+            "embedding",
+            "retrieval",
+            "generation",
+            "evaluation",
+        ]
+        assert component_status.metadata["display_name"] == "RAG Templates Optimization Status"

@@ -556,6 +556,7 @@ def rag_templates_optimization(
         sys.path.pop(0)
 
     status = component_status_tracker(component_status, "rag_templates_optimization")
+    component_status.metadata["display_name"] = "RAG Templates Optimization Status"
     run_optimization_steps = ["chunking", "embedding", "retrieval", "generation", "evaluation"]
 
     class OptimizationEventHandler(BaseEventHandler):
@@ -674,7 +675,14 @@ def rag_templates_optimization(
             ogx_vector_io_provider_id=vector_io_provider_id,
         )
         rag_exp.search()
-        status.record("run_optimization", "completed", steps=run_optimization_steps)
+        selected_patterns = [getattr(ev, "pattern_name", "") for ev in rag_exp.results.evaluations]
+        status.record(
+            "run_optimization",
+            "completed",
+            max_rag_patterns=max_rag_patterns,
+            selected_patterns=selected_patterns,
+            steps=run_optimization_steps,
+        )
         with status.stage("write_patterns"):
 
             def _evaluation_result_fallback(eval_data_list, evaluation_result):
