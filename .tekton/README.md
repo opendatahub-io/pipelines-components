@@ -1,6 +1,6 @@
 # ⚠️ Do Not Modify Files in the `.tekton/` Directory Directly
 
-The `.tekton/` directory in each component repository is **automatically synchronized** from [`konflux-central`](https://github.com/opendatahub-io/odh-konflux-central) using automation. Any edits made directly to Tekton files in the component repositories will be **overwritten** by the next sync.
+The `.tekton/` directory in each component repository is **automatically synchronized** from [`konflux-central`](https://github.com/red-hat-data-services/konflux-central) using automation. Any edits made directly to Tekton files in the component repositories will be **overwritten** by the next sync.
 
 All Tekton file updates **must be made in the `konflux-central` repository**.
 
@@ -8,10 +8,10 @@ All Tekton file updates **must be made in the `konflux-central` repository**.
 
 To modify the pipelines for `pipelines-components` in the `main` branch:
 
-- Clone the [`konflux-central`](https://github.com/opendatahub-io/odh-konflux-central) repository.
+- Clone the [`konflux-central`](https://github.com/red-hat-data-services/konflux-central) repository.
 
 ```bash
-git clone git@github.com:opendatahub-io/odh-konflux-central.git
+git clone git@github.com:red-hat-data-services/konflux-central.git
 cd konflux-central
 ```
 

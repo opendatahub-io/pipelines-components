@@ -15,12 +15,9 @@ FROM ${BASE_IMAGE}
 COPY --from=builder /tmp/dist/kfp_components-*.whl /tmp/
 RUN pip install --no-cache-dir --no-deps /tmp/kfp_components-*.whl
 
-COPY pipelines/training/automl/autogluon_tabular_training_pipeline/requirements.txt \
-     pipelines/training/automl/autogluon_tabular_training_pipeline/requirements-pypi.txt \
-     /tmp/
+COPY pipelines/training/automl/autogluon_tabular_training_pipeline/requirements.txt /tmp/
 
 ## Ensure build isolation
 RUN pip install --no-cache-dir -r /tmp/requirements.txt
-RUN pip install --index-url https://pypi.org/simple --no-cache-dir -r /tmp/requirements-pypi.txt
 RUN pip check
 
