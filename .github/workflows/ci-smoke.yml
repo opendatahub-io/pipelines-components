@@ -42,6 +42,7 @@ jobs:
     needs: gate
     if: needs.gate.outputs.run_automl == 'true'
     runs-on: ubuntu-latest
+    environment: automl
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
@@ -82,9 +83,12 @@ jobs:
       - name: Get image digest
         id: digest
         run: |
+          SHA=${{ github.event.pull_request.head.sha }}
+          TAG="odh-pr-${SHA}"
           DIGEST=$(skopeo inspect --format '{{.Digest}}' \
-            docker://quay.io/opendatahub/odh-automl:odh-pr)
+            docker://quay.io/opendatahub/odh-automl:${TAG})
           echo "image_digest=${DIGEST}" >> "$GITHUB_OUTPUT"
+          echo "Image tag: ${TAG}"
           echo "Image digest: ${DIGEST}"
 
       - name: Install uv
@@ -113,7 +117,6 @@ jobs:
           RHOAI_URL: ${{ secrets.AUTOML_RHOAI_URL }}
           RHOAI_TOKEN: ${{ secrets.AUTOML_RHOAI_TOKEN }}
           RHOAI_PROJECT_NAME: ${{ secrets.AUTOML_RHOAI_PROJECT_NAME }}
-          RHOAI_KFP_URL: ${{ secrets.AUTOML_RHOAI_KFP_URL }}
           KFP_VERIFY_SSL: ${{ secrets.AUTOML_KFP_VERIFY_SSL }}
           AWS_S3_ENDPOINT: ${{ secrets.AUTOML_AWS_S3_ENDPOINT }}
           AWS_ACCESS_KEY_ID: ${{ secrets.AUTOML_AWS_ACCESS_KEY_ID }}
@@ -128,7 +131,6 @@ jobs:
           RHOAI_URL=${RHOAI_URL}
           RHOAI_TOKEN=${RHOAI_TOKEN}
           RHOAI_PROJECT_NAME=${RHOAI_PROJECT_NAME}
-          RHOAI_KFP_URL=${RHOAI_KFP_URL}
           KFP_VERIFY_SSL=${KFP_VERIFY_SSL:-true}
           S3_SSL_VERIFY=true
           AWS_S3_ENDPOINT=${AWS_S3_ENDPOINT}
@@ -174,6 +176,7 @@ jobs:
     needs: gate
     if: needs.gate.outputs.run_autorag == 'true'
     runs-on: ubuntu-latest
+    environment: autorag
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
@@ -214,9 +217,12 @@ jobs:
       - name: Get image digest
         id: digest
         run: |
+          SHA=${{ github.event.pull_request.head.sha }}
+          TAG="odh-pr-${SHA}"
           DIGEST=$(skopeo inspect --format '{{.Digest}}' \
-            docker://quay.io/opendatahub/odh-autorag:odh-pr)
+            docker://quay.io/opendatahub/odh-autorag:${TAG})
           echo "image_digest=${DIGEST}" >> "$GITHUB_OUTPUT"
+          echo "Image tag: ${TAG}"
           echo "Image digest: ${DIGEST}"
 
       - name: Install uv
