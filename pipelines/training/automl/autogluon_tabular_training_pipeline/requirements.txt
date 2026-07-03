@@ -195,5 +195,5 @@ websockets==16.0
 Werkzeug==3.1.8
 window_ops==0.0.15
 wrapt==2.2.1
-xgboost==3.1.3
+xgboost==3.1.2  # CI smoke test trigger
 yarl==1.24.2
