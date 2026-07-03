@@ -106,7 +106,10 @@ readme:
 sync-packages:
 	@$(UVRUN) python -m scripts.sync_packages.sync_packages
 
-AIPCC_INDEX_URL := https://console.redhat.com/api/pypi/public-rhai/rhoai/3.4/cpu-ubi9/simple
+AIPCC_INDEX_URL := https://console.redhat.com/api/pypi/public-rhai/rhoai/3.5-EA2/cpu-ubi9/simple
+
+# RHEL UBI9 (glibc 2.34)
+PYTHON_PLATFORM := x86_64-manylinux_2_34
 
 # RHEL UBI9 (glibc 2.34)
 PYTHON_PLATFORM := x86_64-manylinux_2_34

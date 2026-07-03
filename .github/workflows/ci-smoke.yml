@@ -1,0 +1,354 @@
+name: CI Smoke Tests
+
+on:
+  pull_request:
+    types: [labeled, synchronize]
+
+concurrency:
+  group: ci-smoke-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    name: Check ok-to-test label
+    runs-on: ubuntu-latest
+    if: >-
+      github.event.label.name == 'ok-to-test'
+      || (github.event.action == 'synchronize'
+          && contains(github.event.pull_request.labels.*.name, 'ok-to-test'))
+    outputs:
+      run_automl: ${{ steps.changes.outputs.automl }}
+      run_autorag: ${{ steps.changes.outputs.autorag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Detect changed components
+        id: changes
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            automl:
+              - 'components/training/automl/**'
+              - 'components/data_processing/automl/**'
+              - 'pipelines/training/automl/**'
+            autorag:
+              - 'components/training/autorag/**'
+              - 'components/data_processing/autorag/**'
+              - 'pipelines/training/autorag/**'
+              - 'pipelines/data_processing/autorag/**'
+
+  automl-smoke:
+    name: AutoML Smoke
+    needs: gate
+    if: needs.gate.outputs.run_automl == 'true'
+    runs-on: ubuntu-latest
+    environment: automl
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Wait for Konflux build
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const sha = context.payload.pull_request.head.sha;
+            const checkName = 'Red Hat Konflux / odh-automl-ci-pull-request';
+            const maxAttempts = 60;
+            const interval = 30000;
+            for (let i = 0; i < maxAttempts; i++) {
+              const { data } = await github.rest.checks.listForRef({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: sha,
+                check_name: checkName,
+              });
+              if (data.check_runs.length > 0) {
+                const run = data.check_runs[0];
+                if (run.status === 'completed') {
+                  if (run.conclusion === 'success') {
+                    core.info(`Konflux build passed`);
+                    return;
+                  }
+                  core.setFailed(`Konflux build finished with: ${run.conclusion}`);
+                  return;
+                }
+                core.info(`Konflux build status: ${run.status} (attempt ${i + 1}/${maxAttempts})`);
+              } else {
+                core.info(`Konflux check not found yet (attempt ${i + 1}/${maxAttempts})`);
+              }
+              await new Promise(r => setTimeout(r, interval));
+            }
+            core.setFailed('Timed out waiting for Konflux build (30 min)');
+
+      - name: Get image digest
+        id: digest
+        run: |
+          SHA=${{ github.event.pull_request.head.sha }}
+          TAG="odh-pr-${SHA}"
+          DIGEST=$(skopeo inspect --format '{{.Digest}}' \
+            docker://quay.io/opendatahub/odh-automl:${TAG})
+          echo "image_digest=${DIGEST}" >> "$GITHUB_OUTPUT"
+          echo "Image tag: ${TAG}"
+          echo "Image digest: ${DIGEST}"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Compile pipeline YAMLs
+        env:
+          RELATED_IMAGE_ODH_AUTOML_IMAGE: quay.io/opendatahub/odh-automl@${{ steps.digest.outputs.image_digest }}
+        run: uv run python -m scripts.generate_managed_pipelines.generate_managed_pipelines
+
+      - uses: actions/checkout@v4
+        with:
+          repository: red-hat-data-services/autox-ci
+          ssh-key: ${{ secrets.AUTOX_CI_DEPLOY_KEY }}
+          path: autox-ci
+
+      - name: Install test dependencies
+        working-directory: autox-ci
+        run: uv sync --extra test_automl
+
+      - name: Write env file from secrets
+        env:
+          RHOAI_URL: ${{ secrets.AUTOML_RHOAI_URL }}
+          RHOAI_TOKEN: ${{ secrets.AUTOML_RHOAI_TOKEN }}
+          RHOAI_PROJECT_NAME: ${{ secrets.AUTOML_RHOAI_PROJECT_NAME }}
+          KFP_VERIFY_SSL: ${{ secrets.AUTOML_KFP_VERIFY_SSL }}
+          AWS_S3_ENDPOINT: ${{ secrets.AUTOML_AWS_S3_ENDPOINT }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AUTOML_AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AUTOML_AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ secrets.AUTOML_AWS_DEFAULT_REGION }}
+          AWS_S3_BUCKET: ${{ secrets.AUTOML_AWS_S3_BUCKET }}
+          RHOAI_TRAIN_DATA_BUCKET: ${{ secrets.AUTOML_RHOAI_TRAIN_DATA_BUCKET }}
+          RHOAI_TEST_ARTIFACTS_BUCKET: ${{ secrets.AUTOML_RHOAI_TEST_ARTIFACTS_BUCKET }}
+          RHOAI_TRAIN_S3_SECRET_NAME: ${{ secrets.AUTOML_RHOAI_TRAIN_S3_SECRET_NAME }}
+        run: |
+          cat > autox-ci/autox_tests/.env.ml << EOF
+          RHOAI_URL=${RHOAI_URL}
+          RHOAI_TOKEN=${RHOAI_TOKEN}
+          RHOAI_PROJECT_NAME=${RHOAI_PROJECT_NAME}
+          KFP_VERIFY_SSL=${KFP_VERIFY_SSL:-true}
+          S3_SSL_VERIFY=true
+          AWS_S3_ENDPOINT=${AWS_S3_ENDPOINT}
+          AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+          AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+          AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION:-us-east-1}
+          AWS_S3_BUCKET=${AWS_S3_BUCKET}
+          RHOAI_TRAIN_DATA_BUCKET=${RHOAI_TRAIN_DATA_BUCKET}
+          RHOAI_TEST_ARTIFACTS_BUCKET=${RHOAI_TEST_ARTIFACTS_BUCKET}
+          RHOAI_TRAIN_S3_SECRET_NAME=${RHOAI_TRAIN_S3_SECRET_NAME}
+          RHOAI_MANAGED_PIPELINE_TABULAR=autogluon-tabular-training-pipeline
+          RHOAI_MANAGED_PIPELINE_TIMESERIES=autogluon-timeseries-training-pipeline
+          RHOAI_MANAGED_PIPELINE_WAIT_TIMEOUT=300
+          RHOAI_DSPA_NAME=dspa
+          RHOAI_DSPA_DSP_VERSION=v2
+          RHOAI_PIPELINE_RUN_TIMEOUT=3600
+          RHOAI_KFP_POLL_INTERVAL_SECONDS=25
+          KFP_DISABLE_EXECUTION_CACHING_BY_DEFAULT=true
+          AUTOML_UPLOAD_TEST_DATASETS=false
+          AUTOML_TABULAR_PIPELINE_PATH=${GITHUB_WORKSPACE}/pipelines/training/automl/autogluon_tabular_training_pipeline/pipeline.yaml
+          AUTOML_TIMESERIES_PIPELINE_PATH=${GITHUB_WORKSPACE}/pipelines/training/automl/autogluon_timeseries_training_pipeline/pipeline.yaml
+          EOF
+
+      - name: Run AutoML smoke tests
+        working-directory: autox-ci
+        run: |
+          ./run_tests.sh \
+            --suite automl \
+            --env-file autox_tests/.env.ml \
+            -t smoke \
+            -- -v --tb=short --junit-xml=results/automl-smoke.xml
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: automl-smoke-results
+          path: autox-ci/results/automl-smoke.xml
+          if-no-files-found: ignore
+
+  autorag-smoke:
+    name: AutoRAG Smoke
+    needs: gate
+    if: needs.gate.outputs.run_autorag == 'true'
+    runs-on: ubuntu-latest
+    environment: autorag
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Wait for Konflux build
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const sha = context.payload.pull_request.head.sha;
+            const checkName = 'Red Hat Konflux / odh-autorag-ci-pull-request';
+            const maxAttempts = 60;
+            const interval = 30000;
+            for (let i = 0; i < maxAttempts; i++) {
+              const { data } = await github.rest.checks.listForRef({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: sha,
+                check_name: checkName,
+              });
+              if (data.check_runs.length > 0) {
+                const run = data.check_runs[0];
+                if (run.status === 'completed') {
+                  if (run.conclusion === 'success') {
+                    core.info(`Konflux build passed`);
+                    return;
+                  }
+                  core.setFailed(`Konflux build finished with: ${run.conclusion}`);
+                  return;
+                }
+                core.info(`Konflux build status: ${run.status} (attempt ${i + 1}/${maxAttempts})`);
+              } else {
+                core.info(`Konflux check not found yet (attempt ${i + 1}/${maxAttempts})`);
+              }
+              await new Promise(r => setTimeout(r, interval));
+            }
+            core.setFailed('Timed out waiting for Konflux build (30 min)');
+
+      - name: Get image digest
+        id: digest
+        run: |
+          SHA=${{ github.event.pull_request.head.sha }}
+          TAG="odh-pr-${SHA}"
+          DIGEST=$(skopeo inspect --format '{{.Digest}}' \
+            docker://quay.io/opendatahub/odh-autorag:${TAG})
+          echo "image_digest=${DIGEST}" >> "$GITHUB_OUTPUT"
+          echo "Image tag: ${TAG}"
+          echo "Image digest: ${DIGEST}"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Compile pipeline YAMLs
+        env:
+          RELATED_IMAGE_ODH_AUTORAG_IMAGE: quay.io/opendatahub/odh-autorag@${{ steps.digest.outputs.image_digest }}
+        run: uv run python -m scripts.generate_managed_pipelines.generate_managed_pipelines
+
+      - uses: actions/checkout@v4
+        with:
+          repository: red-hat-data-services/autox-ci
+          ssh-key: ${{ secrets.AUTOX_CI_DEPLOY_KEY }}
+          path: autox-ci
+
+      - name: Install test dependencies
+        working-directory: autox-ci
+        run: uv sync --extra test_autorag
+
+      - name: Write env file from secrets
+        env:
+          RHOAI_URL: ${{ secrets.AUTORAG_RHOAI_URL }}
+          RHOAI_TOKEN: ${{ secrets.AUTORAG_RHOAI_TOKEN }}
+          RHOAI_PROJECT_NAME: ${{ secrets.AUTORAG_RHOAI_PROJECT_NAME }}
+          RHOAI_KFP_URL: ${{ secrets.AUTORAG_RHOAI_KFP_URL }}
+          AWS_S3_ENDPOINT: ${{ secrets.AUTORAG_AWS_S3_ENDPOINT }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AUTORAG_AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AUTORAG_AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ secrets.AUTORAG_AWS_DEFAULT_REGION }}
+          AWS_S3_BUCKET: ${{ secrets.AUTORAG_AWS_S3_BUCKET }}
+          TEST_DATA_BUCKET_NAME: ${{ secrets.AUTORAG_TEST_DATA_BUCKET_NAME }}
+          TEST_DATA_SECRET_NAME: ${{ secrets.AUTORAG_TEST_DATA_SECRET_NAME }}
+          INPUT_DATA_BUCKET_NAME: ${{ secrets.AUTORAG_INPUT_DATA_BUCKET_NAME }}
+          INPUT_DATA_SECRET_NAME: ${{ secrets.AUTORAG_INPUT_DATA_SECRET_NAME }}
+          OGX_SECRET_NAME: ${{ secrets.AUTORAG_OGX_SECRET_NAME }}
+          OGX_CLIENT_BASE_URL: ${{ secrets.AUTORAG_OGX_CLIENT_BASE_URL }}
+          OGX_CLIENT_API_KEY: ${{ secrets.AUTORAG_OGX_CLIENT_API_KEY }}
+          RHOAI_TEST_ARTIFACTS_BUCKET: ${{ secrets.AUTORAG_RHOAI_TEST_ARTIFACTS_BUCKET }}
+          RHOAI_TEST_S3_SECRET_NAME: ${{ secrets.AUTORAG_RHOAI_TEST_S3_SECRET_NAME }}
+          ARTIFACTS_AWS_ACCESS_KEY_ID: ${{ secrets.AUTORAG_ARTIFACTS_AWS_ACCESS_KEY_ID }}
+          ARTIFACTS_AWS_SECRET_ACCESS_KEY: ${{ secrets.AUTORAG_ARTIFACTS_AWS_SECRET_ACCESS_KEY }}
+          ARTIFACTS_AWS_S3_ENDPOINT: ${{ secrets.AUTORAG_ARTIFACTS_AWS_S3_ENDPOINT }}
+        run: |
+          cat > autox-ci/autox_tests/.env.rag << EOF
+          RHOAI_URL=${RHOAI_URL}
+          RHOAI_TOKEN=${RHOAI_TOKEN}
+          RHOAI_PROJECT_NAME=${RHOAI_PROJECT_NAME}
+          RHOAI_KFP_URL=${RHOAI_KFP_URL}
+          KFP_VERIFY_SSL=true
+          S3_SSL_VERIFY=true
+          RHOAI_TEST_S3_SECRET_NAME=${RHOAI_TEST_S3_SECRET_NAME}
+          RHOAI_MANAGED_PIPELINE_AUTORAG=documents-rag-optimization-pipeline
+          RHOAI_MANAGED_PIPELINE_WAIT_TIMEOUT=300
+          RHOAI_DSPA_NAME=dspa
+          RHOAI_DSPA_DSP_VERSION=v2
+          AWS_S3_ENDPOINT=${AWS_S3_ENDPOINT}
+          AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+          AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+          AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION:-us-east-1}
+          AWS_S3_BUCKET=${AWS_S3_BUCKET}
+          TEST_DATA_BUCKET_NAME=${TEST_DATA_BUCKET_NAME}
+          TEST_DATA_SECRET_NAME=${TEST_DATA_SECRET_NAME}
+          INPUT_DATA_BUCKET_NAME=${INPUT_DATA_BUCKET_NAME}
+          INPUT_DATA_SECRET_NAME=${INPUT_DATA_SECRET_NAME}
+          OGX_SECRET_NAME=${OGX_SECRET_NAME}
+          OGX_CLIENT_BASE_URL=${OGX_CLIENT_BASE_URL}
+          OGX_CLIENT_API_KEY=${OGX_CLIENT_API_KEY}
+          ARTIFACTS_AWS_ACCESS_KEY_ID=${ARTIFACTS_AWS_ACCESS_KEY_ID}
+          ARTIFACTS_AWS_SECRET_ACCESS_KEY=${ARTIFACTS_AWS_SECRET_ACCESS_KEY}
+          ARTIFACTS_AWS_S3_ENDPOINT=${ARTIFACTS_AWS_S3_ENDPOINT}
+          ARTIFACTS_AWS_DEFAULT_REGION=us-east-1
+          RHOAI_TEST_ARTIFACTS_BUCKET=${RHOAI_TEST_ARTIFACTS_BUCKET}
+          AUTORAG_UPLOAD_TEST_DATASETS=false
+          AUTORAG_FUNCTIONAL_TEST_KEEP_ARTIFACTS=false
+          RHOAI_PIPELINE_RUN_TIMEOUT=3600
+          RHOAI_KFP_POLL_INTERVAL_SECONDS=25
+          AUTORAG_PIPELINE_PATH=${GITHUB_WORKSPACE}/pipelines/training/autorag/documents_rag_optimization_pipeline/pipeline.yaml
+          EOF
+
+      - name: Run AutoRAG smoke tests
+        working-directory: autox-ci
+        run: |
+          ./run_tests.sh \
+            --suite autorag \
+            --env-file autox_tests/.env.rag \
+            -t smoke \
+            -- -v --tb=short --junit-xml=results/autorag-smoke.xml
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: autorag-smoke-results
+          path: autox-ci/results/autorag-smoke.xml
+          if-no-files-found: ignore
+
+  smoke-results:
+    name: Smoke Results
+    needs: [gate, automl-smoke, autorag-smoke]
+    if: always() && needs.gate.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Evaluate results
+        run: |
+          echo "## CI Smoke Test Results" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Suite | Status |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|-------|--------|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| AutoML | \`${{ needs.automl-smoke.result }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| AutoRAG | \`${{ needs.autorag-smoke.result }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+
+          failed=false
+          for result in "${{ needs.automl-smoke.result }}" "${{ needs.autorag-smoke.result }}"; do
+            if [[ "$result" == "failure" ]]; then
+              failed=true
+            fi
+          done
+
+          if [[ "$failed" == "true" ]]; then
+            echo "> One or more smoke test suites failed. An admin can comment \`/merge-anyway\` to override." >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
+          echo "> All executed smoke tests passed." >> "$GITHUB_STEP_SUMMARY"
