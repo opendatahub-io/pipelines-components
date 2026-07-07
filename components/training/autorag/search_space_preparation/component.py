@@ -21,6 +21,8 @@ def search_space_preparation(
     embedding_models: Optional[List] = None,
     generation_models: Optional[List] = None,
     metric: str = None,
+    evaluator: str = "judge",
+    judge_model_id: Optional[str] = None,
     component_status: dsl.Output[dsl.Artifact] = None,
 ):
     """Search space preparation for AutoRAG experiments.
@@ -37,6 +39,8 @@ def search_space_preparation(
         embedding_models: List of embedding model identifiers to try.
         generation_models: List of generation model identifiers to try.
         metric: Quality metric for evaluation (e.g. "faithfulness").
+        evaluator: Evaluation backend (``judge`` or ``unitxt``). Defaults to ``judge``.
+        judge_model_id: Optional OGX judge model identifier when ``evaluator=judge``.
 
     Environment variables (required):
         OGX_CLIENT_BASE_URL, OGX_CLIENT_API_KEY.
@@ -82,6 +86,9 @@ def search_space_preparation(
                 api_key=os.environ["OGX_CLIENT_API_KEY"],
             )
 
+            if evaluator not in ("judge", "unitxt"):
+                raise ValueError(f"evaluator must be 'judge' or 'unitxt'; got {evaluator!r}")
+
             report = prepare_search_space_report(
                 test_data_path=test_data.path,
                 extracted_text_path=extracted_text.path,
@@ -89,6 +96,8 @@ def search_space_preparation(
                 embedding_models=embedding_models,
                 generation_models=generation_models,
                 metric=metric if metric is not None else "faithfulness",
+                evaluator=evaluator,
+                judge_model_id=judge_model_id,
             )
 
             report.save_json(search_space_prep_report.path)

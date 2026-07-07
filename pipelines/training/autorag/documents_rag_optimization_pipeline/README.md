@@ -26,8 +26,10 @@ The system integrates with OGX API for inference and vector database operations,
 | `input_data_key` | `str` | `""` | Object key (path) of the input documents in the input data bucket. |
 | `embedding_models` | `Optional[List]` | `None` | Optional list of embedding model identifiers to use in the search space. |
 | `generation_models` | `Optional[List]` | `None` | Optional list of foundation/generation model identifiers to use in the search space. |
-| `optimization_metric` | `str` | `faithfulness` | Quality metric used to optimize RAG patterns. Supported values: "faithfulness", "answer_correctness", "context_correctness". |
+| `optimization_metric` | `str` | `faithfulness` | Quality metric used to optimize RAG patterns. Supported values: "faithfulness", "answer_correctness", "context_correctness", "answer_relevance". "answer_relevance" requires ``evaluator=judge``. |
 | `optimization_max_rag_patterns` | `int` | `8` | Maximum number of RAG patterns to generate. Passed to ai4rag (max_number_of_rag_patterns). Defaults to 8. |
+| `evaluator` | `str` | `judge` | Evaluation backend: ``judge`` (LLM-as-a-Judge, default) or ``unitxt`` (legacy). |
+| `judge_model_id` | `Optional[str]` | `None` | Optional OGX model identifier for the judge LLM. When ``evaluator=judge`` and omitted, ai4rag auto-selects the judge during search space preparation. |
 
 ## Metadata 🗂️
 

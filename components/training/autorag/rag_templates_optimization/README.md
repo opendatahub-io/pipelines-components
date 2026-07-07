@@ -22,6 +22,8 @@ Thin wrapper that delegates to ``ai4rag.components.optimization.rag_templates_op
 | `embedded_artifact` | `dsl.EmbeddedInput[dsl.Dataset]` | `None` | Embedded ``autorag.shared`` helpers injected by KFP at runtime. |
 | `optimization_settings` | `Optional[dict]` | `None` | Additional experiment settings. |
 | `input_data_key` | `Optional[str]` | `""` | Path to documents dir within bucket. |
+| `evaluator` | `str` | `judge` | Evaluation backend: ``judge`` (LLM-as-a-Judge) or ``unitxt`` (legacy). |
+| `judge_model_id` | `Optional[str]` | `None` | Optional OGX judge model identifier when ``evaluator=judge``. |
 | `component_status` | `dsl.Output[dsl.Artifact]` | `None` | Output artifact containing stage-level progress tracking. |
 
 ## Usage Examples 🧪

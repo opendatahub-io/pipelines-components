@@ -9,3 +9,4 @@ huggingface_hub>=0.23.0
 boto3>=1.42.0
 numpy
 pandas>=2.0
+openai~=1.109.1
