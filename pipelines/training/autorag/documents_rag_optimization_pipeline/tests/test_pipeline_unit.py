@@ -16,7 +16,6 @@ _EXPECTED_ROOT_DAG_TASK_IDS = (
     "documents-discovery",
     "rag-templates-optimization",
     "search-space-preparation",
-    "test-data-loader",
     "text-extraction",
 )
 
@@ -48,7 +47,7 @@ class TestDocumentsRagOptimizationPipelineUnit:
             expected_task_ids=_EXPECTED_ROOT_DAG_TASK_IDS,
         )
 
-    def test_test_data_loader_runs_after_stage_map_publisher(self):
+    def test_documents_discovery_runs_after_stage_map_publisher(self):
         """Stage map publisher must complete before downstream components start."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as tmp:
             tmp_path = tmp.name
@@ -58,8 +57,8 @@ class TestDocumentsRagOptimizationPipelineUnit:
                 package_path=tmp_path,
             )
             spec = load_pipeline_spec_document(Path(tmp_path))
-            loader_task = spec["root"]["dag"]["tasks"]["test-data-loader"]
-            assert "publish-component-stage-map" in loader_task["dependentTasks"]
+            discovery_task = spec["root"]["dag"]["tasks"]["documents-discovery"]
+            assert "publish-component-stage-map" in discovery_task["dependentTasks"]
         finally:
             Path(tmp_path).unlink(missing_ok=True)
 

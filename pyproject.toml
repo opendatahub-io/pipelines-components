@@ -72,7 +72,6 @@ packages = [
     "kfp_components.components.data_processing.autorag",
     "kfp_components.components.data_processing.autorag.documents_discovery",
     "kfp_components.components.data_processing.autorag.documents_indexing",
-    "kfp_components.components.data_processing.autorag.test_data_loader",
     "kfp_components.components.data_processing.autorag.text_extraction",
     "kfp_components.components.data_processing.dataset_download",
     "kfp_components.components.data_processing.download_model",

@@ -6,7 +6,7 @@
 
 Documents discovery component.
 
-Thin wrapper that delegates to ``ai4rag.components.data.documents_discovery.discover_documents``.
+Optionally downloads benchmark test data from S3, then lists and samples input documents. Delegates to ``ai4rag.components.data.test_data_loader.load_test_data`` and ``ai4rag.components.data.documents_discovery.discover_documents``.
 
 ## Inputs 📥
 
@@ -14,10 +14,13 @@ Thin wrapper that delegates to ``ai4rag.components.data.documents_discovery.disc
 | --------- | ---- | ------- | ----------- |
 | `input_data_bucket_name` | `str` | `None` | S3 (or compatible) bucket containing input data. |
 | `input_data_path` | `str` | `""` | Path to folder with input documents within the bucket. |
-| `test_data` | `dsl.Input[dsl.Artifact]` | `None` | Optional input artifact containing test data for sampling. |
+| `test_data_bucket_name` | `str` | `""` | S3 bucket containing benchmark test data JSON. When set together with ``test_data_path``, test data is downloaded and used for document sampling. |
+| `test_data_path` | `str` | `""` | S3 object key to the benchmark test data JSON file. |
+| `benchmark_sample_size` | `int` | `25` | Maximum number of benchmark records to keep. When the dataset exceeds this limit, a reproducible random sample is drawn (seed 42). Set to 0 to disable sampling and keep all records. |
 | `sampling_enabled` | `bool` | `True` | Whether to enable sampling or not. |
 | `sampling_max_size` | `float` | `1` | Maximum size of sampled documents (in gigabytes). |
 | `discovered_documents` | `dsl.Output[dsl.Artifact]` | `None` | Output artifact containing the documents descriptor JSON file. |
+| `test_data` | `dsl.Output[dsl.Artifact]` | `None` | Output artifact with the (possibly sampled) benchmark JSON when ``test_data_bucket_name`` and ``test_data_path`` are provided. |
 | `component_status` | `dsl.Output[dsl.Artifact]` | `None` | Output artifact containing stage-level progress tracking. |
 | `embedded_artifact` | `dsl.EmbeddedInput[dsl.Dataset]` | `None` | Embedded ``autorag.shared`` helpers injected by KFP at runtime. |
 

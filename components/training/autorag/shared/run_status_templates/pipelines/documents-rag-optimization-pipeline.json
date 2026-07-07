@@ -3,19 +3,13 @@
   "description": "AutoRAG pipeline: load test data, discover and extract documents, prepare search space, optimize RAG templates, build leaderboard.",
   "components": [
     {
-      "id": "test_data_loader",
-      "description": "Download benchmark test data from S3 and sample records for evaluation.",
+      "id": "documents_discovery",
+      "description": "Download benchmark test data, list input documents in S3, and write descriptor and test data artifacts.",
       "stages": [
         {
           "id": "load_benchmark",
           "description": "Validate S3 access, download benchmark JSON, sample records, and write test data artifact."
-        }
-      ]
-    },
-    {
-      "id": "documents_discovery",
-      "description": "List input documents in S3 and write a documents descriptor manifest.",
-      "stages": [
+        },
         {
           "id": "discover_documents",
           "description": "List and sample source documents in S3 and write documents_descriptor.json."

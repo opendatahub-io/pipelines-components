@@ -14,7 +14,6 @@ def test_load_documents_rag_optimization_manifest():
     assert manifest["pipeline_id"] == PIPELINE_DOCUMENTS_RAG_OPTIMIZATION
     component_ids = [component["id"] for component in manifest["components"]]
     assert component_ids == [
-        "test_data_loader",
         "documents_discovery",
         "text_extraction",
         "search_space_preparation",
@@ -26,7 +25,6 @@ def test_pipeline_component_ids():
     """pipeline_component_ids returns component ids in manifest order."""
     ids = pipeline_component_ids(PIPELINE_DOCUMENTS_RAG_OPTIMIZATION)
     assert ids == [
-        "test_data_loader",
         "documents_discovery",
         "text_extraction",
         "search_space_preparation",
