@@ -123,11 +123,11 @@ class TestRagTemplatesOptimizationUnitTests:
         assert call_kwargs["optimization_settings"] == {"max_number_of_rag_patterns": 8}
         assert call_kwargs["evaluator"] == "judge"
         assert call_kwargs["judge_model_id"] is None
-        assert call_kwargs["llm_judge_model"] is None
+        assert "llm_judge_model" not in call_kwargs
 
     @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
     def test_passes_judge_model_when_evaluator_is_judge(self, tmp_path):
-        """evaluator=judge forwards judge_model_id as llm_judge_model to ai4rag."""
+        """evaluator=judge forwards judge_model_id to ai4rag."""
         modules, mock_create_ogx, mock_run_opt, _ = _make_ai4rag_mocks()
         mock_create_ogx.return_value = mock.MagicMock()
         mock_run_opt.return_value = SimpleNamespace(patterns=[])
@@ -156,11 +156,11 @@ class TestRagTemplatesOptimizationUnitTests:
 
         assert mock_run_opt.call_args.kwargs["evaluator"] == "judge"
         assert mock_run_opt.call_args.kwargs["judge_model_id"] == "granite-3.3-8b-instruct"
-        assert mock_run_opt.call_args.kwargs["llm_judge_model"] == "granite-3.3-8b-instruct"
+        assert "llm_judge_model" not in mock_run_opt.call_args.kwargs
 
     @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
-    def test_unitxt_evaluator_disables_llm_judge(self, tmp_path):
-        """evaluator=unitxt does not pass a judge model to ai4rag."""
+    def test_unitxt_evaluator_ignores_judge_model_id(self, tmp_path):
+        """evaluator=unitxt forwards judge_model_id unchanged; ai4rag ignores it."""
         modules, mock_create_ogx, mock_run_opt, _ = _make_ai4rag_mocks()
         mock_create_ogx.return_value = mock.MagicMock()
         mock_run_opt.return_value = SimpleNamespace(patterns=[])
@@ -188,7 +188,8 @@ class TestRagTemplatesOptimizationUnitTests:
             )
 
         assert mock_run_opt.call_args.kwargs["evaluator"] == "unitxt"
-        assert mock_run_opt.call_args.kwargs["llm_judge_model"] is None
+        assert mock_run_opt.call_args.kwargs["judge_model_id"] == "granite-3.3-8b-instruct"
+        assert "llm_judge_model" not in mock_run_opt.call_args.kwargs
 
     @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
     def test_rejects_invalid_evaluator(self, tmp_path):

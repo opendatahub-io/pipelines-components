@@ -102,8 +102,6 @@ def rag_templates_optimization(
             if evaluator not in ("judge", "unitxt"):
                 raise ValueError(f"evaluator must be 'judge' or 'unitxt'; got {evaluator!r}")
 
-            llm_judge_model = judge_model_id if evaluator == "judge" else None
-
             result = run_rag_optimization(
                 extracted_text_path=extracted_text,
                 test_data_path=test_data,
@@ -116,7 +114,6 @@ def rag_templates_optimization(
                 optimization_settings=optimization_settings,
                 evaluator=evaluator,
                 judge_model_id=judge_model_id,
-                llm_judge_model=llm_judge_model,
             )
 
             status.record(
