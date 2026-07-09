@@ -23,8 +23,6 @@ def rag_templates_optimization(
     embedded_artifact: dsl.EmbeddedInput[dsl.Dataset] = None,
     optimization_settings: Optional[dict] = None,
     input_data_key: Optional[str] = "",
-    evaluator: str = "judge",
-    judge_model_id: Optional[str] = None,
     component_status: dsl.Output[dsl.Artifact] = None,
 ):
     """RAG Templates Optimization component.
@@ -45,9 +43,6 @@ def rag_templates_optimization(
         embedded_artifact: Embedded ``autorag.shared`` helpers injected by KFP at runtime.
         optimization_settings: Additional experiment settings.
         input_data_key: Path to documents dir within bucket.
-        evaluator: Evaluation backend (``judge`` or ``unitxt``). Defaults to ``judge``.
-        judge_model_id: Optional OGX judge model identifier. Used when ``evaluator=judge``;
-            when omitted, ai4rag auto-selects the judge model.
 
     Environment variables (required):
         OGX_CLIENT_BASE_URL, OGX_CLIENT_API_KEY.
@@ -99,9 +94,6 @@ def rag_templates_optimization(
             output_dir = Path(rag_patterns.path)
             output_dir.mkdir(parents=True, exist_ok=True)
 
-            if evaluator not in ("judge", "unitxt"):
-                raise ValueError(f"evaluator must be 'judge' or 'unitxt'; got {evaluator!r}")
-
             result = run_rag_optimization(
                 extracted_text_path=extracted_text,
                 test_data_path=test_data,
@@ -112,8 +104,6 @@ def rag_templates_optimization(
                 test_data_key=test_data_key or "",
                 input_data_key=input_data_key or "",
                 optimization_settings=optimization_settings,
-                evaluator=evaluator,
-                judge_model_id=judge_model_id,
             )
 
             status.record(

@@ -59,8 +59,8 @@ class TestSearchSpacePreparationUnitTests:
         assert "embedding_models" in params
         assert "generation_models" in params
         assert "metric" in params
-        assert "evaluator" in params
-        assert "judge_model_id" in params
+        assert "evaluator" not in params
+        assert "judge_model_id" not in params
 
     @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
     def test_delegates_to_ai4rag_prepare_search_space_report(self, tmp_path):
@@ -100,8 +100,6 @@ class TestSearchSpacePreparationUnitTests:
             embedding_models=["embed-1", "embed-2"],
             generation_models=["gen-1"],
             metric="answer_correctness",
-            evaluator="judge",
-            judge_model_id=None,
         )
         mock_report.save_json.assert_called_once_with(str(tmp_path / "report.yml"))
 
@@ -127,7 +125,7 @@ class TestSearchSpacePreparationUnitTests:
             )
 
         assert mock_prepare.call_args.kwargs["metric"] == "faithfulness"
-        assert mock_prepare.call_args.kwargs["evaluator"] == "judge"
+        assert "evaluator" not in mock_prepare.call_args.kwargs
 
     @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
     def test_none_models_passed_through(self, tmp_path):

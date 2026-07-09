@@ -48,10 +48,8 @@ def documents_rag_optimization_pipeline(
     input_data_key: str = "",
     embedding_models: Optional[List] = None,
     generation_models: Optional[List] = None,
-    optimization_metric: str = "faithfulness",
+    optimization_metric: str = "overall_score",
     optimization_max_rag_patterns: int = 8,
-    evaluator: str = "judge",
-    judge_model_id: Optional[str] = None,
 ):
     """Automated system for building and optimizing Retrieval-Augmented Generation (RAG) applications.
 
@@ -87,14 +85,10 @@ def documents_rag_optimization_pipeline(
         generation_models: Optional list of foundation/generation model identifiers to use in the
             search space.
         optimization_metric: Quality metric used to optimize RAG patterns. Supported values:
-            "faithfulness", "answer_correctness", "context_correctness", "answer_relevance".
-            "answer_relevance" requires ``evaluator=judge``.
+            "faithfulness", "answer_correctness", "context_correctness", "answer_relevance",
+            and "overall_score" (default). Hybrid evaluation (Unitxt + LLM judge) is always used.
         optimization_max_rag_patterns: Maximum number of RAG patterns to generate. Passed to ai4rag
             (max_number_of_rag_patterns). Defaults to 8.
-        evaluator: Evaluation backend for scoring RAG patterns. ``judge`` uses LLM-as-a-Judge
-            (default); ``unitxt`` uses the legacy Unitxt evaluator.
-        judge_model_id: Optional OGX model identifier for the judge LLM. When ``evaluator=judge``
-            and omitted, ai4rag auto-selects the judge during search space preparation.
     """
     component_stage_map_task = publish_component_stage_map(
         pipeline_id=PIPELINE_NAME,
@@ -158,8 +152,6 @@ def documents_rag_optimization_pipeline(
         embedding_models=embedding_models,
         generation_models=generation_models,
         metric=optimization_metric,
-        evaluator=evaluator,
-        judge_model_id=judge_model_id,
     )
 
     mps_task.set_caching_options(False)
@@ -174,8 +166,6 @@ def documents_rag_optimization_pipeline(
             "metric": optimization_metric,
             "max_number_of_rag_patterns": optimization_max_rag_patterns,
         },
-        evaluator=evaluator,
-        judge_model_id=judge_model_id,
         test_data_key=test_data_key,
         input_data_key=input_data_key,
     )

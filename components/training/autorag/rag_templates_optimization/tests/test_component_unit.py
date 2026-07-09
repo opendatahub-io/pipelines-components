@@ -31,7 +31,7 @@ def _make_ai4rag_mocks():
 
     mock_leaderboard = mock.MagicMock()
     mock_leaderboard.build_leaderboard_html = mock.MagicMock(return_value="<html></html>")
-    mock_leaderboard.DEFAULT_METRIC = "faithfulness"
+    mock_leaderboard.DEFAULT_METRIC = "overall_score"
 
     modules = {
         "ai4rag": mock.MagicMock(),
@@ -69,8 +69,8 @@ class TestRagTemplatesOptimizationUnitTests:
         assert "vector_io_provider_id" in params
         assert "optimization_settings" in params
         assert "input_data_key" in params
-        assert "evaluator" in params
-        assert "judge_model_id" in params
+        assert "evaluator" not in params
+        assert "judge_model_id" not in params
 
     @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
     def test_delegates_to_ai4rag_run_rag_optimization(self, tmp_path):
@@ -121,104 +121,9 @@ class TestRagTemplatesOptimizationUnitTests:
         assert call_kwargs["test_data_key"] == "data/test.json"
         assert call_kwargs["input_data_key"] == "data/docs/"
         assert call_kwargs["optimization_settings"] == {"max_number_of_rag_patterns": 8}
-        assert call_kwargs["evaluator"] == "judge"
-        assert call_kwargs["judge_model_id"] is None
+        assert "evaluator" not in call_kwargs
+        assert "judge_model_id" not in call_kwargs
         assert "llm_judge_model" not in call_kwargs
-
-    @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
-    def test_passes_judge_model_when_evaluator_is_judge(self, tmp_path):
-        """evaluator=judge forwards judge_model_id to ai4rag."""
-        modules, mock_create_ogx, mock_run_opt, _ = _make_ai4rag_mocks()
-        mock_create_ogx.return_value = mock.MagicMock()
-        mock_run_opt.return_value = SimpleNamespace(patterns=[])
-
-        rag_patterns = mock.MagicMock()
-        rag_patterns.path = str(tmp_path / "out")
-        rag_patterns.uri = "uri"
-        rag_patterns.metadata = {}
-
-        html_artifact = mock.MagicMock()
-        html_artifact.path = str(tmp_path / "leaderboard.html")
-        html_artifact.metadata = {}
-
-        with mock.patch.dict("sys.modules", modules):
-            rag_templates_optimization.python_func(
-                extracted_text=str(tmp_path / "ext"),
-                test_data=str(tmp_path / "td.json"),
-                search_space_prep_report=str(tmp_path / "r.yml"),
-                rag_patterns=rag_patterns,
-                test_data_key="key.json",
-                vector_io_provider_id="provider",
-                html_artifact=html_artifact,
-                evaluator="judge",
-                judge_model_id="granite-3.3-8b-instruct",
-            )
-
-        assert mock_run_opt.call_args.kwargs["evaluator"] == "judge"
-        assert mock_run_opt.call_args.kwargs["judge_model_id"] == "granite-3.3-8b-instruct"
-        assert "llm_judge_model" not in mock_run_opt.call_args.kwargs
-
-    @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
-    def test_unitxt_evaluator_ignores_judge_model_id(self, tmp_path):
-        """evaluator=unitxt forwards judge_model_id unchanged; ai4rag ignores it."""
-        modules, mock_create_ogx, mock_run_opt, _ = _make_ai4rag_mocks()
-        mock_create_ogx.return_value = mock.MagicMock()
-        mock_run_opt.return_value = SimpleNamespace(patterns=[])
-
-        rag_patterns = mock.MagicMock()
-        rag_patterns.path = str(tmp_path / "out")
-        rag_patterns.uri = "uri"
-        rag_patterns.metadata = {}
-
-        html_artifact = mock.MagicMock()
-        html_artifact.path = str(tmp_path / "leaderboard.html")
-        html_artifact.metadata = {}
-
-        with mock.patch.dict("sys.modules", modules):
-            rag_templates_optimization.python_func(
-                extracted_text=str(tmp_path / "ext"),
-                test_data=str(tmp_path / "td.json"),
-                search_space_prep_report=str(tmp_path / "r.yml"),
-                rag_patterns=rag_patterns,
-                test_data_key="key.json",
-                vector_io_provider_id="provider",
-                html_artifact=html_artifact,
-                evaluator="unitxt",
-                judge_model_id="granite-3.3-8b-instruct",
-            )
-
-        assert mock_run_opt.call_args.kwargs["evaluator"] == "unitxt"
-        assert mock_run_opt.call_args.kwargs["judge_model_id"] == "granite-3.3-8b-instruct"
-        assert "llm_judge_model" not in mock_run_opt.call_args.kwargs
-
-    @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
-    def test_rejects_invalid_evaluator(self, tmp_path):
-        """Unknown evaluator values raise ValueError."""
-        modules, mock_create_ogx, mock_run_opt, _ = _make_ai4rag_mocks()
-        mock_create_ogx.return_value = mock.MagicMock()
-
-        rag_patterns = mock.MagicMock()
-        rag_patterns.path = str(tmp_path / "out")
-        rag_patterns.metadata = {}
-
-        html_artifact = mock.MagicMock()
-        html_artifact.path = str(tmp_path / "leaderboard.html")
-        html_artifact.metadata = {}
-
-        with mock.patch.dict("sys.modules", modules):
-            with pytest.raises(ValueError, match="evaluator must be"):
-                rag_templates_optimization.python_func(
-                    extracted_text=str(tmp_path / "ext"),
-                    test_data=str(tmp_path / "td.json"),
-                    search_space_prep_report=str(tmp_path / "r.yml"),
-                    rag_patterns=rag_patterns,
-                    test_data_key="key.json",
-                    vector_io_provider_id="provider",
-                    html_artifact=html_artifact,
-                    evaluator="invalid",
-                )
-
-        mock_run_opt.assert_not_called()
 
     @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
     def test_sets_artifact_metadata(self, tmp_path):
