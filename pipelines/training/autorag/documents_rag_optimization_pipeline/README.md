@@ -12,6 +12,10 @@ explore RAG configurations and identify the best performing parameter settings b
 The system integrates with OGX API for inference and vector database operations, producing optimized RAG patterns as artifacts that can be deployed and used for production RAG applications. Each optimized pattern contains a ``pattern.json`` with deployment settings (including
 ``settings.responses_template`` for OGX ``/v1/responses``), executable notebooks, and evaluation results.
 
+Pattern scoring uses hybrid evaluation inside ai4rag (Unitxt metrics plus LLM-as-a-Judge). The pipeline
+does not expose evaluator or judge-model parameters; judge selection is handled by ai4rag during search
+space preparation and optimization.
+
 ## Inputs 📥
 
 | Parameter | Type | Default | Description |
@@ -26,10 +30,8 @@ The system integrates with OGX API for inference and vector database operations,
 | `input_data_key` | `str` | `""` | Object key (path) of the input documents in the input data bucket. |
 | `embedding_models` | `Optional[List]` | `None` | Optional list of embedding model identifiers to use in the search space. |
 | `generation_models` | `Optional[List]` | `None` | Optional list of foundation/generation model identifiers to use in the search space. |
-| `optimization_metric` | `str` | `faithfulness` | Quality metric used to optimize RAG patterns. Supported values: "faithfulness", "answer_correctness", "context_correctness", "answer_relevance". "answer_relevance" requires ``evaluator=judge``. |
+| `optimization_metric` | `str` | `overall_score` | Quality metric used to optimize RAG patterns. Supported values: "faithfulness", "answer_correctness", "context_correctness", "answer_relevance", and "overall_score" (default composite score from hybrid evaluation). |
 | `optimization_max_rag_patterns` | `int` | `8` | Maximum number of RAG patterns to generate. Passed to ai4rag (max_number_of_rag_patterns). Defaults to 8. |
-| `evaluator` | `str` | `judge` | Evaluation backend: ``judge`` (LLM-as-a-Judge, default) or ``unitxt`` (legacy). |
-| `judge_model_id` | `Optional[str]` | `None` | Optional OGX model identifier for the judge LLM. When ``evaluator=judge`` and omitted, ai4rag auto-selects the judge during search space preparation. |
 
 ## Metadata 🗂️
 
@@ -40,7 +42,7 @@ The system integrates with OGX API for inference and vector database operations,
   - Kubeflow:
     - Name: Pipelines, Version: 2.16.1
   - External Services:
-    - Name: ai4rag, Version: ~=0.8.1
+    - Name: ai4rag, Version: ~=0.9.1
     - Name: OGX API, Version: ~=1.1.0
     - Name: RHOAI Connections API, Version: >=1.0.0
     - Name: Milvus, Version: >=2.0.0
@@ -52,7 +54,7 @@ The system integrates with OGX API for inference and vector database operations,
   - pipeline
   - autorag
   - rag-optimization
-- **Last Verified**: 2026-06-09 12:00:00+00:00
+- **Last Verified**: 2026-07-10 00:00:00+00:00
 - **Owners**:
   - No Parent Owners: Yes
   - Approvers:

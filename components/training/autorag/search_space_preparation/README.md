@@ -7,6 +7,7 @@
 Search space preparation for AutoRAG experiments.
 
 Thin wrapper that delegates to ``ai4rag.components.optimization.search_space_preparation.prepare_search_space_report``.
+Judge model selection (when needed) is handled inside ai4rag during this step.
 
 ## Inputs 📥
 
@@ -18,9 +19,7 @@ Thin wrapper that delegates to ``ai4rag.components.optimization.search_space_pre
 | `embedded_artifact` | `dsl.EmbeddedInput[dsl.Dataset]` | `None` | Embedded ``autorag.shared`` helpers injected by KFP at runtime. |
 | `embedding_models` | `Optional[List]` | `None` | List of embedding model identifiers to try. |
 | `generation_models` | `Optional[List]` | `None` | List of generation model identifiers to try. |
-| `metric` | `str` | `None` | Quality metric for evaluation (e.g. "faithfulness"). |
-| `evaluator` | `str` | `judge` | Evaluation backend: ``judge`` (LLM-as-a-Judge) or ``unitxt`` (legacy). |
-| `judge_model_id` | `Optional[str]` | `None` | Optional OGX judge model identifier when ``evaluator=judge``. |
+| `metric` | `str` | `None` | Quality metric for evaluation (e.g. "faithfulness", "overall_score"). Defaults to "faithfulness" when omitted. |
 | `component_status` | `dsl.Output[dsl.Artifact]` | `None` | Output artifact containing stage-level progress tracking. |
 
 ## Usage Examples 🧪
@@ -73,7 +72,7 @@ def example_pipeline(
   - autorag
   - search-space
   - optimization
-- **Last Verified**: 2026-05-14 00:00:00+00:00
+- **Last Verified**: 2026-07-10 00:00:00+00:00
 - **Owners**:
   - No Parent Owners: Yes
   - Approvers:

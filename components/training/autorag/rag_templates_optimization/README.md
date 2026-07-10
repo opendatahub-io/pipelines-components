@@ -7,6 +7,8 @@
 RAG Templates Optimization component.
 
 Thin wrapper that delegates to ``ai4rag.components.optimization.rag_templates_optimization.run_rag_optimization``.
+Evaluation uses hybrid Unitxt + LLM-as-a-Judge scoring inside ai4rag; this component does not expose
+evaluator selection parameters.
 
 ## Inputs 📥
 
@@ -22,8 +24,6 @@ Thin wrapper that delegates to ``ai4rag.components.optimization.rag_templates_op
 | `embedded_artifact` | `dsl.EmbeddedInput[dsl.Dataset]` | `None` | Embedded ``autorag.shared`` helpers injected by KFP at runtime. |
 | `optimization_settings` | `Optional[dict]` | `None` | Additional experiment settings. |
 | `input_data_key` | `Optional[str]` | `""` | Path to documents dir within bucket. |
-| `evaluator` | `str` | `judge` | Evaluation backend: ``judge`` (LLM-as-a-Judge) or ``unitxt`` (legacy). |
-| `judge_model_id` | `Optional[str]` | `None` | Optional OGX judge model identifier when ``evaluator=judge``. |
 | `component_status` | `dsl.Output[dsl.Artifact]` | `None` | Output artifact containing stage-level progress tracking. |
 
 ## Usage Examples 🧪
@@ -90,7 +90,7 @@ def example_pipeline(
   - autorag
   - optimization
   - rag-patterns
-- **Last Verified**: 2026-06-10 00:00:00+00:00
+- **Last Verified**: 2026-07-10 00:00:00+00:00
 - **Owners**:
   - No Parent Owners: Yes
   - Approvers:
