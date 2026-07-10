@@ -22,6 +22,7 @@ def search_space_preparation(
     generation_models: Optional[List] = None,
     metric: str = None,
     component_status: dsl.Output[dsl.Artifact] = None,
+    preset: str = "speed",
 ):
     """Search space preparation for AutoRAG experiments.
 
@@ -37,6 +38,9 @@ def search_space_preparation(
         embedding_models: List of embedding model identifiers to try.
         generation_models: List of generation model identifiers to try.
         metric: Quality metric for evaluation (e.g. "faithfulness").
+        preset: Pipeline quality tier. "speed" (default) uses recursive chunking
+            without contextual enrichment. "balanced" uses hybrid chunking with
+            LLM contextual enrichment in the search space.
 
     Environment variables (required):
         OGX_CLIENT_BASE_URL, OGX_CLIENT_API_KEY.
@@ -54,6 +58,29 @@ def search_space_preparation(
     from ai4rag.components.utils.ogx_client import create_ogx_client
 
     logging.basicConfig(level=logging.INFO)
+
+    VALID_PRESETS = {"speed", "balanced"}
+    PRESET_CHUNKING_METHODS = {"speed": ["recursive"], "balanced": ["recursive", "hybrid"]}
+    PRESET_CHUNK_SIZES = {"speed": [128, 256, 512], "balanced": [512, 1024, 2048]}
+    PRESET_CHUNK_OVERLAPS = {"speed": [32, 64], "balanced": [0, 128, 256]}
+    PRESET_INFERENCE_MAX_THREADS = {"speed": 10, "balanced": 4}
+
+    if preset not in VALID_PRESETS:
+        raise ValueError(f"preset must be one of {VALID_PRESETS}; got {preset!r}.")
+
+    chunking_methods = PRESET_CHUNKING_METHODS[preset]
+    chunk_sizes = PRESET_CHUNK_SIZES[preset]
+    chunk_overlaps = PRESET_CHUNK_OVERLAPS[preset]
+    inference_max_threads = PRESET_INFERENCE_MAX_THREADS[preset]
+
+    logging.info(
+        "Preset %r: chunking_methods=%s, chunk_sizes=%s, chunks_overlaps=%s, inference_max_threads=%s",
+        preset,
+        chunking_methods,
+        chunk_sizes,
+        chunk_overlaps,
+        inference_max_threads,
+    )
 
     if component_status is None:
         from kfp_components.components.training.autorag.shared.component_status import (  # pyright: ignore[reportMissingImports]
@@ -89,6 +116,10 @@ def search_space_preparation(
                 embedding_models=embedding_models,
                 generation_models=generation_models,
                 metric=metric if metric is not None else "faithfulness",
+                chunking_methods=chunking_methods,
+                chunk_sizes=chunk_sizes,
+                chunk_overlaps=chunk_overlaps,
+                inference_max_threads=inference_max_threads,
             )
 
             report.save_json(search_space_prep_report.path)

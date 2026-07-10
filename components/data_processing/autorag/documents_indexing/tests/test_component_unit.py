@@ -50,6 +50,7 @@ class TestDocumentsIndexingUnitTests:
         assert "embedding_model_id" in params
         assert "extracted_text" in params
         assert "vector_io_provider_id" in params
+        assert "vector_store_id" in params
         assert sig.parameters["distance_metric"].default == "cosine"
         assert sig.parameters["chunk_size"].default == 1024
         assert sig.parameters["batch_size"].default == 20
@@ -75,7 +76,7 @@ class TestDocumentsIndexingUnitTests:
                 chunk_size=512,
                 chunk_overlap=64,
                 batch_size=10,
-                collection_name="my-collection",
+                vector_store_id="my-vector-store",
             )
 
         mock_create_ogx.assert_called_once_with(
@@ -93,7 +94,7 @@ class TestDocumentsIndexingUnitTests:
             chunk_size=512,
             chunk_overlap=64,
             batch_size=10,
-            collection_name="my-collection",
+            collection_name="my-vector-store",
         )
 
     @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)

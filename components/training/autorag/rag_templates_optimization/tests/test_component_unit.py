@@ -71,6 +71,8 @@ class TestRagTemplatesOptimizationUnitTests:
         assert "input_data_key" in params
         assert "evaluator" not in params
         assert "judge_model_id" not in params
+        assert "preset" in params
+        assert sig.parameters["preset"].default == "speed"
 
     @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
     def test_delegates_to_ai4rag_run_rag_optimization(self, tmp_path):
@@ -318,3 +320,60 @@ class TestRagTemplatesOptimizationUnitTests:
         assert html_path.exists()
         assert html_path.read_text(encoding="utf-8") == expected_html
         assert html_artifact.metadata["display_name"] == "autorag_leaderboard"
+
+    @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
+    def test_preset_validation_rejects_invalid(self, tmp_path):
+        """Invalid preset raises ValueError."""
+        modules, _, _, _ = _make_ai4rag_mocks()
+
+        rag_patterns = mock.MagicMock()
+        rag_patterns.path = str(tmp_path / "out")
+        rag_patterns.metadata = {}
+
+        html_artifact = mock.MagicMock()
+        html_artifact.path = str(tmp_path / "leaderboard.html")
+        html_artifact.metadata = {}
+
+        with mock.patch.dict("sys.modules", modules):
+            with pytest.raises(ValueError, match="preset must be one of"):
+                rag_templates_optimization.python_func(
+                    extracted_text=str(tmp_path / "ext"),
+                    test_data=str(tmp_path / "td.json"),
+                    search_space_prep_report=str(tmp_path / "r.yml"),
+                    rag_patterns=rag_patterns,
+                    test_data_key="key.json",
+                    vector_io_provider_id="provider",
+                    html_artifact=html_artifact,
+                    preset="invalid",
+                )
+
+    @pytest.mark.parametrize("preset_value", ["speed", "balanced"])
+    @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
+    def test_valid_presets_accepted(self, tmp_path, preset_value):
+        """Both 'speed' and 'balanced' presets are accepted without error."""
+        modules, mock_create_ogx, mock_run_opt, _ = _make_ai4rag_mocks()
+        mock_create_ogx.return_value = mock.MagicMock()
+        mock_run_opt.return_value = SimpleNamespace(patterns=[])
+
+        rag_patterns = mock.MagicMock()
+        rag_patterns.path = str(tmp_path / "out")
+        rag_patterns.uri = "uri"
+        rag_patterns.metadata = {}
+
+        html_artifact = mock.MagicMock()
+        html_artifact.path = str(tmp_path / "leaderboard.html")
+        html_artifact.metadata = {}
+
+        with mock.patch.dict("sys.modules", modules):
+            rag_templates_optimization.python_func(
+                extracted_text=str(tmp_path / "ext"),
+                test_data=str(tmp_path / "td.json"),
+                search_space_prep_report=str(tmp_path / "r.yml"),
+                rag_patterns=rag_patterns,
+                test_data_key="key.json",
+                vector_io_provider_id="provider",
+                html_artifact=html_artifact,
+                preset=preset_value,
+            )
+
+        mock_run_opt.assert_called_once()

@@ -21,6 +21,7 @@ Judge model selection (when needed) is handled inside ai4rag during this step.
 | `generation_models` | `Optional[List]` | `None` | List of generation model identifiers to try. |
 | `metric` | `str` | `None` | Quality metric for evaluation (e.g. "faithfulness", "overall_score"). Defaults to "faithfulness" when omitted. |
 | `component_status` | `dsl.Output[dsl.Artifact]` | `None` | Output artifact containing stage-level progress tracking. |
+| `preset` | `str` | `speed` | Pipeline quality tier. "speed" (default) uses recursive chunking without contextual enrichment. "balanced" uses hybrid chunking with LLM contextual enrichment in the search space. |
 
 ## Usage Examples 🧪
 
