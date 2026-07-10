@@ -48,8 +48,10 @@ class TestTextExtractionUnitTests:
         assert "extracted_text" in params
         assert "error_tolerance" in params
         assert "max_extraction_workers" in params
+        assert "preset" in params
         assert sig.parameters["error_tolerance"].default is None
         assert sig.parameters["max_extraction_workers"].default is None
+        assert sig.parameters["preset"].default == "speed"
 
     @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
     def test_delegates_to_ai4rag_extract_text(self, tmp_path):
@@ -92,6 +94,7 @@ class TestTextExtractionUnitTests:
             error_tolerance=0.1,
             max_extraction_workers=4,
             docling_artifacts_path=None,
+            do_table_structure=False,
         )
 
     @mock.patch.dict(
@@ -188,3 +191,79 @@ class TestTextExtractionUnitTests:
                         documents_descriptor=descriptor_artifact,
                         extracted_text=output_artifact,
                     )
+
+    @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
+    def test_preset_validation_rejects_invalid(self, tmp_path):
+        """Invalid preset raises ValueError."""
+        modules, _ = _make_ai4rag_mocks()
+
+        descriptor_dir = tmp_path / "descriptor"
+        descriptor_dir.mkdir()
+        descriptor = {"bucket": "b", "documents": []}
+        (descriptor_dir / "documents_descriptor.json").write_text(json.dumps(descriptor), encoding="utf-8")
+
+        descriptor_artifact = mock.MagicMock()
+        descriptor_artifact.path = str(descriptor_dir)
+        output_artifact = mock.MagicMock()
+        output_artifact.path = str(tmp_path / "output")
+
+        with mock.patch.dict("sys.modules", modules):
+            with pytest.raises(ValueError, match="preset must be one of"):
+                text_extraction.python_func(
+                    documents_descriptor=descriptor_artifact,
+                    extracted_text=output_artifact,
+                    preset="invalid",
+                )
+
+    @pytest.mark.parametrize("preset_value", ["speed", "balanced"])
+    @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
+    def test_valid_presets_accepted(self, tmp_path, preset_value):
+        """Both 'speed' and 'balanced' presets are accepted without error."""
+        modules, mock_extract = _make_ai4rag_mocks()
+
+        descriptor_dir = tmp_path / "descriptor"
+        descriptor_dir.mkdir()
+        descriptor = {"bucket": "b", "documents": []}
+        (descriptor_dir / "documents_descriptor.json").write_text(json.dumps(descriptor), encoding="utf-8")
+
+        descriptor_artifact = mock.MagicMock()
+        descriptor_artifact.path = str(descriptor_dir)
+        output_artifact = mock.MagicMock()
+        output_artifact.path = str(tmp_path / "output")
+
+        with mock.patch.dict("sys.modules", modules):
+            text_extraction.python_func(
+                documents_descriptor=descriptor_artifact,
+                extracted_text=output_artifact,
+                preset=preset_value,
+            )
+
+        mock_extract.assert_called_once()
+
+    @pytest.mark.parametrize(
+        ("preset_value", "expected_do_table_structure"),
+        [("speed", False), ("balanced", True)],
+    )
+    @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
+    def test_preset_sets_do_table_structure(self, tmp_path, preset_value, expected_do_table_structure):
+        """Preset controls do_table_structure passed to extract_text."""
+        modules, mock_extract = _make_ai4rag_mocks()
+
+        descriptor_dir = tmp_path / "descriptor"
+        descriptor_dir.mkdir()
+        descriptor = {"bucket": "b", "documents": []}
+        (descriptor_dir / "documents_descriptor.json").write_text(json.dumps(descriptor), encoding="utf-8")
+
+        descriptor_artifact = mock.MagicMock()
+        descriptor_artifact.path = str(descriptor_dir)
+        output_artifact = mock.MagicMock()
+        output_artifact.path = str(tmp_path / "output")
+
+        with mock.patch.dict("sys.modules", modules):
+            text_extraction.python_func(
+                documents_descriptor=descriptor_artifact,
+                extracted_text=output_artifact,
+                preset=preset_value,
+            )
+
+        assert mock_extract.call_args.kwargs["do_table_structure"] == expected_do_table_structure

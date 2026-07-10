@@ -61,6 +61,8 @@ class TestSearchSpacePreparationUnitTests:
         assert "metric" in params
         assert "evaluator" not in params
         assert "judge_model_id" not in params
+        assert "preset" in params
+        assert sig.parameters["preset"].default == "speed"
 
     @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
     def test_delegates_to_ai4rag_prepare_search_space_report(self, tmp_path):
@@ -100,6 +102,10 @@ class TestSearchSpacePreparationUnitTests:
             embedding_models=["embed-1", "embed-2"],
             generation_models=["gen-1"],
             metric="answer_correctness",
+            chunking_methods=["recursive"],
+            chunk_sizes=[128, 256, 512],
+            chunk_overlaps=[32, 64],
+            inference_max_threads=10,
         )
         mock_report.save_json.assert_called_once_with(str(tmp_path / "report.yml"))
 
@@ -202,3 +208,85 @@ class TestSearchSpacePreparationUnitTests:
         sig = inspect.signature(search_space_preparation.python_func)
         param = sig.parameters["component_status"]
         assert param.default is None, "component_status should default to None for notebook usage"
+
+    @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
+    def test_preset_validation_rejects_invalid(self, tmp_path):
+        """Invalid preset raises ValueError."""
+        modules, _, _, _ = _make_ai4rag_mocks()
+
+        test_data = mock.MagicMock()
+        test_data.path = str(tmp_path / "test.json")
+        extracted_text = mock.MagicMock()
+        extracted_text.path = str(tmp_path / "ext")
+        report = mock.MagicMock()
+        report.path = str(tmp_path / "report.yml")
+
+        with mock.patch.dict("sys.modules", modules):
+            with pytest.raises(ValueError, match="preset must be one of"):
+                search_space_preparation.python_func(
+                    test_data=test_data,
+                    extracted_text=extracted_text,
+                    search_space_prep_report=report,
+                    preset="invalid",
+                )
+
+    @pytest.mark.parametrize("preset_value", ["speed", "balanced"])
+    @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
+    def test_valid_presets_accepted(self, tmp_path, preset_value):
+        """Both 'speed' and 'balanced' presets are accepted without error."""
+        modules, mock_create_ogx, mock_prepare, _ = _make_ai4rag_mocks()
+        mock_create_ogx.return_value = mock.MagicMock()
+        mock_prepare.return_value = mock.MagicMock()
+
+        test_data = mock.MagicMock()
+        test_data.path = str(tmp_path / "test.json")
+        extracted_text = mock.MagicMock()
+        extracted_text.path = str(tmp_path / "ext")
+        report = mock.MagicMock()
+        report.path = str(tmp_path / "report.yml")
+
+        with mock.patch.dict("sys.modules", modules):
+            search_space_preparation.python_func(
+                test_data=test_data,
+                extracted_text=extracted_text,
+                search_space_prep_report=report,
+                preset=preset_value,
+            )
+
+        mock_prepare.assert_called_once()
+
+    @pytest.mark.parametrize(
+        ("preset_value", "expected_chunking", "expected_chunk_sizes", "expected_chunk_overlaps", "expected_threads"),
+        [
+            ("speed", ["recursive"], [128, 256, 512], [32, 64], 10),
+            ("balanced", ["recursive", "hybrid"], [512, 1024, 2048], [0, 128, 256], 4),
+        ],
+    )
+    @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
+    def test_preset_sets_search_space_params(
+        self, tmp_path, preset_value, expected_chunking, expected_chunk_sizes, expected_chunk_overlaps, expected_threads
+    ):
+        """Preset controls chunking_methods, chunk_sizes, chunk_overlaps, and inference_max_threads."""
+        modules, mock_create_ogx, mock_prepare, _ = _make_ai4rag_mocks()
+        mock_create_ogx.return_value = mock.MagicMock()
+        mock_prepare.return_value = mock.MagicMock()
+
+        test_data = mock.MagicMock()
+        test_data.path = str(tmp_path / "test.json")
+        extracted_text = mock.MagicMock()
+        extracted_text.path = str(tmp_path / "ext")
+        report = mock.MagicMock()
+        report.path = str(tmp_path / "report.yml")
+
+        with mock.patch.dict("sys.modules", modules):
+            search_space_preparation.python_func(
+                test_data=test_data,
+                extracted_text=extracted_text,
+                search_space_prep_report=report,
+                preset=preset_value,
+            )
+
+        assert mock_prepare.call_args.kwargs["chunking_methods"] == expected_chunking
+        assert mock_prepare.call_args.kwargs["chunk_sizes"] == expected_chunk_sizes
+        assert mock_prepare.call_args.kwargs["chunk_overlaps"] == expected_chunk_overlaps
+        assert mock_prepare.call_args.kwargs["inference_max_threads"] == expected_threads

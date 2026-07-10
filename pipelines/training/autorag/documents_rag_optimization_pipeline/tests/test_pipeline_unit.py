@@ -40,8 +40,7 @@ class TestDocumentsRagOptimizationPipelineUnit:
         assert "input_data_key" in inputs
         assert "ogx_secret_name" in inputs
         assert "optimization_max_rag_patterns" in inputs
-        assert "evaluator" not in inputs
-        assert "judge_model_id" not in inputs
+        assert "preset" in inputs
         assert "responses_request_default_question" not in inputs
 
     def test_compiled_pipeline_root_dag_task_ids(self):

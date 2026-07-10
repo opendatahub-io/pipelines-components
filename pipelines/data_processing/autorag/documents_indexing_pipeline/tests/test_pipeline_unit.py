@@ -37,7 +37,7 @@ class TestDocumentsIndexingPipelineUnit:
             "input_data_bucket_name",
             "chunk_size",
             "chunk_overlap",
-            "collection_name",
+            "vector_store_id",
         ):
             assert name in inputs
 
@@ -93,7 +93,7 @@ class TestDocumentsIndexingPipelineUnit:
         assert "componentInputParameter: chunk_size" in content
         assert "componentInputParameter: chunk_overlap" in content
         assert "componentInputParameter: embedding_model_id" in content
-        assert "componentInputParameter: collection_name" in content
+        assert "componentInputParameter: vector_store_id" in content
         assert "comp-documents-indexing:" in content
 
     def test_compiled_pipeline_wires_s3_and_ogx_secrets(self):

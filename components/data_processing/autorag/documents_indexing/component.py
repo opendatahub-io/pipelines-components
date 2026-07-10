@@ -17,7 +17,7 @@ def documents_indexing(
     chunk_size: int = 1024,
     chunk_overlap: int = 0,
     batch_size: int = 20,
-    collection_name: Optional[str] = None,
+    vector_store_id: Optional[str] = None,
 ):
     """Index extracted text into a vector store with optional batch processing.
 
@@ -33,8 +33,11 @@ def documents_indexing(
         chunking_method: Chunking method.
         chunk_size: Chunk size in characters.
         chunk_overlap: Chunk overlap in characters.
-        batch_size: Number of documents per batch; 0 means process all in one batch.
-        collection_name: Optional name of the collection to reuse; omit to create a new one.
+        batch_size: Number of documents per batch. Defaults to ``20``; ``0`` processes all
+            documents in a single batch.
+        vector_store_id: OGX vector store / collection id to reuse (matches
+            ``pattern.json`` ``settings.vector_store_binding.vector_store_id``).
+            Omit to create a new collection.
     """
     import logging
     import os
@@ -60,5 +63,5 @@ def documents_indexing(
         chunk_size=chunk_size,
         chunk_overlap=chunk_overlap,
         batch_size=batch_size,
-        collection_name=collection_name,
+        collection_name=vector_store_id,
     )

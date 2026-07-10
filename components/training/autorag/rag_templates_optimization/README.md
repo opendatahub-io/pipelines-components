@@ -23,6 +23,7 @@ Thin wrapper that delegates to ``ai4rag.components.optimization.rag_templates_op
 | `optimization_settings` | `Optional[dict]` | `None` | Additional experiment settings. |
 | `input_data_key` | `Optional[str]` | `""` | Path to documents dir within bucket. |
 | `component_status` | `dsl.Output[dsl.Artifact]` | `None` | Output artifact containing stage-level progress tracking. |
+| `preset` | `str` | `speed` | Pipeline quality tier. "speed" (default) uses 10 benchmark query threads. "balanced" uses 4 threads (reduced due to larger per-request context). |
 
 ## Usage Examples 🧪
 

@@ -18,6 +18,7 @@ Thin wrapper that delegates to ``ai4rag.components.data.text_extraction.extract_
 | `embedded_artifact` | `dsl.EmbeddedInput[dsl.Dataset]` | `None` | Embedded ``autorag.shared`` helpers injected by KFP at runtime. |
 | `error_tolerance` | `Optional[float]` | `None` | Fraction of documents (0.0-1.0) allowed to fail without raising an error. None (the default) means zero tolerance. |
 | `max_extraction_workers` | `Optional[int]` | `None` | Number of parallel worker processes used for text extraction. Defaults to 4. Set to None to use all available CPU cores. |
+| `preset` | `str` | `speed` | Pipeline quality tier. "speed" (default) disables Docling table structure parsing. "balanced" enables TableFormer table reconstruction. |
 
 ## Usage Examples 🧪
 

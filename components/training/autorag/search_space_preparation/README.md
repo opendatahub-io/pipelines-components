@@ -20,6 +20,7 @@ Thin wrapper that delegates to ``ai4rag.components.optimization.search_space_pre
 | `generation_models` | `Optional[List]` | `None` | List of generation model identifiers to try. |
 | `metric` | `str` | `None` | Quality metric for evaluation (e.g. "faithfulness"). |
 | `component_status` | `dsl.Output[dsl.Artifact]` | `None` | Output artifact containing stage-level progress tracking. |
+| `preset` | `str` | `speed` | Pipeline quality tier. "speed" (default) uses recursive chunking without contextual enrichment. "balanced" uses hybrid chunking with LLM contextual enrichment in the search space. |
 
 ## Usage Examples 🧪
 

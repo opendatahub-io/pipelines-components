@@ -24,6 +24,7 @@ def rag_templates_optimization(
     optimization_settings: Optional[dict] = None,
     input_data_key: Optional[str] = "",
     component_status: dsl.Output[dsl.Artifact] = None,
+    preset: str = "speed",
 ):
     """RAG Templates Optimization component.
 
@@ -43,6 +44,9 @@ def rag_templates_optimization(
         embedded_artifact: Embedded ``autorag.shared`` helpers injected by KFP at runtime.
         optimization_settings: Additional experiment settings.
         input_data_key: Path to documents dir within bucket.
+        preset: Pipeline quality tier. "speed" (default) uses 10 benchmark query
+            threads. "balanced" uses 4 threads (reduced due to larger per-request
+            context).
 
     Environment variables (required):
         OGX_CLIENT_BASE_URL, OGX_CLIENT_API_KEY.
@@ -61,6 +65,15 @@ def rag_templates_optimization(
     from ai4rag.components.utils.ogx_client import create_ogx_client
 
     logging.basicConfig(level=logging.INFO)
+
+    VALID_PRESETS = {"speed", "balanced"}
+    PRESET_INFERENCE_MAX_THREADS = {"speed": 10, "balanced": 4}
+
+    if preset not in VALID_PRESETS:
+        raise ValueError(f"preset must be one of {VALID_PRESETS}; got {preset!r}.")
+
+    inference_max_threads = PRESET_INFERENCE_MAX_THREADS[preset]
+    logging.info("Preset %r: inference_max_threads=%d", preset, inference_max_threads)
 
     if component_status is None:
         from kfp_components.components.training.autorag.shared.component_status import (  # pyright: ignore[reportMissingImports]
@@ -104,6 +117,7 @@ def rag_templates_optimization(
                 test_data_key=test_data_key or "",
                 input_data_key=input_data_key or "",
                 optimization_settings=optimization_settings,
+                inference_max_threads=inference_max_threads,
             )
 
             status.record(

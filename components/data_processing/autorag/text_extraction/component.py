@@ -19,6 +19,7 @@ def text_extraction(
     embedded_artifact: dsl.EmbeddedInput[dsl.Dataset] = None,
     error_tolerance: Optional[float] = None,
     max_extraction_workers: Optional[int] = None,
+    preset: str = "speed",
 ):
     """Text Extraction component.
 
@@ -35,6 +36,8 @@ def text_extraction(
             raising an error. None (the default) means zero tolerance.
         max_extraction_workers: Number of parallel worker processes used for text
             extraction. Defaults to 4. Set to None to use all available CPU cores.
+        preset: Pipeline quality tier. "speed" (default) disables Docling table
+            structure parsing. "balanced" enables TableFormer table reconstruction.
     """
     import importlib.util
     import json
@@ -45,6 +48,15 @@ def text_extraction(
     from ai4rag.components.data.text_extraction import extract_text
 
     logging.basicConfig(level=logging.INFO)
+
+    VALID_PRESETS = {"speed", "balanced"}
+    PRESET_DO_TABLE_STRUCTURE = {"speed": False, "balanced": True}
+
+    if preset not in VALID_PRESETS:
+        raise ValueError(f"preset must be one of {VALID_PRESETS}; got {preset!r}.")
+
+    do_table_structure = PRESET_DO_TABLE_STRUCTURE[preset]
+    logging.info("Preset %r: do_table_structure=%s", preset, do_table_structure)
 
     if component_status is None:
         from kfp_components.components.training.autorag.shared.component_status import (  # pyright: ignore[reportMissingImports]
@@ -84,6 +96,7 @@ def text_extraction(
                 error_tolerance=error_tolerance,
                 max_extraction_workers=max_extraction_workers,
                 docling_artifacts_path=os.environ.get("DOCLING_ARTIFACTS_PATH"),
+                do_table_structure=do_table_structure,
             )
 
 

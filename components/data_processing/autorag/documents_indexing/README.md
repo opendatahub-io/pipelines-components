@@ -20,8 +20,8 @@ Thin wrapper that delegates to ``ai4rag.components.data.indexing.index_documents
 | `chunking_method` | `str` | `recursive` | Chunking method. |
 | `chunk_size` | `int` | `1024` | Chunk size in characters. |
 | `chunk_overlap` | `int` | `0` | Chunk overlap in characters. |
-| `batch_size` | `int` | `20` | Number of documents per batch; 0 means process all in one batch. |
-| `collection_name` | `Optional[str]` | `None` | Optional name of the collection to reuse; omit to create a new one. |
+| `batch_size` | `int` | `20` | Number of documents per batch. Defaults to ``20``; ``0`` processes all documents in a single batch. |
+| `vector_store_id` | `Optional[str]` | `None` | OGX vector store / collection id to reuse (matches ``pattern.json`` ``settings.vector_store_binding.vector_store_id``). Omit to create a new collection. |
 
 ## Usage Examples 🧪
 

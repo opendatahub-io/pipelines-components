@@ -28,6 +28,7 @@ The system integrates with OGX API for inference and vector database operations,
 | `generation_models` | `Optional[List]` | `None` | Optional list of foundation/generation model identifiers to use in the search space. |
 | `optimization_metric` | `str` | `overall_score` | Quality metric used to optimize RAG patterns. Supported values: "faithfulness", "answer_correctness", "context_correctness", "answer_relevance", and "overall_score" (default). Hybrid evaluation (Unitxt + LLM judge) is always used. |
 | `optimization_max_rag_patterns` | `int` | `8` | Maximum number of RAG patterns to generate. Passed to ai4rag (max_number_of_rag_patterns). Defaults to 8. |
+| `preset` | `str` | `speed` | Pipeline quality tier. "speed" (default) uses recursive chunking, no table structure parsing, and no contextual enrichment. "balanced" enables Docling table layout parsing, hybrid chunking, and LLM contextual enrichment. Both presets use the same resource tier. |
 
 ## Metadata 🗂️
 
