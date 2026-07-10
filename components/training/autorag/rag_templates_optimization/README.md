@@ -7,8 +7,6 @@
 RAG Templates Optimization component.
 
 Thin wrapper that delegates to ``ai4rag.components.optimization.rag_templates_optimization.run_rag_optimization``.
-Evaluation uses hybrid Unitxt + LLM-as-a-Judge scoring inside ai4rag; this component does not expose
-evaluator selection parameters.
 
 ## Inputs 📥
 
