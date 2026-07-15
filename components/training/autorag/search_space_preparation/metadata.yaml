@@ -7,7 +7,7 @@ dependencies:
       version: '>=2.15.2'
   external_services:
     - name: ai4rag
-      version: "~=0.9.1"
+      version: "~=0.10.0"
     - name: pyYaml
       version: ">=6.0.0"
     - name: pandas

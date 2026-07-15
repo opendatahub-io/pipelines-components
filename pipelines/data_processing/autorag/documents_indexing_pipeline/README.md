@@ -36,7 +36,7 @@ Discovers documents from object storage, extracts text, and indexes chunks into 
   - External Services:
     - Name: docling, Version: >=2.72.0
     - Name: boto3, Version: >=1.42.34
-    - Name: ai4rag, Version: ~=0.9.1
+    - Name: ai4rag, Version: ~=0.10.0
     - Name: RHOAI Connections API, Version: >=1.0.0
 - **Tags**:
   - data_processing

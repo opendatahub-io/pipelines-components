@@ -7,9 +7,8 @@ dependencies:
     - name: Pipelines
       version: '2.16.1'
   external_services:
-# TODO: check this version to mach ai4rag LLMaAJ release
     - name: ai4rag
-      version: "~=0.9.1"
+      version: "~=0.10.0"
     - name: OGX API
       version: "~=1.1.0"
     - name: RHOAI Connections API
