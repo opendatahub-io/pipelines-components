@@ -61,6 +61,7 @@ uv run python -m scripts.refresh_pipeline_requirements.refresh_pipeline_requirem
 | `NO_UPGRADE` | `true` | Keep existing pins from `requirements.txt` |
 | `DRY_RUN` | `true` | Show changes without writing `requirements.txt` |
 | `QUIET` | `true` | Suppress live pip-compile progress output |
+| `PYTHON_PLATFORM` | uv platform | Target wheel platform (default: `x86_64-manylinux_2_34`) |
 
 ## Defaults
 
@@ -69,6 +70,7 @@ uv run python -m scripts.refresh_pipeline_requirements.refresh_pipeline_requirem
   - `pipelines/training/autorag/documents_rag_optimization_pipeline`
 - **Container image**: `registry.access.redhat.com/ubi9/python-312:9.8`
 - **Container runtime**: auto-detect `podman`, then `docker` (override with `RUNTIME` or `CONTAINER_RUNTIME`)
+- **Python platform**: `x86_64-manylinux_2_34` (RHEL UBI9 / glibc 2.34; matches root `make requirements`)
 
 Each pipeline directory must contain a `requirements.in` with a `--index-url` line.
 The generated `requirements.txt` keeps that index URL and includes package hashes

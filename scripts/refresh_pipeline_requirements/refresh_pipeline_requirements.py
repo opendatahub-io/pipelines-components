@@ -24,6 +24,12 @@ from urllib.parse import urlsplit, urlunsplit
 from ..lib.discovery import get_repo_root
 
 DEFAULT_CONTAINER_IMAGE = "registry.access.redhat.com/ubi9/python-312:9.8"
+# RHEL UBI9 (glibc 2.34); matches Makefile PYTHON_PLATFORM
+DEFAULT_PYTHON_PLATFORM = "x86_64-manylinux_2_34"
+DEFAULT_PYTHON_VERSION = "3.12"
+# Install pip-tools from PyPI; AIPCC/RHOAI base images often pin pip to an index that
+# does not publish pip-tools. pip-compile still uses --index-url from requirements.in.
+PIP_TOOLS_INDEX_URL = "https://pypi.org/simple"
 DEFAULT_PIPELINES: tuple[str, ...] = (
     "pipelines/training/automl/autogluon_tabular_training_pipeline",
     "pipelines/training/autorag/documents_rag_optimization_pipeline",
@@ -54,6 +60,27 @@ def sanitize_index_url_for_log(url: str) -> str:
     if parts.port is not None:
         host = f"{host}:{parts.port}"
     return urlunsplit((parts.scheme, host, "", "", parts.fragment))
+
+
+def build_pip_platform_args(python_platform: str, python_version: str) -> str:
+    """Build pip resolver args from a uv-style platform string.
+
+    Converts ``x86_64-manylinux_2_34`` to pip's ``--platform manylinux_2_34_x86_64``
+    format, matching ``uv pip compile --python-platform``.
+    """
+    arch, separator, platform_tag = python_platform.partition("-")
+    if not separator or not arch or not platform_tag:
+        raise RefreshRequirementsError(
+            f"Invalid python platform {python_platform!r}; expected format like x86_64-manylinux_2_34"
+        )
+
+    major, _, minor = python_version.partition(".")
+    if not major.isdigit() or not minor.isdigit():
+        raise RefreshRequirementsError(f"Invalid python version {python_version!r}; expected format like 3.12")
+
+    pip_platform = f"{platform_tag}_{arch}"
+    abi = f"cp{major}{minor}"
+    return f"--platform {pip_platform} --python-version {python_version} --implementation cp --abi {abi}"
 
 
 def resolve_pipeline_dir(repo_root: Path, pipeline: str | Path) -> Path:
@@ -117,9 +144,12 @@ def build_container_command(
     upgrade: bool,
     dry_run: bool,
     verbose: bool,
+    python_platform: str = DEFAULT_PYTHON_PLATFORM,
+    python_version: str = DEFAULT_PYTHON_VERSION,
 ) -> list[str]:
     """Build the container command that runs pip-compile."""
     python_bin = "python3 -u"
+    pip_platform_args = build_pip_platform_args(python_platform, python_version)
     compile_flags = [
         f"{python_bin} -m piptools compile",
         _REQUIREMENTS_IN,
@@ -127,6 +157,7 @@ def build_container_command(
         "--emit-index-url",
         "--allow-unsafe",
         "--no-header",
+        f"--pip-args '{pip_platform_args}'",
         f"--output-file {_REQUIREMENTS_TXT}",
     ]
     if upgrade:
@@ -136,9 +167,10 @@ def build_container_command(
     if verbose:
         compile_flags.append("-v")
 
-    pip_install = (
-        f"{python_bin} -m pip install pip-tools" if verbose else f"{python_bin} -m pip install --quiet pip-tools"
-    )
+    pip_install_flags = f"--index-url {PIP_TOOLS_INDEX_URL}"
+    if not verbose:
+        pip_install_flags = f"--quiet {pip_install_flags}"
+    pip_install = f"{python_bin} -m pip install {pip_install_flags} pip-tools"
     compile_command = " ".join([pip_install, "&&", " ".join(compile_flags)])
 
     command = [
@@ -162,6 +194,8 @@ def compile_pipeline_requirements(
     upgrade: bool = True,
     dry_run: bool = False,
     verbose: bool = True,
+    python_platform: str = DEFAULT_PYTHON_PLATFORM,
+    python_version: str = DEFAULT_PYTHON_VERSION,
 ) -> None:
     """Compile ``requirements.in`` to ``requirements.txt`` for one pipeline."""
     requirements_in = pipeline_dir / _REQUIREMENTS_IN
@@ -177,12 +211,15 @@ def compile_pipeline_requirements(
         upgrade=upgrade,
         dry_run=dry_run,
         verbose=verbose,
+        python_platform=python_platform,
+        python_version=python_version,
     )
 
     print(f"Refreshing {pipeline_dir / _REQUIREMENTS_TXT}")
     print(f"  index-url: {sanitize_index_url_for_log(index_url)}")
     print(f"  runtime: {runtime}")
     print(f"  image: {container_image}")
+    print(f"  python-platform: {python_platform}")
     run_kwargs: dict[str, object] = {"check": True, "timeout": 3600}
     if not verbose:
         run_kwargs["stdout"] = subprocess.DEVNULL
@@ -199,6 +236,8 @@ def refresh_pipeline_requirements(
     upgrade: bool = True,
     dry_run: bool = False,
     verbose: bool = True,
+    python_platform: str = DEFAULT_PYTHON_PLATFORM,
+    python_version: str = DEFAULT_PYTHON_VERSION,
 ) -> None:
     """Refresh requirements.txt for all given pipeline directories."""
     if repo_root is None:
@@ -213,6 +252,8 @@ def refresh_pipeline_requirements(
             upgrade=upgrade,
             dry_run=dry_run,
             verbose=verbose,
+            python_platform=python_platform,
+            python_version=python_version,
         )
 
 
@@ -253,6 +294,16 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Suppress live pip-compile progress output",
     )
+    parser.add_argument(
+        "--python-platform",
+        default=DEFAULT_PYTHON_PLATFORM,
+        help=(f"Target platform for wheel resolution in uv format (default: {DEFAULT_PYTHON_PLATFORM})"),
+    )
+    parser.add_argument(
+        "--python-version",
+        default=DEFAULT_PYTHON_VERSION,
+        help=f"Target Python version for wheel resolution (default: {DEFAULT_PYTHON_VERSION})",
+    )
     return parser.parse_args(argv)
 
 
@@ -269,6 +320,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             upgrade=not args.no_upgrade,
             dry_run=args.dry_run,
             verbose=not args.quiet,
+            python_platform=args.python_platform,
+            python_version=args.python_version,
         )
     except (RefreshRequirementsError, subprocess.CalledProcessError, FileNotFoundError) as exc:
         print(f"error: {exc}", file=sys.stderr)

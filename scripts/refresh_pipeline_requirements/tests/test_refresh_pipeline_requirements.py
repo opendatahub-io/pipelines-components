@@ -9,6 +9,7 @@ import pytest
 from ..refresh_pipeline_requirements import (
     RefreshRequirementsError,
     build_container_command,
+    build_pip_platform_args,
     build_volume_mount,
     compile_pipeline_requirements,
     read_index_url,
@@ -68,6 +69,26 @@ class TestSanitizeIndexUrlForLog:
         url = "https://user:secret@example.com:8443/simple?foo=bar"
 
         assert sanitize_index_url_for_log(url) == "https://example.com:8443"
+
+
+class TestBuildPipPlatformArgs:
+    """Tests for build_pip_platform_args."""
+
+    def test_converts_uv_platform_to_pip_args(self):
+        """Converts uv-style platform strings to pip resolver arguments."""
+        args = build_pip_platform_args("x86_64-manylinux_2_34", "3.12")
+
+        assert args == ("--platform manylinux_2_34_x86_64 --python-version 3.12 --implementation cp --abi cp312")
+
+    def test_rejects_invalid_platform(self):
+        """Raises when the platform string is malformed."""
+        with pytest.raises(RefreshRequirementsError, match="Invalid python platform"):
+            build_pip_platform_args("manylinux_2_34", "3.12")
+
+    def test_rejects_invalid_python_version(self):
+        """Raises when the python version string is malformed."""
+        with pytest.raises(RefreshRequirementsError, match="Invalid python version"):
+            build_pip_platform_args("x86_64-manylinux_2_34", "3")
 
 
 class TestResolvePipelineDir:
@@ -168,12 +189,16 @@ class TestBuildContainerCommand:
         assert "-lc" in command
         compile_command = command[command.index("-lc") + 1]
         assert "python3 -u -m piptools compile requirements.in" in compile_command
-        assert "python3 -u -m pip install pip-tools" in compile_command
+        assert "python3 -u -m pip install --index-url https://pypi.org/simple pip-tools" in compile_command
         assert "--generate-hashes" in compile_command
         assert "--allow-unsafe" in compile_command
         assert "--no-header" in compile_command
         assert " -v" in compile_command
         assert "--upgrade" in compile_command
+        assert "--pip-args" in compile_command
+        assert "--platform manylinux_2_34_x86_64" in compile_command
+        assert "--python-version 3.12" in compile_command
+        assert "--abi cp312" in compile_command
         assert "--output-file requirements.txt" in compile_command
         assert "--dry-run" not in compile_command
         assert "--quiet" not in compile_command
@@ -230,6 +255,7 @@ class TestBuildContainerCommand:
         compile_command = command[command.index("-lc") + 1]
         assert " -v" not in compile_command
         assert "--quiet" in compile_command
+        assert "--index-url https://pypi.org/simple" in compile_command
         assert "python3 -u -m piptools compile requirements.in" in compile_command
 
     def test_includes_upgrade_and_dry_run_flags(self, tmp_path: Path):

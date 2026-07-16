@@ -33,24 +33,24 @@ annotated-doc==0.0.4 \
 annotated-types==0.7.0 \
     --hash=sha256:d31d6f386f3ecd6cdca12274844b969c3f9c90d15ebef7774f2eb34857108758
     # via pydantic
-anyio==4.14.1 \
-    --hash=sha256:7b1919965ee5094a3cf8b0c371749b59b5835293055e51ab23a4a45bca1d3fab
+anyio==4.14.2 \
+    --hash=sha256:910fa689d2615586a8c10cd10caaa20a6613e5eda16c3844eeb2b0886d37c8d3
     # via
     #   httpx
     #   httpx2
     #   starlette
     #   watchfiles
-apsw==3.53.3.0 \
-    --hash=sha256:6ebd5eb00fe05748474cf2447d69e1e8046b7ea660161118e11704fb740faad4 \
-    --hash=sha256:8067563ffbfd0e92d4bd7c93ca8a9ba48563dba7e4df0d3147e3eb1c4186d6ea \
-    --hash=sha256:cf81d8b440d7e814230a3813f8ad9604c7215e913fd20c84efecaf55e6574628 \
-    --hash=sha256:da341bba1dba4edca8d3276be0ab620cb19d82531df58167c058f82558fcd43b
+apsw==3.53.3.1 \
+    --hash=sha256:0ef9225484f3e93bd1389edd2ad6f06470633affea8e67789a24f3dad05e03b5 \
+    --hash=sha256:405c613c44ec4e27f57a75d4271c94e823844eb9ff3359032e18a3196f18466c \
+    --hash=sha256:88037832f60378b85c261728d8c61b6fbb1243b59e698bd3a2f1c7f2a432a9c6 \
+    --hash=sha256:c6666cb445b0b3964d26b1bd4c649018be88452488da310fa90c56aa872d34ca
     # via apswutils
 apswutils==0.1.2 \
     --hash=sha256:93c25816cc520a6c6017e4b74ea2087298acc955bcc31b6646edfe6687a14a65
     # via fastlite
-asttokens==3.0.1 \
-    --hash=sha256:0c40c339bd379c26d9487ff0462886cdf2d5d709fca63db38e80487577f3ba00
+asttokens==3.0.2 \
+    --hash=sha256:b1bc9099e022bd7dbe8269b719ff351de7ab700dffbc834f69d78b70c554d6d8
     # via stack-data
 attrs==26.1.0 \
     --hash=sha256:72a7cd6c5cd0ba459eec87d0cff40ba06839196b8355a01450ea1db9f6ab6a3d
@@ -210,8 +210,8 @@ executing==2.2.1 \
 fastai==2.8.7 \
     --hash=sha256:807e2f12314d88cf73e04bd5aa56b09b3894de1ceadfd0147dd06d27d082bbb5
     # via autogluon-tabular
-fastcore==2.0.1 \
-    --hash=sha256:5abb65be409d76e39e96a96cda0c5a36b1662f43cb95255be2ac9f729aa9f252
+fastcore==2.0.4 \
+    --hash=sha256:61925da7f1e8e621abd132e45ead85d08027d070eb8ae71a438cdfccac6ef1ae
     # via
     #   apswutils
     #   fastai
@@ -610,10 +610,14 @@ pexpect==4.9.0 \
     --hash=sha256:76e4e42fc2b353ddb52526937278a06ebdd64b5a5cd55dc2b9a2b812f85d51fd
     # via ipython
 pillow==12.3.0 \
+    --hash=sha256:292ad662c4a21daa5c557816bd36870c036fcb32f1863a474725c9a48db317f2 \
     --hash=sha256:4a904ef7f3765fc818c3a483529ff04147e97cc0390f9eec5edd30cae497fafe \
     --hash=sha256:5762ef56cdceff2319ac80ed92150106a0bf51ec2eea15226f44c9d983e7b916 \
     --hash=sha256:65a30ac6a91ac6d2d08c73441c8fe69653d0d818312b18d1dc86ee8932529cec \
-    --hash=sha256:bb4f92e67999c0820fd8a9f959f0dce3b0b0dcb8144d47aa7a1432183e7c4c98
+    --hash=sha256:787b6ebb6a267bca4040c40296487e0428b7ba8fe3024b2863626ba09d566fc9 \
+    --hash=sha256:bb4f92e67999c0820fd8a9f959f0dce3b0b0dcb8144d47aa7a1432183e7c4c98 \
+    --hash=sha256:c7d40c6deb9bf0b847d4f027d55e2362d55fbee8876dbf728af0e2efe345128a \
+    --hash=sha256:e803d1800d5fb6ed2fbbb8d1aa4a42f1f9080ed98b6f929646b920330031f6b1
     # via
     #   fastai
     #   matplotlib
@@ -728,8 +732,8 @@ python-dateutil==2.9.0.post0 \
 python-dotenv==1.2.2 \
     --hash=sha256:b380203de11ab7a5b422fa6f9f377fe1ae1e1daa8559474a0518b6ca10f7aec5
     # via uvicorn
-python-fasthtml==0.14.5 \
-    --hash=sha256:94a8a5642b8cf17eb21d71990cfd33fe354ae60849773793fbe493dfc0734fc3
+python-fasthtml==0.14.6 \
+    --hash=sha256:cf2085f7606ae5f1db4fd43a463218839b99b9f4f65c817f2c38d86a915095d9
     # via fastprogress
 python-multipart==0.0.32 \
     --hash=sha256:61e4a190f7cd947a7aebc96a97976e628210851d66f7a25a6ddc3dab2305e6b4
@@ -760,6 +764,7 @@ pyyaml==6.0.3 \
     #   uvicorn
 regex==2026.7.10 \
     --hash=sha256:08953ce98a4d4651720eb1f9eab1b6e1420e794949707fa50b99b6a8a0db74a3 \
+    --hash=sha256:2137bb9688fd4e0c24b4dfba4aa53ed14516259e858840aa3fd79e3f9c144241 \
     --hash=sha256:228df7d37b129645868b12b6761f4a04fdccfa64110d5c4ec030ea40f3ece3b5 \
     --hash=sha256:7aace66aba0972be9268979cfa5364a3b5d48ae020569f395d0bbd0b762051f9
     # via transformers
@@ -824,11 +829,11 @@ scipy==1.16.3 \
     #   statsforecast
     #   statsmodels
     #   xgboost
-sentencepiece==0.2.1 \
-    --hash=sha256:126d4f0311685be7f651ce08aa549fdd69a8a8cae70ed8dff587eb0a42f4359e \
-    --hash=sha256:6a3de0ea0b5ea0f8993511780d4dd964b3e93875bedb5d6e225102742ed05922 \
-    --hash=sha256:6a9124f3be94bb4fd56d6ea4e775762525131f0b11944e6f738abdde33d73c5f \
-    --hash=sha256:c8e3671034d2f4a094584963b2e30ab3a3065449066746a33e35df624be02c76
+sentencepiece==0.2.2 \
+    --hash=sha256:5248bf8a5e06b674c570b2ae405d83524de0c88253348c7e3a68c90e98f7f848 \
+    --hash=sha256:68b3372f9de22a0d93fdb377935f9ccfced3a9f208728537ed8a5e3e010149ce \
+    --hash=sha256:783e2c63cc9389a9049887908db0577997f19d887db6c4eb2cfc3c12f63a0078 \
+    --hash=sha256:d9a0be1cca4d5885319a63c5f36f1d927d0c9e3e09e46508974b1bb450c620c1
     # via transformers
 shellingham==1.5.4 \
     --hash=sha256:c62d421a942ec6b2400acb0091f31f7bd860d133dfcc8e7c5a252afedba20f8f

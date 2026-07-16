@@ -107,6 +107,10 @@ sync-packages:
 	@$(UVRUN) python -m scripts.sync_packages.sync_packages
 
 AIPCC_INDEX_URL := https://console.redhat.com/api/pypi/public-rhai/rhoai/3.5/cpu-ubi9/simple
+
+# RHEL UBI9 (glibc 2.34)
+PYTHON_PLATFORM := x86_64-manylinux_2_34
+
 # Refresh Hermeto-compatible requirements.txt for RHOAI pipelines (requires Podman or Docker)
 # Usage: make pipeline-requirements [PIPELINE=path/to/pipeline] [RUNTIME=podman|docker] [IMAGE=...] [NO_UPGRADE=true] [DRY_RUN=true] [QUIET=true]
 pipeline-requirements:
@@ -115,15 +119,13 @@ pipeline-requirements:
 		echo "Error: RUNTIME must be podman or docker"; exit 1; \
 	fi; \
 	$(UVRUN) python -m scripts.refresh_pipeline_requirements.refresh_pipeline_requirements \
+		--python-platform "$(PYTHON_PLATFORM)" \
 		$(if $(filter true,$(NO_UPGRADE)),--no-upgrade,) \
 		$(if $(filter true,$(DRY_RUN)),--dry-run,) \
 		$(if $(filter true,$(QUIET)),--quiet,) \
 		$${RUNTIME:+--runtime "$$RUNTIME"} \
 		$${IMAGE:+--image "$$IMAGE"} \
 		$${PIPELINE:+"$$PIPELINE"}
-
-# RHEL UBI9 (glibc 2.34)
-PYTHON_PLATFORM := x86_64-manylinux_2_34
 
 requirements:
 	echo "--index-url $(AIPCC_INDEX_URL)" > requirements.txt
