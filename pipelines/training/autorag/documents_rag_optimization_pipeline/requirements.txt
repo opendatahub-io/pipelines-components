@@ -52,11 +52,11 @@ bcrypt==5.0.0 \
 beautifulsoup4==4.15.0 \
     --hash=sha256:79d127e40edb07f252fb2c5e802665c5a28a26a49eaf9c5f1be7b9af93b4d61e
     # via docling-slim
-boto3==1.43.49 \
-    --hash=sha256:05dcd8fd1dc5291702dfc335c25824c5ea7294ad1f8d16d1128378307242a431
+boto3==1.43.50 \
+    --hash=sha256:00c080260af44da1faaed39ed97e3d37762e9414426eed89cc9137e7e8ae96a9
     # via ai4rag
-botocore==1.43.49 \
-    --hash=sha256:f65e2e5df3298a444b99f348ab3f39de98253f02a042ccf3ae7c602f6fc216d2
+botocore==1.43.50 \
+    --hash=sha256:a202e00c75172a292d6cd3f5d217b7c27333c496ef854ead607ea6b3d7b6bb2d
     # via
     #   boto3
     #   s3transfer
@@ -169,8 +169,8 @@ evaluate==0.4.6 \
 faker==40.31.0 \
     --hash=sha256:2045a96cbb764b050126da080b26ba6388c961a69569b8cdfa9d2cf534e681fd
     # via polyfactory
-filelock==3.29.7 \
-    --hash=sha256:23543cc34a61918869874773bcc0340e77a3b5281205c84340214d541d9d106e
+filelock==3.30.2 \
+    --hash=sha256:3876bce9fb39cd4dc9dc025336708416b2159bd96c5b4ca2d77dd14c9c7600ba
     # via
     #   datasets
     #   huggingface-hub
@@ -199,8 +199,8 @@ fsspec[http]==2026.4.0 \
     #   evaluate
     #   huggingface-hub
     #   torch
-google-api-core==2.31.0 \
-    --hash=sha256:2975c76ecb910406ff6f71c62ed09848d0db421b27986413c448cb8766fc827e
+google-api-core==2.32.0 \
+    --hash=sha256:3e21a1d0f5bb3cc135e11f816a83f22bc77f6fecb32d8bc0474e1cecfd923e3d
     # via
     #   google-cloud-core
     #   google-cloud-storage
@@ -244,11 +244,11 @@ h11==0.16.0 \
     # via
     #   httpcore
     #   uvicorn
-hf-xet==1.5.1 \
-    --hash=sha256:1c81a2bf52de7fce806473afeae8822ebabbb806cc45d6e7df906a8ebf25fcbc \
-    --hash=sha256:236938f6e7b607bba83e3c69f706a88c04ac98ae40185b7993d2252c27c31512 \
-    --hash=sha256:5072f2dcc3fb7d66700b2b14af25f534623b2b71166f4a6566dac091da387936 \
-    --hash=sha256:e0b14eda87d8109be4ca52aa5daef4897ed046ff2e558f363be65008c048149e
+hf-xet==1.5.2 \
+    --hash=sha256:0b7172fa11d8bcaf9b5c6233b74ea2afead2ac2f06daf6dc6fc9997d6f7811d2 \
+    --hash=sha256:547bf863d0d837702295719ddc13cf1f5f8a7e30c1921d937ce5696148c546ad \
+    --hash=sha256:7a31f51b7d81506ad4c7b8b915fc83d241c10292c56987d322274ef3a7fa0abb \
+    --hash=sha256:87162129170863c936dfc8abb220797e5d418e3a9bba83d53a2eb3fd02a415d3
     # via huggingface-hub
 httpcore==1.0.9 \
     --hash=sha256:fc0ea63671089523efc6fe94ec49d0b10c9660460cbca6172fc972c1c5f9c0ac
@@ -458,31 +458,31 @@ opencv-python==4.13.0.92 \
 openpyxl==3.1.5 \
     --hash=sha256:9fd63908760579307e6ef081d0305efc3f37dbb6ec8b29650b248a01010eae6b
     # via docling-slim
-opentelemetry-api==1.43.0 \
-    --hash=sha256:d5a5a56ae11c0a04240e8ce1e7e18bede5c0f755bb612a30456312e0d2b7eaeb
+opentelemetry-api==1.44.0 \
+    --hash=sha256:f43837b558a6ca8d83b0525bcdce06fe8ac35bf54c3954fce5d048e912b9dc7c
     # via
     #   chromadb
     #   opentelemetry-exporter-otlp-proto-grpc
     #   opentelemetry-sdk
     #   opentelemetry-semantic-conventions
-opentelemetry-exporter-otlp-proto-common==1.43.0 \
-    --hash=sha256:b97c66b65e267c685152a10104dfe5f8b5beac824e89cbe02ab61f33285bb125
+opentelemetry-exporter-otlp-proto-common==1.44.0 \
+    --hash=sha256:db3cb73dd9ba52e8705a1fc7195a70d98798a6674089f08fdc4583b14372f7f1
     # via opentelemetry-exporter-otlp-proto-grpc
-opentelemetry-exporter-otlp-proto-grpc==1.43.0 \
-    --hash=sha256:2e5f27efc78a0da24dade88cf50d19bfdc64b8524b45f5ac9b421d21fceb72be
+opentelemetry-exporter-otlp-proto-grpc==1.44.0 \
+    --hash=sha256:ecc9ac901cd39ba52eb117d92b6359043923d9436b391ca5c23bc735b2c03621
     # via chromadb
-opentelemetry-proto==1.43.0 \
-    --hash=sha256:5a35c1d6e39162e5e3f7dc5bed9c0e1afc786020a5fc230b7c2f2e7699c294fd
+opentelemetry-proto==1.44.0 \
+    --hash=sha256:200229f9ff013f7147cf8e598c539a0b15cb8413358c2e7cfe0af6b8d9fd6ed3
     # via
     #   opentelemetry-exporter-otlp-proto-common
     #   opentelemetry-exporter-otlp-proto-grpc
-opentelemetry-sdk==1.43.0 \
-    --hash=sha256:ca8bf96cfa0ca462ac17866f03f78d79523e37e06c8628a8e3aff71dc65d6dd6
+opentelemetry-sdk==1.44.0 \
+    --hash=sha256:5716ba7552bbc3898a93d167a0b3c40b910fbea5d107a6327a808f4a97749307
     # via
     #   chromadb
     #   opentelemetry-exporter-otlp-proto-grpc
-opentelemetry-semantic-conventions==0.64b0 \
-    --hash=sha256:00d10ccc86c1c169ab96e8b182b5369ad20c129d473a1e40f93ce3226786ffe0
+opentelemetry-semantic-conventions==0.65b0 \
+    --hash=sha256:e03f36b9fa30e8ae088db0b8e583d626468b0131ea7d26fb84a12de687a97730
     # via opentelemetry-sdk
 orjson==3.11.9 \
     --hash=sha256:21ad5305e765b982e46b044165f8a37f2dfc29f2986a54b3ad5c4c7757b5480c \
@@ -888,8 +888,8 @@ tqdm==4.68.4 \
     #   rapidocr
     #   semchunk
     #   transformers
-transformers==5.14.0 \
-    --hash=sha256:4c41d78778e174bc4b46fa0578d975393c9df13d0e583aedab267202074542f5
+transformers==5.14.1 \
+    --hash=sha256:3e917182ca1be0140cac8411afb52e0df0999e106c4eea2e81a052b6b5015a8d
     # via
     #   docling-core
     #   docling-ibm-models
