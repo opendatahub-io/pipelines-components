@@ -101,11 +101,17 @@ def timeseries_data_loader(
     if file_key.startswith("/") or file_key.endswith("/") or "//" in file_key:
         raise ValueError("file_key must be a valid S3 object key and must not start/end with '/' or contain '//'.")
 
-    if (test_data_file_key and test_data_file_key.strip() and
-        not (test_data_bucket_name and test_data_bucket_name.strip())):
+    if (
+        test_data_file_key
+        and test_data_file_key.strip()
+        and not (test_data_bucket_name and test_data_bucket_name.strip())
+    ):
         raise ValueError("test_data_bucket_name must be provided when test_data_file_key is set.")
-    if (test_data_bucket_name and test_data_bucket_name.strip() and
-        not (test_data_file_key and test_data_file_key.strip())):
+    if (
+        test_data_bucket_name
+        and test_data_bucket_name.strip()
+        and not (test_data_file_key and test_data_file_key.strip())
+    ):
         raise ValueError("test_data_file_key must be provided when test_data_bucket_name is set.")
 
     from kfp_components.components.training.automl.shared.component_status import ComponentStatusTracker

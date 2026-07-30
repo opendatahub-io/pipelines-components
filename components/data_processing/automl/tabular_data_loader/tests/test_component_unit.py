@@ -776,7 +776,6 @@ class TestAutomlDataLoaderUnitTests:
         assert (tmp_path / "datasets" / "models_selection_train_dataset.csv").exists()
 
 
-
 class TestUserProvidedTestData:
     """Tests for user-provided test dataset feature."""
 

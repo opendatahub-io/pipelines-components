@@ -132,11 +132,17 @@ def automl_data_loader(  # noqa: D417
     elif selection_train_size <= 0 or selection_train_size >= 1:
         raise ValueError("selection_train_size must be in a range 0 to 1.")
 
-    if (test_data_file_key and test_data_file_key.strip() and
-        not (test_data_bucket_name and test_data_bucket_name.strip())):
+    if (
+        test_data_file_key
+        and test_data_file_key.strip()
+        and not (test_data_bucket_name and test_data_bucket_name.strip())
+    ):
         raise TypeError("test_data_bucket_name must be provided when test_data_file_key is set.")
-    if (test_data_bucket_name and test_data_bucket_name.strip() and
-        not (test_data_file_key and test_data_file_key.strip())):
+    if (
+        test_data_bucket_name
+        and test_data_bucket_name.strip()
+        and not (test_data_file_key and test_data_file_key.strip())
+    ):
         raise TypeError("test_data_file_key must be provided when test_data_bucket_name is set.")
 
     from kfp_components.components.training.automl.shared.component_status import ComponentStatusTracker
@@ -443,7 +449,9 @@ def automl_data_loader(  # noqa: D417
             # Download user test data from S3 (AC5: distinguishable error message)
             try:
                 user_test_df = load_data_in_batches(
-                    s3_client, test_data_bucket_name, test_data_file_key,
+                    s3_client,
+                    test_data_bucket_name,
+                    test_data_file_key,
                     max_size_bytes=MAX_SIZE_BYTES,
                     sampling_method="first_n_rows",
                     label_column=label_column,
@@ -484,8 +492,7 @@ def automl_data_loader(  # noqa: D417
 
             # Combined size validation (AC7)
             combined_memory = (
-                sampled_dataframe.memory_usage(deep=True).sum()
-                + user_test_df.memory_usage(deep=True).sum()
+                sampled_dataframe.memory_usage(deep=True).sum() + user_test_df.memory_usage(deep=True).sum()
             )
             if combined_memory > MAX_COMBINED_DATA_BYTES:
                 raise ValueError(
@@ -504,7 +511,8 @@ def automl_data_loader(  # noqa: D417
             y = sampled_dataframe[label_column]
 
             X_sel, X_extra, y_sel, y_extra = train_test_split(
-                X, y,
+                X,
+                y,
                 test_size=(1 - selection_train_size),
                 stratify=(y if stratify_effective else None),
                 random_state=random_state,
