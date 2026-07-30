@@ -726,6 +726,7 @@ def autogluon_models_training(
 
         html_artifact.metadata["data"] = leaderboard_df.to_json(orient="records")
         html_artifact.metadata["display_name"] = "automl_leaderboard"
+        html_artifact.metadata["evaluation_mode"] = evaluation_mode
         status.record(
             "build_leaderboard",
             "completed",
@@ -739,8 +740,8 @@ def autogluon_models_training(
             "data_config": {
                 "sampling_config": sampling_config,
                 "split_config": split_config,
-                "evaluation_mode": evaluation_mode,
             },
+            "evaluation_mode": evaluation_mode,
             "task_type": problem_type,
             "label_column": predictor.label,
             "model_config": model_config,
