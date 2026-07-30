@@ -1481,7 +1481,7 @@ class TestEvaluationModeParameter:
 
         with pytest.raises(
             ValueError,
-            match=r"evaluation_mode must be one of \{'user-provided', 'auto-split'\}; got 'invalid-mode'\.",
+            match=r"evaluation_mode must be one of \{('user-provided', 'auto-split'|'auto-split', 'user-provided')\}; got 'invalid-mode'\.",
         ):
             autogluon_timeseries_models_training.python_func(
                 target="sales",
