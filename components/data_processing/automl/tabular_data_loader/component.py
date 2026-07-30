@@ -96,6 +96,7 @@ def automl_data_loader(  # noqa: D417
     logger = logging.getLogger(__name__)
 
     MAX_SIZE_BYTES = 100 * 1024 * 1024  # 100 MB limit in bytes
+    MAX_COMBINED_DATA_BYTES = 8 * 1024 * 1024 * 1024  # 8 GiB combined train + test limit
     MIN_VALID_RECORDS_AFTER_CLEANSING = 100
     PANDAS_CHUNK_SIZE = 10000  # Rows per batch for streaming read
     DEFAULT_RANDOM_STATE = 42
@@ -428,6 +429,11 @@ def automl_data_loader(  # noqa: D417
         if not sampled_test_dataset.uri or not sampled_test_dataset.uri.endswith(".csv"):
             sampled_test_dataset.uri = (sampled_test_dataset.uri or "sampled_test_dataset") + ".csv"
 
+        # Common setup: workspace directory and stratification flag
+        datasets_dir = Path(workspace_path) / "datasets"
+        datasets_dir.mkdir(parents=True, exist_ok=True)
+        stratify_effective = task_type != "regression" and split_config.get("stratify", True)
+
         has_user_test_data = bool(test_data_file_key and test_data_file_key.strip())
 
         if has_user_test_data:
@@ -450,7 +456,7 @@ def automl_data_loader(  # noqa: D417
                 ) from e
 
             # Validate test data is non-empty (AC4)
-            if user_test_df.empty or len(user_test_df) == 0:
+            if len(user_test_df) == 0:
                 raise ValueError(
                     "Test dataset contains no data rows (only headers). "
                     f"Source: s3://{test_data_bucket_name}/{test_data_file_key}. "
@@ -481,7 +487,6 @@ def automl_data_loader(  # noqa: D417
                 sampled_dataframe.memory_usage(deep=True).sum()
                 + user_test_df.memory_usage(deep=True).sum()
             )
-            MAX_COMBINED_DATA_BYTES = 8 * 1024 * 1024 * 1024  # 8 GiB
             if combined_memory > MAX_COMBINED_DATA_BYTES:
                 raise ValueError(
                     f"Combined training and test dataset size ({combined_memory / (1024**3):.2f} GiB) "
@@ -498,8 +503,6 @@ def automl_data_loader(  # noqa: D417
             X = sampled_dataframe.drop(columns=[label_column], inplace=False)
             y = sampled_dataframe[label_column]
 
-            stratify_effective = task_type != "regression" and split_config.get("stratify", True)
-
             X_sel, X_extra, y_sel, y_extra = train_test_split(
                 X, y,
                 test_size=(1 - selection_train_size),
@@ -510,15 +513,6 @@ def automl_data_loader(  # noqa: D417
             X_y_sel = pd.concat([X_sel, y_sel], axis=1)
             X_y_extra = pd.concat([X_extra, y_extra], axis=1)
 
-            # Write to PVC workspace
-            datasets_dir = Path(workspace_path) / "datasets"
-            datasets_dir.mkdir(parents=True, exist_ok=True)
-            models_selection_train_data_path = str(datasets_dir / "models_selection_train_dataset.csv")
-            extra_train_data_path = str(datasets_dir / "extra_train_dataset.csv")
-            X_y_sel.to_csv(models_selection_train_data_path, index=False)
-            X_y_extra.to_csv(extra_train_data_path, index=False)
-
-            # Sample row from test data for downstream use
             sample_row = user_test_df.head(1).to_json(orient="records")
 
             split_config_out = {
@@ -527,19 +521,11 @@ def automl_data_loader(  # noqa: D417
                 "stratify": stratify_effective,
             }
 
-            status.record("split_and_export", "completed",
-                selection_train_size=selection_train_size,
-                stratify=stratify_effective,
-                evaluation_mode=evaluation_mode,
-            )
-
         else:
             evaluation_mode = "auto-split"
             # Features and target
             X = sampled_dataframe.drop(columns=[label_column], inplace=False)
             y = sampled_dataframe[label_column]
-
-            stratify_effective = task_type != "regression" and split_config.get("stratify", True)
 
             # Primary split: train vs test
             X_train, X_test, y_train, y_test = train_test_split(
@@ -563,18 +549,9 @@ def automl_data_loader(  # noqa: D417
             X_y_extra = pd.concat([X_extra, y_extra], axis=1)
             X_y_test = pd.concat([X_test, y_test], axis=1)
 
-            # Write selection train and extra train to PVC workspace
-            datasets_dir = Path(workspace_path) / "datasets"
-            datasets_dir.mkdir(parents=True, exist_ok=True)
-            models_selection_train_data_path = str(datasets_dir / "models_selection_train_dataset.csv")
-            extra_train_data_path = str(datasets_dir / "extra_train_dataset.csv")
-            X_y_sel.to_csv(models_selection_train_data_path, index=False)
-            X_y_extra.to_csv(extra_train_data_path, index=False)
-
             # Write test to S3 artifact
             X_y_test.to_csv(sampled_test_dataset.path, index=False)
 
-            # Sample row for downstream use (JSON string to avoid NaN issues)
             sample_row = X_y_test.head(1).to_json(orient="records")
 
             split_config_out = {
@@ -583,13 +560,20 @@ def automl_data_loader(  # noqa: D417
                 "stratify": stratify_effective,
             }
 
-            status.record(
-                "split_and_export",
-                "completed",
-                test_size=test_size,
-                selection_train_size=selection_train_size,
-                stratify=stratify_effective,
-            )
+        # Common post-split: write selection-train and extra-train CSVs to workspace
+        models_selection_train_data_path = str(datasets_dir / "models_selection_train_dataset.csv")
+        extra_train_data_path = str(datasets_dir / "extra_train_dataset.csv")
+        X_y_sel.to_csv(models_selection_train_data_path, index=False)
+        X_y_extra.to_csv(extra_train_data_path, index=False)
+
+        status.record(
+            "split_and_export",
+            "completed",
+            test_size=split_config_out["test_size"],
+            selection_train_size=selection_train_size,
+            stratify=stratify_effective,
+            evaluation_mode=evaluation_mode,
+        )
 
         return NamedTuple(
             "outputs",

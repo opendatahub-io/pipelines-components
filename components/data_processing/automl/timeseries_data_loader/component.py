@@ -79,6 +79,7 @@ def timeseries_data_loader(
     logger = logging.getLogger(__name__)
 
     MAX_SIZE_BYTES = 100 * 1024 * 1024  # 100 MB limit in bytes
+    MAX_COMBINED_DATA_BYTES = 8 * 1024 * 1024 * 1024  # 8 GiB combined train + test limit
     MIN_VALID_RECORDS_AFTER_CLEANSING = 100
     PANDAS_CHUNK_SIZE = 10000  # Rows per batch for streaming read
     DEFAULT_TEST_SIZE = 0.2
@@ -416,7 +417,6 @@ def timeseries_data_loader(
 
             # Combined size validation (AC7)
             combined_memory = df.memory_usage(deep=True).sum() + user_test_df.memory_usage(deep=True).sum()
-            MAX_COMBINED_DATA_BYTES = 8 * 1024 * 1024 * 1024
             if combined_memory > MAX_COMBINED_DATA_BYTES:
                 raise ValueError(
                     f"Combined training and test dataset size ({combined_memory / (1024**3):.2f} GiB) "
@@ -446,31 +446,9 @@ def timeseries_data_loader(
                     "Increase rows per time series and/or selection_train_size."
                 )
 
-            # Save test dataset to artifact (already done above)
-            # Write selection and extra to workspace
-            selection_path = datasets_dir / "models_selection_train_dataset.csv"
-            extra_path = datasets_dir / "extra_train_dataset.csv"
-            selection_train_df.to_csv(selection_path, index=False)
-            extra_train_df.to_csv(extra_path, index=False)
+            # Extract tail rows from test data for preview
+            test_data_for_sample = user_test_df
 
-            status.record(
-                "split_and_export",
-                "completed",
-                selection_train_size=selection_train_size,
-                evaluation_mode=evaluation_mode,
-            )
-
-            # Sample rows from test data for downstream use
-            sample_tail = user_test_df.tail(min(5, len(user_test_df)))
-            if hasattr(sample_tail, "to_dict"):
-                from kfp_components.components.training.automl.shared.timeseries_notebook_utils import (
-                    _json_records,
-                )
-                sample_rows = json.dumps(_json_records(sample_tail))
-            else:
-                sample_rows = sample_tail.to_json(orient="records")
-
-            sample_config = {"sampling_method": "first_n_rows", "total_rows_loaded": len(df), "sampled_rows": len(df)}
             split_config_out = {
                 "test_size": 0.0,
                 "selection_train_size": selection_train_size,
@@ -518,37 +496,39 @@ def timeseries_data_loader(
             # Save test dataset to artifact
             test_df.to_csv(sampled_test_dataset.path, index=False)
 
-            selection_path = datasets_dir / "models_selection_train_dataset.csv"
-            extra_path = datasets_dir / "extra_train_dataset.csv"
-
-            selection_train_df.to_csv(selection_path, index=False)
-            extra_train_df.to_csv(extra_path, index=False)
-
-            status.record(
-                "split_and_export",
-                "completed",
-                test_size=test_size,
-                selection_train_size=selection_train_size,
-            )
-
-            # Sample rows for downstream use (ISO timestamps when supported; JSON string to avoid NaN issues)
-            sample_tail = test_df.tail(min(5, len(test_df)))
-            if hasattr(sample_tail, "to_dict"):
-                from kfp_components.components.training.automl.shared.timeseries_notebook_utils import (
-                    _json_records,
-                )
-
-                sample_rows = json.dumps(_json_records(sample_tail))
-            else:
-                sample_rows = sample_tail.to_json(orient="records")
-
-            # Create sample config and split config
-            sample_config = {"sampling_method": "first_n_rows", "total_rows_loaded": len(df), "sampled_rows": len(df)}
+            test_data_for_sample = test_df
 
             split_config_out = {
                 "test_size": test_size,
                 "selection_train_size": selection_train_size,
             }
+
+        # Common post-split: write selection-train and extra-train CSVs to workspace
+        selection_path = datasets_dir / "models_selection_train_dataset.csv"
+        extra_path = datasets_dir / "extra_train_dataset.csv"
+        selection_train_df.to_csv(selection_path, index=False)
+        extra_train_df.to_csv(extra_path, index=False)
+
+        status.record(
+            "split_and_export",
+            "completed",
+            test_size=split_config_out["test_size"],
+            selection_train_size=selection_train_size,
+            evaluation_mode=evaluation_mode,
+        )
+
+        # Extract tail rows for downstream preview (ISO timestamps when supported; JSON to avoid NaN issues)
+        sample_tail = test_data_for_sample.tail(min(5, len(test_data_for_sample)))
+        if hasattr(sample_tail, "to_dict"):
+            from kfp_components.components.training.automl.shared.timeseries_notebook_utils import (
+                _json_records,
+            )
+
+            sample_rows = json.dumps(_json_records(sample_tail))
+        else:
+            sample_rows = sample_tail.to_json(orient="records")
+
+        sample_config = {"sampling_method": "first_n_rows", "total_rows_loaded": len(df), "sampled_rows": len(df)}
 
         logger.info(
             "Timeseries loader: %s rows from s3://%s/%s; split selection=%s extra=%s evaluation_mode=%s",

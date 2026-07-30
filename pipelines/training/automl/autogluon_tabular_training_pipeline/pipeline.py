@@ -41,6 +41,7 @@ def autogluon_tabular_training_pipeline(
     positive_class: str = "",
     eval_metric: str = "",
     preset: str = "speed",
+    test_data_secret_name: str = "",
     test_data_bucket_name: str = "",
     test_data_file_key: str = "",
 ):
@@ -123,6 +124,7 @@ def autogluon_tabular_training_pipeline(
         positive_class: Optional label value for the positive class in binary classification. Defaults to the second unique class after sorting label values.
         eval_metric: Metric used for model ranking. Empty string (default) is resolved by the component to "r2" for regression and "accuracy" for binary and multiclass classification.
         preset: Training quality tier. "speed" (default, 4 vCPU / 16 GiB) or "balanced" (may run more than 2x longer, 8 vCPU / 32 GiB).
+        test_data_secret_name: Optional Kubernetes secret name for test data S3 credentials. Reserved for forward compatibility; currently test data uses the same credentials as training data.
         test_data_bucket_name: Optional S3-compatible bucket name containing user-provided test dataset. If provided, test_data_file_key must also be specified.
         test_data_file_key: Optional S3 object key of the test CSV file (features and target column). If provided, test_data_bucket_name must also be specified.
 

@@ -56,6 +56,7 @@ class TestAutogluonTimeseriesTrainingPipelineUnitTests:
             "top_n",
             "preset",
             "eval_metric",
+            "test_data_secret_name",
             "test_data_bucket_name",
             "test_data_file_key",
         }
@@ -67,6 +68,7 @@ class TestAutogluonTimeseriesTrainingPipelineUnitTests:
         assert inputs["known_covariates_names"].default == []
         assert inputs["preset"].default == "speed"
         assert inputs["eval_metric"].default == "mean_absolute_scaled_error"
+        assert inputs["test_data_secret_name"].default == ""
         assert inputs["test_data_bucket_name"].default == ""
         assert inputs["test_data_file_key"].default == ""
 
@@ -93,6 +95,7 @@ class TestAutogluonTimeseriesTrainingPipelineUnitTests:
                 "top_n",
                 "preset",
                 "eval_metric",
+                "test_data_secret_name",
                 "test_data_bucket_name",
                 "test_data_file_key",
             ):

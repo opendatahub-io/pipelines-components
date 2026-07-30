@@ -775,6 +775,11 @@ class TestAutomlDataLoaderUnitTests:
             assert result.sample_config["n_samples"] == 15000
         assert (tmp_path / "datasets" / "models_selection_train_dataset.csv").exists()
 
+
+
+class TestUserProvidedTestData:
+    """Tests for user-provided test dataset feature."""
+
     @mock.patch.dict("os.environ", mocked_env_variables)
     def test_user_provided_test_data_happy_path(self, tmp_path):
         """User-provided test data is written to sampled_test_dataset; evaluation_mode='user-provided'."""
@@ -804,12 +809,16 @@ class TestAutomlDataLoaderUnitTests:
             )
 
         assert result.evaluation_mode == "user-provided"
+        assert result.split_config["test_size"] == 0.0
         # Test data artifact should contain test CSV rows, not auto-split rows
         test_path = Path(sampled_test.path)
         assert test_path.exists()
         header, rows = _read_csv_path(str(test_path))
         assert "target" in header
         assert len(rows) > 0
+        # Verify CSV content: row count and at least one column value match
+        assert len(rows) >= MIN_VALID_RECORDS
+        assert any(row[header.index("target")] != "" for row in rows)
         # Selection train and extra train paths should be written
         assert Path(result.models_selection_train_data_path).exists()
         assert Path(result.extra_train_data_path).exists()
@@ -954,6 +963,83 @@ class TestAutomlDataLoaderUnitTests:
                     label_column="target",
                     sampled_test_dataset=sampled_test,
                     test_data_bucket_name="",
+                    test_data_file_key="data/test.csv",
+                )
+
+    @mock.patch.dict("os.environ", mocked_env_variables)
+    def test_user_provided_test_data_combined_size_exceeds_limit(self, tmp_path):
+        """Combined training + test dataset exceeding 8 GiB raises ValueError (AC7).
+
+        BYTES_PER_ROW is inflated only on the second S3 call (test data fetch) so training
+        data loads normally (default 100 bytes/row, no sampling truncation).  Because
+        ``memory_usage`` reads the class variable at call time, the combined-size check
+        sees the inflated value for *both* training and test DataFrames.
+        """
+        from .mocked_pandas import MockedDataFrame
+
+        train_csv = "a,b,target\n1,2,3\n4,5,6\n"
+        test_csv = "a,b,target\n10,20,30\n40,50,60\n"
+
+        call_count = 0
+
+        def get_object_side_effect(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                # Training data loads with default BYTES_PER_ROW (100)
+                return {"Body": _csv_body(train_csv)}
+            # Inflate BYTES_PER_ROW *after* training data was loaded and cleansed.
+            # memory_usage reads the class variable at call time, so the combined
+            # check sees 85 MB/row for both the already-loaded training DataFrame
+            # and the newly-loaded test DataFrame.
+            MockedDataFrame.BYTES_PER_ROW = 85_000_000  # 85 MB per row
+            return {"Body": _csv_body(test_csv)}
+
+        sampled_test = _make_test_artifact(tmp_path)
+
+        original_bytes_per_row = MockedDataFrame.BYTES_PER_ROW
+        try:
+            with _mock_boto3_and_pandas(get_object_side_effect=get_object_side_effect):
+                with pytest.raises(ValueError, match="Combined training and test dataset size"):
+                    automl_data_loader.python_func(
+                        file_key="data/train.csv",
+                        bucket_name="my-bucket",
+                        workspace_path=str(tmp_path),
+                        label_column="target",
+                        sampled_test_dataset=sampled_test,
+                        test_data_bucket_name="test-bucket",
+                        test_data_file_key="data/test.csv",
+                    )
+        finally:
+            MockedDataFrame.BYTES_PER_ROW = original_bytes_per_row
+
+    @mock.patch.dict("os.environ", mocked_env_variables)
+    def test_user_provided_test_data_empty_after_cleansing(self, tmp_path):
+        """Test dataset with rows that become empty after cleansing raises ValueError."""
+        train_csv = "a,b,target\n1,2,3\n4,5,6\n"
+        # All test data rows have NaN in the label column -> empty after cleansing
+        test_csv = "a,b,target\n10,20,\n40,50,\n"
+
+        call_count = 0
+
+        def get_object_side_effect(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return {"Body": _csv_body(train_csv)}
+            return {"Body": _csv_body(test_csv, pad=False)}
+
+        sampled_test = _make_test_artifact(tmp_path)
+
+        with _mock_boto3_and_pandas(get_object_side_effect=get_object_side_effect):
+            with pytest.raises(ValueError, match="no valid rows after cleansing"):
+                automl_data_loader.python_func(
+                    file_key="data/train.csv",
+                    bucket_name="my-bucket",
+                    workspace_path=str(tmp_path),
+                    label_column="target",
+                    sampled_test_dataset=sampled_test,
+                    test_data_bucket_name="test-bucket",
                     test_data_file_key="data/test.csv",
                 )
 
@@ -1105,6 +1191,9 @@ class TestDataLoaderSplitLogic:
         header, rows = _read_csv_path(sampled_test.path)
         assert "target" in header
         assert len(rows) >= 1
+        # Verify CSV content: row count matches expected split and values are present
+        target_idx = header.index("target")
+        assert all(row[target_idx].strip() != "" for row in rows), "All test rows must have a target value"
 
     @mock.patch.dict("os.environ", mocked_env_variables)
     def test_all_return_fields_present(self, tmp_path):

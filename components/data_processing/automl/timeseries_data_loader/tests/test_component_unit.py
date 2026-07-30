@@ -773,7 +773,12 @@ class TestUserProvidedTestData:
             )
 
         assert result.evaluation_mode == "user-provided"
+        assert result.split_config["test_size"] == 0.0
         assert Path(sampled_test.path).exists()
+        # Verify test artifact CSV has rows and expected columns
+        test_rows = _read_csv_rows(sampled_test.path)
+        assert len(test_rows) > 0
+        assert "target" in test_rows[0]
         assert Path(result.models_selection_train_data_path).exists()
         assert Path(result.extra_train_data_path).exists()
 
@@ -786,6 +791,8 @@ class TestUserProvidedTestData:
         assert result.evaluation_mode == "auto-split"
         assert Path(result.models_selection_train_data_path).exists()
         assert Path(result.extra_train_data_path).exists()
+        assert result.split_config["test_size"] == 0.2
+        assert result.split_config["selection_train_size"] == 0.3
 
     @mock.patch.dict("os.environ", mocked_env_variables)
     def test_user_test_data_empty_file(self, tmp_path):
@@ -917,5 +924,81 @@ class TestUserProvidedTestData:
                     timestamp_column="timestamp",
                     sampled_test_dataset=sampled_test,
                     test_data_bucket_name="",
+                    test_data_file_key="test.csv",
+                )
+
+    @mock.patch.dict("os.environ", mocked_env_variables)
+    def test_user_provided_test_data_combined_size_exceeds_limit(self, tmp_path):
+        """Combined training + test dataset exceeding 8 GiB raises ValueError (AC7).
+
+        BYTES_PER_ROW is inflated only on the second S3 call (test data fetch) so training
+        data loads normally (default 100 bytes/row, no sampling truncation).  Because
+        ``memory_usage`` reads the class variable at call time, the combined-size check
+        sees the inflated value for *both* training and test DataFrames.
+        """
+        train_csv = _timeseries_csv(n_rows=MIN_VALID_RECORDS + 10)
+        test_csv = _timeseries_csv(n_rows=MIN_VALID_RECORDS + 10)
+
+        call_count = 0
+
+        def get_object_side_effect(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                # Training data loads with default BYTES_PER_ROW (100)
+                return {"Body": io.BytesIO(train_csv.encode("utf-8"))}
+            # Inflate BYTES_PER_ROW *after* training data was loaded and cleansed.
+            MockedDataFrame.BYTES_PER_ROW = 85_000_000  # 85 MB per row
+            return {"Body": io.BytesIO(test_csv.encode("utf-8"))}
+
+        sampled_test = _make_test_artifact(tmp_path)
+
+        original_bytes_per_row = MockedDataFrame.BYTES_PER_ROW
+        try:
+            with _mock_boto3_and_pandas(get_object_side_effect=get_object_side_effect):
+                with pytest.raises(ValueError, match="Combined training and test dataset size"):
+                    timeseries_data_loader.python_func(
+                        file_key="train.csv",
+                        bucket_name="b",
+                        workspace_path=str(tmp_path),
+                        target="target",
+                        id_column="item_id",
+                        timestamp_column="timestamp",
+                        sampled_test_dataset=sampled_test,
+                        test_data_bucket_name="test-bucket",
+                        test_data_file_key="test.csv",
+                    )
+        finally:
+            MockedDataFrame.BYTES_PER_ROW = original_bytes_per_row
+
+    @mock.patch.dict("os.environ", mocked_env_variables)
+    def test_user_provided_test_data_empty_after_cleansing(self, tmp_path):
+        """Test dataset with rows that become empty after cleansing raises ValueError."""
+        train_csv = _timeseries_csv(n_rows=MIN_VALID_RECORDS + 10)
+        # Test data with unparseable timestamps -> all rows fail cleansing
+        test_csv = "item_id,timestamp,target,feature\nseries-1,not-a-date,100,1000\nseries-1,also-bad,200,2000\n"
+
+        call_count = 0
+
+        def get_object_side_effect(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return {"Body": io.BytesIO(train_csv.encode("utf-8"))}
+            return {"Body": io.BytesIO(test_csv.encode("utf-8"))}
+
+        sampled_test = _make_test_artifact(tmp_path)
+
+        with _mock_boto3_and_pandas(get_object_side_effect=get_object_side_effect):
+            with pytest.raises(ValueError, match="could not be parsed"):
+                timeseries_data_loader.python_func(
+                    file_key="train.csv",
+                    bucket_name="b",
+                    workspace_path=str(tmp_path),
+                    target="target",
+                    id_column="item_id",
+                    timestamp_column="timestamp",
+                    sampled_test_dataset=sampled_test,
+                    test_data_bucket_name="test-bucket",
                     test_data_file_key="test.csv",
                 )

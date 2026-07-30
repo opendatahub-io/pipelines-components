@@ -55,6 +55,7 @@ class TestAutogluonTabularTrainingPipelineUnitTests:
             "positive_class",
             "preset",
             "eval_metric",
+            "test_data_secret_name",
             "test_data_bucket_name",
             "test_data_file_key",
         }
@@ -64,6 +65,7 @@ class TestAutogluonTabularTrainingPipelineUnitTests:
         assert inputs["top_n"].default == 3
         assert inputs["preset"].default == "speed"
         assert inputs["eval_metric"].default == ""
+        assert inputs["test_data_secret_name"].default == ""
         assert inputs["test_data_bucket_name"].default == ""
         assert inputs["test_data_file_key"].default == ""
 
@@ -88,6 +90,7 @@ class TestAutogluonTabularTrainingPipelineUnitTests:
                 "positive_class",
                 "preset",
                 "eval_metric",
+                "test_data_secret_name",
                 "test_data_bucket_name",
                 "test_data_file_key",
             ):
