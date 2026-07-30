@@ -45,6 +45,8 @@ def autogluon_timeseries_training_pipeline(
     top_n: int = 3,
     eval_metric: str = "mean_absolute_scaled_error",
     preset: str = "speed",
+    test_data_bucket_name: str = "",
+    test_data_file_key: str = "",
 ):
     """AutoGluon time series training pipeline.
 
@@ -105,6 +107,10 @@ def autogluon_timeseries_training_pipeline(
             ``"mean_absolute_scaled_error"``.
         preset: Training quality tier. ``"speed"`` (default, 4 vCPU / 16 GiB) or
             ``"balanced"`` (may run more than 2x longer, 8 vCPU / 32 GiB).
+        test_data_bucket_name: Optional S3-compatible bucket name containing user-provided test dataset.
+            If provided, test_data_file_key must also be specified.
+        test_data_file_key: Optional S3 object key of the test CSV file (features and target column).
+            If provided, test_data_bucket_name must also be specified.
 
     Returns:
         This pipeline wires task outputs between components; compiled runs expose the combined models artifact
@@ -147,6 +153,8 @@ def autogluon_timeseries_training_pipeline(
         target=target,
         id_column=id_column,
         timestamp_column=timestamp_column,
+        test_data_bucket_name=test_data_bucket_name,
+        test_data_file_key=test_data_file_key,
     )
     data_loader_task.after(component_stage_map_task)
     data_loader_task.set_caching_options(False)
@@ -187,6 +195,7 @@ def autogluon_timeseries_training_pipeline(
         extra_train_data_path=data_loader_task.outputs["extra_train_data_path"],
         preset=preset,
         eval_metric=eval_metric,
+        evaluation_mode=data_loader_task.outputs["evaluation_mode"],
     )
     with dsl.If(preset == "balanced"):
         training_task_bl = autogluon_timeseries_models_training(**_training_kwargs)
