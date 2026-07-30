@@ -55,6 +55,8 @@ class TestAutogluonTabularTrainingPipelineUnitTests:
             "positive_class",
             "preset",
             "eval_metric",
+            "test_data_bucket_name",
+            "test_data_file_key",
         }
         inputs = autogluon_tabular_training_pipeline.component_spec.inputs
         params = set(inputs.keys())
@@ -62,6 +64,8 @@ class TestAutogluonTabularTrainingPipelineUnitTests:
         assert inputs["top_n"].default == 3
         assert inputs["preset"].default == "speed"
         assert inputs["eval_metric"].default == ""
+        assert inputs["test_data_bucket_name"].default == ""
+        assert inputs["test_data_file_key"].default == ""
 
     def test_compiled_pipeline_has_expected_inputs(self):
         """Test that the compiled pipeline YAML contains expected pipeline inputs."""
@@ -84,6 +88,8 @@ class TestAutogluonTabularTrainingPipelineUnitTests:
                 "positive_class",
                 "preset",
                 "eval_metric",
+                "test_data_bucket_name",
+                "test_data_file_key",
             ):
                 assert name in content, f"Expected pipeline input '{name}' in compiled YAML"
         except Exception as e:
@@ -209,3 +215,40 @@ class TestAutogluonTabularTrainingPipelineUnitTests:
         assert "task_type:" in content
         assert "label_column:" in content
         assert "defaultValue: regression" in content
+
+    def test_compiled_pipeline_wires_test_data_params_to_data_loader(self):
+        """Test that pipeline wires test_data_bucket_name and test_data_file_key to data loader."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as tmp_file:
+            tmp_path = tmp_file.name
+        try:
+            compiler.Compiler().compile(
+                pipeline_func=autogluon_tabular_training_pipeline,
+                package_path=tmp_path,
+            )
+            content = Path(tmp_path).read_text(encoding="utf-8")
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
+
+        # Verify test data parameters are passed to data loader
+        assert "test_data_bucket_name:" in content
+        assert "test_data_file_key:" in content
+        assert "componentInputParameter: test_data_bucket_name" in content
+        assert "componentInputParameter: test_data_file_key" in content
+
+    def test_compiled_pipeline_wires_evaluation_mode_to_training(self):
+        """Test that evaluation_mode output from data loader is wired to training component."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as tmp_file:
+            tmp_path = tmp_file.name
+        try:
+            compiler.Compiler().compile(
+                pipeline_func=autogluon_tabular_training_pipeline,
+                package_path=tmp_path,
+            )
+            content = Path(tmp_path).read_text(encoding="utf-8")
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
+
+        # Verify evaluation_mode is wired from data loader to training
+        assert "evaluation_mode:" in content
+        assert "outputParameterKey: evaluation_mode" in content
+        assert "producerTask: automl-data-loader" in content
