@@ -27,6 +27,7 @@ def autogluon_models_training(
     positive_class: str = "",
     preset: str = "speed",
     eval_metric: str = "",
+    evaluation_mode: str = "auto-split",
 ) -> NamedTuple("outputs", eval_metric=str, best_model_name=str):
     """Train AutoGluon models, select the top N, and refit each on the full dataset.
 
@@ -70,6 +71,9 @@ def autogluon_models_training(
             (may run more than 2x longer).
         eval_metric: Metric for model ranking (e.g. ``"r2"``, ``"accuracy"``). Defaults
             to ``"r2"`` for regression and ``"accuracy"`` otherwise.
+        evaluation_mode: Data evaluation mode from the data loader. Either ``"user-provided"``
+            (test data provided by user) or ``"auto-split"`` (test data from train/test split).
+            Default is ``"auto-split"``.
 
     Returns:
         NamedTuple with ``eval_metric`` (the metric used for ranking, e.g. ``"r2"`` or ``"accuracy"``)
@@ -100,6 +104,7 @@ def autogluon_models_training(
 
     VALID_TASK_TYPES = {"binary", "multiclass", "regression"}
     VALID_PRESETS = {"speed", "balanced"}
+    VALID_EVALUATION_MODES = {"user-provided", "auto-split"}
     PRESET_TIME_LIMITS = {"speed": 45 * 60, "balanced": 90 * 60}
     PRESET_AG_NAMES = {"speed": "good_quality", "balanced": "high_quality"}
     TOP_N_MAX = 10
@@ -111,6 +116,8 @@ def autogluon_models_training(
         raise ValueError(f"task_type must be one of {VALID_TASK_TYPES}; got {task_type!r}.")
     if preset not in VALID_PRESETS:
         raise ValueError(f"preset must be one of {VALID_PRESETS}; got {preset!r}.")
+    if evaluation_mode not in VALID_EVALUATION_MODES:
+        raise ValueError(f"evaluation_mode must be one of {VALID_EVALUATION_MODES}; got {evaluation_mode!r}.")
     if not train_data_path or not isinstance(train_data_path, str) or not train_data_path.strip():
         raise TypeError("train_data_path must be a non-empty string.")
     if not workspace_path or not isinstance(workspace_path, str) or not workspace_path.strip():
@@ -732,6 +739,7 @@ def autogluon_models_training(
             "data_config": {
                 "sampling_config": sampling_config,
                 "split_config": split_config,
+                "evaluation_mode": evaluation_mode,
             },
             "task_type": problem_type,
             "label_column": predictor.label,
