@@ -817,7 +817,7 @@ class TestUserProvidedTestData:
         assert len(rows) > 0
         # Verify CSV content: row count and at least one column value match
         assert len(rows) >= MIN_VALID_RECORDS
-        assert any(row[header.index("target")] != "" for row in rows)
+        assert all(row[header.index("target")] != "" for row in rows)
         # Selection train and extra train paths should be written
         assert Path(result.models_selection_train_data_path).exists()
         assert Path(result.extra_train_data_path).exists()

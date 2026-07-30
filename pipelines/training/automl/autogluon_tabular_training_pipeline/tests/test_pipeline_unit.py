@@ -90,7 +90,6 @@ class TestAutogluonTabularTrainingPipelineUnitTests:
                 "positive_class",
                 "preset",
                 "eval_metric",
-                "test_data_secret_name",
                 "test_data_bucket_name",
                 "test_data_file_key",
             ):
