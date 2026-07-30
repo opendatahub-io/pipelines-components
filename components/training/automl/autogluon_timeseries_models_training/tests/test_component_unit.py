@@ -1306,3 +1306,308 @@ class TestPredictorMetadata:
         metadata_path = Path(models_artifact.path) / "DeepAR_FULL" / "predictor" / "predictor_metadata.json"
         metadata = json.loads(metadata_path.read_text())
         assert metadata["known_covariates_names"] == ["promo", "temperature"]
+
+
+class TestEvaluationModeParameter:
+    """Tests for evaluation_mode parameter and metadata storage."""
+
+    @mock.patch("pandas.read_csv")
+    @mock.patch("pandas.concat")
+    @mock.patch("autogluon.timeseries.TimeSeriesDataFrame")
+    @mock.patch("autogluon.timeseries.TimeSeriesPredictor")
+    def test_evaluation_mode_user_provided_stored_in_metadata(
+        self,
+        mock_predictor_cls,
+        mock_ts_df_cls,
+        mock_concat,
+        mock_read_csv,
+        mock_artifacts,  # noqa: F811
+    ):
+        """evaluation_mode="user-provided" is accepted and stored in both metadata locations."""
+        models_artifact, extra_train_path, html_artifact = mock_artifacts
+
+        mock_predictor = mock.MagicMock()
+        mock_predictor.leaderboard.return_value = _mock_leaderboard(["DeepAR"])
+        mock_predictor.fit_summary.return_value = {"model_hyperparams": {"DeepAR": {}}}
+        mock_predictor._trainer.get_model_attribute.return_value = mock.MagicMock
+
+        mock_refit_predictor = mock.MagicMock()
+        mock_refit_predictor.evaluate.return_value = {"MASE": 0.5, "MSE": 1.0}
+
+        mock_predictor_cls.side_effect = [mock_predictor, mock_refit_predictor]
+        mock_ts_df_cls.from_data_frame.return_value = _mock_ts_df()
+        mock_ts_df_cls.from_path.return_value = _mock_ts_df()
+        mock_ts_df_cls.return_value = _mock_ts_df()
+        mock_concat.return_value = mock.MagicMock()
+        mock_read_csv.side_effect = [mock.MagicMock(), mock.MagicMock()]
+
+        test_data = mock.MagicMock()
+        test_data.path = "/tmp/test.csv"
+
+        autogluon_timeseries_models_training.python_func(
+            target="sales",
+            id_column="item_id",
+            timestamp_column="timestamp",
+            train_data_path="/tmp/train.csv",
+            test_data=test_data,
+            top_n=1,
+            workspace_path="/tmp/workspace",
+            pipeline_name="ts-pipeline-123",
+            run_id="run-123",
+            models_artifact=models_artifact,
+            extra_train_data_path=extra_train_path,
+            evaluation_mode="user-provided",
+            html_artifact=html_artifact,
+            component_status=_DEFAULT_COMPONENT_STATUS,
+        )
+
+        # Check metadata is stored in both locations
+        assert models_artifact.metadata["context"]["evaluation_mode"] == "user-provided"
+        assert html_artifact.metadata["evaluation_mode"] == "user-provided"
+
+    @mock.patch("pandas.read_csv")
+    @mock.patch("pandas.concat")
+    @mock.patch("autogluon.timeseries.TimeSeriesDataFrame")
+    @mock.patch("autogluon.timeseries.TimeSeriesPredictor")
+    def test_evaluation_mode_auto_split_stored_in_metadata(
+        self,
+        mock_predictor_cls,
+        mock_ts_df_cls,
+        mock_concat,
+        mock_read_csv,
+        mock_artifacts,  # noqa: F811
+    ):
+        """evaluation_mode="auto-split" is accepted and stored in both metadata locations."""
+        models_artifact, extra_train_path, html_artifact = mock_artifacts
+
+        mock_predictor = mock.MagicMock()
+        mock_predictor.leaderboard.return_value = _mock_leaderboard(["DeepAR"])
+        mock_predictor.fit_summary.return_value = {"model_hyperparams": {"DeepAR": {}}}
+        mock_predictor._trainer.get_model_attribute.return_value = mock.MagicMock
+
+        mock_refit_predictor = mock.MagicMock()
+        mock_refit_predictor.evaluate.return_value = {"MASE": 0.5, "MSE": 1.0}
+
+        mock_predictor_cls.side_effect = [mock_predictor, mock_refit_predictor]
+        mock_ts_df_cls.from_data_frame.return_value = _mock_ts_df()
+        mock_ts_df_cls.from_path.return_value = _mock_ts_df()
+        mock_ts_df_cls.return_value = _mock_ts_df()
+        mock_concat.return_value = mock.MagicMock()
+        mock_read_csv.side_effect = [mock.MagicMock(), mock.MagicMock()]
+
+        test_data = mock.MagicMock()
+        test_data.path = "/tmp/test.csv"
+
+        autogluon_timeseries_models_training.python_func(
+            target="sales",
+            id_column="item_id",
+            timestamp_column="timestamp",
+            train_data_path="/tmp/train.csv",
+            test_data=test_data,
+            top_n=1,
+            workspace_path="/tmp/workspace",
+            pipeline_name="ts-pipeline-123",
+            run_id="run-123",
+            models_artifact=models_artifact,
+            extra_train_data_path=extra_train_path,
+            evaluation_mode="auto-split",
+            html_artifact=html_artifact,
+            component_status=_DEFAULT_COMPONENT_STATUS,
+        )
+
+        # Check metadata is stored in both locations
+        assert models_artifact.metadata["context"]["evaluation_mode"] == "auto-split"
+        assert html_artifact.metadata["evaluation_mode"] == "auto-split"
+
+    @mock.patch("pandas.read_csv")
+    @mock.patch("pandas.concat")
+    @mock.patch("autogluon.timeseries.TimeSeriesDataFrame")
+    @mock.patch("autogluon.timeseries.TimeSeriesPredictor")
+    def test_evaluation_mode_defaults_to_auto_split(
+        self,
+        mock_predictor_cls,
+        mock_ts_df_cls,
+        mock_concat,
+        mock_read_csv,
+        mock_artifacts,  # noqa: F811
+    ):
+        """evaluation_mode defaults to "auto-split" when not provided."""
+        models_artifact, extra_train_path, html_artifact = mock_artifacts
+
+        mock_predictor = mock.MagicMock()
+        mock_predictor.leaderboard.return_value = _mock_leaderboard(["DeepAR"])
+        mock_predictor.fit_summary.return_value = {"model_hyperparams": {"DeepAR": {}}}
+        mock_predictor._trainer.get_model_attribute.return_value = mock.MagicMock
+
+        mock_refit_predictor = mock.MagicMock()
+        mock_refit_predictor.evaluate.return_value = {"MASE": 0.5, "MSE": 1.0}
+
+        mock_predictor_cls.side_effect = [mock_predictor, mock_refit_predictor]
+        mock_ts_df_cls.from_data_frame.return_value = _mock_ts_df()
+        mock_ts_df_cls.from_path.return_value = _mock_ts_df()
+        mock_ts_df_cls.return_value = _mock_ts_df()
+        mock_concat.return_value = mock.MagicMock()
+        mock_read_csv.side_effect = [mock.MagicMock(), mock.MagicMock()]
+
+        test_data = mock.MagicMock()
+        test_data.path = "/tmp/test.csv"
+
+        # Call without evaluation_mode parameter to test default
+        autogluon_timeseries_models_training.python_func(
+            target="sales",
+            id_column="item_id",
+            timestamp_column="timestamp",
+            train_data_path="/tmp/train.csv",
+            test_data=test_data,
+            top_n=1,
+            workspace_path="/tmp/workspace",
+            pipeline_name="ts-pipeline-123",
+            run_id="run-123",
+            models_artifact=models_artifact,
+            extra_train_data_path=extra_train_path,
+            html_artifact=html_artifact,
+            component_status=_DEFAULT_COMPONENT_STATUS,
+        )
+
+        # Check default value is stored in both locations
+        assert models_artifact.metadata["context"]["evaluation_mode"] == "auto-split"
+        assert html_artifact.metadata["evaluation_mode"] == "auto-split"
+
+    def test_rejects_invalid_evaluation_mode(self, mock_artifacts):  # noqa: F811
+        """evaluation_mode with invalid value raises ValueError."""
+        models_artifact, extra_train_path, html_artifact = mock_artifacts
+        test_data = mock.MagicMock()
+        test_data.path = "/tmp/test.csv"
+
+        with pytest.raises(
+            ValueError,
+            match=r"evaluation_mode must be one of \{'user-provided', 'auto-split'\}; got 'invalid-mode'\.",
+        ):
+            autogluon_timeseries_models_training.python_func(
+                target="sales",
+                id_column="item_id",
+                timestamp_column="timestamp",
+                train_data_path="/tmp/train.csv",
+                test_data=test_data,
+                top_n=1,
+                workspace_path="/tmp/workspace",
+                pipeline_name="ts-pipeline-123",
+                run_id="run-123",
+                models_artifact=models_artifact,
+                extra_train_data_path=extra_train_path,
+                evaluation_mode="invalid-mode",
+                html_artifact=html_artifact,
+                component_status=_DEFAULT_COMPONENT_STATUS,
+            )
+
+    @mock.patch("pandas.read_csv")
+    @mock.patch("pandas.concat")
+    @mock.patch("autogluon.timeseries.TimeSeriesDataFrame")
+    @mock.patch("autogluon.timeseries.TimeSeriesPredictor")
+    def test_evaluation_mode_metadata_structure(
+        self,
+        mock_predictor_cls,
+        mock_ts_df_cls,
+        mock_concat,
+        mock_read_csv,
+        mock_artifacts,  # noqa: F811
+    ):
+        """evaluation_mode appears in the correct metadata location (top-level context)."""
+        models_artifact, extra_train_path, html_artifact = mock_artifacts
+
+        mock_predictor = mock.MagicMock()
+        mock_predictor.leaderboard.return_value = _mock_leaderboard(["DeepAR"])
+        mock_predictor.fit_summary.return_value = {"model_hyperparams": {"DeepAR": {}}}
+        mock_predictor._trainer.get_model_attribute.return_value = mock.MagicMock
+
+        mock_refit_predictor = mock.MagicMock()
+        mock_refit_predictor.evaluate.return_value = {"MASE": 0.5, "MSE": 1.0}
+
+        mock_predictor_cls.side_effect = [mock_predictor, mock_refit_predictor]
+        mock_ts_df_cls.from_data_frame.return_value = _mock_ts_df()
+        mock_ts_df_cls.from_path.return_value = _mock_ts_df()
+        mock_ts_df_cls.return_value = _mock_ts_df()
+        mock_concat.return_value = mock.MagicMock()
+        mock_read_csv.side_effect = [mock.MagicMock(), mock.MagicMock()]
+
+        test_data = mock.MagicMock()
+        test_data.path = "/tmp/test.csv"
+
+        autogluon_timeseries_models_training.python_func(
+            target="sales",
+            id_column="item_id",
+            timestamp_column="timestamp",
+            train_data_path="/tmp/train.csv",
+            test_data=test_data,
+            top_n=1,
+            workspace_path="/tmp/workspace",
+            pipeline_name="ts-pipeline-123",
+            run_id="run-123",
+            models_artifact=models_artifact,
+            extra_train_data_path=extra_train_path,
+            evaluation_mode="user-provided",
+            html_artifact=html_artifact,
+            component_status=_DEFAULT_COMPONENT_STATUS,
+        )
+
+        # Verify metadata structure
+        context = models_artifact.metadata["context"]
+        # evaluation_mode should be at top-level context, not inside data_config
+        assert "evaluation_mode" in context
+        assert context["evaluation_mode"] == "user-provided"
+        # Should NOT be in data_config
+        assert "evaluation_mode" not in context["data_config"]
+
+    @mock.patch("pandas.read_csv")
+    @mock.patch("pandas.concat")
+    @mock.patch("autogluon.timeseries.TimeSeriesDataFrame")
+    @mock.patch("autogluon.timeseries.TimeSeriesPredictor")
+    def test_evaluation_mode_stored_in_html_artifact_metadata(
+        self,
+        mock_predictor_cls,
+        mock_ts_df_cls,
+        mock_concat,
+        mock_read_csv,
+        mock_artifacts,  # noqa: F811
+    ):
+        """evaluation_mode is stored in html_artifact.metadata."""
+        models_artifact, extra_train_path, html_artifact = mock_artifacts
+
+        mock_predictor = mock.MagicMock()
+        mock_predictor.leaderboard.return_value = _mock_leaderboard(["DeepAR"])
+        mock_predictor.fit_summary.return_value = {"model_hyperparams": {"DeepAR": {}}}
+        mock_predictor._trainer.get_model_attribute.return_value = mock.MagicMock
+
+        mock_refit_predictor = mock.MagicMock()
+        mock_refit_predictor.evaluate.return_value = {"MASE": 0.5, "MSE": 1.0}
+
+        mock_predictor_cls.side_effect = [mock_predictor, mock_refit_predictor]
+        mock_ts_df_cls.from_data_frame.return_value = _mock_ts_df()
+        mock_ts_df_cls.from_path.return_value = _mock_ts_df()
+        mock_ts_df_cls.return_value = _mock_ts_df()
+        mock_concat.return_value = mock.MagicMock()
+        mock_read_csv.side_effect = [mock.MagicMock(), mock.MagicMock()]
+
+        test_data = mock.MagicMock()
+        test_data.path = "/tmp/test.csv"
+
+        autogluon_timeseries_models_training.python_func(
+            target="sales",
+            id_column="item_id",
+            timestamp_column="timestamp",
+            train_data_path="/tmp/train.csv",
+            test_data=test_data,
+            top_n=1,
+            workspace_path="/tmp/workspace",
+            pipeline_name="ts-pipeline-123",
+            run_id="run-123",
+            models_artifact=models_artifact,
+            extra_train_data_path=extra_train_path,
+            evaluation_mode="user-provided",
+            html_artifact=html_artifact,
+            component_status=_DEFAULT_COMPONENT_STATUS,
+        )
+
+        # Verify html_artifact metadata contains evaluation_mode
+        assert "evaluation_mode" in html_artifact.metadata
+        assert html_artifact.metadata["evaluation_mode"] == "user-provided"
