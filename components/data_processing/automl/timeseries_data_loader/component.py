@@ -18,6 +18,8 @@ def timeseries_data_loader(
     sampled_test_dataset: dsl.Output[dsl.Dataset],
     component_status: dsl.Output[dsl.Artifact],
     selection_train_size: float = 0.3,
+    test_data_bucket_name: str = "",
+    test_data_file_key: str = "",
 ) -> NamedTuple(
     "outputs",
     sample_config=dict,
@@ -25,6 +27,7 @@ def timeseries_data_loader(
     sample_rows=str,
     models_selection_train_data_path=str,
     extra_train_data_path=str,
+    evaluation_mode=str,
 ):
     """Load and split timeseries data from S3 for AutoGluon training.
 
@@ -57,9 +60,12 @@ def timeseries_data_loader(
         sampled_test_dataset: Output dataset artifact for the test split.
         component_status: Output artifact containing stage-level progress tracking for this component.
         selection_train_size: Fraction of train portion for model selection (default: 0.3).
+        test_data_bucket_name: S3 bucket name for user-provided test dataset (default: empty string).
+        test_data_file_key: S3 object key for user-provided test dataset (default: empty string).
 
     Returns:
-        NamedTuple: sample_config, split_config, sample_rows, models_selection_train_data_path, extra_train_data_path.
+        NamedTuple: sample_config, split_config, sample_rows, models_selection_train_data_path,
+                   extra_train_data_path, evaluation_mode.
     """
     import io
     import json
@@ -93,6 +99,13 @@ def timeseries_data_loader(
 
     if file_key.startswith("/") or file_key.endswith("/") or "//" in file_key:
         raise ValueError("file_key must be a valid S3 object key and must not start/end with '/' or contain '//'.")
+
+    if (test_data_file_key and test_data_file_key.strip() and
+        not (test_data_bucket_name and test_data_bucket_name.strip())):
+        raise ValueError("test_data_bucket_name must be provided when test_data_file_key is set.")
+    if (test_data_bucket_name and test_data_bucket_name.strip() and
+        not (test_data_file_key and test_data_file_key.strip())):
+        raise ValueError("test_data_file_key must be provided when test_data_bucket_name is set.")
 
     from kfp_components.components.training.automl.shared.component_status import ComponentStatusTracker
 
@@ -335,8 +348,6 @@ def timeseries_data_loader(
         # Stable ordering for downstream I/O (redundant if cleanse already sorted; kept for clarity)
         df = df.sort_values(by=[id_column, timestamp_column]).reset_index(drop=True)
 
-        test_size = DEFAULT_TEST_SIZE
-
         def _early_late_split(group: pd.DataFrame, early_fraction: float) -> tuple[pd.DataFrame, pd.DataFrame]:
             """Split one series by time: first ``early_fraction`` of rows (by time) vs remainder.
 
@@ -359,85 +370,195 @@ def timeseries_data_loader(
             out = pd.concat(parts, ignore_index=True)
             return out.sort_values(by=sort_by).reset_index(drop=True)
 
-        train_parts: list = []
-        test_parts: list = []
-        for _, series_df in df.groupby(id_column, sort=False):
-            tr, te = _early_late_split(series_df, 1.0 - test_size)
-            train_parts.append(tr)
-            test_parts.append(te)
+        has_user_test_data = bool(test_data_file_key and test_data_file_key.strip())
 
-        train_df = _concat_sorted(train_parts, [id_column, timestamp_column])
-        test_df = _concat_sorted(test_parts, [id_column, timestamp_column])
+        if has_user_test_data:
+            evaluation_mode = "user-provided"
+            status.record("load_test_data", "started", source=f"s3://{test_data_bucket_name}/{test_data_file_key}")
 
-        selection_parts: list = []
-        extra_parts: list = []
-        for _, series_train in train_df.groupby(id_column, sort=False):
-            sel, ext = _early_late_split(series_train, selection_train_size)
-            selection_parts.append(sel)
-            extra_parts.append(ext)
+            # Download user test data from S3 (AC5: distinguishable error message)
+            try:
+                user_test_df = load_timeseries_data_truncate(
+                    test_data_bucket_name, test_data_file_key, MAX_SIZE_BYTES, PANDAS_CHUNK_SIZE
+                )
+            except Exception as e:
+                raise ValueError(
+                    f"Failed to download test dataset from "
+                    f"s3://{test_data_bucket_name}/{test_data_file_key}: {e}. "
+                    "Verify the test data S3 path and credentials are correct."
+                ) from e
 
-        selection_train_df = _concat_sorted(selection_parts, [id_column, timestamp_column])
-        extra_train_df = _concat_sorted(extra_parts, [id_column, timestamp_column])
+            # Validate required columns
+            required_columns = {id_column, timestamp_column, target}
+            missing_columns = required_columns - set(user_test_df.columns)
+            if missing_columns:
+                raise ValueError(
+                    f"Missing required columns in test dataset: {missing_columns}. "
+                    f"Available columns: {list(user_test_df.columns)}"
+                )
 
-        # Validate split outputs:
-        if len(train_df) == 0:
-            raise ValueError(
-                "Primary temporal split produced no train rows. The dataset may be too small for "
-                "the configured splits. Add more rows per time series, or reduce test_size "
-                f"(default is {DEFAULT_TEST_SIZE})."
+            # Validate non-empty (AC4)
+            if len(user_test_df) == 0:
+                raise ValueError(
+                    "Test dataset contains no data rows (only headers). "
+                    f"Source: s3://{test_data_bucket_name}/{test_data_file_key}. "
+                    "Provide a test dataset with at least one data row."
+                )
+
+            # Apply same cleansing
+            user_test_df = _clean_timeseries_dataframe(user_test_df, id_column, timestamp_column, logger)
+
+            if len(user_test_df) == 0:
+                raise ValueError(
+                    "Test dataset has no valid rows after cleansing. "
+                    f"Source: s3://{test_data_bucket_name}/{test_data_file_key}."
+                )
+
+            # Combined size validation (AC7)
+            combined_memory = df.memory_usage(deep=True).sum() + user_test_df.memory_usage(deep=True).sum()
+            MAX_COMBINED_DATA_BYTES = 8 * 1024 * 1024 * 1024
+            if combined_memory > MAX_COMBINED_DATA_BYTES:
+                raise ValueError(
+                    f"Combined training and test dataset size ({combined_memory / (1024**3):.2f} GiB) "
+                    f"exceeds workspace capacity threshold ({MAX_COMBINED_DATA_BYTES / (1024**3):.0f} GiB). "
+                    "Reduce dataset sizes or use smaller samples."
+                )
+
+            # Write user test data to artifact
+            user_test_df.to_csv(sampled_test_dataset.path, index=False)
+
+            status.record("load_test_data", "completed", test_rows=len(user_test_df))
+
+            # Skip primary temporal split -- use ALL data for secondary split
+            selection_parts = []
+            extra_parts = []
+            for _, series_df in df.groupby(id_column, sort=False):
+                sel, ext = _early_late_split(series_df, selection_train_size)
+                selection_parts.append(sel)
+                extra_parts.append(ext)
+
+            selection_train_df = _concat_sorted(selection_parts, [id_column, timestamp_column])
+            extra_train_df = _concat_sorted(extra_parts, [id_column, timestamp_column])
+
+            if len(selection_train_df) == 0:
+                raise ValueError(
+                    "Secondary split produced an empty selection-train dataset. "
+                    "Increase rows per time series and/or selection_train_size."
+                )
+
+            # Save test dataset to artifact (already done above)
+            # Write selection and extra to workspace
+            selection_path = datasets_dir / "models_selection_train_dataset.csv"
+            extra_path = datasets_dir / "extra_train_dataset.csv"
+            selection_train_df.to_csv(selection_path, index=False)
+            extra_train_df.to_csv(extra_path, index=False)
+
+            status.record(
+                "split_and_export",
+                "completed",
+                selection_train_size=selection_train_size,
+                evaluation_mode=evaluation_mode,
             )
-        if len(selection_train_df) == 0:
-            raise ValueError(
-                "Secondary split produced an empty selection-train dataset; "
-                "models_selection_train_dataset.csv would be empty and downstream training would fail. "
-                "Increase rows per time series and/or selection_train_size, or reduce test_size so "
-                "each series has enough train rows for the selection segment."
+
+            # Sample rows from test data for downstream use
+            sample_tail = user_test_df.tail(min(5, len(user_test_df)))
+            if hasattr(sample_tail, "to_dict"):
+                from kfp_components.components.training.automl.shared.timeseries_notebook_utils import (
+                    _json_records,
+                )
+                sample_rows = json.dumps(_json_records(sample_tail))
+            else:
+                sample_rows = sample_tail.to_json(orient="records")
+
+            sample_config = {"sampling_method": "first_n_rows", "total_rows_loaded": len(df), "sampled_rows": len(df)}
+            split_config_out = {
+                "test_size": 0.0,
+                "selection_train_size": selection_train_size,
+            }
+
+        else:
+            evaluation_mode = "auto-split"
+            test_size = DEFAULT_TEST_SIZE
+
+            train_parts: list = []
+            test_parts: list = []
+            for _, series_df in df.groupby(id_column, sort=False):
+                tr, te = _early_late_split(series_df, 1.0 - test_size)
+                train_parts.append(tr)
+                test_parts.append(te)
+
+            train_df = _concat_sorted(train_parts, [id_column, timestamp_column])
+            test_df = _concat_sorted(test_parts, [id_column, timestamp_column])
+
+            selection_parts: list = []
+            extra_parts: list = []
+            for _, series_train in train_df.groupby(id_column, sort=False):
+                sel, ext = _early_late_split(series_train, selection_train_size)
+                selection_parts.append(sel)
+                extra_parts.append(ext)
+
+            selection_train_df = _concat_sorted(selection_parts, [id_column, timestamp_column])
+            extra_train_df = _concat_sorted(extra_parts, [id_column, timestamp_column])
+
+            # Validate split outputs:
+            if len(train_df) == 0:
+                raise ValueError(
+                    "Primary temporal split produced no train rows. The dataset may be too small for "
+                    "the configured splits. Add more rows per time series, or reduce test_size "
+                    f"(default is {DEFAULT_TEST_SIZE})."
+                )
+            if len(selection_train_df) == 0:
+                raise ValueError(
+                    "Secondary split produced an empty selection-train dataset; "
+                    "models_selection_train_dataset.csv would be empty and downstream training would fail. "
+                    "Increase rows per time series and/or selection_train_size, or reduce test_size so "
+                    "each series has enough train rows for the selection segment."
+                )
+
+            # Save test dataset to artifact
+            test_df.to_csv(sampled_test_dataset.path, index=False)
+
+            selection_path = datasets_dir / "models_selection_train_dataset.csv"
+            extra_path = datasets_dir / "extra_train_dataset.csv"
+
+            selection_train_df.to_csv(selection_path, index=False)
+            extra_train_df.to_csv(extra_path, index=False)
+
+            status.record(
+                "split_and_export",
+                "completed",
+                test_size=test_size,
+                selection_train_size=selection_train_size,
             )
 
-        # Save test dataset to artifact
-        test_df.to_csv(sampled_test_dataset.path, index=False)
+            # Sample rows for downstream use (ISO timestamps when supported; JSON string to avoid NaN issues)
+            sample_tail = test_df.tail(min(5, len(test_df)))
+            if hasattr(sample_tail, "to_dict"):
+                from kfp_components.components.training.automl.shared.timeseries_notebook_utils import (
+                    _json_records,
+                )
 
-        selection_path = datasets_dir / "models_selection_train_dataset.csv"
-        extra_path = datasets_dir / "extra_train_dataset.csv"
+                sample_rows = json.dumps(_json_records(sample_tail))
+            else:
+                sample_rows = sample_tail.to_json(orient="records")
 
-        selection_train_df.to_csv(selection_path, index=False)
-        extra_train_df.to_csv(extra_path, index=False)
+            # Create sample config and split config
+            sample_config = {"sampling_method": "first_n_rows", "total_rows_loaded": len(df), "sampled_rows": len(df)}
 
-        status.record(
-            "split_and_export",
-            "completed",
-            test_size=test_size,
-            selection_train_size=selection_train_size,
-        )
+            split_config_out = {
+                "test_size": test_size,
+                "selection_train_size": selection_train_size,
+            }
 
         logger.info(
-            "Timeseries loader: %s rows from s3://%s/%s; split selection=%s extra=%s test=%s",
+            "Timeseries loader: %s rows from s3://%s/%s; split selection=%s extra=%s evaluation_mode=%s",
             len(df),
             bucket_name,
             file_key,
             len(selection_train_df),
             len(extra_train_df),
-            len(test_df),
+            evaluation_mode,
         )
-
-        # Create sample config and split config
-        sample_config = {"sampling_method": "first_n_rows", "total_rows_loaded": len(df), "sampled_rows": len(df)}
-
-        split_config = {
-            "test_size": test_size,
-            "selection_train_size": selection_train_size,
-        }
-
-        # Sample rows for downstream use (ISO timestamps when supported; JSON string to avoid NaN issues)
-        sample_tail = test_df.tail(min(5, len(test_df)))
-        if hasattr(sample_tail, "to_dict"):
-            from kfp_components.components.training.automl.shared.timeseries_notebook_utils import (
-                _json_records,
-            )
-
-            sample_rows = json.dumps(_json_records(sample_tail))
-        else:
-            sample_rows = sample_tail.to_json(orient="records")
 
         return NamedTuple(
             "outputs",
@@ -446,12 +567,14 @@ def timeseries_data_loader(
             sample_rows=str,
             models_selection_train_data_path=str,
             extra_train_data_path=str,
+            evaluation_mode=str,
         )(
             sample_config=sample_config,
-            split_config=split_config,
+            split_config=split_config_out,
             sample_rows=sample_rows,
             models_selection_train_data_path=str(selection_path),
             extra_train_data_path=str(extra_path),
+            evaluation_mode=evaluation_mode,
         )
 
 
