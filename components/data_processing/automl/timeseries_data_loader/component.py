@@ -537,12 +537,13 @@ def timeseries_data_loader(
         sample_config = {"sampling_method": "first_n_rows", "total_rows_loaded": len(df), "sampled_rows": len(df)}
 
         logger.info(
-            "Timeseries loader: %s rows from s3://%s/%s; split selection=%s extra=%s evaluation_mode=%s",
+            "Timeseries loader: %s rows from s3://%s/%s; split selection=%s extra=%s test=%s evaluation_mode=%s",
             len(df),
             bucket_name,
             file_key,
             len(selection_train_df),
             len(extra_train_df),
+            len(test_data_for_sample),
             evaluation_mode,
         )
 

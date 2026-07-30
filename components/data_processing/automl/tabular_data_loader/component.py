@@ -77,13 +77,16 @@ def automl_data_loader(  # noqa: D417
         task_type: "binary", "multiclass", or "regression" (default); used when sampling_method is None.
         split_config: Split configuration dictionary. Available keys: "test_size" (float), "random_state" (int), "stratify" (bool).
         selection_train_size: Fraction of the train portion used for model selection (default 0.3).
+        test_data_bucket_name: S3 bucket name for user-provided test dataset (default: empty string).
+        test_data_file_key: S3 object key for user-provided test dataset (default: empty string).
 
     Raises:
         ValueError: If sampling_method or task_type is invalid, if required parameters are missing,
             or if fewer than 100 valid records remain after data cleansing.
 
     Returns:
-        NamedTuple: Contains sample config, split config, a sample row, and paths to selection-train and extra-train CSVs.
+        NamedTuple: Contains sample config, split config, a sample row, paths to selection-train
+            and extra-train CSVs, and evaluation_mode ("user-provided" or "auto-split").
     """  # noqa: E501
     import io
     import logging

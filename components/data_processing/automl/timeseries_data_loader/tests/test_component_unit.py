@@ -777,7 +777,7 @@ class TestUserProvidedTestData:
         assert Path(sampled_test.path).exists()
         # Verify test artifact CSV has rows and expected columns
         test_rows = _read_csv_rows(sampled_test.path)
-        assert len(test_rows) > 0
+        assert len(test_rows) >= 2, f"Expected at least 2 test rows from multi-row test data, got {len(test_rows)}"
         assert "target" in test_rows[0]
         assert Path(result.models_selection_train_data_path).exists()
         assert Path(result.extra_train_data_path).exists()
@@ -973,9 +973,9 @@ class TestUserProvidedTestData:
 
     @mock.patch.dict("os.environ", mocked_env_variables)
     def test_user_provided_test_data_empty_after_cleansing(self, tmp_path):
-        """Test dataset with rows that become empty after cleansing raises ValueError."""
+        """Test data with unparseable timestamps fails during cleansing timestamp validation."""
         train_csv = _timeseries_csv(n_rows=MIN_VALID_RECORDS + 10)
-        # Test data with unparseable timestamps -> all rows fail cleansing
+        # Test data with unparseable timestamps -> timestamp parsing fails in _clean_timeseries_dataframe
         test_csv = "item_id,timestamp,target,feature\nseries-1,not-a-date,100,1000\nseries-1,also-bad,200,2000\n"
 
         call_count = 0
