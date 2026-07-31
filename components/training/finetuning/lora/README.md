@@ -74,7 +74,7 @@ Train model using LoRA (Low-Rank Adaptation). Outputs model artifact and metrics
 
 | Name | Type | Description |
 | ---- | ---- | ----------- |
-| Output | `str` |  |
+| Output | `str` | |
 
 ## Metadata 🗂️
 

@@ -54,7 +54,7 @@ uv run python -m scripts.refresh_pipeline_requirements.refresh_pipeline_requirem
 ### Make variables
 
 | Variable | Values | Description |
-|----------|--------|-------------|
+| ---------- | -------- | ------------- |
 | `PIPELINE` | path | Single pipeline directory (default: both AutoML and AutoRAG) |
 | `RUNTIME` | `podman`, `docker` | Container runtime (default: auto-detect) |
 | `IMAGE` | image ref | Container image override |

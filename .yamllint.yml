@@ -2,6 +2,7 @@
 extends: default
 ignore: |
   .tekton/
+  .venv/
 rules:
   line-length:
     max: 120

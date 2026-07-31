@@ -47,7 +47,7 @@ Uses instructlab-training backend. Outputs model artifact and metrics.
 
 | Name | Type | Description |
 | ---- | ---- | ----------- |
-| Output | `str` |  |
+| Output | `str` | |
 
 ## Metadata 🗂️
 

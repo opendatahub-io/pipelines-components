@@ -35,7 +35,7 @@ Uses the upstream model artifact (input_model) produced by training, or falls ba
 
 | Name | Type | Description |
 | ---- | ---- | ----------- |
-| Output | `str` |  |
+| Output | `str` | |
 
 ## Metadata 🗂️
 
