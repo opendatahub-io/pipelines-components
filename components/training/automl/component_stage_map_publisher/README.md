@@ -20,7 +20,7 @@ Reads the static JSON template from the package (``run_status_templates/pipeline
 
 | Name | Type | Description |
 | ---- | ---- | ----------- |
-| Output | `None` | |
+| Output | `None` |  |
 
 ## Metadata 🗂️
 
