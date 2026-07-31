@@ -235,6 +235,51 @@ def _base_call_kwargs(workspace_path, models_artifact, test_data, tmp_path=None)
     )
 
 
+def _run_training_for_evaluation_mode(mock_predictor_class, mock_read_csv, tmp_path, **extra_kwargs):
+    """Drive one successful regression run; ``extra_kwargs`` carries evaluation_mode when set.
+
+    Returns the models and HTML artifacts so callers can assert on the recorded metadata.
+    """
+    mock_predictor = mock.MagicMock()
+    mock_predictor_clone = mock.MagicMock()
+    mock_predictor_class.return_value.fit.return_value = mock_predictor
+    mock_predictor.clone.return_value = mock_predictor_clone
+    mock_predictor.problem_type = "regression"
+    mock_predictor.label = "target"
+    mock_predictor.eval_metric = "r2"
+    _mock_leaderboard_top_models(mock_predictor, ["LightGBM_BAG_L1"])
+    mock_predictor_clone.evaluate_predictions.return_value = {"r2": 0.9}
+    mock_predictor_clone.feature_importance.return_value = mock.MagicMock(to_dict=lambda: {"f": 0.1})
+    mock_predictor_clone.predict.return_value = mock.MagicMock()
+    mock_read_csv.side_effect = [_mock_csv_frame(), _mock_csv_frame()]
+
+    workspace_path = str(tmp_path / "ws")
+    Path(workspace_path).mkdir()
+    models_output_dir = str(tmp_path / "out")
+    Path(models_output_dir).mkdir()
+    models_artifact = mock.MagicMock()
+    models_artifact.path = models_output_dir
+    models_artifact.metadata = {}
+    html_artifact = _make_html_artifact(tmp_path)
+
+    autogluon_models_training.python_func(
+        label_column="target",
+        task_type="regression",
+        top_n=1,
+        train_data_path="/tmp/train.csv",
+        test_data=mock.MagicMock(path="/tmp/test.csv"),
+        workspace_path=workspace_path,
+        pipeline_name=PIPELINE_NAME,
+        run_id=RUN_ID,
+        sample_row=SAMPLE_ROW,
+        models_artifact=models_artifact,
+        html_artifact=html_artifact,
+        component_status=_make_component_status_artifact(tmp_path),
+        **extra_kwargs,
+    )
+    return models_artifact, html_artifact
+
+
 _NOTEBOOK_TEMPLATES_DIR = Path(__file__).resolve().parents[2] / "shared" / "notebook_templates"
 _DEFAULT_COMPONENT_STATUS = _make_component_status_artifact(Path("/tmp"))
 _DEFAULT_HTML_ARTIFACT = _make_html_artifact(Path("/tmp"))
@@ -1548,6 +1593,25 @@ class TestAutogluonModelsTrainingUnitTests:
                 component_status=_DEFAULT_COMPONENT_STATUS,
             )
 
+    def test_rejects_invalid_evaluation_mode(self):
+        """Reject unknown evaluation_mode value."""
+        with pytest.raises(ValueError, match="evaluation_mode must be one of"):
+            autogluon_models_training.python_func(
+                label_column="target",
+                task_type="regression",
+                top_n=1,
+                train_data_path="/tmp/train.csv",
+                test_data=mock.MagicMock(path="/tmp/test.csv"),
+                workspace_path="/tmp/ws",
+                pipeline_name=PIPELINE_NAME,
+                run_id=RUN_ID,
+                sample_row=SAMPLE_ROW,
+                models_artifact=self._minimal_artifact(),
+                html_artifact=_DEFAULT_HTML_ARTIFACT,
+                evaluation_mode="invalid-mode",
+                component_status=_DEFAULT_COMPONENT_STATUS,
+            )
+
     # ── eval_metric parameter ─────────────────────────────────────────────────
 
     @mock.patch("pandas.read_csv")
@@ -1848,6 +1912,48 @@ class TestAutogluonModelsTrainingUnitTests:
         context = mock_models_artifact.metadata["context"]
         assert "best_model_name" in context
         assert context["best_model_name"] == "LightGBM_BAG_L1_FULL"
+
+    # ── evaluation_mode parameter ──────────────────────────────────────────────
+
+    @pytest.mark.parametrize(
+        ("extra_kwargs", "expected"),
+        [
+            ({"evaluation_mode": "user-provided"}, "user-provided"),
+            ({"evaluation_mode": "auto-split"}, "auto-split"),
+            pytest.param({}, "auto-split", id="omitted-defaults-to-auto-split"),
+        ],
+    )
+    @mock.patch("pandas.read_csv")
+    @mock.patch("autogluon.tabular.TabularPredictor")
+    def test_evaluation_mode_stored_in_metadata(
+        self, mock_predictor_class, mock_read_csv, tmp_path, extra_kwargs, expected
+    ):
+        """Each accepted evaluation_mode (and the default) is stored in both metadata locations."""
+        models_artifact, html_artifact = _run_training_for_evaluation_mode(
+            mock_predictor_class, mock_read_csv, tmp_path, **extra_kwargs
+        )
+
+        assert models_artifact.metadata["context"]["evaluation_mode"] == expected
+        assert html_artifact.metadata["evaluation_mode"] == expected
+
+    @mock.patch("pandas.read_csv")
+    @mock.patch("autogluon.tabular.TabularPredictor")
+    def test_evaluation_mode_sits_beside_data_config(self, mock_predictor_class, mock_read_csv, tmp_path):
+        """evaluation_mode is top-level context; sampling/split configs stay inside data_config."""
+        models_artifact, _html_artifact = _run_training_for_evaluation_mode(
+            mock_predictor_class,
+            mock_read_csv,
+            tmp_path,
+            sampling_config={"sample": True},
+            split_config={"test_size": 0.2},
+            evaluation_mode="user-provided",
+        )
+
+        context = models_artifact.metadata["context"]
+        assert context["evaluation_mode"] == "user-provided"
+        assert context["data_config"]["sampling_config"] == {"sample": True}
+        assert context["data_config"]["split_config"] == {"test_size": 0.2}
+        assert "evaluation_mode" not in context["data_config"]
 
 
 class TestComponentStatusOutput:

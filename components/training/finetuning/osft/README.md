@@ -52,7 +52,7 @@ Uses mini-trainer backend. Outputs model artifact and metrics.
 
 | Name | Type | Description |
 | ---- | ---- | ----------- |
-| Output | `str` |  |
+| Output | `str` | |
 
 ## Metadata 🗂️
 

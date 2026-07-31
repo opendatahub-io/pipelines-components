@@ -20,12 +20,12 @@ uv run python -m scripts.generate_managed_pipelines.generate_managed_pipelines -
 
 The JSON is an array of objects with:
 
-| Field         | Source                | Description |
-|---------------|-----------------------|-------------|
-| `name`        | `metadata.yaml` name  | Pipeline name |
-| `description` | See below             | Short description for the catalog |
-| `path`        | Derived               | Relative path to `pipeline.py` (e.g. `pipelines/training/automl/my_pipeline/pipeline.py`) |
-| `stability`   | `metadata.yaml` stability | `alpha` → Development Preview; `beta` → Technology Preview; `stable` → General Availability. `experimental` is not allowed for managed pipelines. |
+| Field | Source | Description |
+| --- | --- | --- |
+| `name` | `metadata.yaml` name | Pipeline name |
+| `description` | See below | Short description for the catalog |
+| `path` | Derived | Relative path to `pipeline.py` (e.g. `pipelines/training/automl/my_pipeline/pipeline.py`) |
+| `stability` | `metadata.yaml` stability | `alpha` → Development Preview; `beta` → Technology Preview; `stable` → General Availability. `experimental` is not allowed for managed pipelines. |
 
 **`description` resolution (in order):**
 

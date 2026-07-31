@@ -29,6 +29,7 @@ def autogluon_timeseries_models_training(
     known_covariates_names: Optional[List[str]] = None,
     preset: str = "speed",
     eval_metric: str = "mean_absolute_scaled_error",
+    evaluation_mode: str = "auto-split",
 ) -> NamedTuple(
     "outputs",
     top_models=List[str],
@@ -71,6 +72,10 @@ def autogluon_timeseries_models_training(
         eval_metric: Metric for model ranking (e.g. ``"mean_absolute_scaled_error"``,
             ``"weighted_quantile_loss"``). Defaults to ``"mean_absolute_scaled_error"``.
             Legacy uppercase acronyms (e.g. ``"MASE"``) are accepted and normalized to snake_case.
+        evaluation_mode: Provenance of ``test_data``, as reported by the data loader: either
+            "user-provided" or "auto-split" (default). This is recorded as metadata only and does
+            not change how evaluation runs -- the swap is already accomplished by what the loader
+            wrote to ``test_data``.
 
     Returns:
         NamedTuple: top_models list, predictor_path, eval_metric, model_config.
@@ -105,6 +110,7 @@ def autogluon_timeseries_models_training(
         VALID_PRESETS = {"speed", "balanced"}
         PRESET_AG_NAMES = {"speed": "fast_training", "balanced": "medium_quality"}
         PRESET_TIME_LIMITS = {"speed": 10 * 60, "balanced": 60 * 60}
+        VALID_EVALUATION_MODES = {"user-provided", "auto-split"}
 
         # Normalize eval_metric to snake_case; accept legacy uppercase acronyms (e.g. "MASE") for back-compat.
         _acronym_to_snake = {acronym: snake for snake, acronym in METRIC_ALIASES.items()}
@@ -113,6 +119,8 @@ def autogluon_timeseries_models_training(
         # Input validation
         if preset not in VALID_PRESETS:
             raise ValueError(f"preset must be one of {VALID_PRESETS}; got {preset!r}.")
+        if evaluation_mode not in VALID_EVALUATION_MODES:
+            raise ValueError(f"evaluation_mode must be one of {VALID_EVALUATION_MODES}; got {evaluation_mode!r}.")
         for param, value in (
             ("target", target),
             ("id_column", id_column),
@@ -538,6 +546,7 @@ def autogluon_timeseries_models_training(
 
         html_artifact.metadata["data"] = leaderboard_df.to_json(orient="records")
         html_artifact.metadata["display_name"] = "automl_leaderboard"
+        html_artifact.metadata["evaluation_mode"] = evaluation_mode
         status.record(
             "build_leaderboard",
             "completed",
@@ -554,6 +563,7 @@ def autogluon_timeseries_models_training(
             "model_config": model_config,
             "best_model_name": best_model_name,
             "models": models_metadata,
+            "evaluation_mode": evaluation_mode,
         }
 
         outputs = NamedTuple(

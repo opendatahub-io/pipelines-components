@@ -19,7 +19,7 @@ Copy `.env.template` to `.env` and fill in your values.
 The module `integration_config.py` loads `.env` when `get_rhoai_config()` / `get_dspa_config()` run and builds the config; the same config is used for both the skip condition and the fixtures.
 
 | Variable | Required | Description |
-|----------|----------|-------------|
+| ---------- | ---------- | ------------- |
 | `RHOAI_URL` | Yes | Base URL of the OCP cluster (e.g. `https://api.example.com`). |
 | `RHOAI_KFP_URL` | No | KFP server URL where the client connects. Omit when using `RHOAI_CREATE_DSPA=true` (the route URL is resolved automatically). |
 | `RHOAI_TOKEN` | Yes | API token; use a **service account token** for Jenkins/CI (long-lived, no oc or kubeconfig). |
@@ -142,7 +142,7 @@ Set `RHOAI_TOKEN` to the printed token and `RHOAI_PROJECT_NAME` to that project 
 Fixtures used by the AutoML pipeline integration tests:
 
 | Fixture | Scope | Description |
-|---------|--------|-------------|
+| --------- | -------- | ------------- |
 | `rhoai_integration_config` | session | Config dict from env (or `None`). |
 | `integration_available` | session | `True` when config is present. |
 | `temp_kubeconfig_path` | session | Temp kubeconfig file built from `RHOAI_URL` and `RHOAI_TOKEN`; used by all Kubernetes API calls so the default `~/.kube/config` is not used. Yields path or `None`. |

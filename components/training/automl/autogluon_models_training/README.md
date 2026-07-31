@@ -34,6 +34,7 @@ mutates predictor state. All artifacts are written under a single output artifac
 | `positive_class` | `str` | `""` | Label value for the positive class in **binary** classification (e.g. ``"1"`` or ``"yes"``). Passed to ``TabularPredictor`` when set. Empty string (default) lets AutoGluon infer the positive class when ``fit`` runs. Ignored for ``multiclass`` and ``regression``. |
 | `preset` | `str` | `speed` | Training quality tier. ``"speed"`` (default) or ``"balanced"`` (may run more than 2x longer). |
 | `eval_metric` | `str` | `""` | Metric for model ranking (e.g. ``"r2"``, ``"accuracy"``). Defaults to ``"r2"`` for regression and ``"accuracy"`` otherwise. |
+| `evaluation_mode` | `str` | `auto-split` | Provenance of ``test_data``, as reported by the data loader: either ``"user-provided"`` or ``"auto-split"`` (default). This is recorded as metadata only and does not change how evaluation runs -- the swap is already accomplished by what the loader wrote to ``test_data``. |
 
 ## Outputs 📤
 

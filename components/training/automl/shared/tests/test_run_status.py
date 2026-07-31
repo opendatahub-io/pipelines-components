@@ -114,6 +114,7 @@ def test_init_seeds_full_pipeline_as_pending(tmp_path):
     loader_stages = {s["id"]: s["status"] for s in _component_by_id(doc, COMPONENT_DATA_LOADER)["stages"]}
     assert loader_stages == {
         "prepare_data": STATUS_PENDING,
+        "load_test_data": STATUS_PENDING,
         "split_and_export": STATUS_PENDING,
     }
 

@@ -21,7 +21,7 @@ Reads the static JSON template from the embedded artifact (``run_status_template
 
 | Name | Type | Description |
 | ---- | ---- | ----------- |
-| Output | `None` |  |
+| Output | `None` | |
 
 ## Metadata 🗂️
 

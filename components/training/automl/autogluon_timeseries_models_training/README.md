@@ -35,6 +35,7 @@ Refit outputs for all selected models are written under one ``models_artifact``,
 | `known_covariates_names` | `Optional[List[str]]` | `None` | Optional list of known covariate column names. |
 | `preset` | `str` | `speed` | Training quality tier. ``"speed"`` (default) or ``"balanced"`` (may run more than 2x longer). |
 | `eval_metric` | `str` | `mean_absolute_scaled_error` | Metric for model ranking (e.g. ``"mean_absolute_scaled_error"``, ``"weighted_quantile_loss"``). Defaults to ``"mean_absolute_scaled_error"``. Legacy uppercase acronyms (e.g. ``"MASE"``) are accepted and normalized to snake_case. |
+| `evaluation_mode` | `str` | `auto-split` | Provenance of ``test_data``, as reported by the data loader: either "user-provided" or "auto-split" (default). This is recorded as metadata only and does not change how evaluation runs -- the swap is already accomplished by what the loader wrote to ``test_data``. |
 
 ## Outputs 📤
 

@@ -19,6 +19,8 @@ def automl_data_loader(  # noqa: D417
     task_type: str = "regression",
     split_config: Optional[dict] = None,
     selection_train_size: float = 0.3,
+    test_data_bucket_name: str = "",
+    test_data_file_key: str = "",
 ) -> NamedTuple(
     "outputs",
     sample_config=dict,
@@ -26,6 +28,7 @@ def automl_data_loader(  # noqa: D417
     sample_row=str,
     models_selection_train_data_path=str,
     extra_train_data_path=str,
+    evaluation_mode=str,
 ):
     """Automl Data Loader component.
 
@@ -74,13 +77,22 @@ def automl_data_loader(  # noqa: D417
         task_type: "binary", "multiclass", or "regression" (default); used when sampling_method is None.
         split_config: Split configuration dictionary. Available keys: "test_size" (float), "random_state" (int), "stratify" (bool).
         selection_train_size: Fraction of the train portion used for model selection (default 0.3).
+        test_data_bucket_name: S3 bucket name for user-provided test dataset (default: empty string).
+            Read with the same credentials and endpoint as the training data.
+        test_data_file_key: S3 object key for user-provided test dataset (default: empty string).
+            Must be set together with ``test_data_bucket_name``. When set, the primary 80/20
+            split is skipped and this dataset is written to ``sampled_test_dataset`` instead.
 
     Raises:
-        ValueError: If sampling_method or task_type is invalid, if required parameters are missing,
-            or if fewer than 100 valid records remain after data cleansing.
+        TypeError: If a required string parameter is empty or a config value has the wrong type.
+        ValueError: If sampling_method or task_type is invalid, if only one of the
+            ``test_data_*`` pair is set or the test key is not a valid S3 object key, if the
+            test dataset is empty or missing the label or a training feature column, or if
+            fewer than 100 valid records remain after data cleansing.
 
     Returns:
-        NamedTuple: Contains sample config, split config, a sample row, and paths to selection-train and extra-train CSVs.
+        NamedTuple: Contains sample config, split config, a sample row, paths to selection-train
+            and extra-train CSVs, and evaluation_mode ("user-provided" or "auto-split").
     """  # noqa: E501
     import io
     import logging
@@ -89,6 +101,14 @@ def automl_data_loader(  # noqa: D417
 
     import boto3
     import pandas as pd
+    from kfp_components.components.training.automl.shared.component_status import ComponentStatusTracker
+    from kfp_components.components.training.automl.shared.user_test_data import (
+        raise_if_test_data_empty,
+        report_test_data_truncation,
+        test_data_load_error,
+        test_data_source_uri,
+        validate_test_data_params,
+    )
 
     logger = logging.getLogger(__name__)
 
@@ -128,7 +148,7 @@ def automl_data_loader(  # noqa: D417
     elif selection_train_size <= 0 or selection_train_size >= 1:
         raise ValueError("selection_train_size must be in a range 0 to 1.")
 
-    from kfp_components.components.training.automl.shared.component_status import ComponentStatusTracker
+    test_data_bucket_name, test_data_file_key = validate_test_data_params(test_data_bucket_name, test_data_file_key)
 
     # Initialize status tracker
     status = ComponentStatusTracker(component_status.path, "automl_data_loader")
@@ -190,16 +210,27 @@ def automl_data_loader(  # noqa: D417
                 verify=verify,
             )
 
-        def _sample_first_n_rows(text_stream, chunk_size, max_size_bytes):
-            """Take rows from the start of the stream until the size limit is reached."""
+        def _sample_first_n_rows(text_stream, chunk_size, max_size_bytes, truncation_report=None):
+            """Take rows from the start of the stream until the size limit is reached.
+
+            When ``truncation_report`` is a dict, its ``"truncated"`` key is set to True if
+            the size limit stopped the read before the stream was exhausted. The signal is
+            conservative: a stream whose rows add up to exactly ``max_size_bytes`` is also
+            reported, since the read stops without proving no rows follow.
+            """
             chunk_list = []
             accumulated_size = 0
+
+            def _mark_truncated():
+                if truncation_report is not None:
+                    truncation_report["truncated"] = True
 
             try:
                 for chunk_df in pd.read_csv(text_stream, chunksize=chunk_size):
                     chunk_memory = chunk_df.memory_usage(deep=True).sum()
 
                     if accumulated_size + chunk_memory > max_size_bytes:
+                        _mark_truncated()
                         remaining_bytes = max_size_bytes - accumulated_size
                         if remaining_bytes <= 0:
                             # No remaining budget; do not take any more rows
@@ -216,6 +247,7 @@ def automl_data_loader(  # noqa: D417
                     accumulated_size += chunk_memory
 
                     if accumulated_size >= max_size_bytes:
+                        _mark_truncated()
                         break
             except Exception as e:
                 if not chunk_list:
@@ -299,8 +331,13 @@ def automl_data_loader(  # noqa: D417
             max_size_bytes,
             sampling_method,
             label_column,
+            truncation_report=None,
         ):
-            """Load CSV from S3 in batches and return a sampled dataframe using the chosen strategy."""
+            """Load CSV from S3 in batches and return a sampled dataframe using the chosen strategy.
+
+            ``truncation_report`` is only honoured by the ``first_n_rows`` strategy; the
+            subsampling strategies keep a representative sample of the whole stream.
+            """
             from botocore.exceptions import SSLError
 
             if sampling_method == "stratified" and label_column is None:
@@ -322,7 +359,9 @@ def automl_data_loader(  # noqa: D417
                 return _sample_stratified(text_stream, PANDAS_CHUNK_SIZE, max_size_bytes, label_column)
             if sampling_method == "random":
                 return _sample_random(text_stream, PANDAS_CHUNK_SIZE, max_size_bytes)
-            return _sample_first_n_rows(text_stream, PANDAS_CHUNK_SIZE, max_size_bytes)
+            return _sample_first_n_rows(
+                text_stream, PANDAS_CHUNK_SIZE, max_size_bytes, truncation_report=truncation_report
+            )
 
         status.record(
             "prepare_data",
@@ -418,55 +457,163 @@ def automl_data_loader(  # noqa: D417
         if not sampled_test_dataset.uri or not sampled_test_dataset.uri.endswith(".csv"):
             sampled_test_dataset.uri = (sampled_test_dataset.uri or "sampled_test_dataset") + ".csv"
 
-        # Features and target
-        X = sampled_dataframe.drop(columns=[label_column], inplace=False)
-        y = sampled_dataframe[label_column]
-
-        stratify_effective = task_type != "regression" and split_config.get("stratify", True)
-
-        # Primary split: train vs test
-        X_train, X_test, y_train, y_test = train_test_split(
-            X,
-            y,
-            test_size=test_size,
-            stratify=(y if stratify_effective else None),
-            random_state=random_state,
-        )
-
-        # Secondary split: selection train vs extra train
-        X_sel, X_extra, y_sel, y_extra = train_test_split(
-            X_train,
-            y_train,
-            test_size=(1 - selection_train_size),
-            stratify=(y_train if stratify_effective else None),
-            random_state=random_state,
-        )
-
-        X_y_sel = pd.concat([X_sel, y_sel], axis=1)
-        X_y_extra = pd.concat([X_extra, y_extra], axis=1)
-        X_y_test = pd.concat([X_test, y_test], axis=1)
-
-        # Write selection train and extra train to PVC workspace
+        # Common setup: workspace directory and stratification flag
         datasets_dir = Path(workspace_path) / "datasets"
         datasets_dir.mkdir(parents=True, exist_ok=True)
+        stratify_effective = task_type != "regression" and split_config.get("stratify", True)
+
+        has_user_test_data = bool(test_data_file_key)
+
+        if has_user_test_data:
+            evaluation_mode = "user-provided"
+            test_data_source = test_data_source_uri(test_data_bucket_name, test_data_file_key)
+            status.record("load_test_data", "started", source=test_data_source)
+
+            # Download user test data from S3 (AC5: distinguishable error message)
+            truncation_report = {}
+            try:
+                user_test_df = load_data_in_batches(
+                    s3_client,
+                    test_data_bucket_name,
+                    test_data_file_key,
+                    max_size_bytes=MAX_SIZE_BYTES,
+                    sampling_method="first_n_rows",
+                    label_column=label_column,
+                    truncation_report=truncation_report,
+                )
+            except Exception as e:
+                raise test_data_load_error(test_data_source, e) from e
+
+            # Validate test data is non-empty (AC4)
+            raise_if_test_data_empty(len(user_test_df), test_data_source)
+
+            if truncation_report.get("truncated"):
+                report_test_data_truncation(status, logger, test_data_source, len(user_test_df), MAX_SIZE_BYTES)
+
+            # Validate label column exists in test data
+            if label_column not in user_test_df.columns:
+                raise ValueError(
+                    f"Label column {label_column!r} not found in test dataset. "
+                    f"Available columns: {list(user_test_df.columns)}"
+                )
+
+            # Fail fast on a train/test schema mismatch: AutoGluon would otherwise only
+            # surface it inside predict/evaluate, after the full fit has already run.
+            train_feature_columns = [c for c in sampled_dataframe.columns if c != label_column]
+            test_columns = set(user_test_df.columns)
+            missing_features = [c for c in train_feature_columns if c not in test_columns]
+            if missing_features:
+                raise ValueError(
+                    f"Test dataset is missing feature column(s) present in the training data: "
+                    f"{missing_features}. Test data columns: {list(user_test_df.columns)}. "
+                    "Provide a test dataset with the same feature columns as the training data."
+                )
+            extra_features = [c for c in user_test_df.columns if c != label_column and c not in train_feature_columns]
+            if extra_features:
+                logger.warning(
+                    "Test dataset has column(s) not present in the training data: %s. "
+                    "They are ignored during evaluation.",
+                    extra_features,
+                )
+
+            # Apply same cleansing as training data
+            user_test_df.replace([math.inf, -math.inf], float("nan"), inplace=True)
+            user_test_df.drop_duplicates(inplace=True)
+            user_test_df = user_test_df.dropna(subset=[label_column])
+
+            if user_test_df.empty:
+                raise ValueError(
+                    "Test dataset has no valid rows after cleansing "
+                    "(infinite value replacement, duplicate removal, label NaN drop). "
+                    f"Source: {test_data_source}."
+                )
+
+            # Write user test data to the sampled_test_dataset artifact
+            user_test_df.to_csv(sampled_test_dataset.path, index=False)
+
+            status.record(
+                "load_test_data",
+                "completed",
+                test_rows=len(user_test_df),
+                truncated=bool(truncation_report.get("truncated")),
+            )
+
+            # Skip primary 80/20 split -- use ALL sampled training data for secondary split
+            X = sampled_dataframe.drop(columns=[label_column], inplace=False)
+            y = sampled_dataframe[label_column]
+
+            X_sel, X_extra, y_sel, y_extra = train_test_split(
+                X,
+                y,
+                test_size=(1 - selection_train_size),
+                stratify=(y if stratify_effective else None),
+                random_state=random_state,
+            )
+
+            X_y_sel = pd.concat([X_sel, y_sel], axis=1)
+            X_y_extra = pd.concat([X_extra, y_extra], axis=1)
+
+            sample_row = user_test_df.head(1).to_json(orient="records")
+
+            split_config_out = {
+                "test_size": 0.0,
+                "random_state": random_state,
+                "stratify": stratify_effective,
+            }
+
+        else:
+            evaluation_mode = "auto-split"
+            # Features and target
+            X = sampled_dataframe.drop(columns=[label_column], inplace=False)
+            y = sampled_dataframe[label_column]
+
+            # Primary split: train vs test
+            X_train, X_test, y_train, y_test = train_test_split(
+                X,
+                y,
+                test_size=test_size,
+                stratify=(y if stratify_effective else None),
+                random_state=random_state,
+            )
+
+            # Secondary split: selection train vs extra train
+            X_sel, X_extra, y_sel, y_extra = train_test_split(
+                X_train,
+                y_train,
+                test_size=(1 - selection_train_size),
+                stratify=(y_train if stratify_effective else None),
+                random_state=random_state,
+            )
+
+            X_y_sel = pd.concat([X_sel, y_sel], axis=1)
+            X_y_extra = pd.concat([X_extra, y_extra], axis=1)
+            X_y_test = pd.concat([X_test, y_test], axis=1)
+
+            # Write test to S3 artifact
+            X_y_test.to_csv(sampled_test_dataset.path, index=False)
+
+            sample_row = X_y_test.head(1).to_json(orient="records")
+
+            split_config_out = {
+                "test_size": test_size,
+                "random_state": random_state,
+                "stratify": stratify_effective,
+            }
+
+        # Common post-split: write selection-train and extra-train CSVs to workspace
         models_selection_train_data_path = str(datasets_dir / "models_selection_train_dataset.csv")
         extra_train_data_path = str(datasets_dir / "extra_train_dataset.csv")
         X_y_sel.to_csv(models_selection_train_data_path, index=False)
         X_y_extra.to_csv(extra_train_data_path, index=False)
 
-        # Write test to S3 artifact
-        X_y_test.to_csv(sampled_test_dataset.path, index=False)
-
         status.record(
             "split_and_export",
             "completed",
-            test_size=test_size,
+            test_size=split_config_out["test_size"],
             selection_train_size=selection_train_size,
             stratify=stratify_effective,
+            evaluation_mode=evaluation_mode,
         )
-
-        # Sample row for downstream use (JSON string to avoid NaN issues)
-        sample_row = X_y_test.head(1).to_json(orient="records")
 
         return NamedTuple(
             "outputs",
@@ -475,16 +622,14 @@ def automl_data_loader(  # noqa: D417
             sample_row=str,
             models_selection_train_data_path=str,
             extra_train_data_path=str,
+            evaluation_mode=str,
         )(
             sample_config={"n_samples": n_samples},
-            split_config={
-                "test_size": test_size,
-                "random_state": random_state,
-                "stratify": stratify_effective,
-            },
+            split_config=split_config_out,
             sample_row=sample_row,
             models_selection_train_data_path=models_selection_train_data_path,
             extra_train_data_path=extra_train_data_path,
+            evaluation_mode=evaluation_mode,
         )
 
 
