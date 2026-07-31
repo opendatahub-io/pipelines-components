@@ -11,6 +11,10 @@
           "description": "Validate inputs, read source data, apply sampling, and cleanse the dataset."
         },
         {
+          "id": "load_test_data",
+          "description": "Load and validate the user-provided test dataset (only when one is configured)."
+        },
+        {
           "id": "split_and_export",
           "description": "Split into selection train/validation sets and write output CSVs."
         }

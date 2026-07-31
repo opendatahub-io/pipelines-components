@@ -72,10 +72,10 @@ def autogluon_timeseries_models_training(
         eval_metric: Metric for model ranking (e.g. ``"mean_absolute_scaled_error"``,
             ``"weighted_quantile_loss"``). Defaults to ``"mean_absolute_scaled_error"``.
             Legacy uppercase acronyms (e.g. ``"MASE"``) are accepted and normalized to snake_case.
-        evaluation_mode: Evaluation mode from data loader ("user-provided" or "auto-split").
-            "user-provided" indicates test data was provided by the user, "auto-split" indicates
-            test data was created by automatically splitting training data. Used by downstream
-            pipeline components for decision making. Defaults to "auto-split".
+        evaluation_mode: Provenance of ``test_data``, as reported by the data loader: either
+            "user-provided" or "auto-split" (default). This is recorded as metadata only and does
+            not change how evaluation runs -- the swap is already accomplished by what the loader
+            wrote to ``test_data``.
 
     Returns:
         NamedTuple: top_models list, predictor_path, eval_metric, model_config.

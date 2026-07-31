@@ -11,6 +11,10 @@
           "description": "Validate inputs, read panel data from S3, parse timestamps, and deduplicate series keys."
         },
         {
+          "id": "load_test_data",
+          "description": "Load and validate the user-provided test dataset (only when one is configured)."
+        },
+        {
           "id": "split_and_export",
           "description": "Apply per-series temporal splits and write train/validation/test CSVs."
         }

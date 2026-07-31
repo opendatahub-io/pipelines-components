@@ -108,9 +108,14 @@ def autogluon_timeseries_training_pipeline(
         preset: Training quality tier. ``"speed"`` (default, 4 vCPU / 16 GiB) or
             ``"balanced"`` (may run more than 2x longer, 8 vCPU / 32 GiB).
         test_data_bucket_name: Optional S3-compatible bucket name containing user-provided test dataset.
-            If provided, test_data_file_key must also be specified.
+            If provided, test_data_file_key must also be specified. The test data is read with the
+            single ``train_data_secret_name`` credential set, so it must live on the same S3 endpoint
+            and be readable with the same credentials as the training data.
         test_data_file_key: Optional S3 object key of the test CSV file (features and target column).
-            If provided, test_data_bucket_name must also be specified.
+            If provided, test_data_bucket_name must also be specified. The test CSV must carry the
+            same id/timestamp/target and ``known_covariates_names`` columns as the training data,
+            cover the same series, and give each series at least ``prediction_length`` rows; the
+            data loader fails on a mismatch before training starts.
 
     Returns:
         This pipeline wires task outputs between components; compiled runs expose the combined models artifact
@@ -153,6 +158,8 @@ def autogluon_timeseries_training_pipeline(
         target=target,
         id_column=id_column,
         timestamp_column=timestamp_column,
+        prediction_length=prediction_length,
+        known_covariates_names=known_covariates_names,
         test_data_bucket_name=test_data_bucket_name,
         test_data_file_key=test_data_file_key,
     )

@@ -123,8 +123,8 @@ def autogluon_tabular_training_pipeline(
         positive_class: Optional label value for the positive class in binary classification. Defaults to the second unique class after sorting label values.
         eval_metric: Metric used for model ranking. Empty string (default) is resolved by the component to "r2" for regression and "accuracy" for binary and multiclass classification.
         preset: Training quality tier. "speed" (default, 4 vCPU / 16 GiB) or "balanced" (may run more than 2x longer, 8 vCPU / 32 GiB).
-        test_data_bucket_name: Optional S3-compatible bucket name containing user-provided test dataset. If provided, test_data_file_key must also be specified.
-        test_data_file_key: Optional S3 object key of the test CSV file (features and target column). If provided, test_data_bucket_name must also be specified.
+        test_data_bucket_name: Optional S3-compatible bucket name containing user-provided test dataset. If provided, test_data_file_key must also be specified. The test data is read with the single train_data_secret_name credential set, so it must live on the same S3 endpoint and be readable with the same credentials as the training data.
+        test_data_file_key: Optional S3 object key of the test CSV file (features and target column). If provided, test_data_bucket_name must also be specified. The test CSV must carry the same feature columns and label column as the training data; a mismatch fails the data loader before training starts.
 
     Returns:
         HTML artifact with leaderboard of refitted models ranked by task_type metric (e.g. accuracy, r2).

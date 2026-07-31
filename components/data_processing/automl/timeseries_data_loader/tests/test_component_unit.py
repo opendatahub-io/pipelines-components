@@ -779,8 +779,22 @@ class TestUserProvidedTestData:
         test_rows = _read_csv_rows(sampled_test.path)
         assert len(test_rows) >= 2, f"Expected at least 2 test rows from multi-row test data, got {len(test_rows)}"
         assert "target" in test_rows[0]
+        # The 2025 timestamps exist only in the user test CSV (training data and padding
+        # are all 2024), so finding them proves the artifact is the user's data.
+        test_only = {
+            (str(row["timestamp"])[:10], row["target"], row["feature"])
+            for row in test_rows
+            if str(row["timestamp"]).startswith("2025-01")
+        }
+        assert test_only == {("2025-01-01", "100", "1000"), ("2025-01-02", "200", "2000")}
         assert Path(result.models_selection_train_data_path).exists()
         assert Path(result.extra_train_data_path).exists()
+        # The load_test_data stage is reported to the dashboard
+        payload = json.loads((tmp_path / "component_status" / "component_status.json").read_text())
+        stages = {stage["id"]: stage for stage in payload["stages"]}
+        assert stages["load_test_data"]["status"] == "completed"
+        assert stages["load_test_data"]["test_rows"] == len(test_rows)
+        assert stages["load_test_data"]["truncated"] is False
 
     @mock.patch.dict("os.environ", mocked_env_variables)
     def test_no_test_data_backward_compatible(self, tmp_path):
@@ -928,13 +942,11 @@ class TestUserProvidedTestData:
                 )
 
     @mock.patch.dict("os.environ", mocked_env_variables)
-    def test_user_provided_test_data_combined_size_exceeds_limit(self, tmp_path):
-        """Combined training + test dataset exceeding 8 GiB raises ValueError (AC7).
+    def test_user_provided_test_data_truncation_warns_and_is_recorded(self, tmp_path, caplog):
+        """A test dataset over the 100 MB load limit is truncated with a WARNING and a status flag.
 
-        BYTES_PER_ROW is inflated only on the second S3 call (test data fetch) so training
-        data loads normally (default 100 bytes/row, no sampling truncation).  Because
-        ``memory_usage`` reads the class variable at call time, the combined-size check
-        sees the inflated value for *both* training and test DataFrames.
+        BYTES_PER_ROW is inflated only on the second S3 call (test data fetch) so the
+        training data loads normally (default 100 bytes/row, no sampling truncation).
         """
         train_csv = _timeseries_csv(n_rows=MIN_VALID_RECORDS + 10)
         test_csv = _timeseries_csv(n_rows=MIN_VALID_RECORDS + 10)
@@ -945,19 +957,19 @@ class TestUserProvidedTestData:
             nonlocal call_count
             call_count += 1
             if call_count == 1:
-                # Training data loads with default BYTES_PER_ROW (100)
                 return {"Body": io.BytesIO(train_csv.encode("utf-8"))}
-            # Inflate BYTES_PER_ROW *after* training data was loaded and cleansed.
-            MockedDataFrame.BYTES_PER_ROW = 85_000_000  # 85 MB per row
+            # 85 MB per row: the first chunk already blows the 100 MB budget, so the
+            # reader stops early and reports the truncation.
+            MockedDataFrame.BYTES_PER_ROW = 85_000_000
             return {"Body": io.BytesIO(test_csv.encode("utf-8"))}
 
         sampled_test = _make_test_artifact(tmp_path)
 
         original_bytes_per_row = MockedDataFrame.BYTES_PER_ROW
         try:
-            with _mock_boto3_and_pandas(get_object_side_effect=get_object_side_effect):
-                with pytest.raises(ValueError, match="Combined training and test dataset size"):
-                    timeseries_data_loader.python_func(
+            with caplog.at_level("WARNING"):
+                with _mock_boto3_and_pandas(get_object_side_effect=get_object_side_effect):
+                    result = timeseries_data_loader.python_func(
                         file_key="train.csv",
                         bucket_name="b",
                         workspace_path=str(tmp_path),
@@ -971,8 +983,228 @@ class TestUserProvidedTestData:
         finally:
             MockedDataFrame.BYTES_PER_ROW = original_bytes_per_row
 
+        assert result.evaluation_mode == "user-provided"
+        assert "was truncated" in caplog.text
+        payload = json.loads((tmp_path / "component_status" / "component_status.json").read_text())
+        stages = {stage["id"]: stage for stage in payload["stages"]}
+        assert stages["load_test_data"]["truncated"] is True
+        assert stages["load_test_data"]["status"] == "completed"
+
     @mock.patch.dict("os.environ", mocked_env_variables)
-    def test_user_provided_test_data_empty_after_cleansing(self, tmp_path):
+    @pytest.mark.parametrize("bad_key", ["/test.csv", "data/test.csv/", "data//test.csv"])
+    def test_user_test_data_rejects_malformed_s3_key(self, tmp_path, bad_key):
+        """Keys with a leading/trailing '/' or an empty path segment are rejected up front."""
+        train_csv = _timeseries_csv(n_rows=MIN_VALID_RECORDS + 10)
+        sampled_test = _make_test_artifact(tmp_path)
+
+        with _mock_boto3_and_pandas(get_object_return={"Body": io.BytesIO(train_csv.encode("utf-8"))}):
+            with pytest.raises(ValueError, match="must be a valid S3 object key"):
+                timeseries_data_loader.python_func(
+                    file_key="train.csv",
+                    bucket_name="b",
+                    workspace_path=str(tmp_path),
+                    target="target",
+                    id_column="item_id",
+                    timestamp_column="timestamp",
+                    sampled_test_dataset=sampled_test,
+                    test_data_bucket_name="test-bucket",
+                    test_data_file_key=bad_key,
+                )
+
+    @mock.patch.dict("os.environ", mocked_env_variables)
+    def test_user_test_data_params_are_stripped(self, tmp_path):
+        """Surrounding whitespace is stripped before the S3 request is issued."""
+        train_csv = _timeseries_csv(n_rows=MIN_VALID_RECORDS + 10)
+        test_csv = _pad_timeseries_csv(
+            "item_id,timestamp,target,feature\nseries-1,2025-01-01,100,1000\n",
+            min_rows=MIN_VALID_RECORDS + 1,
+        )
+
+        call_count = 0
+
+        def get_object_side_effect(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return {"Body": io.BytesIO(train_csv.encode("utf-8"))}
+            return {"Body": io.BytesIO(test_csv.encode("utf-8"))}
+
+        sampled_test = _make_test_artifact(tmp_path)
+
+        with _mock_boto3_and_pandas(get_object_side_effect=get_object_side_effect) as mock_s3:
+            result = timeseries_data_loader.python_func(
+                file_key="train.csv",
+                bucket_name="b",
+                workspace_path=str(tmp_path),
+                target="target",
+                id_column="item_id",
+                timestamp_column="timestamp",
+                sampled_test_dataset=sampled_test,
+                test_data_bucket_name="  test-bucket  ",
+                test_data_file_key="  test.csv  ",
+            )
+
+        assert result.evaluation_mode == "user-provided"
+        test_call = mock_s3.get_object.call_args_list[1]
+        assert test_call.kwargs["Bucket"] == "test-bucket"
+        assert test_call.kwargs["Key"] == "test.csv"
+
+    @mock.patch.dict("os.environ", mocked_env_variables)
+    def test_user_test_data_duplicate_keys_are_deduplicated(self, tmp_path):
+        """Duplicate ``(item_id, timestamp)`` rows in the test data collapse to the last one."""
+        train_csv = _timeseries_csv(n_rows=MIN_VALID_RECORDS + 10)
+        test_csv = (
+            "item_id,timestamp,target,feature\n"
+            "series-1,2025-01-01,100,1000\n"
+            "series-1,2025-01-01,111,1111\n"
+            "series-1,2025-01-02,200,2000\n"
+        )
+
+        call_count = 0
+
+        def get_object_side_effect(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return {"Body": io.BytesIO(train_csv.encode("utf-8"))}
+            return {"Body": io.BytesIO(test_csv.encode("utf-8"))}
+
+        sampled_test = _make_test_artifact(tmp_path)
+
+        with _mock_boto3_and_pandas(get_object_side_effect=get_object_side_effect):
+            timeseries_data_loader.python_func(
+                file_key="train.csv",
+                bucket_name="b",
+                workspace_path=str(tmp_path),
+                target="target",
+                id_column="item_id",
+                timestamp_column="timestamp",
+                sampled_test_dataset=sampled_test,
+                test_data_bucket_name="test-bucket",
+                test_data_file_key="test.csv",
+            )
+
+        rows = _read_csv_rows(sampled_test.path)
+        assert len(rows) == 2
+        by_timestamp = {str(row["timestamp"])[:10]: row["target"] for row in rows}
+        assert by_timestamp == {"2025-01-01": "111", "2025-01-02": "200"}
+
+    @mock.patch.dict("os.environ", mocked_env_variables)
+    def test_user_test_data_no_shared_series_raises(self, tmp_path):
+        """A test dataset whose series are all absent from the training data is rejected."""
+        train_csv = _timeseries_csv(n_rows=MIN_VALID_RECORDS + 10)
+        test_csv = "item_id,timestamp,target,feature\nseries-99,2025-01-01,100,1000\nseries-99,2025-01-02,200,2000\n"
+
+        call_count = 0
+
+        def get_object_side_effect(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return {"Body": io.BytesIO(train_csv.encode("utf-8"))}
+            return {"Body": io.BytesIO(test_csv.encode("utf-8"))}
+
+        sampled_test = _make_test_artifact(tmp_path)
+
+        with _mock_boto3_and_pandas(get_object_side_effect=get_object_side_effect):
+            with pytest.raises(ValueError, match="shares no 'item_id' values with the training data"):
+                timeseries_data_loader.python_func(
+                    file_key="train.csv",
+                    bucket_name="b",
+                    workspace_path=str(tmp_path),
+                    target="target",
+                    id_column="item_id",
+                    timestamp_column="timestamp",
+                    sampled_test_dataset=sampled_test,
+                    test_data_bucket_name="test-bucket",
+                    test_data_file_key="test.csv",
+                )
+
+    @mock.patch.dict("os.environ", mocked_env_variables)
+    def test_user_test_data_series_shorter_than_prediction_length_raises(self, tmp_path):
+        """A test series with fewer rows than ``prediction_length`` cannot be scored."""
+        train_csv = _timeseries_csv(n_rows=MIN_VALID_RECORDS + 10)
+        test_csv = "item_id,timestamp,target,feature\nseries-1,2025-01-01,100,1000\nseries-1,2025-01-02,200,2000\n"
+
+        call_count = 0
+
+        def get_object_side_effect(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return {"Body": io.BytesIO(train_csv.encode("utf-8"))}
+            return {"Body": io.BytesIO(test_csv.encode("utf-8"))}
+
+        sampled_test = _make_test_artifact(tmp_path)
+
+        with _mock_boto3_and_pandas(get_object_side_effect=get_object_side_effect):
+            with pytest.raises(ValueError, match=r"shorter than prediction_length \(5\)"):
+                timeseries_data_loader.python_func(
+                    file_key="train.csv",
+                    bucket_name="b",
+                    workspace_path=str(tmp_path),
+                    target="target",
+                    id_column="item_id",
+                    timestamp_column="timestamp",
+                    sampled_test_dataset=sampled_test,
+                    prediction_length=5,
+                    test_data_bucket_name="test-bucket",
+                    test_data_file_key="test.csv",
+                )
+
+    @mock.patch.dict("os.environ", mocked_env_variables)
+    def test_user_test_data_missing_known_covariate_raises(self, tmp_path):
+        """A test dataset missing a declared known covariate fails before training starts."""
+        train_csv = _timeseries_csv(n_rows=MIN_VALID_RECORDS + 10)
+        test_csv = "item_id,timestamp,target\nseries-1,2025-01-01,100\nseries-1,2025-01-02,200\n"
+
+        call_count = 0
+
+        def get_object_side_effect(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return {"Body": io.BytesIO(train_csv.encode("utf-8"))}
+            return {"Body": io.BytesIO(test_csv.encode("utf-8"))}
+
+        sampled_test = _make_test_artifact(tmp_path)
+
+        with _mock_boto3_and_pandas(get_object_side_effect=get_object_side_effect):
+            with pytest.raises(ValueError, match="Missing known covariate column"):
+                timeseries_data_loader.python_func(
+                    file_key="train.csv",
+                    bucket_name="b",
+                    workspace_path=str(tmp_path),
+                    target="target",
+                    id_column="item_id",
+                    timestamp_column="timestamp",
+                    sampled_test_dataset=sampled_test,
+                    known_covariates_names=["feature"],
+                    test_data_bucket_name="test-bucket",
+                    test_data_file_key="test.csv",
+                )
+
+    @mock.patch.dict("os.environ", mocked_env_variables)
+    def test_invalid_prediction_length_raises(self, tmp_path):
+        """A non-positive ``prediction_length`` is rejected."""
+        train_csv = _timeseries_csv(n_rows=MIN_VALID_RECORDS + 10)
+        sampled_test = _make_test_artifact(tmp_path)
+
+        with _mock_boto3_and_pandas(get_object_return={"Body": io.BytesIO(train_csv.encode("utf-8"))}):
+            with pytest.raises(ValueError, match="prediction_length must be greater than 0"):
+                timeseries_data_loader.python_func(
+                    file_key="train.csv",
+                    bucket_name="b",
+                    workspace_path=str(tmp_path),
+                    target="target",
+                    id_column="item_id",
+                    timestamp_column="timestamp",
+                    sampled_test_dataset=sampled_test,
+                    prediction_length=0,
+                )
+
+    @mock.patch.dict("os.environ", mocked_env_variables)
+    def test_user_test_data_unparseable_timestamps_raise(self, tmp_path):
         """Test data with unparseable timestamps fails during cleansing timestamp validation."""
         train_csv = _timeseries_csv(n_rows=MIN_VALID_RECORDS + 10)
         # Test data with unparseable timestamps -> timestamp parsing fails in _clean_timeseries_dataframe

@@ -71,9 +71,10 @@ def autogluon_models_training(
             (may run more than 2x longer).
         eval_metric: Metric for model ranking (e.g. ``"r2"``, ``"accuracy"``). Defaults
             to ``"r2"`` for regression and ``"accuracy"`` otherwise.
-        evaluation_mode: Data evaluation mode from the data loader. Either ``"user-provided"``
-            (test data provided by user) or ``"auto-split"`` (test data from train/test split).
-            Default is ``"auto-split"``.
+        evaluation_mode: Provenance of ``test_data``, as reported by the data loader: either
+            ``"user-provided"`` or ``"auto-split"`` (default). This is recorded as metadata only
+            and does not change how evaluation runs -- the swap is already accomplished by what
+            the loader wrote to ``test_data``.
 
     Returns:
         NamedTuple with ``eval_metric`` (the metric used for ranking, e.g. ``"r2"`` or ``"accuracy"``)

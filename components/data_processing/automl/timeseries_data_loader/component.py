@@ -1,4 +1,4 @@
-from typing import NamedTuple
+from typing import List, NamedTuple, Optional
 
 from kfp import dsl
 from kfp_components.utils.consts import AUTOML_IMAGE  # pyright: ignore[reportMissingImports]
@@ -18,6 +18,8 @@ def timeseries_data_loader(
     sampled_test_dataset: dsl.Output[dsl.Dataset],
     component_status: dsl.Output[dsl.Artifact],
     selection_train_size: float = 0.3,
+    prediction_length: int = 1,
+    known_covariates_names: Optional[List[str]] = None,
     test_data_bucket_name: str = "",
     test_data_file_key: str = "",
 ) -> NamedTuple(
@@ -60,8 +62,22 @@ def timeseries_data_loader(
         sampled_test_dataset: Output dataset artifact for the test split.
         component_status: Output artifact containing stage-level progress tracking for this component.
         selection_train_size: Fraction of train portion for model selection (default: 0.3).
+        prediction_length: Forecast horizon used downstream (default: 1). Only used to
+            fail fast when a user-provided test series is too short to be evaluated.
+        known_covariates_names: Covariate columns known in advance downstream (default: none).
+            Only used to fail fast when a user-provided test dataset omits one of them.
         test_data_bucket_name: S3 bucket name for user-provided test dataset (default: empty string).
+            Read with the same credentials and endpoint as the training data.
         test_data_file_key: S3 object key for user-provided test dataset (default: empty string).
+            Must be set together with ``test_data_bucket_name``. When set, the primary
+            temporal split is skipped and this dataset is written to ``sampled_test_dataset``.
+
+    Raises:
+        ValueError: If a required parameter is empty or invalid, if only one of the
+            ``test_data_*`` pair is set or the test key is not a valid S3 object key, if the
+            test dataset is empty, missing required or covariate columns, shares no series
+            with the training data, or has a series shorter than ``prediction_length``, or if
+            fewer than 100 valid records remain after cleansing.
 
     Returns:
         NamedTuple: sample_config, split_config, sample_rows, models_selection_train_data_path,
@@ -78,8 +94,16 @@ def timeseries_data_loader(
 
     logger = logging.getLogger(__name__)
 
+    from kfp_components.components.training.automl.shared.component_status import ComponentStatusTracker
+    from kfp_components.components.training.automl.shared.user_test_data import (
+        raise_if_test_data_empty,
+        report_test_data_truncation,
+        test_data_load_error,
+        test_data_source_uri,
+        validate_test_data_params,
+    )
+
     MAX_SIZE_BYTES = 100 * 1024 * 1024  # 100 MB limit in bytes
-    MAX_COMBINED_DATA_BYTES = 8 * 1024 * 1024 * 1024  # 8 GiB combined train + test limit
     MIN_VALID_RECORDS_AFTER_CLEANSING = 100
     PANDAS_CHUNK_SIZE = 10000  # Rows per batch for streaming read
     DEFAULT_TEST_SIZE = 0.2
@@ -101,20 +125,10 @@ def timeseries_data_loader(
     if file_key.startswith("/") or file_key.endswith("/") or "//" in file_key:
         raise ValueError("file_key must be a valid S3 object key and must not start/end with '/' or contain '//'.")
 
-    if (
-        test_data_file_key
-        and test_data_file_key.strip()
-        and not (test_data_bucket_name and test_data_bucket_name.strip())
-    ):
-        raise ValueError("test_data_bucket_name must be provided when test_data_file_key is set.")
-    if (
-        test_data_bucket_name
-        and test_data_bucket_name.strip()
-        and not (test_data_file_key and test_data_file_key.strip())
-    ):
-        raise ValueError("test_data_file_key must be provided when test_data_bucket_name is set.")
+    if prediction_length <= 0:
+        raise ValueError("prediction_length must be greater than 0.")
 
-    from kfp_components.components.training.automl.shared.component_status import ComponentStatusTracker
+    test_data_bucket_name, test_data_file_key = validate_test_data_params(test_data_bucket_name, test_data_file_key)
 
     status = ComponentStatusTracker(component_status.path, "timeseries_data_loader")
     with status:
@@ -156,8 +170,14 @@ def timeseries_data_loader(
                 verify=verify,
             )
 
-        def load_timeseries_data_truncate(bucket_name, file_key, max_size_bytes, chunk_size):
-            """Load time series CSV from S3, truncating to max_size_bytes while preserving order."""
+        def load_timeseries_data_truncate(bucket_name, file_key, max_size_bytes, chunk_size, truncation_report=None):
+            """Load time series CSV from S3, truncating to max_size_bytes while preserving order.
+
+            When ``truncation_report`` is a dict, its ``"truncated"`` key is set to True if the
+            size limit stopped the read before the stream was exhausted. The signal is
+            conservative: a stream whose rows add up to exactly ``max_size_bytes`` is also
+            reported, since the read stops without proving no rows follow.
+            """
             from botocore.exceptions import SSLError
 
             s3_client = get_s3_client()
@@ -177,11 +197,16 @@ def timeseries_data_loader(
             accumulated_size = 0
             total_rows_read = 0
 
+            def _mark_truncated():
+                if truncation_report is not None:
+                    truncation_report["truncated"] = True
+
             try:
                 for chunk_df in pd.read_csv(text_stream, chunksize=chunk_size):
                     chunk_memory = chunk_df.memory_usage(deep=True).sum()
 
                     if accumulated_size + chunk_memory > max_size_bytes:
+                        _mark_truncated()
                         remaining_bytes = max_size_bytes - accumulated_size
                         if remaining_bytes <= 0:
                             break
@@ -199,6 +224,7 @@ def timeseries_data_loader(
                     total_rows_read += len(chunk_df)
 
                     if accumulated_size >= max_size_bytes:
+                        _mark_truncated()
                         break
 
             except Exception as e:
@@ -377,23 +403,25 @@ def timeseries_data_loader(
             out = pd.concat(parts, ignore_index=True)
             return out.sort_values(by=sort_by).reset_index(drop=True)
 
-        has_user_test_data = bool(test_data_file_key and test_data_file_key.strip())
+        has_user_test_data = bool(test_data_file_key)
 
         if has_user_test_data:
             evaluation_mode = "user-provided"
-            status.record("load_test_data", "started", source=f"s3://{test_data_bucket_name}/{test_data_file_key}")
+            test_data_source = test_data_source_uri(test_data_bucket_name, test_data_file_key)
+            status.record("load_test_data", "started", source=test_data_source)
 
             # Download user test data from S3 (AC5: distinguishable error message)
+            truncation_report = {}
             try:
                 user_test_df = load_timeseries_data_truncate(
-                    test_data_bucket_name, test_data_file_key, MAX_SIZE_BYTES, PANDAS_CHUNK_SIZE
+                    test_data_bucket_name,
+                    test_data_file_key,
+                    MAX_SIZE_BYTES,
+                    PANDAS_CHUNK_SIZE,
+                    truncation_report=truncation_report,
                 )
             except Exception as e:
-                raise ValueError(
-                    f"Failed to download test dataset from "
-                    f"s3://{test_data_bucket_name}/{test_data_file_key}: {e}. "
-                    "Verify the test data S3 path and credentials are correct."
-                ) from e
+                raise test_data_load_error(test_data_source, e) from e
 
             # Validate required columns
             required_columns = {id_column, timestamp_column, target}
@@ -405,35 +433,62 @@ def timeseries_data_loader(
                 )
 
             # Validate non-empty (AC4)
-            if len(user_test_df) == 0:
+            raise_if_test_data_empty(len(user_test_df), test_data_source)
+
+            if truncation_report.get("truncated"):
+                report_test_data_truncation(status, logger, test_data_source, len(user_test_df), MAX_SIZE_BYTES)
+
+            # Fail fast on covariates AutoGluon will demand at predict time, hours into the run.
+            missing_covariates = [c for c in (known_covariates_names or []) if c not in set(user_test_df.columns)]
+            if missing_covariates:
                 raise ValueError(
-                    "Test dataset contains no data rows (only headers). "
-                    f"Source: s3://{test_data_bucket_name}/{test_data_file_key}. "
-                    "Provide a test dataset with at least one data row."
+                    f"Missing known covariate column(s) in test dataset: {missing_covariates}. "
+                    f"Available columns: {list(user_test_df.columns)}"
                 )
 
             # Apply same cleansing
             user_test_df = _clean_timeseries_dataframe(user_test_df, id_column, timestamp_column, logger)
 
-            if len(user_test_df) == 0:
+            # A test set that shares no series with the training data cannot be scored:
+            # every forecast would be for an item the predictor never saw.
+            train_item_ids = {item_id for item_id, _ in df.groupby(id_column, sort=False)}
+            test_series_lengths = {
+                item_id: len(series_df) for item_id, series_df in user_test_df.groupby(id_column, sort=False)
+            }
+            unknown_item_ids = sorted(str(i) for i in test_series_lengths if i not in train_item_ids)
+            if len(unknown_item_ids) == len(test_series_lengths):
                 raise ValueError(
-                    "Test dataset has no valid rows after cleansing. "
-                    f"Source: s3://{test_data_bucket_name}/{test_data_file_key}."
+                    f"Test dataset shares no {id_column!r} values with the training data "
+                    f"(test ids: {unknown_item_ids[:10]}). Provide a test dataset for the same time series."
+                )
+            if unknown_item_ids:
+                logger.warning(
+                    "Test dataset contains %s %r value(s) absent from the training data: %s. "
+                    "Those series cannot be forecast and are expected to be skipped downstream.",
+                    len(unknown_item_ids),
+                    id_column,
+                    unknown_item_ids[:10],
                 )
 
-            # Combined size validation (AC7)
-            combined_memory = df.memory_usage(deep=True).sum() + user_test_df.memory_usage(deep=True).sum()
-            if combined_memory > MAX_COMBINED_DATA_BYTES:
+            short_series = sorted(
+                str(item_id) for item_id, length in test_series_lengths.items() if length < prediction_length
+            )
+            if short_series:
                 raise ValueError(
-                    f"Combined training and test dataset size ({combined_memory / (1024**3):.2f} GiB) "
-                    f"exceeds workspace capacity threshold ({MAX_COMBINED_DATA_BYTES / (1024**3):.0f} GiB). "
-                    "Reduce dataset sizes or use smaller samples."
+                    f"Test dataset series shorter than prediction_length ({prediction_length}): "
+                    f"{short_series[:10]}. Each series needs at least {prediction_length} row(s) to be "
+                    "evaluated over the forecast horizon."
                 )
 
             # Write user test data to artifact
             user_test_df.to_csv(sampled_test_dataset.path, index=False)
 
-            status.record("load_test_data", "completed", test_rows=len(user_test_df))
+            status.record(
+                "load_test_data",
+                "completed",
+                test_rows=len(user_test_df),
+                truncated=bool(truncation_report.get("truncated")),
+            )
 
             # Skip primary temporal split -- use ALL data for secondary split
             selection_parts = []

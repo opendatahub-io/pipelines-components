@@ -78,11 +78,17 @@ def automl_data_loader(  # noqa: D417
         split_config: Split configuration dictionary. Available keys: "test_size" (float), "random_state" (int), "stratify" (bool).
         selection_train_size: Fraction of the train portion used for model selection (default 0.3).
         test_data_bucket_name: S3 bucket name for user-provided test dataset (default: empty string).
+            Read with the same credentials and endpoint as the training data.
         test_data_file_key: S3 object key for user-provided test dataset (default: empty string).
+            Must be set together with ``test_data_bucket_name``. When set, the primary 80/20
+            split is skipped and this dataset is written to ``sampled_test_dataset`` instead.
 
     Raises:
-        ValueError: If sampling_method or task_type is invalid, if required parameters are missing,
-            or if fewer than 100 valid records remain after data cleansing.
+        TypeError: If a required string parameter is empty or a config value has the wrong type.
+        ValueError: If sampling_method or task_type is invalid, if only one of the
+            ``test_data_*`` pair is set or the test key is not a valid S3 object key, if the
+            test dataset is empty or missing the label or a training feature column, or if
+            fewer than 100 valid records remain after data cleansing.
 
     Returns:
         NamedTuple: Contains sample config, split config, a sample row, paths to selection-train
@@ -95,11 +101,18 @@ def automl_data_loader(  # noqa: D417
 
     import boto3
     import pandas as pd
+    from kfp_components.components.training.automl.shared.component_status import ComponentStatusTracker
+    from kfp_components.components.training.automl.shared.user_test_data import (
+        raise_if_test_data_empty,
+        report_test_data_truncation,
+        test_data_load_error,
+        test_data_source_uri,
+        validate_test_data_params,
+    )
 
     logger = logging.getLogger(__name__)
 
     MAX_SIZE_BYTES = 100 * 1024 * 1024  # 100 MB limit in bytes
-    MAX_COMBINED_DATA_BYTES = 8 * 1024 * 1024 * 1024  # 8 GiB combined train + test limit
     MIN_VALID_RECORDS_AFTER_CLEANSING = 100
     PANDAS_CHUNK_SIZE = 10000  # Rows per batch for streaming read
     DEFAULT_RANDOM_STATE = 42
@@ -135,20 +148,7 @@ def automl_data_loader(  # noqa: D417
     elif selection_train_size <= 0 or selection_train_size >= 1:
         raise ValueError("selection_train_size must be in a range 0 to 1.")
 
-    if (
-        test_data_file_key
-        and test_data_file_key.strip()
-        and not (test_data_bucket_name and test_data_bucket_name.strip())
-    ):
-        raise TypeError("test_data_bucket_name must be provided when test_data_file_key is set.")
-    if (
-        test_data_bucket_name
-        and test_data_bucket_name.strip()
-        and not (test_data_file_key and test_data_file_key.strip())
-    ):
-        raise TypeError("test_data_file_key must be provided when test_data_bucket_name is set.")
-
-    from kfp_components.components.training.automl.shared.component_status import ComponentStatusTracker
+    test_data_bucket_name, test_data_file_key = validate_test_data_params(test_data_bucket_name, test_data_file_key)
 
     # Initialize status tracker
     status = ComponentStatusTracker(component_status.path, "automl_data_loader")
@@ -210,16 +210,27 @@ def automl_data_loader(  # noqa: D417
                 verify=verify,
             )
 
-        def _sample_first_n_rows(text_stream, chunk_size, max_size_bytes):
-            """Take rows from the start of the stream until the size limit is reached."""
+        def _sample_first_n_rows(text_stream, chunk_size, max_size_bytes, truncation_report=None):
+            """Take rows from the start of the stream until the size limit is reached.
+
+            When ``truncation_report`` is a dict, its ``"truncated"`` key is set to True if
+            the size limit stopped the read before the stream was exhausted. The signal is
+            conservative: a stream whose rows add up to exactly ``max_size_bytes`` is also
+            reported, since the read stops without proving no rows follow.
+            """
             chunk_list = []
             accumulated_size = 0
+
+            def _mark_truncated():
+                if truncation_report is not None:
+                    truncation_report["truncated"] = True
 
             try:
                 for chunk_df in pd.read_csv(text_stream, chunksize=chunk_size):
                     chunk_memory = chunk_df.memory_usage(deep=True).sum()
 
                     if accumulated_size + chunk_memory > max_size_bytes:
+                        _mark_truncated()
                         remaining_bytes = max_size_bytes - accumulated_size
                         if remaining_bytes <= 0:
                             # No remaining budget; do not take any more rows
@@ -236,6 +247,7 @@ def automl_data_loader(  # noqa: D417
                     accumulated_size += chunk_memory
 
                     if accumulated_size >= max_size_bytes:
+                        _mark_truncated()
                         break
             except Exception as e:
                 if not chunk_list:
@@ -319,8 +331,13 @@ def automl_data_loader(  # noqa: D417
             max_size_bytes,
             sampling_method,
             label_column,
+            truncation_report=None,
         ):
-            """Load CSV from S3 in batches and return a sampled dataframe using the chosen strategy."""
+            """Load CSV from S3 in batches and return a sampled dataframe using the chosen strategy.
+
+            ``truncation_report`` is only honoured by the ``first_n_rows`` strategy; the
+            subsampling strategies keep a representative sample of the whole stream.
+            """
             from botocore.exceptions import SSLError
 
             if sampling_method == "stratified" and label_column is None:
@@ -342,7 +359,9 @@ def automl_data_loader(  # noqa: D417
                 return _sample_stratified(text_stream, PANDAS_CHUNK_SIZE, max_size_bytes, label_column)
             if sampling_method == "random":
                 return _sample_random(text_stream, PANDAS_CHUNK_SIZE, max_size_bytes)
-            return _sample_first_n_rows(text_stream, PANDAS_CHUNK_SIZE, max_size_bytes)
+            return _sample_first_n_rows(
+                text_stream, PANDAS_CHUNK_SIZE, max_size_bytes, truncation_report=truncation_report
+            )
 
         status.record(
             "prepare_data",
@@ -443,13 +462,15 @@ def automl_data_loader(  # noqa: D417
         datasets_dir.mkdir(parents=True, exist_ok=True)
         stratify_effective = task_type != "regression" and split_config.get("stratify", True)
 
-        has_user_test_data = bool(test_data_file_key and test_data_file_key.strip())
+        has_user_test_data = bool(test_data_file_key)
 
         if has_user_test_data:
             evaluation_mode = "user-provided"
-            status.record("load_test_data", "started", source=f"s3://{test_data_bucket_name}/{test_data_file_key}")
+            test_data_source = test_data_source_uri(test_data_bucket_name, test_data_file_key)
+            status.record("load_test_data", "started", source=test_data_source)
 
             # Download user test data from S3 (AC5: distinguishable error message)
+            truncation_report = {}
             try:
                 user_test_df = load_data_in_batches(
                     s3_client,
@@ -458,27 +479,41 @@ def automl_data_loader(  # noqa: D417
                     max_size_bytes=MAX_SIZE_BYTES,
                     sampling_method="first_n_rows",
                     label_column=label_column,
+                    truncation_report=truncation_report,
                 )
             except Exception as e:
-                raise ValueError(
-                    f"Failed to download test dataset from "
-                    f"s3://{test_data_bucket_name}/{test_data_file_key}: {e}. "
-                    "Verify the test data S3 path and credentials are correct."
-                ) from e
+                raise test_data_load_error(test_data_source, e) from e
 
             # Validate test data is non-empty (AC4)
-            if len(user_test_df) == 0:
-                raise ValueError(
-                    "Test dataset contains no data rows (only headers). "
-                    f"Source: s3://{test_data_bucket_name}/{test_data_file_key}. "
-                    "Provide a test dataset with at least one data row."
-                )
+            raise_if_test_data_empty(len(user_test_df), test_data_source)
+
+            if truncation_report.get("truncated"):
+                report_test_data_truncation(status, logger, test_data_source, len(user_test_df), MAX_SIZE_BYTES)
 
             # Validate label column exists in test data
             if label_column not in user_test_df.columns:
                 raise ValueError(
                     f"Label column {label_column!r} not found in test dataset. "
                     f"Available columns: {list(user_test_df.columns)}"
+                )
+
+            # Fail fast on a train/test schema mismatch: AutoGluon would otherwise only
+            # surface it inside predict/evaluate, after the full fit has already run.
+            train_feature_columns = [c for c in sampled_dataframe.columns if c != label_column]
+            test_columns = set(user_test_df.columns)
+            missing_features = [c for c in train_feature_columns if c not in test_columns]
+            if missing_features:
+                raise ValueError(
+                    f"Test dataset is missing feature column(s) present in the training data: "
+                    f"{missing_features}. Test data columns: {list(user_test_df.columns)}. "
+                    "Provide a test dataset with the same feature columns as the training data."
+                )
+            extra_features = [c for c in user_test_df.columns if c != label_column and c not in train_feature_columns]
+            if extra_features:
+                logger.warning(
+                    "Test dataset has column(s) not present in the training data: %s. "
+                    "They are ignored during evaluation.",
+                    extra_features,
                 )
 
             # Apply same cleansing as training data
@@ -490,24 +525,18 @@ def automl_data_loader(  # noqa: D417
                 raise ValueError(
                     "Test dataset has no valid rows after cleansing "
                     "(infinite value replacement, duplicate removal, label NaN drop). "
-                    f"Source: s3://{test_data_bucket_name}/{test_data_file_key}."
-                )
-
-            # Combined size validation (AC7)
-            combined_memory = (
-                sampled_dataframe.memory_usage(deep=True).sum() + user_test_df.memory_usage(deep=True).sum()
-            )
-            if combined_memory > MAX_COMBINED_DATA_BYTES:
-                raise ValueError(
-                    f"Combined training and test dataset size ({combined_memory / (1024**3):.2f} GiB) "
-                    f"exceeds workspace capacity threshold ({MAX_COMBINED_DATA_BYTES / (1024**3):.0f} GiB). "
-                    "Reduce dataset sizes or use smaller samples."
+                    f"Source: {test_data_source}."
                 )
 
             # Write user test data to the sampled_test_dataset artifact
             user_test_df.to_csv(sampled_test_dataset.path, index=False)
 
-            status.record("load_test_data", "completed", test_rows=len(user_test_df))
+            status.record(
+                "load_test_data",
+                "completed",
+                test_rows=len(user_test_df),
+                truncated=bool(truncation_report.get("truncated")),
+            )
 
             # Skip primary 80/20 split -- use ALL sampled training data for secondary split
             X = sampled_dataframe.drop(columns=[label_column], inplace=False)
