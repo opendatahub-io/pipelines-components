@@ -2,7 +2,7 @@
 
 ARG DOCLING_LAYOUT_MODELCAR="registry.redhat.io/rhai/modelcar-docling-project-docling-layout-heron:3.0@sha256:fec51abe62b2a2db2e2998eaf7300d076c825f81817f4296977622fe15d7edbe"
 ARG DOCLING_MODELS_MODELCAR="registry.redhat.io/rhai/modelcar-docling-project-docling-models@sha256:34ee3b291a320144b50ed7b29f04251e1179d70024de578dc2583111931a7db6"
-ARG BASE_IMAGE="quay.io/aipcc/base-images/cpu:3.6.0-ea.1"
+ARG BASE_IMAGE="quay.io/aipcc/base-images/cpu:3.5.0"
 
 FROM ${DOCLING_LAYOUT_MODELCAR} AS docling-layout-modelcar
 FROM ${DOCLING_MODELS_MODELCAR} AS docling-models-modelcar
