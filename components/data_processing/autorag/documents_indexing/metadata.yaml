@@ -9,7 +9,7 @@ dependencies:
     - name: RHOAI Connections API
       version: ">=1.0.0"
     - name: ai4rag
-      version: "~=0.10.3"
+      version: "~=0.11.0"
 tags:
   - data-indexing
   - autorag
