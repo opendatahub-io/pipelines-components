@@ -37,9 +37,9 @@ The system integrates with OGX API for inference and vector database operations,
 - **Managed**: Yes
 - **Dependencies**:
   - Kubeflow:
-    - Name: Pipelines, Version: 2.16.1
+    - Name: Pipelines, Version: 2.17.0
   - External Services:
-    - Name: ai4rag, Version: ~=0.10.3
+    - Name: ai4rag, Version: ~=0.11.0
     - Name: OGX API, Version: ~=1.1.0
     - Name: RHOAI Connections API, Version: >=1.0.0
     - Name: Milvus, Version: >=2.0.0

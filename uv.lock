@@ -1223,7 +1223,6 @@ source = { editable = "." }
 dependencies = [
     { name = "kfp" },
     { name = "kfp-kubernetes" },
-    { name = "protobuf" },
 ]
 
 [package.optional-dependencies]
@@ -1297,7 +1296,6 @@ requires-dist = [
     { name = "kubernetes", marker = "extra == 'test-automl'" },
     { name = "packaging", marker = "extra == 'test'" },
     { name = "pip", marker = "extra == 'test'" },
-    { name = "protobuf", specifier = "<6.32" },
     { name = "pytest", marker = "extra == 'test'" },
     { name = "pytest-cov", marker = "extra == 'test'" },
     { name = "pytest-timeout", marker = "extra == 'test'" },
