@@ -926,7 +926,7 @@ tree-sitter-typescript==0.23.2 \
     --hash=sha256:0fa0c96de9e44aad636ec2bdbfbd4fc8a14497aa0656ae60021a8a20fe611e41 \
     --hash=sha256:e3f6058625e88bb057a5aa1aee8fe2aa8e1758c912bb6aadb72720a61fae586e
     # via docling-core
-triton==3.6.0 ; platform_machine != "s390x" \
+triton==3.6.0 \
     --hash=sha256:1fd543ee4b888f749e186f87fb4c669894fd2f74849b820ffee3014a54e99d05 \
     --hash=sha256:669850f373cd9bd588b5a4d86c6849f16be98b3e8087130ad945082842ae631b \
     --hash=sha256:a64f6de7b2d45d0426474a980776161e626ccdcbb35e8b540686411fe204e0c9
