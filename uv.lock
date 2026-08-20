@@ -1193,7 +1193,7 @@ wheels = [
 
 [[package]]
 name = "kfp"
-version = "2.16.1"
+version = "2.17.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "click" },
@@ -1207,13 +1207,14 @@ dependencies = [
     { name = "kubernetes" },
     { name = "protobuf" },
     { name = "pyyaml" },
+    { name = "requests" },
     { name = "requests-toolbelt" },
     { name = "tabulate" },
     { name = "urllib3" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/24/d8/4b72f7ffaf8918f629873766db81d444c7dd65a2c7342829b7b9df3d0cc3/kfp-2.16.1.tar.gz", hash = "sha256:67fffff19960bb4624836d1ee0a4449e6e326092646883f7d57e9d1cc402bce2", size = 317570, upload-time = "2026-05-05T13:47:52.389Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/e9/e8/a14556188eb695055db4bfa7714ed84eb555637c97e4da77b67df573499b/kfp-2.17.0.tar.gz", hash = "sha256:92dd2fc0cca5b073f14860253e936cc9e6901f871dfae355be6a9f8ea9d580c5", size = 362373, upload-time = "2026-07-09T13:46:40.295Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b7/64/c2393ab7410017cefd5fd5693811a77d7d55d5b02faf09a9e6402c4d187c/kfp-2.16.1-py3-none-any.whl", hash = "sha256:d90742de35d1fee871240ddf619b29f5c25103f522eddaf97d2b24cb2483d3ba", size = 421579, upload-time = "2026-05-05T13:47:50.588Z" },
+    { url = "https://files.pythonhosted.org/packages/e9/c6/eab3e5ed59497c09e0aca3f1cf0fc7c9c7ceaa05be0db620787355ffb351/kfp-2.17.0-py3-none-any.whl", hash = "sha256:dff321b76b2be8a09748a1be805a88699b4919e13bb6a1bf67ebf3074ea8ce3f", size = 477920, upload-time = "2026-07-09T13:46:38.614Z" },
 ]
 
 [[package]]
@@ -1268,6 +1269,7 @@ test-automl = [
     { name = "docker" },
     { name = "docstring-parser" },
     { name = "jinja2" },
+    { name = "jsonschema" },
     { name = "kfp-kubernetes" },
     { name = "kubernetes" },
     { name = "packaging" },
@@ -1288,16 +1290,16 @@ requires-dist = [
     { name = "docstring-parser", marker = "extra == 'test'" },
     { name = "jinja2", marker = "extra == 'test'" },
     { name = "jsonschema", marker = "extra == 'test'" },
-    { name = "kfp", specifier = ">=2.16.1" },
+    { name = "kfp", specifier = ">=2.17.0" },
     { name = "kfp-components", extras = ["lint"], marker = "extra == 'dev'" },
     { name = "kfp-components", extras = ["test"], marker = "extra == 'dev'" },
     { name = "kfp-components", extras = ["test"], marker = "extra == 'test-automl'" },
-    { name = "kfp-kubernetes", specifier = ">=2.16.1" },
+    { name = "kfp-kubernetes", specifier = ">=2.17.0" },
     { name = "kfp-kubernetes", marker = "extra == 'test'" },
     { name = "kubernetes", marker = "extra == 'test-automl'" },
     { name = "packaging", marker = "extra == 'test'" },
     { name = "pip", marker = "extra == 'test'" },
-    { name = "protobuf", specifier = "<6.32" },
+    { name = "protobuf", specifier = "<7.0" },
     { name = "pytest", marker = "extra == 'test'" },
     { name = "pytest-cov", marker = "extra == 'test'" },
     { name = "pytest-timeout", marker = "extra == 'test'" },
@@ -1312,32 +1314,34 @@ provides-extras = ["lint", "test", "test-automl", "dev"]
 
 [[package]]
 name = "kfp-kubernetes"
-version = "2.16.1"
+version = "2.17.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "kfp" },
     { name = "protobuf" },
+    { name = "requests" },
+    { name = "urllib3" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/fe/bf/ec1d0b97220b779fe373a2e52b217e70ac391cbcdbe184d5d4a128aecb3d/kfp_kubernetes-2.16.1.tar.gz", hash = "sha256:31267b58d04ad97165fb640ab8fe99c2ac58b9f46077a046bd34d281e9491d54", size = 19754, upload-time = "2026-05-05T13:48:28.948Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/bc/5e/ab074201c7e4657b4d3818050f31975fa04d82c8a74ccf2c42b550ae2007/kfp_kubernetes-2.17.0.tar.gz", hash = "sha256:28db5290d4b5aef1bfb89267574eda3ed26fc226bf9f4ddf851baf0a33a31161", size = 20384, upload-time = "2026-07-09T13:50:14.752Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/38/be/f6022a3c453318b867d2ba9ec9d07f52ecb01ff0bfccd3567b2d3280d0d7/kfp_kubernetes-2.16.1-py3-none-any.whl", hash = "sha256:d6bb854d93a6bc6893f70e9e4f4978d6133760ae62d8626be8a4360993cc9375", size = 27306, upload-time = "2026-05-05T13:48:27.326Z" },
+    { url = "https://files.pythonhosted.org/packages/f0/7b/e0db02a56682a37d4fc96a9c257dc81fc8f847e0575d0d4f9301c3976e56/kfp_kubernetes-2.17.0-py3-none-any.whl", hash = "sha256:822e3c59aa09a678f4f5fff392065f93495e18ffcd6cbd43ac62d8bffc0d82b8", size = 27715, upload-time = "2026-07-09T13:50:13.623Z" },
 ]
 
 [[package]]
 name = "kfp-pipeline-spec"
-version = "2.16.0"
+version = "2.17.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "protobuf" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/4f/bb/cb8a8d84fecfb0be421dacd93e63c3499e416a31f8fad2466cbdbd13d23e/kfp_pipeline_spec-2.16.0.tar.gz", hash = "sha256:96b6fe189978aac8e3c928611d467788914c7e5ff2c6ca313279116734e2e26c", size = 10555, upload-time = "2026-02-25T14:30:25.218Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/83/ba/61c1986a0724e146b745cac3006e4123dad6077084c5eeca43f5351d77ec/kfp_pipeline_spec-2.17.0.tar.gz", hash = "sha256:9ffe0a9a881d52ae867fd274d6b458a92d980bb368c15793d9f5e536c7f24521", size = 10621, upload-time = "2026-07-09T13:46:39.095Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/2a/4a/3cf478682cbcf72bb5808ca375d8f1deb829c9564563924d4c9d887721d6/kfp_pipeline_spec-2.16.0-py3-none-any.whl", hash = "sha256:02dc0feff42b1bca14f798fbd2264a537e697411527c6ee6343ed5546f1ea172", size = 9865, upload-time = "2026-02-25T14:30:24.231Z" },
+    { url = "https://files.pythonhosted.org/packages/b1/b3/15c2bf2a0063b1fe595cba12ce88e858a90861a166e966fc3d656a3ebbac/kfp_pipeline_spec-2.17.0-py3-none-any.whl", hash = "sha256:a2ae9f287ce69d72f2fc10a5dca30a5e32ab3b6975ad6ce9d4b54e0e02c54371", size = 9920, upload-time = "2026-07-09T13:46:38.132Z" },
 ]
 
 [[package]]
 name = "kfp-server-api"
-version = "2.16.0"
+version = "2.17.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "certifi" },
@@ -1345,7 +1349,7 @@ dependencies = [
     { name = "six" },
     { name = "urllib3" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/39/d7/13c537014f637288297ee9af5684b18b3823acb89e1f588b469196eba83c/kfp_server_api-2.16.0.tar.gz", hash = "sha256:32243e9eed9a386110e0363cbdc88b026f177bd5a1a53b63684bc0a47eb665a3", size = 63821, upload-time = "2026-02-25T14:29:56.678Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/4c/66/96e957346130828d5b8eaf9d3bea89fea5008680289c54f03be70cb745a3/kfp_server_api-2.17.0.tar.gz", hash = "sha256:12adfe269ca4758f01c687898f4471e786183e720fe5fa5aa4ad4fb0f3737d4f", size = 69867, upload-time = "2026-07-09T13:46:09.233Z" }
 
 [[package]]
 name = "kubernetes"
@@ -1964,16 +1968,17 @@ wheels = [
 
 [[package]]
 name = "protobuf"
-version = "6.31.1"
+version = "6.33.6"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/52/f3/b9655a711b32c19720253f6f06326faf90580834e2e83f840472d752bc8b/protobuf-6.31.1.tar.gz", hash = "sha256:d8cac4c982f0b957a4dc73a80e2ea24fab08e679c0de9deb835f4a12d69aca9a", size = 441797, upload-time = "2025-05-28T19:25:54.947Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/66/70/e908e9c5e52ef7c3a6c7902c9dfbb34c7e29c25d2f81ade3856445fd5c94/protobuf-6.33.6.tar.gz", hash = "sha256:a6768d25248312c297558af96a9f9c929e8c4cee0659cb07e780731095f38135", size = 444531, upload-time = "2026-03-18T19:05:00.988Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f3/6f/6ab8e4bf962fd5570d3deaa2d5c38f0a363f57b4501047b5ebeb83ab1125/protobuf-6.31.1-cp310-abi3-win32.whl", hash = "sha256:7fa17d5a29c2e04b7d90e5e32388b8bfd0e7107cd8e616feef7ed3fa6bdab5c9", size = 423603, upload-time = "2025-05-28T19:25:41.198Z" },
-    { url = "https://files.pythonhosted.org/packages/44/3a/b15c4347dd4bf3a1b0ee882f384623e2063bb5cf9fa9d57990a4f7df2fb6/protobuf-6.31.1-cp310-abi3-win_amd64.whl", hash = "sha256:426f59d2964864a1a366254fa703b8632dcec0790d8862d30034d8245e1cd447", size = 435283, upload-time = "2025-05-28T19:25:44.275Z" },
-    { url = "https://files.pythonhosted.org/packages/6a/c9/b9689a2a250264a84e66c46d8862ba788ee7a641cdca39bccf64f59284b7/protobuf-6.31.1-cp39-abi3-macosx_10_9_universal2.whl", hash = "sha256:6f1227473dc43d44ed644425268eb7c2e488ae245d51c6866d19fe158e207402", size = 425604, upload-time = "2025-05-28T19:25:45.702Z" },
-    { url = "https://files.pythonhosted.org/packages/76/a1/7a5a94032c83375e4fe7e7f56e3976ea6ac90c5e85fac8576409e25c39c3/protobuf-6.31.1-cp39-abi3-manylinux2014_aarch64.whl", hash = "sha256:a40fc12b84c154884d7d4c4ebd675d5b3b5283e155f324049ae396b95ddebc39", size = 322115, upload-time = "2025-05-28T19:25:47.128Z" },
-    { url = "https://files.pythonhosted.org/packages/fa/b1/b59d405d64d31999244643d88c45c8241c58f17cc887e73bcb90602327f8/protobuf-6.31.1-cp39-abi3-manylinux2014_x86_64.whl", hash = "sha256:4ee898bf66f7a8b0bd21bce523814e6fbd8c6add948045ce958b73af7e8878c6", size = 321070, upload-time = "2025-05-28T19:25:50.036Z" },
-    { url = "https://files.pythonhosted.org/packages/f7/af/ab3c51ab7507a7325e98ffe691d9495ee3d3aa5f589afad65ec920d39821/protobuf-6.31.1-py3-none-any.whl", hash = "sha256:720a6c7e6b77288b85063569baae8536671b39f15cc22037ec7045658d80489e", size = 168724, upload-time = "2025-05-28T19:25:53.926Z" },
+    { url = "https://files.pythonhosted.org/packages/fc/9f/2f509339e89cfa6f6a4c4ff50438db9ca488dec341f7e454adad60150b00/protobuf-6.33.6-cp310-abi3-win32.whl", hash = "sha256:7d29d9b65f8afef196f8334e80d6bc1d5d4adedb449971fefd3723824e6e77d3", size = 425739, upload-time = "2026-03-18T19:04:48.373Z" },
+    { url = "https://files.pythonhosted.org/packages/76/5d/683efcd4798e0030c1bab27374fd13a89f7c2515fb1f3123efdfaa5eab57/protobuf-6.33.6-cp310-abi3-win_amd64.whl", hash = "sha256:0cd27b587afca21b7cfa59a74dcbd48a50f0a6400cfb59391340ad729d91d326", size = 437089, upload-time = "2026-03-18T19:04:50.381Z" },
+    { url = "https://files.pythonhosted.org/packages/5c/01/a3c3ed5cd186f39e7880f8303cc51385a198a81469d53d0fdecf1f64d929/protobuf-6.33.6-cp39-abi3-macosx_10_9_universal2.whl", hash = "sha256:9720e6961b251bde64edfdab7d500725a2af5280f3f4c87e57c0208376aa8c3a", size = 427737, upload-time = "2026-03-18T19:04:51.866Z" },
+    { url = "https://files.pythonhosted.org/packages/ee/90/b3c01fdec7d2f627b3a6884243ba328c1217ed2d978def5c12dc50d328a3/protobuf-6.33.6-cp39-abi3-manylinux2014_aarch64.whl", hash = "sha256:e2afbae9b8e1825e3529f88d514754e094278bb95eadc0e199751cdd9a2e82a2", size = 324610, upload-time = "2026-03-18T19:04:53.096Z" },
+    { url = "https://files.pythonhosted.org/packages/9b/ca/25afc144934014700c52e05103c2421997482d561f3101ff352e1292fb81/protobuf-6.33.6-cp39-abi3-manylinux2014_s390x.whl", hash = "sha256:c96c37eec15086b79762ed265d59ab204dabc53056e3443e702d2681f4b39ce3", size = 339381, upload-time = "2026-03-18T19:04:54.616Z" },
+    { url = "https://files.pythonhosted.org/packages/16/92/d1e32e3e0d894fe00b15ce28ad4944ab692713f2e7f0a99787405e43533a/protobuf-6.33.6-cp39-abi3-manylinux2014_x86_64.whl", hash = "sha256:e9db7e292e0ab79dd108d7f1a94fe31601ce1ee3f7b79e0692043423020b0593", size = 323436, upload-time = "2026-03-18T19:04:55.768Z" },
+    { url = "https://files.pythonhosted.org/packages/c4/72/02445137af02769918a93807b2b7890047c32bfb9f90371cbc12688819eb/protobuf-6.33.6-py3-none-any.whl", hash = "sha256:77179e006c476e69bf8e8ce866640091ec42e1beb80b213c3900006ecfba6901", size = 170656, upload-time = "2026-03-18T19:04:59.826Z" },
 ]
 
 [[package]]
@@ -2476,7 +2481,7 @@ wheels = [
 
 [[package]]
 name = "requests"
-version = "2.33.1"
+version = "2.33.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "certifi" },
@@ -2484,9 +2489,9 @@ dependencies = [
     { name = "idna" },
     { name = "urllib3" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/5f/a4/98b9c7c6428a668bf7e42ebb7c79d576a1c3c1e3ae2d47e674b468388871/requests-2.33.1.tar.gz", hash = "sha256:18817f8c57c6263968bc123d237e3b8b08ac046f5456bd1e307ee8f4250d3517", size = 134120, upload-time = "2026-03-30T16:09:15.531Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/34/64/8860370b167a9721e8956ae116825caff829224fbca0ca6e7bf8ddef8430/requests-2.33.0.tar.gz", hash = "sha256:c7ebc5e8b0f21837386ad0e1c8fe8b829fa5f544d8df3b2253bff14ef29d7652", size = 134232, upload-time = "2026-03-25T15:10:41.586Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d7/8e/7540e8a2036f79a125c1d2ebadf69ed7901608859186c856fa0388ef4197/requests-2.33.1-py3-none-any.whl", hash = "sha256:4e6d1ef462f3626a1f0a0a9c42dd93c63bad33f9f1c1937509b8c5c8718ab56a", size = 64947, upload-time = "2026-03-30T16:09:13.83Z" },
+    { url = "https://files.pythonhosted.org/packages/56/5d/c814546c2333ceea4ba42262d8c4d55763003e767fa169adc693bd524478/requests-2.33.0-py3-none-any.whl", hash = "sha256:3324635456fa185245e24865e810cecec7b4caf933d7eb133dcde67d48cee69b", size = 65017, upload-time = "2026-03-25T15:10:40.382Z" },
 ]
 
 [[package]]
@@ -2968,11 +2973,11 @@ wheels = [
 
 [[package]]
 name = "urllib3"
-version = "2.6.3"
+version = "2.7.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/c7/24/5f1b3bdffd70275f6661c76461e25f024d5a38a46f04aaca912426a2b1d3/urllib3-2.6.3.tar.gz", hash = "sha256:1b62b6884944a57dbe321509ab94fd4d3b307075e0c2eae991ac71ee15ad38ed", size = 435556, upload-time = "2026-01-07T16:24:43.925Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/53/0c/06f8b233b8fd13b9e5ee11424ef85419ba0d8ba0b3138bf360be2ff56953/urllib3-2.7.0.tar.gz", hash = "sha256:231e0ec3b63ceb14667c67be60f2f2c40a518cb38b03af60abc813da26505f4c", size = 433602, upload-time = "2026-05-07T16:13:18.596Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/39/08/aaaad47bc4e9dc8c725e68f9d04865dbcb2052843ff09c97b08904852d84/urllib3-2.6.3-py3-none-any.whl", hash = "sha256:bf272323e553dfb2e87d9bfd225ca7b0f467b919d7bbd355436d3fd37cb0acd4", size = 131584, upload-time = "2026-01-07T16:24:42.685Z" },
+    { url = "https://files.pythonhosted.org/packages/7f/3e/5db95bcf282c52709639744ca2a8b149baccf648e39c8cc87553df9eae0c/urllib3-2.7.0-py3-none-any.whl", hash = "sha256:9fb4c81ebbb1ce9531cce37674bbc6f1360472bc18ca9a553ede278ef7276897", size = 131087, upload-time = "2026-05-07T16:13:17.151Z" },
 ]
 
 [[package]]
