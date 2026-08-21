@@ -76,6 +76,8 @@ class TestRagTemplatesOptimizationUnitTests:
         assert "input_data_key" in params
         assert "preset" in params
         assert sig.parameters["preset"].default == "speed"
+        assert "llm_judge_mode" in params
+        assert sig.parameters["llm_judge_mode"].default == "base"
 
     @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
     def test_delegates_to_ai4rag_run_rag_optimization(self, tmp_path):
@@ -112,6 +114,7 @@ class TestRagTemplatesOptimizationUnitTests:
                 html_artifact=html_artifact,
                 optimization_settings={"max_number_of_rag_patterns": 8},
                 input_data_key="data/docs/",
+                llm_judge_mode="ragas",
             )
 
         mock_sqlite.assert_called_once()
@@ -128,6 +131,7 @@ class TestRagTemplatesOptimizationUnitTests:
         assert call_kwargs["vector_io_provider_id"] == "milvus-provider"
         assert call_kwargs["test_data_key"] == "data/test.json"
         assert call_kwargs["input_data_key"] == "data/docs/"
+        assert call_kwargs["llm_judge_mode"] == "ragas"
         assert call_kwargs["optimization_settings"] == {"max_number_of_rag_patterns": 8}
         assert call_kwargs["indexing_pipeline_params"] == {
             "pipeline_name": "documents-indexing-pipeline",

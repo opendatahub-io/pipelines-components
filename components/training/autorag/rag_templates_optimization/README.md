@@ -27,6 +27,7 @@ Thin wrapper that delegates to ``ai4rag.components.optimization.rag_templates_op
 | `input_data_key` | `Optional[str]` | `""` | Path to documents dir within bucket. |
 | `component_status` | `dsl.Output[dsl.Artifact]` | `None` | Output artifact containing stage-level progress tracking. |
 | `preset` | `str` | `speed` | Pipeline quality tier. "speed" (default) uses 10 benchmark query threads. "balanced" uses 4 threads (reduced due to larger per-request context). |
+| `llm_judge_mode` | `str` | `base` | LLM-as-a-judge evaluation mode passed to ai4rag. One of "base" (default, in-house judge), "ragas" (RAGAS-based judge), "all" (both), or "none" (no LLM judge). |
 
 ## Usage Examples 🧪
 

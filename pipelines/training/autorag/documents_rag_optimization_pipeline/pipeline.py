@@ -190,6 +190,7 @@ def documents_rag_optimization_pipeline(
         test_data_key=test_data_key,
         input_data_key=input_data_key,
         preset=preset,
+        llm_judge_mode="ragas",
     )
 
     hpo_task.set_caching_options(False)

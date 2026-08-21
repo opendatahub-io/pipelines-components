@@ -28,6 +28,7 @@ def rag_templates_optimization(
     input_data_key: Optional[str] = "",
     component_status: dsl.Output[dsl.Artifact] = None,
     preset: str = "speed",
+    llm_judge_mode: str = "base",
 ):
     """RAG Templates Optimization component.
 
@@ -54,6 +55,9 @@ def rag_templates_optimization(
         preset: Pipeline quality tier. "speed" (default) uses 10 benchmark query
             threads. "balanced" uses 4 threads (reduced due to larger per-request
             context).
+        llm_judge_mode: LLM-as-a-judge evaluation mode passed to ai4rag. One of
+            "base" (default, in-house judge), "ragas" (RAGAS-based judge), "all"
+            (both), or "none" (no LLM judge).
 
     Environment variables (required):
         OGX_CLIENT_BASE_URL, OGX_CLIENT_API_KEY.
@@ -136,6 +140,7 @@ def rag_templates_optimization(
                 optimization_settings=optimization_settings,
                 inference_max_threads=inference_max_threads,
                 indexing_pipeline_params=indexing_pipeline_params,
+                llm_judge_mode=llm_judge_mode,
             )
 
             status.record(

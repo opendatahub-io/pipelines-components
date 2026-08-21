@@ -63,6 +63,22 @@ class TestDocumentsRagOptimizationPipelineUnit:
         finally:
             Path(tmp_path).unlink(missing_ok=True)
 
+    def test_rag_templates_optimization_uses_ragas_judge_mode(self):
+        """The optimization step is wired to run RAGAS as the LLM judge."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as tmp:
+            tmp_path = tmp.name
+        try:
+            compiler.Compiler().compile(
+                pipeline_func=documents_rag_optimization_pipeline,
+                package_path=tmp_path,
+            )
+            spec = load_pipeline_spec_document(Path(tmp_path))
+            hpo_task = spec["root"]["dag"]["tasks"]["rag-templates-optimization"]
+            llm_judge_mode = hpo_task["inputs"]["parameters"]["llm_judge_mode"]
+            assert llm_judge_mode["runtimeValue"]["constant"] == "ragas"
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
+
     def test_compiled_pipeline_declares_component_resource_tiers(self):
         """Every AutoRAG optimization step declares the expected CPU/memory tier."""
         from kfp_components.utils.pipeline_task_resources import (
