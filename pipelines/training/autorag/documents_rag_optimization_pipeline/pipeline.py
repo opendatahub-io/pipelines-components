@@ -1,7 +1,7 @@
 from typing import List, Optional
 
 from kfp import dsl
-from kfp.kubernetes import use_secret_as_env
+from kfp.kubernetes import use_secret_as_env, set_image_pull_policy
 from kfp_components.components.data_processing.autorag.documents_discovery import (
     documents_discovery,
 )
@@ -50,6 +50,7 @@ def documents_rag_optimization_pipeline(
     optimization_metric: str = "overall_score",
     optimization_max_rag_patterns: int = 8,
     preset: str = "speed",
+    optimize_prompts: bool = True,
 ):
     """Automated system for building and optimizing Retrieval-Augmented Generation (RAG) applications.
 
@@ -170,7 +171,10 @@ def documents_rag_optimization_pipeline(
         embedding_models=embedding_models,
         generation_models=generation_models,
         preset=preset,
+        optimize_prompts=optimize_prompts,
     )
+
+    set_image_pull_policy(mps_task, "Always")
 
     mps_task.set_caching_options(False)
     mps_task.set_cpu_request("2").set_memory_request("8Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(MAX_MEMORY)
@@ -191,6 +195,8 @@ def documents_rag_optimization_pipeline(
         input_data_key=input_data_key,
         preset=preset,
     )
+
+    set_image_pull_policy(hpo_task, "Always")
 
     hpo_task.set_caching_options(False)
     hpo_task.set_cpu_request("4").set_memory_request("16Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(MAX_MEMORY)

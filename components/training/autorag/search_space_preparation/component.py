@@ -22,6 +22,7 @@ def search_space_preparation(
     generation_models: Optional[List] = None,
     component_status: dsl.Output[dsl.Artifact] = None,
     preset: str = "speed",
+    optimize_prompts: bool = True,
 ):
     """Search space preparation for AutoRAG experiments.
 
@@ -117,6 +118,7 @@ def search_space_preparation(
                 chunk_sizes=chunk_sizes,
                 chunk_overlaps=chunk_overlaps,
                 inference_max_threads=inference_max_threads,
+                optimize_prompts=optimize_prompts,
             )
 
             report.save_json(search_space_prep_report.path)
