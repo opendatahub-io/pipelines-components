@@ -971,7 +971,7 @@ triad==1.0.2 \
     # via
     #   adagio
     #   fugue
-triton==3.6.0 ; platform_machine != 's390x'
+triton==3.6.0 ; platform_machine != 's390x' \
     --hash=sha256:10a4312290e8aa8ebd51fb7d609cdff7b5de87ea533554adbafc8209350b45f8 \
     --hash=sha256:4faa64744bb3259b03481b1898f3094adb9e06d9a995401602fbe54d3c51b41c \
     --hash=sha256:e9131e05ac5186c50b3075f7ee17e1b698d334936f07606ed72cfacefbf47ece
