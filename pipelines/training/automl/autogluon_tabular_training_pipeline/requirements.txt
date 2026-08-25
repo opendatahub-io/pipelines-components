@@ -554,11 +554,11 @@ packaging==26.3 \
     #   transformers
     #   utilsforecast
     #   weasel
-pandas==2.3.3 \
-    --hash=sha256:4022dee33a365dc25d470914b5fe17d02d362916fd88d6c34e3a4011aebb813e \
-    --hash=sha256:448cb61682a3e28102675a13569439021a4cd9ef78d93f1d7d7c9a2a7938952a \
-    --hash=sha256:47e593b4c53c26f63e20f86284bc78b9e343aa38d7feac970afcc7378a8b191c \
-    --hash=sha256:592417e78fbaf4d2883974d4c497d8452d7170655ef1974558de83a80f663693
+pandas==2.2.3 \
+    --hash=sha256:374b8b38ada3d578f3bb18bd88fc1b139a64fb1028a12adcd1a8b23ce455e826 \
+    --hash=sha256:779f481d1b2536d0b996ab00290a8b4f63cfa963a3eee6899f52ee8e758db21f \
+    --hash=sha256:c7de6af5e340a04e29ff41dd10b05882432a26a8d67049ae5fc6c5e1fefe234c \
+    --hash=sha256:eebc01c1342eb8d435c7ea352c6c875a2d97b40fabc9da450c4277e057e9faa0
     # via
     #   -r requirements.in
     #   autogluon-common
@@ -971,7 +971,7 @@ triad==1.0.2 \
     # via
     #   adagio
     #   fugue
-triton==3.6.0 \
+triton==3.6.0 ; platform_machine != 's390x'
     --hash=sha256:10a4312290e8aa8ebd51fb7d609cdff7b5de87ea533554adbafc8209350b45f8 \
     --hash=sha256:4faa64744bb3259b03481b1898f3094adb9e06d9a995401602fbe54d3c51b41c \
     --hash=sha256:e9131e05ac5186c50b3075f7ee17e1b698d334936f07606ed72cfacefbf47ece
