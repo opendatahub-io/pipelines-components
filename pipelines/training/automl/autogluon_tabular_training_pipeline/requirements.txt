@@ -1,4 +1,4 @@
---index-url https://console.redhat.com/api/pypi/public-rhai/rhoai/3.6-EA1/cpu-ubi9-test/simple
+--index-url https://console.redhat.com/api/pypi/public-rhai/rhoai/3.6-EA1/cpu-ubi9/simple
 
 absl-py==2.5.0 \
     --hash=sha256:6a154ec5a5d0b25cf629a00e54d600b631099967d2090b583774035d82b5df34

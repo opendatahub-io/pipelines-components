@@ -1,4 +1,4 @@
---index-url https://console.redhat.com/api/pypi/public-rhai/rhoai/3.6-EA1/cpu-ubi9-test/simple
+--index-url https://console.redhat.com/api/pypi/public-rhai/rhoai/3.6-EA1/cpu-ubi9/simple
 
 autogluon.tabular[lightgbm,xgboost,tabm]==1.5.0+rhaiv.5
 fastai==2.8.8
