@@ -17,6 +17,7 @@ _EXPECTED_ROOT_DAG_TASK_IDS = (
     "rag-templates-optimization",
     "search-space-preparation",
     "text-extraction",
+    "models-pre-selector",
 )
 
 
@@ -37,7 +38,10 @@ class TestDocumentsRagOptimizationPipelineUnit:
         assert "input_data_secret_name" in inputs
         assert "input_data_bucket_name" in inputs
         assert "input_data_key" in inputs
-        assert "ogx_secret_name" in inputs
+        assert "maas_secret_name" in inputs
+        assert "vector_db_secret_name" in inputs
+        assert "ogx_secret_name" not in inputs
+        assert "vector_io_provider_id" not in inputs
         assert "preset" in inputs
         assert "responses_request_default_question" not in inputs
 
@@ -76,6 +80,36 @@ class TestDocumentsRagOptimizationPipelineUnit:
             hpo_task = spec["root"]["dag"]["tasks"]["rag-templates-optimization"]
             llm_judge_mode = hpo_task["inputs"]["parameters"]["llm_judge_mode"]
             assert llm_judge_mode["runtimeValue"]["constant"] == "ragas"
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
+
+    def test_text_extraction_runs_after_search_space_preparation(self):
+        """Heavy text extraction is gated behind the fail-fast search-space validation."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as tmp:
+            tmp_path = tmp.name
+        try:
+            compiler.Compiler().compile(
+                pipeline_func=documents_rag_optimization_pipeline,
+                package_path=tmp_path,
+            )
+            spec = load_pipeline_spec_document(Path(tmp_path))
+            te_task = spec["root"]["dag"]["tasks"]["text-extraction"]
+            assert "search-space-preparation" in te_task["dependentTasks"]
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
+
+    def test_optimization_consumes_models_pre_selector_report(self):
+        """Optimization must receive the (possibly reduced) report from models_pre_selector."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as tmp:
+            tmp_path = tmp.name
+        try:
+            compiler.Compiler().compile(
+                pipeline_func=documents_rag_optimization_pipeline,
+                package_path=tmp_path,
+            )
+            spec = load_pipeline_spec_document(Path(tmp_path))
+            opt_task = spec["root"]["dag"]["tasks"]["rag-templates-optimization"]
+            assert "models-pre-selector" in opt_task["dependentTasks"]
         finally:
             Path(tmp_path).unlink(missing_ok=True)
 

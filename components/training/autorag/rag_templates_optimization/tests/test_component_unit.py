@@ -9,22 +9,27 @@ import pytest
 from ..component import rag_templates_optimization
 
 MOCKED_ENV_VARIABLES = {
-    "OGX_CLIENT_BASE_URL": "https://ogx.example.com",
-    "OGX_CLIENT_API_KEY": "test-api-key",
+    "MAAS_BASE_URL": "https://maas.example.com/v1",
+    "MAAS_API_KEY": "test-api-key",
+    "MILVUS_URI": "https://milvus.example.com:19530",
 }
 
 
 def _make_ai4rag_mocks():
-    """Build mock modules for ai4rag optimization, utils, compat, and leaderboard."""
-    mock_create_ogx_client = mock.MagicMock(name="create_ogx_client")
+    """Build mock modules for ai4rag optimization, utils, vector_store, compat, leaderboard."""
+    mock_create_maas_client = mock.MagicMock(name="create_maas_client")
     mock_run_rag_optimization = mock.MagicMock(name="run_rag_optimization")
     mock_ensure_sqlite3 = mock.MagicMock(name="ensure_sqlite3")
+    mock_get_vector_store_config = mock.MagicMock(name="get_vector_store_config")
 
     mock_utils = mock.MagicMock()
-    mock_utils.create_ogx_client = mock_create_ogx_client
+    mock_utils.create_maas_client = mock_create_maas_client
 
     mock_optimization_module = mock.MagicMock()
     mock_optimization_module.run_rag_optimization = mock_run_rag_optimization
+
+    mock_vector_store = mock.MagicMock()
+    mock_vector_store.get_vector_store_config = mock_get_vector_store_config
 
     mock_compat = mock.MagicMock()
     mock_compat.ensure_sqlite3 = mock_ensure_sqlite3
@@ -37,15 +42,22 @@ def _make_ai4rag_mocks():
         "ai4rag": mock.MagicMock(),
         "ai4rag.components": mock.MagicMock(),
         "ai4rag.components.utils": mock_utils,
-        "ai4rag.components.utils.ogx_client": mock_utils,
         "ai4rag.components.optimization": mock.MagicMock(),
         "ai4rag.components.optimization.rag_templates_optimization": mock_optimization_module,
         "ai4rag.components.assets_generator": mock.MagicMock(),
         "ai4rag.components.assets_generator.leaderboard": mock_leaderboard,
+        "ai4rag.rag": mock.MagicMock(),
+        "ai4rag.rag.vector_store": mock_vector_store,
         "ai4rag.utils": mock.MagicMock(),
         "ai4rag.utils.compat": mock_compat,
     }
-    return modules, mock_create_ogx_client, mock_run_rag_optimization, mock_ensure_sqlite3
+    return (
+        modules,
+        mock_create_maas_client,
+        mock_run_rag_optimization,
+        mock_ensure_sqlite3,
+        mock_get_vector_store_config,
+    )
 
 
 class TestRagTemplatesOptimizationUnitTests:
@@ -62,15 +74,17 @@ class TestRagTemplatesOptimizationUnitTests:
         params = list(sig.parameters)
         assert "extracted_text" in params
         assert "test_data" in params
-        assert "search_space_prep_report" in params
+        assert "search_space_mps_report" in params
         assert "rag_patterns" in params
         assert "embedded_artifact" in params
         assert "test_data_key" in params
-        assert "vector_io_provider_id" in params
-        assert "ogx_secret_name" in params
+        assert "maas_secret_name" in params
+        assert "vector_db_secret_name" in params
         assert "input_data_secret_name" in params
         assert "input_data_bucket_name" in params
-        for name in ("ogx_secret_name", "input_data_secret_name", "input_data_bucket_name"):
+        assert "vector_io_provider_id" not in params
+        assert "ogx_secret_name" not in params
+        for name in ("maas_secret_name", "vector_db_secret_name", "input_data_secret_name", "input_data_bucket_name"):
             assert sig.parameters[name].default is inspect.Parameter.empty
         assert "optimization_settings" in params
         assert "input_data_key" in params
@@ -81,10 +95,12 @@ class TestRagTemplatesOptimizationUnitTests:
 
     @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
     def test_delegates_to_ai4rag_run_rag_optimization(self, tmp_path):
-        """Wrapper calls ensure_sqlite3, create_ogx_client, and run_rag_optimization."""
-        modules, mock_create_ogx, mock_run_opt, mock_sqlite = _make_ai4rag_mocks()
-        mock_ogx_client = mock.MagicMock(name="ogx_client_instance")
-        mock_create_ogx.return_value = mock_ogx_client
+        """Wrapper calls ensure_sqlite3, create_maas_client, get_vector_store_config, and run_rag_optimization."""
+        modules, mock_create_maas, mock_run_opt, mock_sqlite, mock_get_config = _make_ai4rag_mocks()
+        mock_maas_client = mock.MagicMock(name="maas_client_instance")
+        mock_create_maas.return_value = mock_maas_client
+        mock_config = mock.MagicMock(name="vector_store_config")
+        mock_get_config.return_value = mock_config
 
         patterns_list = [{"name": "pattern_a", "scores": {"faithfulness": {"mean": 0.9}}}]
         mock_run_opt.return_value = SimpleNamespace(patterns=patterns_list)
@@ -96,58 +112,134 @@ class TestRagTemplatesOptimizationUnitTests:
         rag_patterns.metadata = {}
 
         html_path = tmp_path / "leaderboard.html"
-        html_artifact = mock.MagicMock()
-        html_artifact.path = str(html_path)
-        html_artifact.metadata = {}
+        leaderboard_html = mock.MagicMock()
+        leaderboard_html.path = str(html_path)
+        leaderboard_html.metadata = {}
 
         with mock.patch.dict("sys.modules", modules):
             rag_templates_optimization.python_func(
                 extracted_text=str(tmp_path / "extracted"),
                 test_data=str(tmp_path / "test_data.json"),
-                search_space_prep_report=str(tmp_path / "report.yml"),
+                search_space_mps_report=str(tmp_path / "report.yml"),
                 rag_patterns=rag_patterns,
                 test_data_key="data/test.json",
-                vector_io_provider_id="milvus-provider",
-                ogx_secret_name="ogx-connection",
+                maas_secret_name="maas-connection",
+                vector_db_secret_name="vector-db-connection",
                 input_data_secret_name="s3-input-connection",
                 input_data_bucket_name="customer-docs",
-                html_artifact=html_artifact,
+                leaderboard=leaderboard_html,
                 optimization_settings={"max_number_of_rag_patterns": 8},
                 input_data_key="data/docs/",
                 llm_judge_mode="ragas",
             )
 
         mock_sqlite.assert_called_once()
-        mock_create_ogx.assert_called_once_with(
-            base_url="https://ogx.example.com",
+        mock_create_maas.assert_called_once_with(
+            base_url="https://maas.example.com/v1",
             api_key="test-api-key",
         )
+        mock_get_config.assert_called_once_with("milvus")
         mock_run_opt.assert_called_once()
         call_kwargs = mock_run_opt.call_args.kwargs
         assert call_kwargs["extracted_text_path"] == str(tmp_path / "extracted")
         assert call_kwargs["test_data_path"] == str(tmp_path / "test_data.json")
         assert call_kwargs["search_space_report_path"] == str(tmp_path / "report.yml")
-        assert call_kwargs["ogx_client"] is mock_ogx_client
-        assert call_kwargs["vector_io_provider_id"] == "milvus-provider"
+        assert call_kwargs["maas_client"] is mock_maas_client
+        assert call_kwargs["vector_store_config"] is mock_config
+        assert "vector_io_provider_id" not in call_kwargs
         assert call_kwargs["test_data_key"] == "data/test.json"
         assert call_kwargs["input_data_key"] == "data/docs/"
         assert call_kwargs["llm_judge_mode"] == "ragas"
         assert call_kwargs["optimization_settings"] == {"max_number_of_rag_patterns": 8}
         assert call_kwargs["indexing_pipeline_params"] == {
             "pipeline_name": "documents-indexing-pipeline",
-            "ogx_secret_name": "ogx-connection",
-            "vector_io_provider_id": "milvus-provider",
+            "maas_secret_name": "maas-connection",
+            "vector_db_secret_name": "vector-db-connection",
             "input_data_secret_name": "s3-input-connection",
             "input_data_bucket_name": "customer-docs",
             "input_data_key": "data/docs/",
             "batch_size": 20,
         }
 
+    @mock.patch.dict(
+        "os.environ",
+        {
+            "MAAS_BASE_URL": "https://maas.example.com/v1",
+            "MAAS_API_KEY": "test-api-key",
+            "PGVECTOR_HOST": "pg.example.com",
+        },
+        clear=True,
+    )
+    def test_pgvector_provider_detected_from_env(self, tmp_path):
+        """PGVECTOR_* env vars select the pgvector backend when no MILVUS_* keys are set."""
+        modules, mock_create_maas, mock_run_opt, _, mock_get_config = _make_ai4rag_mocks()
+        mock_create_maas.return_value = mock.MagicMock()
+        mock_run_opt.return_value = SimpleNamespace(patterns=[])
+
+        rag_patterns = mock.MagicMock()
+        rag_patterns.path = str(tmp_path / "out")
+        rag_patterns.uri = "uri"
+        rag_patterns.metadata = {}
+
+        leaderboard_html = mock.MagicMock()
+        leaderboard_html.path = str(tmp_path / "leaderboard.html")
+        leaderboard_html.metadata = {}
+
+        # Only PGVECTOR_* keys present -> pgvector.
+        with mock.patch.dict("sys.modules", modules):
+            rag_templates_optimization.python_func(
+                extracted_text=str(tmp_path / "ext"),
+                test_data=str(tmp_path / "td.json"),
+                search_space_mps_report=str(tmp_path / "r.yml"),
+                rag_patterns=rag_patterns,
+                test_data_key="key.json",
+                maas_secret_name="maas-secret",
+                vector_db_secret_name="vector-db-secret",
+                input_data_secret_name="s3-secret",
+                input_data_bucket_name="bucket",
+                leaderboard=leaderboard_html,
+            )
+
+        mock_get_config.assert_called_once_with("pgvector")
+
+    def test_missing_vector_db_env_raises_value_error(self, tmp_path):
+        """Absent MILVUS_*/PGVECTOR_* env vars raise a descriptive ValueError."""
+        modules, mock_create_maas, _, _, _ = _make_ai4rag_mocks()
+        mock_create_maas.return_value = mock.MagicMock()
+
+        rag_patterns = mock.MagicMock()
+        rag_patterns.path = str(tmp_path / "out")
+        rag_patterns.metadata = {}
+
+        leaderboard_html = mock.MagicMock()
+        leaderboard_html.path = str(tmp_path / "leaderboard.html")
+        leaderboard_html.metadata = {}
+
+        with mock.patch.dict(
+            "os.environ",
+            {"MAAS_BASE_URL": "https://maas.example.com/v1", "MAAS_API_KEY": "test-api-key"},
+            clear=True,
+        ):
+            with mock.patch.dict("sys.modules", modules):
+                with pytest.raises(ValueError, match="No vector database configuration found"):
+                    rag_templates_optimization.python_func(
+                        extracted_text=str(tmp_path / "ext"),
+                        test_data=str(tmp_path / "td.json"),
+                        search_space_mps_report=str(tmp_path / "r.yml"),
+                        rag_patterns=rag_patterns,
+                        test_data_key="key.json",
+                        maas_secret_name="maas-secret",
+                        vector_db_secret_name="vector-db-secret",
+                        input_data_secret_name="s3-secret",
+                        input_data_bucket_name="bucket",
+                        leaderboard=leaderboard_html,
+                    )
+
     @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
     def test_sets_artifact_metadata(self, tmp_path):
         """Wrapper sets rag_patterns.metadata correctly from result.patterns."""
-        modules, mock_create_ogx, mock_run_opt, _ = _make_ai4rag_mocks()
-        mock_create_ogx.return_value = mock.MagicMock()
+        modules, mock_create_maas, mock_run_opt, _, _ = _make_ai4rag_mocks()
+        mock_create_maas.return_value = mock.MagicMock()
 
         patterns_list = [
             {"name": "pattern_a", "final_score": 0.95},
@@ -160,22 +252,22 @@ class TestRagTemplatesOptimizationUnitTests:
         rag_patterns.uri = "gs://bucket/rag_patterns"
         rag_patterns.metadata = {}
 
-        html_artifact = mock.MagicMock()
-        html_artifact.path = str(tmp_path / "leaderboard.html")
-        html_artifact.metadata = {}
+        leaderboard_html = mock.MagicMock()
+        leaderboard_html.path = str(tmp_path / "leaderboard.html")
+        leaderboard_html.metadata = {}
 
         with mock.patch.dict("sys.modules", modules):
             rag_templates_optimization.python_func(
                 extracted_text=str(tmp_path / "ext"),
                 test_data=str(tmp_path / "td.json"),
-                search_space_prep_report=str(tmp_path / "r.yml"),
+                search_space_mps_report=str(tmp_path / "r.yml"),
                 rag_patterns=rag_patterns,
                 test_data_key="key.json",
-                vector_io_provider_id="provider",
-                ogx_secret_name="ogx-secret",
+                maas_secret_name="maas-secret",
+                vector_db_secret_name="vector-db-secret",
                 input_data_secret_name="s3-secret",
                 input_data_bucket_name="bucket",
-                html_artifact=html_artifact,
+                leaderboard=leaderboard_html,
             )
 
         assert rag_patterns.metadata["name"] == "rag_patterns_artifact"
@@ -185,8 +277,8 @@ class TestRagTemplatesOptimizationUnitTests:
     @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
     def test_creates_output_directory(self, tmp_path):
         """Output directory is created before calling run_rag_optimization."""
-        modules, mock_create_ogx, mock_run_opt, _ = _make_ai4rag_mocks()
-        mock_create_ogx.return_value = mock.MagicMock()
+        modules, mock_create_maas, mock_run_opt, _, _ = _make_ai4rag_mocks()
+        mock_create_maas.return_value = mock.MagicMock()
         mock_run_opt.return_value = SimpleNamespace(patterns=[])
 
         output_dir = tmp_path / "nested" / "rag_patterns"
@@ -195,22 +287,22 @@ class TestRagTemplatesOptimizationUnitTests:
         rag_patterns.uri = "uri"
         rag_patterns.metadata = {}
 
-        html_artifact = mock.MagicMock()
-        html_artifact.path = str(tmp_path / "leaderboard.html")
-        html_artifact.metadata = {}
+        leaderboard_html = mock.MagicMock()
+        leaderboard_html.path = str(tmp_path / "leaderboard.html")
+        leaderboard_html.metadata = {}
 
         with mock.patch.dict("sys.modules", modules):
             rag_templates_optimization.python_func(
                 extracted_text=str(tmp_path / "ext"),
                 test_data=str(tmp_path / "td.json"),
-                search_space_prep_report=str(tmp_path / "r.yml"),
+                search_space_mps_report=str(tmp_path / "r.yml"),
                 rag_patterns=rag_patterns,
                 test_data_key="key.json",
-                vector_io_provider_id="provider",
-                ogx_secret_name="ogx-secret",
+                maas_secret_name="maas-secret",
+                vector_db_secret_name="vector-db-secret",
                 input_data_secret_name="s3-secret",
                 input_data_bucket_name="bucket",
-                html_artifact=html_artifact,
+                leaderboard=leaderboard_html,
             )
 
         assert output_dir.exists()
@@ -218,8 +310,8 @@ class TestRagTemplatesOptimizationUnitTests:
     @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
     def test_none_keys_default_to_empty_string(self, tmp_path):
         """None test_data_key and input_data_key default to empty strings."""
-        modules, mock_create_ogx, mock_run_opt, _ = _make_ai4rag_mocks()
-        mock_create_ogx.return_value = mock.MagicMock()
+        modules, mock_create_maas, mock_run_opt, _, _ = _make_ai4rag_mocks()
+        mock_create_maas.return_value = mock.MagicMock()
         mock_run_opt.return_value = SimpleNamespace(patterns=[])
 
         rag_patterns = mock.MagicMock()
@@ -227,22 +319,22 @@ class TestRagTemplatesOptimizationUnitTests:
         rag_patterns.uri = "uri"
         rag_patterns.metadata = {}
 
-        html_artifact = mock.MagicMock()
-        html_artifact.path = str(tmp_path / "leaderboard.html")
-        html_artifact.metadata = {}
+        leaderboard_html = mock.MagicMock()
+        leaderboard_html.path = str(tmp_path / "leaderboard.html")
+        leaderboard_html.metadata = {}
 
         with mock.patch.dict("sys.modules", modules):
             rag_templates_optimization.python_func(
                 extracted_text=str(tmp_path / "ext"),
                 test_data=str(tmp_path / "td.json"),
-                search_space_prep_report=str(tmp_path / "r.yml"),
+                search_space_mps_report=str(tmp_path / "r.yml"),
                 rag_patterns=rag_patterns,
                 test_data_key=None,
-                vector_io_provider_id="provider",
-                ogx_secret_name="ogx-secret",
+                maas_secret_name="maas-secret",
+                vector_db_secret_name="vector-db-secret",
                 input_data_secret_name="s3-secret",
                 input_data_bucket_name="bucket",
-                html_artifact=html_artifact,
+                leaderboard=leaderboard_html,
                 input_data_key=None,
             )
 
@@ -251,17 +343,17 @@ class TestRagTemplatesOptimizationUnitTests:
         assert call_kwargs["input_data_key"] == ""
         assert call_kwargs["indexing_pipeline_params"]["input_data_key"] == ""
 
-    def test_missing_ogx_env_raises_key_error(self, tmp_path):
-        """Missing OGX env vars raise KeyError."""
-        modules, _, _, _ = _make_ai4rag_mocks()
+    def test_missing_maas_env_raises_key_error(self, tmp_path):
+        """Missing MaaS env vars raise KeyError."""
+        modules, _, _, _, _ = _make_ai4rag_mocks()
 
         rag_patterns = mock.MagicMock()
         rag_patterns.path = str(tmp_path / "out")
         rag_patterns.metadata = {}
 
-        html_artifact = mock.MagicMock()
-        html_artifact.path = str(tmp_path / "leaderboard.html")
-        html_artifact.metadata = {}
+        leaderboard_html = mock.MagicMock()
+        leaderboard_html.path = str(tmp_path / "leaderboard.html")
+        leaderboard_html.metadata = {}
 
         with mock.patch.dict("os.environ", {}, clear=True):
             with mock.patch.dict("sys.modules", modules):
@@ -269,53 +361,53 @@ class TestRagTemplatesOptimizationUnitTests:
                     rag_templates_optimization.python_func(
                         extracted_text=str(tmp_path / "ext"),
                         test_data=str(tmp_path / "td.json"),
-                        search_space_prep_report=str(tmp_path / "r.yml"),
+                        search_space_mps_report=str(tmp_path / "r.yml"),
                         rag_patterns=rag_patterns,
                         test_data_key="key.json",
-                        vector_io_provider_id="provider",
-                        ogx_secret_name="ogx-secret",
+                        maas_secret_name="maas-secret",
+                        vector_db_secret_name="vector-db-secret",
                         input_data_secret_name="s3-secret",
                         input_data_bucket_name="bucket",
-                        html_artifact=html_artifact,
+                        leaderboard=leaderboard_html,
                     )
 
     @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
     def test_propagates_ai4rag_exception(self, tmp_path):
         """Exceptions from ai4rag are propagated to the caller."""
-        modules, mock_create_ogx, mock_run_opt, _ = _make_ai4rag_mocks()
-        mock_create_ogx.return_value = mock.MagicMock()
+        modules, mock_create_maas, mock_run_opt, _, _ = _make_ai4rag_mocks()
+        mock_create_maas.return_value = mock.MagicMock()
         mock_run_opt.side_effect = ValueError("test_data_path must point to a JSON file")
 
         rag_patterns = mock.MagicMock()
         rag_patterns.path = str(tmp_path / "out")
         rag_patterns.metadata = {}
 
-        html_artifact = mock.MagicMock()
-        html_artifact.path = str(tmp_path / "leaderboard.html")
-        html_artifact.metadata = {}
+        leaderboard_html = mock.MagicMock()
+        leaderboard_html.path = str(tmp_path / "leaderboard.html")
+        leaderboard_html.metadata = {}
 
         with mock.patch.dict("sys.modules", modules):
             with pytest.raises(ValueError, match="test_data_path must point to a JSON file"):
                 rag_templates_optimization.python_func(
                     extracted_text=str(tmp_path / "ext"),
                     test_data=str(tmp_path / "td.json"),
-                    search_space_prep_report=str(tmp_path / "r.yml"),
+                    search_space_mps_report=str(tmp_path / "r.yml"),
                     rag_patterns=rag_patterns,
                     test_data_key="key.json",
-                    vector_io_provider_id="provider",
-                    ogx_secret_name="ogx-secret",
+                    maas_secret_name="maas-secret",
+                    vector_db_secret_name="vector-db-secret",
                     input_data_secret_name="s3-secret",
                     input_data_bucket_name="bucket",
-                    html_artifact=html_artifact,
+                    leaderboard=leaderboard_html,
                 )
 
     @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
     def test_leaderboard_html_written_with_correct_args(self, tmp_path):
-        """build_leaderboard_html receives output_dir (Path) and HTML is written to html_artifact."""
+        """build_leaderboard_html receives output_dir (Path) and HTML is written to leaderboard."""
         from pathlib import Path
 
-        modules, mock_create_ogx, mock_run_opt, _ = _make_ai4rag_mocks()
-        mock_create_ogx.return_value = mock.MagicMock()
+        modules, mock_create_maas, mock_run_opt, _, _ = _make_ai4rag_mocks()
+        mock_create_maas.return_value = mock.MagicMock()
         mock_run_opt.return_value = SimpleNamespace(patterns=[{"name": "p1"}])
 
         mock_leaderboard = modules["ai4rag.components.assets_generator.leaderboard"]
@@ -329,22 +421,22 @@ class TestRagTemplatesOptimizationUnitTests:
         rag_patterns.metadata = {}
 
         html_path = tmp_path / "leaderboard.html"
-        html_artifact = mock.MagicMock()
-        html_artifact.path = str(html_path)
-        html_artifact.metadata = {}
+        leaderboard_html = mock.MagicMock()
+        leaderboard_html.path = str(html_path)
+        leaderboard_html.metadata = {}
 
         with mock.patch.dict("sys.modules", modules):
             rag_templates_optimization.python_func(
                 extracted_text=str(tmp_path / "ext"),
                 test_data=str(tmp_path / "td.json"),
-                search_space_prep_report=str(tmp_path / "r.yml"),
+                search_space_mps_report=str(tmp_path / "r.yml"),
                 rag_patterns=rag_patterns,
                 test_data_key="key.json",
-                vector_io_provider_id="provider",
-                ogx_secret_name="ogx-secret",
+                maas_secret_name="maas-secret",
+                vector_db_secret_name="vector-db-secret",
                 input_data_secret_name="s3-secret",
                 input_data_bucket_name="bucket",
-                html_artifact=html_artifact,
+                leaderboard=leaderboard_html,
             )
 
         mock_leaderboard.build_leaderboard_html.assert_called_once()
@@ -354,34 +446,34 @@ class TestRagTemplatesOptimizationUnitTests:
 
         assert html_path.exists()
         assert html_path.read_text(encoding="utf-8") == expected_html
-        assert html_artifact.metadata["display_name"] == "autorag_leaderboard"
+        assert leaderboard_html.metadata["display_name"] == "autorag_leaderboard"
 
     @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
     def test_preset_validation_rejects_invalid(self, tmp_path):
         """Invalid preset raises ValueError."""
-        modules, _, _, _ = _make_ai4rag_mocks()
+        modules, _, _, _, _ = _make_ai4rag_mocks()
 
         rag_patterns = mock.MagicMock()
         rag_patterns.path = str(tmp_path / "out")
         rag_patterns.metadata = {}
 
-        html_artifact = mock.MagicMock()
-        html_artifact.path = str(tmp_path / "leaderboard.html")
-        html_artifact.metadata = {}
+        leaderboard_html = mock.MagicMock()
+        leaderboard_html.path = str(tmp_path / "leaderboard.html")
+        leaderboard_html.metadata = {}
 
         with mock.patch.dict("sys.modules", modules):
             with pytest.raises(ValueError, match="preset must be one of"):
                 rag_templates_optimization.python_func(
                     extracted_text=str(tmp_path / "ext"),
                     test_data=str(tmp_path / "td.json"),
-                    search_space_prep_report=str(tmp_path / "r.yml"),
+                    search_space_mps_report=str(tmp_path / "r.yml"),
                     rag_patterns=rag_patterns,
                     test_data_key="key.json",
-                    vector_io_provider_id="provider",
-                    ogx_secret_name="ogx-secret",
+                    maas_secret_name="maas-secret",
+                    vector_db_secret_name="vector-db-secret",
                     input_data_secret_name="s3-secret",
                     input_data_bucket_name="bucket",
-                    html_artifact=html_artifact,
+                    leaderboard=leaderboard_html,
                     preset="invalid",
                 )
 
@@ -389,8 +481,8 @@ class TestRagTemplatesOptimizationUnitTests:
     @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
     def test_valid_presets_accepted(self, tmp_path, preset_value):
         """Both 'speed' and 'balanced' presets are accepted without error."""
-        modules, mock_create_ogx, mock_run_opt, _ = _make_ai4rag_mocks()
-        mock_create_ogx.return_value = mock.MagicMock()
+        modules, mock_create_maas, mock_run_opt, _, _ = _make_ai4rag_mocks()
+        mock_create_maas.return_value = mock.MagicMock()
         mock_run_opt.return_value = SimpleNamespace(patterns=[])
 
         rag_patterns = mock.MagicMock()
@@ -398,22 +490,22 @@ class TestRagTemplatesOptimizationUnitTests:
         rag_patterns.uri = "uri"
         rag_patterns.metadata = {}
 
-        html_artifact = mock.MagicMock()
-        html_artifact.path = str(tmp_path / "leaderboard.html")
-        html_artifact.metadata = {}
+        leaderboard_html = mock.MagicMock()
+        leaderboard_html.path = str(tmp_path / "leaderboard.html")
+        leaderboard_html.metadata = {}
 
         with mock.patch.dict("sys.modules", modules):
             rag_templates_optimization.python_func(
                 extracted_text=str(tmp_path / "ext"),
                 test_data=str(tmp_path / "td.json"),
-                search_space_prep_report=str(tmp_path / "r.yml"),
+                search_space_mps_report=str(tmp_path / "r.yml"),
                 rag_patterns=rag_patterns,
                 test_data_key="key.json",
-                vector_io_provider_id="provider",
-                ogx_secret_name="ogx-secret",
+                maas_secret_name="maas-secret",
+                vector_db_secret_name="vector-db-secret",
                 input_data_secret_name="s3-secret",
                 input_data_bucket_name="bucket",
-                html_artifact=html_artifact,
+                leaderboard=leaderboard_html,
                 preset=preset_value,
             )
 

@@ -47,13 +47,11 @@ def example_pipeline():
 - **Dependencies**:
   - Kubeflow:
     - Name: Pipelines, Version: >=2.15.2
-  - External Services:
-    - Name: docling, Version: >=1.0.0
 - **Tags**:
   - data-processing
   - autorag
   - text-extraction
-- **Last Verified**: 2026-06-17 12:00:00+00:00
+- **Last Verified**: 2026-08-24 00:00:00+00:00
 - **Owners**:
   - No Parent Owners: Yes
   - Approvers:

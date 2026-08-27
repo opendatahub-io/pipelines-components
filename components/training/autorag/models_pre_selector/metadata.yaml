@@ -1,5 +1,5 @@
 ---
-name: rag_templates_optimization
+name: models_pre_selector
 stability: alpha  # New component without proven track record
 dependencies:
   kubeflow:
@@ -10,13 +10,11 @@ dependencies:
       version: "~=0.12.0"
     - name: MaaS
       version: ">=1.0.0"
-    - name: Milvus
+    - name: pandas
       version: ">=2.0.0"
-    - name: PGVector
-      version: ">=0.5.0"
 tags:
   - training
   - autorag
+  - model-selection
   - optimization
-  - rag-patterns
 lastVerified: 2026-08-24T00:00:00Z

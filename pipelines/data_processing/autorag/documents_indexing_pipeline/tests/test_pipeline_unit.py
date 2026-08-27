@@ -29,17 +29,17 @@ class TestDocumentsIndexingPipelineUnit:
         assert hasattr(documents_indexing_pipeline, "_component_inputs")
 
     def test_pipeline_required_parameters(self):
-        """Pipeline declares S3, OGX, and indexing parameters."""
+        """Pipeline declares S3, MaaS, vector-DB, and indexing parameters."""
         inputs = getattr(documents_indexing_pipeline, "_component_inputs", set())
         for name in (
-            "ogx_secret_name",
+            "maas_secret_name",
+            "vector_db_secret_name",
             "embedding_model_id",
-            "vector_io_provider_id",
             "input_data_secret_name",
             "input_data_bucket_name",
             "chunk_size",
             "chunk_overlap",
-            "vector_store_id",
+            "collection_name",
         ):
             assert name in inputs
 
@@ -95,11 +95,11 @@ class TestDocumentsIndexingPipelineUnit:
         assert "componentInputParameter: chunk_size" in content
         assert "componentInputParameter: chunk_overlap" in content
         assert "componentInputParameter: embedding_model_id" in content
-        assert "componentInputParameter: vector_store_id" in content
+        assert "componentInputParameter: collection_name" in content
         assert "comp-documents-indexing:" in content
 
-    def test_compiled_pipeline_wires_s3_and_ogx_secrets(self):
-        """S3 secrets attach to discovery/extraction; OGX secret attaches to indexing."""
+    def test_compiled_pipeline_wires_s3_maas_and_vector_db_secrets(self):
+        """S3 secrets attach to discovery/extraction; MaaS + vector-DB secrets attach to indexing."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as tmp:
             tmp_path = tmp.name
         try:
@@ -112,8 +112,11 @@ class TestDocumentsIndexingPipelineUnit:
             Path(tmp_path).unlink(missing_ok=True)
 
         assert "AWS_ACCESS_KEY_ID" in content
-        assert "OGX_CLIENT_BASE_URL" in content
-        assert "OGX_CLIENT_API_KEY" in content
+        assert "MAAS_BASE_URL" in content
+        assert "MAAS_API_KEY" in content
+        # Union of vector-DB backends is mapped as optional env vars.
+        assert "MILVUS_URI" in content
+        assert "PGVECTOR_HOST" in content
 
     def test_compiled_pipeline_declares_component_resource_tiers(self):
         """All indexing pipeline steps declare the workload CPU/memory tier."""

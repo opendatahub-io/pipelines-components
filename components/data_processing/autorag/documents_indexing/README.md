@@ -6,26 +6,27 @@
 
 Chunk, embed, and index extracted documents into a vector store.
 
-Reads DoclingDocument JSON files from the *extracted_text* artifact, splits them into chunks, computes embeddings via OGX, and inserts the resulting vectors into the configured vector store. Documents are processed in batches to bound memory consumption.
+Reads DoclingDocument JSON files from the *extracted_text* artifact, splits them into chunks, computes embeddings via MaaS, and inserts the resulting vectors into the configured vector store. Documents are processed in batches to bound memory consumption.
 
-Individual document failures (corrupt JSON, chunking errors) are recorded in the indexing report and skipped — they do not abort the pipeline. Systemic failures (OGX API unreachable, embedding model errors) propagate normally.
+The vector store backend (Milvus or PGVector) is resolved at runtime from the environment injected by the vector-database secret: ``MILVUS_*`` keys select Milvus, ``PGVECTOR_*`` keys select PGVector.
+
+Individual document failures (corrupt JSON, chunking errors) are recorded in the indexing report and skipped — they do not abort the pipeline. Systemic failures (MaaS API unreachable, vector database unreachable, embedding model errors) propagate normally.
 
 ## Inputs 📥
 
 | Parameter | Type | Default | Description |
 | --------- | ---- | ------- | ----------- |
-| `embedding_model_id` | `str` | `None` | Embedding model ID served by OGX. |
+| `embedding_model_id` | `str` | `None` | Embedding model ID served by MaaS. |
 | `extracted_text` | `dsl.Input[dsl.Artifact]` | `None` | Input artifact (directory) containing DoclingDocument JSON files from text extraction. |
-| `vector_io_provider_id` | `str` | `None` | OGX provider ID for the vector database. |
 | `indexing_report` | `dsl.Output[dsl.Artifact]` | `None` | Output artifact containing ``indexing_report.json`` with per-document indexing status and pipeline settings. |
-| `html_report` | `dsl.Output[dsl.HTML]` | `None` | Output HTML artifact containing a styled rendering of the indexing results (summary stats, settings, per-document table). |
+| `indexing_report_html` | `dsl.Output[dsl.HTML]` | `None` | Output HTML artifact containing a styled rendering of the indexing results (summary stats, settings, per-document table). |
 | `embedded_artifact` | `dsl.EmbeddedInput[dsl.Dataset]` | `None` | Embedded HTML report template injected by KFP at runtime from ``indexing_report_template.html``. |
-| `embedding_params` | `Optional[dict]` | `None` | Optional parameters forwarded to :class:`OGXEmbeddingParams` (e.g. ``embedding_dimension``). |
+| `embedding_params` | `Optional[dict]` | `None` | Optional parameters forwarded to :class:`OpenAIEmbeddingParams` (e.g. ``embedding_dimension``, ``context_length``). |
 | `chunking_method` | `str` | `recursive` | Chunking strategy: ``"recursive"`` (LangChain) or ``"hybrid"`` (Docling structure-aware). |
 | `chunk_size` | `int` | `1024` | Maximum chunk size in tokens (128--2048). |
 | `chunk_overlap` | `int` | `0` | Token overlap between consecutive chunks (recursive method only). |
 | `batch_size` | `int` | `20` | Number of documents loaded and processed per batch. Controls peak memory usage, not API payload sizes. Defaults to ``20``; ``0`` processes all documents in a single batch. |
-| `vector_store_id` | `Optional[str]` | `None` | OGX vector store / collection ID to reuse (matches ``pattern.json`` ``settings.vector_store_binding.vector_store_id``). Omit to create a new collection. |
+| `collection_name` | `Optional[str]` | `None` | Vector store collection to reuse (matches ``pattern.json`` ``settings.vector_store_binding.collection_name``). Omit to create a new collection. |
 
 ## Usage Examples 🧪
 
@@ -39,7 +40,7 @@ from kfp_components.components.data_processing.autorag.documents_indexing import
 @dsl.pipeline(name="documents-indexing-example")
 def example_pipeline(
     embedding_model_id: str = "all-MiniLM-L6-v2",
-    vector_io_provider_id: str = "milvus",
+    collection_name: str = "",
     chunking_method: str = "recursive",
     chunk_size: int = 1024,
     chunk_overlap: int = 0,
@@ -49,7 +50,7 @@ def example_pipeline(
 
     Args:
         embedding_model_id: ID of the embedding model.
-        vector_io_provider_id: OGX provider ID for the vector database.
+        collection_name: Vector store collection to reuse (empty creates a new one).
         chunking_method: Method for text chunking.
         chunk_size: Size of each text chunk.
         chunk_overlap: Overlap between chunks.
@@ -62,7 +63,7 @@ def example_pipeline(
     documents_indexing(
         embedding_model_id=embedding_model_id,
         extracted_text=extracted_text.output,
-        vector_io_provider_id=vector_io_provider_id,
+        collection_name=collection_name,
         chunking_method=chunking_method,
         chunk_size=chunk_size,
         chunk_overlap=chunk_overlap,
@@ -80,11 +81,14 @@ def example_pipeline(
     - Name: Pipelines, Version: >=2.15.2
   - External Services:
     - Name: RHOAI Connections API, Version: >=1.0.0
-    - Name: ai4rag, Version: ~=0.10.3
+    - Name: ai4rag, Version: ~=0.12.0
+    - Name: MaaS, Version: >=1.0.0
+    - Name: Milvus, Version: >=2.0.0
+    - Name: PGVector, Version: >=0.5.0
 - **Tags**:
   - data-indexing
   - autorag
-- **Last Verified**: 2026-07-20 00:00:00+00:00
+- **Last Verified**: 2026-08-24 00:00:00+00:00
 - **Owners**:
   - No Parent Owners: Yes
   - Approvers:

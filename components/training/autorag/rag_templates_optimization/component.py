@@ -15,14 +15,14 @@ _AUTORAG_SHARED = Path(__file__).parents[1] / "shared"
 def rag_templates_optimization(
     extracted_text: dsl.InputPath(dsl.Artifact),
     test_data: dsl.InputPath(dsl.Artifact),
-    search_space_prep_report: dsl.InputPath(dsl.Artifact),
+    search_space_mps_report: dsl.InputPath(dsl.Artifact),
     rag_patterns: dsl.Output[dsl.Artifact],
     test_data_key: Optional[str],
-    vector_io_provider_id: str,
-    ogx_secret_name: str,
+    maas_secret_name: str,
+    vector_db_secret_name: str,
     input_data_secret_name: str,
     input_data_bucket_name: str,
-    html_artifact: dsl.Output[dsl.HTML],
+    leaderboard: dsl.Output[dsl.HTML],
     embedded_artifact: dsl.EmbeddedInput[dsl.Dataset] = None,
     optimization_settings: Optional[dict] = None,
     input_data_key: Optional[str] = "",
@@ -38,16 +38,21 @@ def rag_templates_optimization(
     Args:
         extracted_text: Path to extracted text documents.
         test_data: Path to benchmark test data JSON.
-        search_space_prep_report: Path to the YAML search space report.
+        search_space_mps_report: Path to the JSON search space report.
         rag_patterns: Output artifact for generated RAG patterns.
         test_data_key: Path to benchmark JSON in object storage.
-        vector_io_provider_id: Vector I/O provider identifier in OGX.
-        ogx_secret_name: Name of the K8s secret with OGX credentials.
+        maas_secret_name: Name of the K8s secret with MaaS inference credentials
+            ("MAAS_BASE_URL", "MAAS_API_KEY"). Propagated into each generated
+            ``pattern.json`` indexing spec for downstream deployment.
+        vector_db_secret_name: Name of the K8s secret holding the vector database
+            configuration. Its keys select the backend: ``MILVUS_*`` keys use
+            Milvus, ``PGVECTOR_*`` keys use PGVector. Propagated into each
+            generated ``pattern.json`` indexing spec.
         input_data_secret_name: Name of the K8s secret with S3 credentials for
             input data.
         input_data_bucket_name: S3 bucket containing input documents.
-        html_artifact: Output HTML artifact; the leaderboard table is written to
-            html_artifact.path (single file).
+        leaderboard: Output HTML artifact; the leaderboard table is written to
+            leaderboard_html.path (single file).
         component_status: Output artifact containing stage-level progress tracking.
         embedded_artifact: Embedded ``autorag.shared`` helpers injected by KFP at runtime.
         optimization_settings: Additional experiment settings.
@@ -60,7 +65,10 @@ def rag_templates_optimization(
             (both), or "none" (no LLM judge).
 
     Environment variables (required):
-        OGX_CLIENT_BASE_URL, OGX_CLIENT_API_KEY.
+        MAAS_BASE_URL, MAAS_API_KEY for inference. Plus the vector database
+        configuration injected from ``vector_db_secret_name``: ``MILVUS_*`` keys
+        (at least ``MILVUS_URI``) select Milvus, ``PGVECTOR_*`` keys select
+        PGVector.
     """
     import importlib.util
     import logging
@@ -73,7 +81,8 @@ def rag_templates_optimization(
 
     from ai4rag.components.assets_generator.leaderboard import build_leaderboard_html
     from ai4rag.components.optimization.rag_templates_optimization import DEFAULT_METRIC, run_rag_optimization
-    from ai4rag.components.utils.ogx_client import create_ogx_client
+    from ai4rag.components.utils import create_maas_client
+    from ai4rag.rag.vector_store import get_vector_store_config
 
     logging.basicConfig(level=logging.INFO)
 
@@ -110,18 +119,33 @@ def rag_templates_optimization(
             status.set_metadata(display_name="RAG Templates Optimization Status")
             component_status.metadata["display_name"] = "RAG Templates Optimization Status"
         with status.stage("optimize_templates", steps=optimize_templates_steps):
-            ogx_client = create_ogx_client(
-                base_url=os.environ["OGX_CLIENT_BASE_URL"],
-                api_key=os.environ["OGX_CLIENT_API_KEY"],
+            maas_client = create_maas_client(
+                base_url=os.environ["MAAS_BASE_URL"],
+                api_key=os.environ["MAAS_API_KEY"],
             )
+
+            if any(k.startswith("MILVUS") for k in os.environ):
+                provider = "milvus"
+            elif any(k.startswith("PGVECTOR") for k in os.environ):
+                provider = "pgvector"
+            else:
+                raise ValueError(
+                    "No vector database configuration found. Expected MILVUS_* or PGVECTOR_* "
+                    "environment variables injected from vector_db_secret_name."
+                )
+            vector_store_config = get_vector_store_config(provider)
+            logging.info("Detected %s database provider from secret.", provider)
 
             output_dir = Path(rag_patterns.path)
             output_dir.mkdir(parents=True, exist_ok=True)
 
+            # Deployment blueprint stamped into every pattern.json so the indexing
+            # pipeline can be reproduced. provider_type/collection_name are added
+            # by ai4rag from each pattern's vector_store_binding.
             indexing_pipeline_params = {
                 "pipeline_name": "documents-indexing-pipeline",
-                "ogx_secret_name": ogx_secret_name,
-                "vector_io_provider_id": vector_io_provider_id,
+                "maas_secret_name": maas_secret_name,
+                "vector_db_secret_name": vector_db_secret_name,
                 "input_data_secret_name": input_data_secret_name,
                 "input_data_bucket_name": input_data_bucket_name,
                 "input_data_key": input_data_key or "",
@@ -131,10 +155,10 @@ def rag_templates_optimization(
             result = run_rag_optimization(
                 extracted_text_path=extracted_text,
                 test_data_path=test_data,
-                search_space_report_path=search_space_prep_report,
+                search_space_report_path=search_space_mps_report,
                 output_dir=output_dir,
-                ogx_client=ogx_client,
-                vector_io_provider_id=vector_io_provider_id,
+                maas_client=maas_client,
+                vector_store_config=vector_store_config,
                 test_data_key=test_data_key or "",
                 input_data_key=input_data_key or "",
                 optimization_settings=optimization_settings,
@@ -165,10 +189,10 @@ def rag_templates_optimization(
                 ),
             )
 
-            Path(html_artifact.path).parent.mkdir(parents=True, exist_ok=True)
-            with open(html_artifact.path, "w", encoding="utf-8") as f:
+            Path(leaderboard.path).parent.mkdir(parents=True, exist_ok=True)
+            with open(leaderboard.path, "w", encoding="utf-8") as f:
                 f.write(html_content)
-            html_artifact.metadata["display_name"] = "autorag_leaderboard"
+            leaderboard.metadata["display_name"] = "autorag_leaderboard"
 
 
 if __name__ == "__main__":

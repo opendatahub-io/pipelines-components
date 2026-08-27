@@ -11,11 +11,8 @@ def example_pipeline():
         artifact_uri="gs://placeholder/test_data",
         artifact_class=dsl.Artifact,
     )
-    extracted_text = dsl.importer(
-        artifact_uri="gs://placeholder/extracted_text",
-        artifact_class=dsl.Artifact,
-    )
     search_space_preparation(
         test_data=test_data.output,
-        extracted_text=extracted_text.output,
+        embedding_models=["ibm-granite/granite-embedding-278m-multilingual"],
+        generation_models=["ibm-granite/granite-3.3-8b-instruct"],
     )

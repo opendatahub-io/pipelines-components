@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import List, Optional
+from typing import List
 
 from kfp import dsl
 from kfp.compiler import Compiler
@@ -15,33 +15,34 @@ _AUTORAG_SHARED = Path(__file__).parents[1] / "shared"
 )
 def search_space_preparation(
     test_data: dsl.Input[dsl.Artifact],
-    extracted_text: dsl.Input[dsl.Artifact],
-    search_space_prep_report: dsl.Output[dsl.Artifact],
+    search_space_report: dsl.Output[dsl.Artifact],
+    embedding_models: List[str],
+    generation_models: List[str],
     embedded_artifact: dsl.EmbeddedInput[dsl.Dataset] = None,
-    embedding_models: Optional[List] = None,
-    generation_models: Optional[List] = None,
     component_status: dsl.Output[dsl.Artifact] = None,
     preset: str = "speed",
 ):
-    """Search space preparation for AutoRAG experiments.
+    """Search space preparation and validation for AutoRAG experiments.
 
-    Thin wrapper that delegates to
-    ``ai4rag.components.optimization.search_space_preparation.prepare_search_space_report``.
+    Resolves and validates the requested MaaS models, builds the AutoRAG search
+    space, and writes it as a JSON report. This step runs *before* text
+    extraction so that unresponsive or misconfigured models fail the experiment
+    fast, before any heavy document processing is performed.
 
     Args:
         test_data: Input artifact with benchmark questions and expected answers.
-        extracted_text: Input artifact with extracted text documents.
-        search_space_prep_report: Output artifact for the JSON search space report.
-        component_status: Output artifact containing stage-level progress tracking.
-        embedded_artifact: Embedded ``autorag.shared`` helpers injected by KFP at runtime.
+            Used for language detection during search-space preparation.
+        search_space_report: Output artifact for the JSON search space report.
         embedding_models: List of embedding model identifiers to try.
         generation_models: List of generation model identifiers to try.
+        embedded_artifact: Embedded ``autorag.shared`` helpers injected by KFP at runtime.
+        component_status: Output artifact containing stage-level progress tracking.
         preset: Pipeline quality tier. "speed" (default) uses recursive chunking
             without contextual enrichment. "balanced" uses hybrid chunking with
             LLM contextual enrichment in the search space.
 
     Environment variables (required):
-        OGX_CLIENT_BASE_URL, OGX_CLIENT_API_KEY.
+        MAAS_BASE_URL, MAAS_API_KEY.
     """
     import importlib.util
     import logging
@@ -52,8 +53,9 @@ def search_space_preparation(
 
     ensure_sqlite3()
 
-    from ai4rag.components.optimization.search_space_preparation import prepare_search_space_report
-    from ai4rag.components.utils.ogx_client import create_ogx_client
+    import pandas as pd
+    from ai4rag.components.utils import create_maas_client
+    from ai4rag.search_space.prepare import build_search_space_report, prepare_search_space_with_maas
 
     logging.basicConfig(level=logging.INFO)
 
@@ -61,23 +63,24 @@ def search_space_preparation(
     PRESET_CHUNKING_METHODS = {"speed": ["recursive"], "balanced": ["recursive", "hybrid"]}
     PRESET_CHUNK_SIZES = {"speed": [128, 256, 512], "balanced": [512, 1024, 2048]}
     PRESET_CHUNK_OVERLAPS = {"speed": [32, 64], "balanced": [0, 128, 256]}
-    PRESET_INFERENCE_MAX_THREADS = {"speed": 10, "balanced": 4}
 
     if preset not in VALID_PRESETS:
         raise ValueError(f"preset must be one of {VALID_PRESETS}; got {preset!r}.")
 
+    for name, models in (("generation_models", generation_models), ("embedding_models", embedding_models)):
+        if not isinstance(models, list) or not models or any(not m for m in models):
+            raise ValueError(f"{name} must be a non-empty list of non-empty model identifiers.")
+
     chunking_methods = PRESET_CHUNKING_METHODS[preset]
     chunk_sizes = PRESET_CHUNK_SIZES[preset]
     chunk_overlaps = PRESET_CHUNK_OVERLAPS[preset]
-    inference_max_threads = PRESET_INFERENCE_MAX_THREADS[preset]
 
     logging.info(
-        "Preset %r: chunking_methods=%s, chunk_sizes=%s, chunks_overlaps=%s, inference_max_threads=%s",
+        "Preset %r: chunking_methods=%s, chunk_sizes=%s, chunk_overlaps=%s",
         preset,
         chunking_methods,
         chunk_sizes,
         chunk_overlaps,
-        inference_max_threads,
     )
 
     if component_status is None:
@@ -102,24 +105,28 @@ def search_space_preparation(
             status.set_metadata(display_name="Search Space Preparation Status")
             component_status.metadata["display_name"] = "Search Space Preparation Status"
         with status.stage("prepare_search_space"):
-            ogx_client = create_ogx_client(
-                base_url=os.environ["OGX_CLIENT_BASE_URL"],
-                api_key=os.environ["OGX_CLIENT_API_KEY"],
+            maas_client = create_maas_client(
+                base_url=os.environ["MAAS_BASE_URL"],
+                api_key=os.environ["MAAS_API_KEY"],
             )
 
-            report = prepare_search_space_report(
-                test_data_path=test_data.path,
-                extracted_text_path=extracted_text.path,
-                ogx_client=ogx_client,
-                embedding_models=embedding_models,
-                generation_models=generation_models,
-                chunking_methods=chunking_methods,
-                chunk_sizes=chunk_sizes,
-                chunk_overlaps=chunk_overlaps,
-                inference_max_threads=inference_max_threads,
+            payload = {
+                "foundation_models": [{"model_id": gm} for gm in generation_models],
+                "embedding_models": [{"model_id": em} for em in embedding_models],
+                "chunking_methods": chunking_methods,
+                "chunk_sizes": chunk_sizes,
+                "chunk_overlaps": chunk_overlaps,
+            }
+
+            benchmark_df = pd.read_json(test_data.path)
+
+            search_space = prepare_search_space_with_maas(
+                payload,
+                client=maas_client,
+                benchmark_data=benchmark_df,
             )
 
-            report.save_json(search_space_prep_report.path)
+            build_search_space_report(search_space).save_json(search_space_report.path)
 
 
 if __name__ == "__main__":

@@ -15,42 +15,45 @@ _TEMPLATE_PATH = Path(__file__).parent / "indexing_report_template.html"
 def documents_indexing(
     embedding_model_id: str,
     extracted_text: dsl.Input[dsl.Artifact],
-    vector_io_provider_id: str,
     indexing_report: dsl.Output[dsl.Artifact],
-    html_report: dsl.Output[dsl.HTML],
+    indexing_report_html: dsl.Output[dsl.HTML],
     embedded_artifact: dsl.EmbeddedInput[dsl.Dataset] = None,
     embedding_params: Optional[dict] = None,
     chunking_method: str = "recursive",
     chunk_size: int = 1024,
     chunk_overlap: int = 0,
     batch_size: int = 20,
-    vector_store_id: Optional[str] = None,
+    collection_name: Optional[str] = None,
 ):
     """Chunk, embed, and index extracted documents into a vector store.
 
     Reads DoclingDocument JSON files from the *extracted_text* artifact,
-    splits them into chunks, computes embeddings via OGX, and inserts the
+    splits them into chunks, computes embeddings via MaaS, and inserts the
     resulting vectors into the configured vector store.  Documents are
     processed in batches to bound memory consumption.
 
+    The vector store backend (Milvus or PGVector) is resolved at runtime from
+    the environment injected by the vector-database secret: ``MILVUS_*`` keys
+    select Milvus, ``PGVECTOR_*`` keys select PGVector.
+
     Individual document failures (corrupt JSON, chunking errors) are
     recorded in the indexing report and skipped — they do not abort the
-    pipeline.  Systemic failures (OGX API unreachable, embedding model
-    errors) propagate normally.
+    pipeline.  Systemic failures (MaaS API unreachable, vector database
+    unreachable, embedding model errors) propagate normally.
 
     Args:
-        embedding_model_id: Embedding model ID served by OGX.
+        embedding_model_id: Embedding model ID served by MaaS.
         extracted_text: Input artifact (directory) containing DoclingDocument
             JSON files from text extraction.
-        vector_io_provider_id: OGX provider ID for the vector database.
         indexing_report: Output artifact containing ``indexing_report.json``
             with per-document indexing status and pipeline settings.
-        html_report: Output HTML artifact containing a styled rendering of
+        indexing_report_html: Output HTML artifact containing a styled rendering of
             the indexing results (summary stats, settings, per-document table).
         embedded_artifact: Embedded HTML report template injected by KFP
             at runtime from ``indexing_report_template.html``.
         embedding_params: Optional parameters forwarded to
-            :class:`OGXEmbeddingParams` (e.g. ``embedding_dimension``).
+            :class:`OpenAIEmbeddingParams` (e.g. ``embedding_dimension``,
+            ``context_length``).
         chunking_method: Chunking strategy: ``"recursive"`` (LangChain) or
             ``"hybrid"`` (Docling structure-aware).
         chunk_size: Maximum chunk size in tokens (128--2048).
@@ -59,12 +62,15 @@ def documents_indexing(
         batch_size: Number of documents loaded and processed per batch.
             Controls peak memory usage, not API payload sizes. Defaults to
             ``20``; ``0`` processes all documents in a single batch.
-        vector_store_id: OGX vector store / collection ID to reuse (matches
-            ``pattern.json`` ``settings.vector_store_binding.vector_store_id``).
+        collection_name: Vector store collection to reuse (matches
+            ``pattern.json`` ``settings.vector_store_binding.collection_name``).
             Omit to create a new collection.
 
     Environment variables (required):
-        OGX_CLIENT_BASE_URL, OGX_CLIENT_API_KEY.
+        MAAS_BASE_URL, MAAS_API_KEY for inference. Plus the vector database
+        configuration injected from the vector-database secret: ``MILVUS_*``
+        keys (at least ``MILVUS_URI``) select Milvus, ``PGVECTOR_*`` keys
+        select PGVector.
     """
     import html as html_mod
     import json
@@ -73,10 +79,14 @@ def documents_indexing(
     from dataclasses import asdict
     from pathlib import Path
 
-    from ai4rag.components.utils.ogx_client import create_ogx_client
+    from ai4rag.utils.compat import ensure_sqlite3
+
+    ensure_sqlite3()
+
+    from ai4rag.components.utils import create_maas_client
     from ai4rag.rag.chunking import DoclingChunker, LangChainChunker
-    from ai4rag.rag.embedding.ogx import OGXEmbeddingModel, OGXEmbeddingParams
-    from ai4rag.rag.vector_store.ogx import OGXVectorStore
+    from ai4rag.rag.embedding.openai_model import OpenAIEmbeddingModel, OpenAIEmbeddingParams
+    from ai4rag.rag.vector_store import get_vector_store, get_vector_store_config
     from ai4rag.utils.constants import ChunkingConstraints
     from docling_core.types.doc.document import DoclingDocument
 
@@ -87,9 +97,6 @@ def documents_indexing(
 
     if not embedding_model_id or not embedding_model_id.strip():
         raise ValueError("embedding_model_id must be a non-empty string.")
-
-    if not vector_io_provider_id or not vector_io_provider_id.strip():
-        raise ValueError("vector_io_provider_id must be a non-empty string.")
 
     if chunking_method not in ChunkingConstraints.METHODS:
         raise ValueError(
@@ -114,14 +121,25 @@ def documents_indexing(
     if batch_size < 0:
         raise ValueError("batch_size must be a non-negative integer.")
 
-    # --- Set up OGX client and processing pipeline ---
-
-    ogx_client = create_ogx_client(
-        base_url=os.environ["OGX_CLIENT_BASE_URL"],
-        api_key=os.environ["OGX_CLIENT_API_KEY"],
+    maas_client = create_maas_client(
+        base_url=os.environ["MAAS_BASE_URL"],
+        api_key=os.environ["MAAS_API_KEY"],
     )
 
-    params = OGXEmbeddingParams(**(embedding_params or {}))
+    if any(k.startswith("MILVUS") for k in os.environ):
+        provider = "milvus"
+    elif any(k.startswith("PGVECTOR") for k in os.environ):
+        provider = "pgvector"
+    else:
+        raise ValueError(
+            "No vector database configuration found. Expected MILVUS_* or PGVECTOR_* "
+            "environment variables injected from the vector-database secret."
+        )
+
+    vector_store_config = get_vector_store_config(provider)
+    _logger.info("Detected %s database provider from secret.", provider)
+
+    params = OpenAIEmbeddingParams(**(embedding_params or {}))
 
     base = Path(extracted_text.path)
     paths = sorted(p for p in base.iterdir() if p.is_file() and p.suffix.lower() == ".json")
@@ -199,17 +217,17 @@ def documents_indexing(
         else:
             emb_params_html = '<span class="muted">none</span>'
 
-        vs_id = vsb.get("vector_store_id")
-        vs_id_display = esc(str(vs_id)) if vs_id is not None else '<span class="muted">N/A</span>'
+        collection = vsb.get("collection_name")
+        collection_display = esc(str(collection)) if collection is not None else '<span class="muted">N/A</span>'
 
         settings_html = (
             '<div class="settings-group">\n'
             "  <h3>Vector Store</h3>\n"
             "  <dl>\n"
-            "    <dt>Provider ID</dt>\n"
-            f"    <dd>{esc(str(vsb.get('provider_id', '')))}</dd>\n"
-            "    <dt>Vector Store ID</dt>\n"
-            f"    <dd>{vs_id_display}</dd>\n"
+            "    <dt>Provider</dt>\n"
+            f"    <dd>{esc(str(vsb.get('provider_type', '')))}</dd>\n"
+            "    <dt>Collection Name</dt>\n"
+            f"    <dd>{collection_display}</dd>\n"
             "  </dl>\n"
             "</div>\n"
             '<div class="settings-group">\n'
@@ -258,10 +276,10 @@ def documents_indexing(
             .replace("__TABLE_HTML__", table_html)
         )
 
-        Path(html_report.path).parent.mkdir(parents=True, exist_ok=True)
-        with open(html_report.path, "w", encoding="utf-8") as f:
+        Path(indexing_report_html.path).parent.mkdir(parents=True, exist_ok=True)
+        with open(indexing_report_html.path, "w", encoding="utf-8") as f:
             f.write(html_content)
-        html_report.metadata["display_name"] = "Documents Indexing Report"
+        indexing_report_html.metadata["display_name"] = "Documents Indexing Report"
 
     report_entries = []
 
@@ -269,8 +287,8 @@ def documents_indexing(
         _logger.warning("No documents found in %s", extracted_text.path)
         settings = {
             "vector_store_binding": {
-                "provider_id": vector_io_provider_id,
-                "vector_store_id": vector_store_id,
+                "provider_type": provider,
+                "collection_name": collection_name,
             },
             "chunking": {
                 "method": chunking_method,
@@ -298,65 +316,60 @@ def documents_indexing(
     else:
         chunker = LangChainChunker(method=chunking_method, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
 
-    embedding_model = OGXEmbeddingModel(client=ogx_client, model_id=embedding_model_id, params=params)
-
-    collection_kwargs = {"reuse_collection_name": vector_store_id} if vector_store_id is not None else {}
-    ogx_vectorstore = OGXVectorStore(
-        embedding_model=embedding_model,
-        client=ogx_client,
-        provider_id=vector_io_provider_id,
-        **collection_kwargs,
-    )
-
-    settings = {
-        "vector_store_binding": {
-            "provider_id": vector_io_provider_id,
-            "vector_store_id": ogx_vectorstore.collection_name,
-        },
-        "chunking": {
-            "method": chunking_method,
-            "chunk_size": chunk_size,
-            "chunk_overlap": chunk_overlap,
-        },
-        "embedding": {
-            "model_id": embedding_model_id,
-            "embedding_params": asdict(embedding_model.params),
-        },
-    }
-
-    # --- Process documents in batches ---
+    embedding_model = OpenAIEmbeddingModel(client=maas_client, model_id=embedding_model_id, params=params)
 
     effective_batch_size = batch_size if batch_size > 0 else total_documents
     total_chunks = 0
     num_batches = (total_documents + effective_batch_size - 1) // effective_batch_size
 
-    for start in range(0, total_documents, effective_batch_size):
-        batch_paths = paths[start : start + effective_batch_size]
-        batch_chunks = []
+    with get_vector_store(
+        embedding_model=embedding_model,
+        config=vector_store_config,
+        collection_name=collection_name,
+    ) as vector_store:
+        settings = {
+            "vector_store_binding": {
+                "provider_type": provider,
+                "collection_name": vector_store.collection_name,
+            },
+            "chunking": {
+                "method": chunking_method,
+                "chunk_size": chunk_size,
+                "chunk_overlap": chunk_overlap,
+            },
+            "embedding": {
+                "model_id": embedding_model_id,
+                "embedding_params": asdict(embedding_model.params),
+            },
+        }
 
-        for p in batch_paths:
-            try:
-                doc = DoclingDocument.load_from_json(p)
-                chunks = chunker.split_documents([doc])
-                batch_chunks.extend(chunks)
-                report_entries.append({"file": p.name, "status": "completed", "chunks": len(chunks)})
-            except Exception as exc:
-                _logger.warning("Skipping %s: %s", p.name, exc)
-                report_entries.append({"file": p.name, "status": "failed", "error": str(exc)})
+        for start in range(0, total_documents, effective_batch_size):
+            batch_paths = paths[start : start + effective_batch_size]
+            batch_chunks = []
 
-        if batch_chunks:
-            ogx_vectorstore.add_documents(batch_chunks)
-        total_chunks += len(batch_chunks)
+            for p in batch_paths:
+                try:
+                    doc = DoclingDocument.load_from_json(p)
+                    chunks = chunker.split_documents([doc])
+                    batch_chunks.extend(chunks)
+                    report_entries.append({"file": p.name, "status": "completed", "chunks": len(chunks)})
+                except Exception as exc:
+                    _logger.warning("Skipping %s: %s", p.name, exc)
+                    report_entries.append({"file": p.name, "status": "failed", "error": str(exc)})
 
-        batch_num = start // effective_batch_size + 1
-        _logger.info(
-            "Batch %d/%d: indexed %d documents (%d chunks), total chunks so far: %d",
-            batch_num,
-            num_batches,
-            len(batch_paths),
-            len(batch_chunks),
-            total_chunks,
-        )
+            if batch_chunks:
+                vector_store.add_documents(batch_chunks)
+            total_chunks += len(batch_chunks)
+
+            batch_num = start // effective_batch_size + 1
+            _logger.info(
+                "Batch %d/%d: indexed %d documents (%d chunks), total chunks so far: %d",
+                batch_num,
+                num_batches,
+                len(batch_paths),
+                len(batch_chunks),
+                total_chunks,
+            )
 
     completed_count = sum(1 for e in report_entries if e["status"] == "completed")
     failed_count = sum(1 for e in report_entries if e["status"] == "failed")

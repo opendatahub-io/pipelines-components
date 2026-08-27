@@ -1,6 +1,6 @@
 {
   "pipeline_id": "documents-rag-optimization-pipeline",
-  "description": "AutoRAG pipeline: discover documents and load test data, extract text, prepare search space, optimize RAG templates, build leaderboard.",
+  "description": "AutoRAG pipeline: discover documents and load test data, prepare and validate the search space, extract text, pre-select models, optimize RAG templates, and build a leaderboard.",
   "components": [
     {
       "id": "documents_discovery",
@@ -17,6 +17,16 @@
       ]
     },
     {
+      "id": "search_space_preparation",
+      "description": "Prepare and validate the AutoRAG search space.",
+      "stages": [
+        {
+          "id": "prepare_search_space",
+          "description": "Resolve and validate the requested models, build the search space, and write the report."
+        }
+      ]
+    },
+    {
       "id": "text_extraction",
       "description": "Download listed documents and extract text with docling.",
       "stages": [
@@ -27,12 +37,12 @@
       ]
     },
     {
-      "id": "search_space_preparation",
-      "description": "Prepare the AutoRAG search space and model pre-selection report.",
+      "id": "models_pre_selector",
+      "description": "Trim the model set via pre-selection when the search space exceeds the model limits.",
       "stages": [
         {
-          "id": "prepare_search_space",
-          "description": "Validate OGX config, run search-space preparation, model pre-selection, and write the report."
+          "id": "model_pre_selection",
+          "description": "When the report exceeds the model caps, evaluate models over a benchmark sample and write a limited report; otherwise pass the full report through unchanged."
         }
       ]
     },

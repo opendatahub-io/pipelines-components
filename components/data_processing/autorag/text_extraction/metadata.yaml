@@ -5,11 +5,8 @@ dependencies:
   kubeflow:
     - name: Pipelines
       version: '>=2.15.2'
-  external_services:
-    - name: docling
-      version: ">=1.0.0"
 tags:
   - data-processing
   - autorag
   - text-extraction
-lastVerified: 2026-06-17T12:00:00Z
+lastVerified: 2026-08-24T00:00:00Z

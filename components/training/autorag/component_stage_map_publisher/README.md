@@ -33,7 +33,7 @@ Reads the static JSON template from the embedded artifact (``run_status_template
 - **Tags**:
   - autorag
   - run-status
-- **Last Verified**: 2026-06-10 00:00:00+00:00
+- **Last Verified**: 2026-08-24 00:00:00+00:00
 - **Owners**:
   - Approvers:
     - LukaszCmielowski

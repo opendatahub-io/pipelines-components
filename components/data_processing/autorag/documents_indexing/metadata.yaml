@@ -9,8 +9,14 @@ dependencies:
     - name: RHOAI Connections API
       version: ">=1.0.0"
     - name: ai4rag
-      version: "~=0.10.3"
+      version: "~=0.12.0"
+    - name: MaaS
+      version: ">=1.0.0"
+    - name: Milvus
+      version: ">=2.0.0"
+    - name: PGVector
+      version: ">=0.5.0"
 tags:
   - data-indexing
   - autorag
-lastVerified: 2026-07-20T00:00:00Z
+lastVerified: 2026-08-24T00:00:00Z

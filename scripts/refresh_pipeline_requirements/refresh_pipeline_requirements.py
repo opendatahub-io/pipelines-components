@@ -7,6 +7,11 @@ index does not publish macOS-compatible wheels, so compilation must run on Linux
 (UBI9 Python 3.12). ``uv`` is used instead of ``pip-compile`` because its resolver
 is dramatically faster while producing an equivalent hashed lockfile.
 
+Environment markers from ``requirements.in`` are copied onto the compiled
+lockfile afterwards. ``uv pip compile`` evaluates markers for the container host
+and would otherwise drop ones that are true there (for example
+``platform_machine != 's390x'`` on x86_64).
+
 See: https://hermetoproject.github.io/hermeto/pip/#requirementstxt
 """
 
@@ -33,6 +38,7 @@ SUPPORTED_RUNTIMES: tuple[str, ...] = ("podman", "docker")
 _CONTAINER_RUNTIME_ENV = "CONTAINER_RUNTIME"
 
 _INDEX_URL_RE = re.compile(r"^--index-url\s+(\S+)", re.MULTILINE)
+_PKG_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*")
 _REQUIREMENTS_IN = "requirements.in"
 _REQUIREMENTS_TXT = "requirements.txt"
 
@@ -46,6 +52,98 @@ def read_index_url(requirements_in: Path) -> str | None:
     content = requirements_in.read_text(encoding="utf-8")
     match = _INDEX_URL_RE.search(content)
     return match.group(1) if match else None
+
+
+def _strip_inline_comment(line: str) -> str:
+    """Remove a ``#`` comment that is not inside quotes."""
+    in_quote: str | None = None
+    for index, char in enumerate(line):
+        if in_quote:
+            if char == in_quote:
+                in_quote = None
+        elif char in {"'", '"'}:
+            in_quote = char
+        elif char == "#":
+            return line[:index].rstrip()
+    return line
+
+
+def _canonicalize_name(name: str) -> str:
+    """Normalize a package name per PEP 503."""
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def _split_environment_marker(requirement_line: str) -> tuple[str, str | None]:
+    """Split a PEP 508 requirement into the spec and optional environment marker."""
+    in_quote: str | None = None
+    for index, char in enumerate(requirement_line):
+        if in_quote:
+            if char == in_quote:
+                in_quote = None
+        elif char in {"'", '"'}:
+            in_quote = char
+        elif char == ";":
+            spec = requirement_line[:index].rstrip()
+            marker = requirement_line[index + 1 :].strip()
+            return spec, marker or None
+    return requirement_line.rstrip(), None
+
+
+def read_requirement_markers(requirements_in: Path) -> dict[str, str]:
+    """Return canonical package name to environment marker from ``requirements.in``."""
+    markers: dict[str, str] = {}
+    for raw_line in requirements_in.read_text(encoding="utf-8").splitlines():
+        line = _strip_inline_comment(raw_line).strip()
+        if not line or line.startswith("-"):
+            continue
+        name_match = _PKG_NAME_RE.match(line)
+        if name_match is None:
+            continue
+        _, marker = _split_environment_marker(line)
+        if marker:
+            markers[_canonicalize_name(name_match.group(0))] = marker
+    return markers
+
+
+def _inject_marker(line: str, marker: str) -> str:
+    """Attach ``marker`` to a compiled requirement pin line."""
+    newline = "\n" if line.endswith("\n") else ""
+    body = line[: -len(newline)] if newline else line
+    continuation = ""
+    if body.endswith("\\"):
+        continuation = " \\"
+        body = body[:-1].rstrip()
+    spec, _existing_marker = _split_environment_marker(body)
+    return f"{spec} ; {marker}{continuation}{newline}"
+
+
+def apply_environment_markers(requirements_in: Path, requirements_txt: Path) -> None:
+    """Copy PEP 508 environment markers from ``requirements.in`` onto ``requirements.txt``.
+
+    ``uv pip compile`` evaluates markers against the compile-time environment (the
+    Linux container host) and drops those that are true there, such as
+    ``platform_machine != 's390x'`` on x86_64. Restore the input markers so the
+    lockfile still skips those packages on other architectures.
+    """
+    markers = read_requirement_markers(requirements_in)
+    if not markers:
+        return
+    if not requirements_txt.is_file():
+        raise RefreshRequirementsError(f"Missing {_REQUIREMENTS_TXT}: {requirements_txt}")
+
+    updated_lines: list[str] = []
+    for line in requirements_txt.read_text(encoding="utf-8").splitlines(keepends=True):
+        if not line.strip() or line[:1].isspace() or line.lstrip().startswith(("#", "-")):
+            updated_lines.append(line)
+            continue
+        name_match = _PKG_NAME_RE.match(line)
+        if name_match is None:
+            updated_lines.append(line)
+            continue
+        marker = markers.get(_canonicalize_name(name_match.group(0)))
+        updated_lines.append(_inject_marker(line, marker) if marker else line)
+
+    requirements_txt.write_text("".join(updated_lines), encoding="utf-8")
 
 
 def sanitize_index_url_for_log(url: str) -> str:
@@ -186,6 +284,9 @@ def compile_pipeline_requirements(
         run_kwargs["stdout"] = subprocess.DEVNULL
         run_kwargs["stderr"] = subprocess.DEVNULL
     subprocess.run(command, **run_kwargs)
+
+    if not dry_run:
+        apply_environment_markers(requirements_in, pipeline_dir / _REQUIREMENTS_TXT)
 
 
 def refresh_pipeline_requirements(

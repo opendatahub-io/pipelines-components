@@ -37,10 +37,10 @@ def wrap_component_python_func(
             status.path = str(tmp_path / "component_status_out")
             status.metadata = {}
             kwargs["component_status"] = status
-        if "html_artifact" in signature.parameters and "html_artifact" not in bound.arguments:
+        if "leaderboard" in signature.parameters and "leaderboard" not in bound.arguments:
             html = mock.MagicMock()
-            html.path = str(tmp_path / "html_artifact.html")
-            kwargs["html_artifact"] = html
+            html.path = str(tmp_path / "leaderboard.html")
+            kwargs["leaderboard"] = html
         return original(*args, **kwargs)
 
     wrapper = functools.wraps(original)(wrapper)

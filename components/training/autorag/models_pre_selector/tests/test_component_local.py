@@ -1,20 +1,20 @@
-"""Local runner tests for the search_space_preparation component."""
+"""Local runner tests for the models_pre_selector component."""
 
 import pytest
 
-from ..component import search_space_preparation
+from ..component import models_pre_selector
 
 
-class TestSearchSpacePreparationLocalRunner:
+class TestModelsPreSelectorLocalRunner:
     """Test component with LocalRunner (subprocess execution)."""
 
     @pytest.mark.skip(reason="Requires input artifacts and model APIs; run E2E in pipeline")
     def test_local_execution(self, setup_and_teardown_subprocess_runner):  # noqa: F811
         """Test component execution with LocalRunner."""
-        result = search_space_preparation(
-            test_data=...,
+        result = models_pre_selector(
             search_space_report=...,
-            embedding_models=["embed-1"],
-            generation_models=["gen-1"],
+            extracted_text=...,
+            test_data=...,
+            search_space_mps_report=...,
         )
         assert result is not None

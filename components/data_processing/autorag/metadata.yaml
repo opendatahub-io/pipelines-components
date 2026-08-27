@@ -6,12 +6,10 @@ dependencies:
     - name: Pipelines
       version: '>=2.15.2'
   external_services:
-    - name: docling
-      version: ">=2.72.0"
     - name: boto3
       version: ">=1.42.34"
 tags:
   - data_processing
   - text_extraction
   - documents_discovery
-lastVerified: 2026-02-04T11:46:16Z
+lastVerified: 2026-08-24T00:00:00Z

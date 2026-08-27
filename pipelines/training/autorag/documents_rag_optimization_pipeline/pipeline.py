@@ -1,5 +1,3 @@
-from typing import List, Optional
-
 from kfp import dsl
 from kfp.kubernetes import use_secret_as_env
 from kfp_components.components.data_processing.autorag.documents_discovery import (
@@ -11,6 +9,9 @@ from kfp_components.components.data_processing.autorag.text_extraction import (
 from kfp_components.components.training.autorag.component_stage_map_publisher import (
     publish_component_stage_map,
 )
+from kfp_components.components.training.autorag.models_pre_selector.component import (
+    models_pre_selector,
+)
 from kfp_components.components.training.autorag.rag_templates_optimization.component import (
     rag_templates_optimization,
 )
@@ -21,10 +22,14 @@ from kfp_components.components.training.autorag.search_space_preparation.compone
 MAX_CPUS = "32"
 MAX_MEMORY = "64Gi"
 
-SUPPORTED_OPTIMIZATION_METRICS = frozenset({"faithfulness", "answer_correctness", "context_correctness"})
-
 # Must match run_status_templates/pipelines/<name>.json
 PIPELINE_NAME = "documents-rag-optimization-pipeline"
+
+# Inference credentials exposed by the MaaS secret.
+MAAS_SECRET_KEYS = {
+    "MAAS_BASE_URL": "MAAS_BASE_URL",
+    "MAAS_API_KEY": "MAAS_API_KEY",
+}
 
 
 @dsl.pipeline(
@@ -32,7 +37,7 @@ PIPELINE_NAME = "documents-rag-optimization-pipeline"
     description=(
         "AutoRAG pipeline for building high-quality RAG applications from your documents with minimal "
         "configuration. Powered by ai4rag, it explores and optimizes retrieval and generation design choices "
-        "against your quality goals. Delivers ranked, production-ready patterns, OGX deployment payloads, "
+        "against your quality goals. Delivers ranked, production-ready patterns, deployment-ready settings, "
         "and a leaderboard of the best configurations."
     ),
 )
@@ -42,11 +47,11 @@ def documents_rag_optimization_pipeline(
     test_data_key: str,
     input_data_secret_name: str,
     input_data_bucket_name: str,
-    ogx_secret_name: str,
-    vector_io_provider_id: str,
+    maas_secret_name: str,
+    vector_db_secret_name: str,
+    embedding_models: list[str],
+    generation_models: list[str],
     input_data_key: str = "",
-    embedding_models: Optional[List] = None,
-    generation_models: Optional[List] = None,
     optimization_metric: str = "overall_score",
     optimization_max_rag_patterns: int = 8,
     preset: str = "speed",
@@ -59,11 +64,10 @@ def documents_rag_optimization_pipeline(
     engine to systematically explore RAG configurations and identify the best performing parameter
     settings based on an upfront-specified quality metric.
 
-    The system integrates with OGX API for inference and vector database operations,
-    producing optimized RAG patterns as artifacts that can be deployed and used for production
-    RAG applications. Each optimized pattern contains a ``pattern.json`` with deployment
-    settings (including ``settings.responses_template`` for OGX ``/v1/responses``),
-    executable notebooks, and evaluation results.
+    The system integrates with MaaS (Models-as-a-Service) for inference and a vector database
+    (Milvus or PGVector) for retrieval, producing optimized RAG patterns as artifacts that can
+    be deployed and used for production RAG applications. Each optimized pattern contains a
+    ``pattern.json`` (with deployment settings), executable notebooks, and evaluation results.
 
     Args:
         test_data_secret_name: Name of the Kubernetes secret holding S3-compatible credentials for
@@ -77,13 +81,18 @@ def documents_rag_optimization_pipeline(
             AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_S3_ENDPOINT.
             AWS_DEFAULT_REGION is optional.
         input_data_bucket_name: S3 (or compatible) bucket name for the input documents.
-        ogx_secret_name: Name of the Kubernetes secret for OGX API connection.
-            The secret must define: OGX_CLIENT_API_KEY, OGX_CLIENT_BASE_URL.
-        vector_io_provider_id: Vector I/O provider id (e.g., registered in OGX Milvus).
+        maas_secret_name: Name of the Kubernetes secret for the MaaS inference connection.
+            The secret must define: MAAS_BASE_URL, MAAS_API_KEY.
+        vector_db_secret_name: Name of the Kubernetes secret carrying the vector database
+            configuration. The env-var prefix selects the backend: ``MILVUS_*`` keys (at least
+            ``MILVUS_URI``) select Milvus, ``PGVECTOR_*`` keys select PGVector.
+        embedding_models: List of embedding model identifiers to use in the search space.
+            Required: MaaS exposes no metadata to distinguish model types, so embedding
+            models can no longer be inferred and must be declared explicitly.
+        generation_models: List of foundation/generation model identifiers to use in the
+            search space. Required: MaaS exposes no metadata to distinguish model types, so
+            generation models can no longer be inferred and must be declared explicitly.
         input_data_key: Object key (path) of the input documents in the input data bucket.
-        embedding_models: Optional list of embedding model identifiers to use in the search space.
-        generation_models: Optional list of foundation/generation model identifiers to use in the
-            search space.
         optimization_metric: Quality metric used to rank RAG patterns. Supported values:
             "faithfulness", "answer_correctness", "context_correctness", "answer_relevance",
             and "overall_score" (default). "faithfulness", "answer_correctness", and
@@ -120,16 +129,65 @@ def documents_rag_optimization_pipeline(
         MAX_MEMORY
     )
 
+    search_space_preparation_task = search_space_preparation(
+        test_data=documents_discovery_task.outputs["test_data"],
+        embedding_models=embedding_models,
+        generation_models=generation_models,
+        preset=preset,
+    )
+
+    search_space_preparation_task.set_caching_options(False)
+    search_space_preparation_task.set_cpu_request("2").set_memory_request("8Gi").set_cpu_limit(
+        MAX_CPUS
+    ).set_memory_limit(MAX_MEMORY)
+
     text_extraction_task = text_extraction(
         documents_descriptor=documents_discovery_task.outputs["discovered_documents"],
         preset=preset,
     )
+    text_extraction_task.after(search_space_preparation_task)
 
     text_extraction_task.set_caching_options(False)
     text_extraction_task.set_cpu_request("4").set_memory_request("16Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(
         MAX_MEMORY
     )
 
+    models_pre_selector_task = models_pre_selector(
+        search_space_report=search_space_preparation_task.outputs["search_space_report"],
+        extracted_text=text_extraction_task.outputs["extracted_text"],
+        test_data=documents_discovery_task.outputs["test_data"],
+        preset=preset,
+    )
+
+    models_pre_selector_task.set_caching_options(False)
+    models_pre_selector_task.set_cpu_request("2").set_memory_request("8Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(
+        MAX_MEMORY
+    )
+
+    rag_optimization_task = rag_templates_optimization(
+        extracted_text=text_extraction_task.outputs["extracted_text"],
+        test_data=documents_discovery_task.outputs["test_data"],
+        search_space_mps_report=models_pre_selector_task.outputs["search_space_mps_report"],
+        maas_secret_name=maas_secret_name,
+        vector_db_secret_name=vector_db_secret_name,
+        input_data_secret_name=input_data_secret_name,
+        input_data_bucket_name=input_data_bucket_name,
+        optimization_settings={
+            "metric": optimization_metric,
+            "max_number_of_rag_patterns": optimization_max_rag_patterns,
+        },
+        test_data_key=test_data_key,
+        input_data_key=input_data_key,
+        preset=preset,
+        llm_judge_mode="ragas",
+    )
+
+    rag_optimization_task.set_caching_options(False)
+    rag_optimization_task.set_cpu_request("4").set_memory_request("16Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(
+        MAX_MEMORY
+    )
+
+    # Object storage credentials for document discovery and text extraction.
     use_secret_as_env(
         documents_discovery_task,
         secret_name=input_data_secret_name,
@@ -164,53 +222,24 @@ def documents_rag_optimization_pipeline(
         optional=True,
     )
 
-    mps_task = search_space_preparation(
-        test_data=documents_discovery_task.outputs["test_data"],
-        extracted_text=text_extraction_task.outputs["extracted_text"],
-        embedding_models=embedding_models,
-        generation_models=generation_models,
-        preset=preset,
-    )
-
-    mps_task.set_caching_options(False)
-    mps_task.set_cpu_request("2").set_memory_request("8Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(MAX_MEMORY)
-
-    hpo_task = rag_templates_optimization(
-        extracted_text=text_extraction_task.outputs["extracted_text"],
-        test_data=documents_discovery_task.outputs["test_data"],
-        search_space_prep_report=mps_task.outputs["search_space_prep_report"],
-        vector_io_provider_id=vector_io_provider_id,
-        ogx_secret_name=ogx_secret_name,
-        input_data_secret_name=input_data_secret_name,
-        input_data_bucket_name=input_data_bucket_name,
-        optimization_settings={
-            "metric": optimization_metric,
-            "max_number_of_rag_patterns": optimization_max_rag_patterns,
-        },
-        test_data_key=test_data_key,
-        input_data_key=input_data_key,
-        preset=preset,
-        llm_judge_mode="ragas",
-    )
-
-    hpo_task.set_caching_options(False)
-    hpo_task.set_cpu_request("4").set_memory_request("16Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(MAX_MEMORY)
+    use_secret_as_env(search_space_preparation_task, maas_secret_name, MAAS_SECRET_KEYS)
+    use_secret_as_env(models_pre_selector_task, maas_secret_name, MAAS_SECRET_KEYS)
+    use_secret_as_env(rag_optimization_task, maas_secret_name, MAAS_SECRET_KEYS)
 
     use_secret_as_env(
-        mps_task,
-        ogx_secret_name,
-        {
-            "OGX_CLIENT_BASE_URL": "OGX_CLIENT_BASE_URL",
-            "OGX_CLIENT_API_KEY": "OGX_CLIENT_API_KEY",
+        rag_optimization_task,
+        vector_db_secret_name,
+        secret_key_to_env={
+            "MILVUS_URI": "MILVUS_URI",
+            "MILVUS_TOKEN": "MILVUS_TOKEN",
+            "MILVUS_SERVER_CERT": "MILVUS_SERVER_CERT",
+            "PGVECTOR_HOST": "PGVECTOR_HOST",
+            "PGVECTOR_PORT": "PGVECTOR_PORT",
+            "PGVECTOR_DB": "PGVECTOR_DB",
+            "PGVECTOR_USER": "PGVECTOR_USER",
+            "PGVECTOR_PASSWORD": "PGVECTOR_PASSWORD",
         },
-    )
-    use_secret_as_env(
-        hpo_task,
-        ogx_secret_name,
-        {
-            "OGX_CLIENT_BASE_URL": "OGX_CLIENT_BASE_URL",
-            "OGX_CLIENT_API_KEY": "OGX_CLIENT_API_KEY",
-        },
+        optional=True,
     )
 
 

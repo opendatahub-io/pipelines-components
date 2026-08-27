@@ -9,8 +9,8 @@ Automated system for building and optimizing Retrieval-Augmented Generation (RAG
 The Documents RAG Optimization Pipeline is an automated system for building and optimizing Retrieval-Augmented Generation (RAG) applications within Red Hat OpenShift AI. It leverages Kubeflow Pipelines to orchestrate the optimization workflow, using the ai4rag optimization engine to systematically
 explore RAG configurations and identify the best performing parameter settings based on an upfront-specified quality metric.
 
-The system integrates with OGX API for inference and vector database operations, producing optimized RAG patterns as artifacts that can be deployed and used for production RAG applications. Each optimized pattern contains a ``pattern.json`` with deployment settings (including
-``settings.responses_template`` for OGX ``/v1/responses``), executable notebooks, and evaluation results.
+The system integrates with MaaS (Models-as-a-Service) for inference and a vector database (Milvus or PGVector) for retrieval, producing optimized RAG patterns as artifacts that can be deployed and used for production RAG applications. Each optimized pattern contains a ``pattern.json`` (with
+deployment settings), executable notebooks, and evaluation results.
 
 ## Inputs 📥
 
@@ -21,11 +21,11 @@ The system integrates with OGX API for inference and vector database operations,
 | `test_data_key` | `str` | `None` | Object key (path) of the test data JSON file in the test data bucket. |
 | `input_data_secret_name` | `str` | `None` | Name of the Kubernetes secret holding S3-compatible credentials for input document data access. The following environment variables are required: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_S3_ENDPOINT. AWS_DEFAULT_REGION is optional. |
 | `input_data_bucket_name` | `str` | `None` | S3 (or compatible) bucket name for the input documents. |
-| `ogx_secret_name` | `str` | `None` | Name of the Kubernetes secret for OGX API connection. The secret must define: OGX_CLIENT_API_KEY, OGX_CLIENT_BASE_URL. |
-| `vector_io_provider_id` | `str` | `None` | Vector I/O provider id (e.g., registered in OGX Milvus). |
+| `maas_secret_name` | `str` | `None` | Name of the Kubernetes secret for the MaaS inference connection. The secret must define: MAAS_BASE_URL, MAAS_API_KEY. |
+| `vector_db_secret_name` | `str` | `None` | Name of the Kubernetes secret carrying the vector database configuration. The env-var prefix selects the backend: ``MILVUS_*`` keys (at least ``MILVUS_URI``) select Milvus, ``PGVECTOR_*`` keys select PGVector. |
+| `embedding_models` | `list[str]` | `None` | List of embedding model identifiers to use in the search space. Required: MaaS exposes no metadata to distinguish model types, so embedding models can no longer be inferred and must be declared explicitly. |
+| `generation_models` | `list[str]` | `None` | List of foundation/generation model identifiers to use in the search space. Required: MaaS exposes no metadata to distinguish model types, so generation models can no longer be inferred and must be declared explicitly. |
 | `input_data_key` | `str` | `""` | Object key (path) of the input documents in the input data bucket. |
-| `embedding_models` | `Optional[List]` | `None` | Optional list of embedding model identifiers to use in the search space. |
-| `generation_models` | `Optional[List]` | `None` | Optional list of foundation/generation model identifiers to use in the search space. |
 | `optimization_metric` | `str` | `overall_score` | Quality metric used to rank RAG patterns. Supported values: "faithfulness", "answer_correctness", "context_correctness", "answer_relevance", and "overall_score" (default). "faithfulness", "answer_correctness", and "context_correctness" are deterministic Unitxt metrics; choosing one as the optimization metric keeps the experiment deterministic. The LLM-judge metric "answer_relevance" is always computed but only drives optimization when selected (or via "overall_score", which aggregates all metrics). |
 | `optimization_max_rag_patterns` | `int` | `8` | Maximum number of RAG patterns to generate. Passed to ai4rag (max_number_of_rag_patterns). Defaults to 8. |
 | `preset` | `str` | `speed` | Pipeline quality tier. "speed" (default) uses recursive chunking, no table structure parsing, and no contextual enrichment. "balanced" enables Docling table layout parsing, hybrid chunking, and LLM contextual enrichment. Both presets use the same resource tier. |
@@ -39,19 +39,18 @@ The system integrates with OGX API for inference and vector database operations,
   - Kubeflow:
     - Name: Pipelines, Version: 2.16.1
   - External Services:
-    - Name: ai4rag, Version: ~=0.10.3
-    - Name: OGX API, Version: ~=1.1.0
+    - Name: ai4rag, Version: ~=0.12.0
+    - Name: MaaS, Version: >=1.0.0
     - Name: RHOAI Connections API, Version: >=1.0.0
     - Name: Milvus, Version: >=2.0.0
-    - Name: Milvus Lite, Version: >=2.0.0
+    - Name: PGVector, Version: >=0.5.0
     - Name: MLFlow, Version: >=2.0.0
-    - Name: docling, Version: >=1.0.0
 - **Tags**:
   - training
   - pipeline
   - autorag
   - rag-optimization
-- **Last Verified**: 2026-07-20 00:00:00+00:00
+- **Last Verified**: 2026-08-24 00:00:00+00:00
 - **Owners**:
   - No Parent Owners: Yes
   - Approvers:
@@ -75,7 +74,7 @@ Besides RAG pattern and data artifacts below, each run publishes:
 | `text-extraction` | `component_status` | `component_status.json` | Stage progress for docling text extraction. |
 | `search-space-preparation` | `component_status` | `component_status.json` | Stage progress for search-space preparation and model pre-selection. |
 | `rag-templates-optimization` | `component_status` | `component_status.json` | Stage progress for RAG template optimization (including sub-steps). |
-| `rag-templates-optimization` | `html_artifact` | `*.html` | Leaderboard HTML comparing optimized RAG patterns. |
+| `rag-templates-optimization` | `leaderboard` | `*.html` | Leaderboard HTML comparing optimized RAG patterns. |
 
 Example artifact-store layout (task folder names are kebab-case):
 
@@ -86,7 +85,7 @@ Example artifact-store layout (task folder names are kebab-case):
 ├── text-extraction/<task_id>/component_status/component_status.json
 ├── search-space-preparation/<task_id>/component_status/component_status.json
 ├── rag-templates-optimization/<task_id>/component_status/component_status.json
-└── rag-templates-optimization/<task_id>/html_artifact/<leaderboard>.html
+└── rag-templates-optimization/<task_id>/leaderboard_html/<leaderboard>.html
 ```
 
 See [AutoRAG training components README](../../../components/training/autorag/README.md) for JSON field details.
@@ -140,13 +139,13 @@ RAG templates with optimal parameter values, which are referred to as RAG Patter
 
 - **RAG Type**: Documents (documents provided as input)
 - **Supported Languages**: English
-- **Supported Document Types**: PDF, DOCX, PPTX, Markdown, HTML, Plain text
+- **Supported Document Types**: PDF, DOCX, PPTX, Markdown (.md, .qmd, .Rmd), HTML (.html, .xhtml), Plain text, ODT, ODP, AsciiDoc, LaTeX, EPUB, EML
 - **Document Data Sources**: S3 (Amazon S3), Local filesystem (FS)
 
 ### Infrastructure Components
 
-- **Vector Databases**: Milvus, Milvus Lite, ChromaDB
-- **LLM Provider**: OGX-supported models and vendors
+- **Vector Databases**: Milvus, PGVector
+- **LLM Provider**: MaaS (Models-as-a-Service, OpenAI-compatible inference)
 - **Experiment Tracking**: MLFlow (optional) - For experiment tracking, metrics logging, and
   artifact management
 

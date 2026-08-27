@@ -7,18 +7,22 @@ dependencies:
     - name: Pipelines
       version: '>=2.15.2'
   external_services:
-    - name: docling
-      version: ">=2.72.0"
     - name: boto3
       version: ">=1.42.34"
     - name: ai4rag
-      version: "~=0.10.3"
+      version: "~=0.12.0"
     - name: RHOAI Connections API
       version: ">=1.0.0"
+    - name: MaaS
+      version: ">=1.0.0"
+    - name: Milvus
+      version: ">=2.0.0"
+    - name: PGVector
+      version: ">=0.5.0"
 tags:
   - data_processing
   - text_extraction
   - documents_discovery
   - data_indexing
   - autorag
-lastVerified: 2026-07-20T00:00:00Z
+lastVerified: 2026-08-24T00:00:00Z

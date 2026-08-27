@@ -8,10 +8,12 @@ import pytest
 
 from ..refresh_pipeline_requirements import (
     RefreshRequirementsError,
+    apply_environment_markers,
     build_container_command,
     build_volume_mount,
     compile_pipeline_requirements,
     read_index_url,
+    read_requirement_markers,
     refresh_pipeline_requirements,
     resolve_container_runtime,
     resolve_pipeline_dir,
@@ -46,6 +48,105 @@ class TestReadIndexUrl:
         requirements_in.write_text("requests\n", encoding="utf-8")
 
         assert read_index_url(requirements_in) is None
+
+
+class TestReadRequirementMarkers:
+    """Tests for read_requirement_markers."""
+
+    def test_reads_platform_marker(self, tmp_path: Path):
+        """Returns the environment marker declared on a pinned package."""
+        requirements_in = tmp_path / "requirements.in"
+        requirements_in.write_text(
+            "--index-url https://example.com/simple\n\ntriton==3.6.0; platform_machine != 's390x'\n",
+            encoding="utf-8",
+        )
+
+        assert read_requirement_markers(requirements_in) == {"triton": "platform_machine != 's390x'"}
+
+    def test_ignores_unmarked_packages_and_comments(self, tmp_path: Path):
+        """Skips option lines, comments, and packages without markers."""
+        requirements_in = tmp_path / "requirements.in"
+        requirements_in.write_text(
+            "--index-url https://example.com/simple\n"
+            "kfp==2.16.1 # from kfp-components\n"
+            "triton==3.6.0; platform_machine != 's390x'\n"
+            "# ignored\n",
+            encoding="utf-8",
+        )
+
+        assert read_requirement_markers(requirements_in) == {"triton": "platform_machine != 's390x'"}
+
+    def test_canonicalizes_package_name(self, tmp_path: Path):
+        """Normalizes dotted/underscored names to PEP 503 form."""
+        requirements_in = tmp_path / "requirements.in"
+        requirements_in.write_text(
+            "Foo_Bar==1.0; python_version >= '3.11'\n",
+            encoding="utf-8",
+        )
+
+        assert read_requirement_markers(requirements_in) == {"foo-bar": "python_version >= '3.11'"}
+
+
+class TestApplyEnvironmentMarkers:
+    """Tests for apply_environment_markers."""
+
+    def test_injects_marker_on_hashed_pin(self, tmp_path: Path):
+        """Adds the input marker to the compiled pin without changing hashes."""
+        requirements_in = tmp_path / "requirements.in"
+        requirements_txt = tmp_path / "requirements.txt"
+        requirements_in.write_text(
+            "triton==3.6.0; platform_machine != 's390x'\n",
+            encoding="utf-8",
+        )
+        requirements_txt.write_text(
+            "triton==3.6.0 \\\n    --hash=sha256:abc\n    # via -r requirements.in\n",
+            encoding="utf-8",
+        )
+
+        apply_environment_markers(requirements_in, requirements_txt)
+
+        assert requirements_txt.read_text(encoding="utf-8") == (
+            "triton==3.6.0 ; platform_machine != 's390x' \\\n    --hash=sha256:abc\n    # via -r requirements.in\n"
+        )
+
+    def test_is_idempotent(self, tmp_path: Path):
+        """Does not duplicate a marker that is already present."""
+        requirements_in = tmp_path / "requirements.in"
+        requirements_txt = tmp_path / "requirements.txt"
+        requirements_in.write_text(
+            "triton==3.6.0; platform_machine != 's390x'\n",
+            encoding="utf-8",
+        )
+        requirements_txt.write_text(
+            "triton==3.6.0 ; platform_machine != 's390x' \\\n    --hash=sha256:abc\n",
+            encoding="utf-8",
+        )
+
+        apply_environment_markers(requirements_in, requirements_txt)
+        apply_environment_markers(requirements_in, requirements_txt)
+
+        assert requirements_txt.read_text(encoding="utf-8") == (
+            "triton==3.6.0 ; platform_machine != 's390x' \\\n    --hash=sha256:abc\n"
+        )
+
+    def test_matches_canonical_lockfile_name(self, tmp_path: Path):
+        """Applies markers when the lockfile uses the PEP 503 package name."""
+        requirements_in = tmp_path / "requirements.in"
+        requirements_txt = tmp_path / "requirements.txt"
+        requirements_in.write_text(
+            "autogluon.tabular==1.5.0; python_version >= '3.11'\n",
+            encoding="utf-8",
+        )
+        requirements_txt.write_text(
+            "autogluon-tabular[fastai]==1.5.0 \\\n    --hash=sha256:abc\n",
+            encoding="utf-8",
+        )
+
+        apply_environment_markers(requirements_in, requirements_txt)
+
+        assert "autogluon-tabular[fastai]==1.5.0 ; python_version >= '3.11' \\" in requirements_txt.read_text(
+            encoding="utf-8"
+        )
 
 
 class TestSanitizeIndexUrlForLog:
@@ -300,6 +401,56 @@ class TestCompilePipelineRequirements:
 
         with pytest.raises(RefreshRequirementsError, match="must declare --index-url"):
             compile_pipeline_requirements(pipeline_dir, container_runtime="podman")
+
+    def test_restores_environment_markers_after_compile(self, tmp_path: Path):
+        """Re-applies requirements.in markers that uv pip compile strips."""
+        pipeline_dir = tmp_path / "pipeline"
+        pipeline_dir.mkdir()
+        (pipeline_dir / "requirements.in").write_text(
+            "--index-url https://example.com/simple\n\ntriton==3.6.0; platform_machine != 's390x'\n",
+            encoding="utf-8",
+        )
+
+        def fake_run(*_args, **_kwargs):
+            (pipeline_dir / "requirements.txt").write_text(
+                "triton==3.6.0 \\\n    --hash=sha256:abc\n",
+                encoding="utf-8",
+            )
+            return mock.MagicMock(returncode=0)
+
+        with (
+            mock.patch(
+                "scripts.refresh_pipeline_requirements.refresh_pipeline_requirements.resolve_container_runtime",
+                return_value="docker",
+            ),
+            mock.patch("subprocess.run", side_effect=fake_run),
+            mock.patch("builtins.print"),
+        ):
+            compile_pipeline_requirements(pipeline_dir, container_runtime="docker")
+
+        assert (pipeline_dir / "requirements.txt").read_text(encoding="utf-8") == (
+            "triton==3.6.0 ; platform_machine != 's390x' \\\n    --hash=sha256:abc\n"
+        )
+
+    def test_dry_run_does_not_rewrite_lockfile(self, tmp_path: Path):
+        """Leaves requirements.txt unchanged in dry-run mode."""
+        pipeline_dir = tmp_path / "pipeline"
+        _write_requirements_in(pipeline_dir)
+        lockfile = pipeline_dir / "requirements.txt"
+        lockfile.write_text("requests==2.0.0\n", encoding="utf-8")
+
+        with (
+            mock.patch(
+                "scripts.refresh_pipeline_requirements.refresh_pipeline_requirements.resolve_container_runtime",
+                return_value="docker",
+            ),
+            mock.patch("subprocess.run") as run_mock,
+            mock.patch("builtins.print"),
+        ):
+            compile_pipeline_requirements(pipeline_dir, container_runtime="docker", dry_run=True)
+
+        run_mock.assert_called_once()
+        assert lockfile.read_text(encoding="utf-8") == "requests==2.0.0\n"
 
 
 class TestRefreshPipelineRequirements:

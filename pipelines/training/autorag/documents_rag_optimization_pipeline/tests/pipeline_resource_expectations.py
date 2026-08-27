@@ -11,5 +11,6 @@ AUTORAG_OPTIMIZATION_EXECUTOR_RESOURCES = {
     "documents-discovery": STANDARD_RESOURCES,
     "text-extraction": HEAVY_RESOURCES,
     "search-space-preparation": STANDARD_RESOURCES,
+    "models-pre-selector": STANDARD_RESOURCES,
     "rag-templates-optimization": HEAVY_RESOURCES,
 }
