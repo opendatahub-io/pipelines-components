@@ -21,7 +21,7 @@ Thin wrapper that delegates to ``ai4rag.components.optimization.rag_templates_op
 | `vector_db_secret_name` | `str` | `None` | Name of the K8s secret holding the vector database configuration. Its keys select the backend: ``MILVUS_*`` keys use Milvus, ``PGVECTOR_*`` keys use PGVector. Propagated into each generated ``pattern.json`` indexing spec. |
 | `input_data_secret_name` | `str` | `None` | Name of the K8s secret with S3 credentials for input data. |
 | `input_data_bucket_name` | `str` | `None` | S3 bucket containing input documents. |
-| `leaderboard` | `dsl.Output[dsl.HTML]` | `None` | Output HTML artifact; the leaderboard table is written to leaderboard_html.path (single file). |
+| `leaderboard` | `dsl.Output[dsl.HTML]` | `None` | Output HTML artifact; the leaderboard table is written to leaderboard.path (single file). |
 | `embedded_artifact` | `dsl.EmbeddedInput[dsl.Dataset]` | `None` | Embedded ``autorag.shared`` helpers injected by KFP at runtime. |
 | `optimization_settings` | `Optional[dict]` | `None` | Additional experiment settings. |
 | `input_data_key` | `Optional[str]` | `""` | Path to documents dir within bucket. |

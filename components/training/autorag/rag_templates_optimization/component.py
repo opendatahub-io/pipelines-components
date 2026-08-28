@@ -52,7 +52,7 @@ def rag_templates_optimization(
             input data.
         input_data_bucket_name: S3 bucket containing input documents.
         leaderboard: Output HTML artifact; the leaderboard table is written to
-            leaderboard_html.path (single file).
+            leaderboard.path (single file).
         component_status: Output artifact containing stage-level progress tracking.
         embedded_artifact: Embedded ``autorag.shared`` helpers injected by KFP at runtime.
         optimization_settings: Additional experiment settings.
