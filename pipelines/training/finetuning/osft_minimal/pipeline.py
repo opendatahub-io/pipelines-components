@@ -1,10 +1,11 @@
 """OSFT Minimal (Orthogonal Subspace Fine-Tuning) Training Pipeline.
 
-A minimal 4-stage pipeline for continual learning without catastrophic forgetting:
+A minimal 5-stage pipeline for continual learning without catastrophic forgetting:
 1. Dataset Download
-2. OSFT Training (mini-trainer backend)
-3. Evaluation with lm-eval
-4. Model Registry
+2. OCI Model Resolution
+3. OSFT Training (mini-trainer backend)
+4. Evaluation with lm-eval
+5. Model Registry
 
 OSFT enables adapting pre-trained or instruction-tuned models to new tasks
 while preserving their original capabilities. This minimal version provides
@@ -21,6 +22,11 @@ from components.deployment.kubeflow_model_registry import (
     kubeflow_model_registry as model_registry,
 )
 from components.evaluation.lm_eval import universal_llm_evaluator
+from components.training.finetuning.oci_utils import (
+    copy_oci_model_to_pvc,
+    is_oci_uri,
+    passthrough_uri,
+)
 from components.training.finetuning.osft import train_model
 
 # =============================================================================
@@ -78,12 +84,13 @@ def osft_minimal_pipeline(
 ):
     """OSFT Minimal Training Pipeline - Continual learning without catastrophic forgetting.
 
-    A minimal 4-stage ML pipeline for fine-tuning language models with OSFT:
+    A minimal 5-stage ML pipeline for fine-tuning language models with OSFT:
 
     1) Dataset Download - Prepares training data from HuggingFace, S3, or HTTP
-    2) OSFT Training - Fine-tunes using mini-trainer backend (orthogonal subspace)
-    3) Evaluation - Evaluates with lm-eval harness (MMLU, GSM8K, etc.)
-    4) Model Registry - Registers trained model to Kubeflow Model Registry
+    2) OCI Model Resolution - Resolves OCI URIs to PVC paths or passes through HF URIs
+    3) OSFT Training - Fine-tunes using mini-trainer backend (orthogonal subspace)
+    4) Evaluation - Evaluates with lm-eval harness (MMLU, GSM8K, etc.)
+    5) Model Registry - Registers trained model to Kubeflow Model Registry
 
     Args:
         phase_01_dataset_man_data_uri: [REQUIRED] Dataset location (hf://dataset, s3://bucket/path, https://url)
@@ -131,13 +138,39 @@ def osft_minimal_pipeline(
     )
 
     # =========================================================================
-    # Stage 2: OSFT Training
+    # Stage 2: OCI Model Resolution
+    # =========================================================================
+    oci_check = is_oci_uri(uri=phase_02_train_man_train_model)
+    oci_check.set_caching_options(False)
+    kfp.kubernetes.set_image_pull_policy(oci_check, "IfNotPresent")
+
+    with dsl.If(oci_check.output == "true"):
+        model_import = dsl.importer(
+            artifact_uri=phase_02_train_man_train_model,
+            artifact_class=dsl.Model,
+            reimport=False,
+        )
+        oci_copy = copy_oci_model_to_pvc(
+            model=model_import.output,
+            pvc_mount_path=dsl.WORKSPACE_PATH_PLACEHOLDER,
+        )
+        oci_copy.set_caching_options(False)
+        kfp.kubernetes.set_image_pull_policy(oci_copy, "IfNotPresent")
+
+    with dsl.Else():
+        hf_pass = passthrough_uri(value=phase_02_train_man_train_model)
+        kfp.kubernetes.set_image_pull_policy(hf_pass, "IfNotPresent")
+
+    resolved_model = dsl.OneOf(oci_copy.output, hf_pass.output)
+
+    # =========================================================================
+    # Stage 3: OSFT Training
     # =========================================================================
     training_task = train_model(
         pvc_path=dsl.WORKSPACE_PATH_PLACEHOLDER,
         dataset=dataset_download_task.outputs["train_dataset"],
         # Model - OSFT specific
-        training_base_model=phase_02_train_man_train_model,
+        training_base_model=resolved_model,
         training_unfreeze_rank_ratio=phase_02_train_man_train_unfreeze,
         training_osft_memory_efficient_init=True,
         # Hyperparameters
@@ -174,15 +207,8 @@ def osft_minimal_pipeline(
         optional=False,
     )
 
-    kfp.kubernetes.use_secret_as_env(
-        task=training_task,
-        secret_name="oci-pull-secret-model-download",
-        secret_key_to_env={"OCI_PULL_SECRET_MODEL_DOWNLOAD": "OCI_PULL_SECRET_MODEL_DOWNLOAD"},
-        optional=True,
-    )
-
     # =========================================================================
-    # Stage 3: Evaluation
+    # Stage 4: Evaluation
     # =========================================================================
     eval_task = universal_llm_evaluator(
         model_artifact=training_task.outputs["output_model"],
@@ -212,7 +238,7 @@ def osft_minimal_pipeline(
         )
 
     # =========================================================================
-    # Stage 4: Model Registry
+    # Stage 5: Model Registry
     # =========================================================================
     model_registry_task = model_registry(
         pvc_mount_path=dsl.WORKSPACE_PATH_PLACEHOLDER,

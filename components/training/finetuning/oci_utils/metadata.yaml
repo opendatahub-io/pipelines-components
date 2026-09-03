@@ -1,0 +1,13 @@
+name: oci_utils
+stability: alpha
+dependencies:
+  kubeflow:
+    - name: Pipelines
+      version: '>=2.15.2'
+tags:
+  - training
+  - fine_tuning
+  - oci
+  - model_download
+  - modelcar
+lastVerified: 2026-06-26T00:00:00Z

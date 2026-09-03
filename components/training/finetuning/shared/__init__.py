@@ -1,7 +1,6 @@
 """Shared utilities for the finetuning subcategory."""
 
 from .data import (
-    download_oci_model,
     prepare_jsonl,
     resolve_dataset,
 )
@@ -29,7 +28,6 @@ __all__ = [
     "compute_nproc",
     "configure_env",
     "create_logger",
-    "download_oci_model",
     "extract_metrics_from_jsonl",
     "find_model_dir",
     "init_k8s",

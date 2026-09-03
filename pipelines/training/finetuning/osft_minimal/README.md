@@ -6,9 +6,10 @@
 
 OSFT Minimal Training Pipeline - Continual learning without catastrophic forgetting.
 
-A minimal 4-stage ML pipeline for fine-tuning language models with OSFT:
+A minimal 5-stage ML pipeline for fine-tuning language models with OSFT:
 
-1) Dataset Download - Prepares training data from HuggingFace, S3, or HTTP 2) OSFT Training - Fine-tunes using mini-trainer backend (orthogonal subspace) 3) Evaluation - Evaluates with lm-eval harness (MMLU, GSM8K, etc.) 4) Model Registry - Registers trained model to Kubeflow Model Registry
+1) Dataset Download - Prepares training data from HuggingFace, S3, or HTTP 2) OCI Model Resolution - Resolves OCI URIs to PVC paths or passes through HF URIs 3) OSFT Training - Fine-tunes using mini-trainer backend (orthogonal subspace) 4) Evaluation - Evaluates with lm-eval harness (MMLU, GSM8K,
+etc.) 5) Model Registry - Registers trained model to Kubeflow Model Registry
 
 ## Inputs 📥
 
