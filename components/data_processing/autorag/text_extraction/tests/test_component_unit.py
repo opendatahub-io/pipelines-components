@@ -103,6 +103,7 @@ class TestTextExtractionUnitTests:
             max_extraction_workers=4,
             docling_artifacts_path=None,
             docling_config=mock_docling_config_cls.return_value,
+            input_data_key="docs/",
         )
 
     @mock.patch.dict(

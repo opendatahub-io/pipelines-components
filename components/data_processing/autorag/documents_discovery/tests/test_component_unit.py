@@ -10,11 +10,11 @@ import pytest
 from ..component import documents_discovery
 
 VALID_BENCHMARK_RECORDS = [
-    {"question": "What is X?", "correct_answers": ["Answer X"], "correct_answer_document_ids": ["doc_a.pdf"]},
+    {"question": "What is X?", "correct_answers": ["Answer X"], "correct_answer_document_keys": ["doc_a.pdf"]},
     {
         "question": "What is Y?",
         "correct_answers": ["Answer Y"],
-        "correct_answer_document_ids": ["doc_a.pdf", "doc_b.txt"],
+        "correct_answer_document_keys": ["doc_a.pdf", "doc_b.txt"],
     },
 ]
 

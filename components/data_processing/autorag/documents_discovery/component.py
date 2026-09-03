@@ -111,7 +111,7 @@ def documents_discovery(
                     json.dump(test_data_result.data, f, indent=2, ensure_ascii=False)
 
                 test_data_doc_names = list(
-                    {doc_id for r in test_data_result.data for doc_id in r.get("correct_answer_document_ids", [])}
+                    {doc_key for r in test_data_result.data for doc_key in r.get("correct_answer_document_keys", [])}
                 )
 
         with status.stage("discover_documents"):
