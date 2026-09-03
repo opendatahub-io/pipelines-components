@@ -24,5 +24,8 @@ COPY --from=docling-layout-modelcar \
 COPY --from=docling-models-modelcar \
      /models/ \
      /opt/app-root/docling-artifacts/models/docling-project--docling-models/
+# Pre-cache Whisper tiny model for offline/air-gapped use
+RUN curl -L -o /opt/app-root/docling-artifacts/models/tiny.pt \
+        https://openaipublic.azureedge.net/main/whisper/models/65147644a518d12f04e32d6f3b26facc3f8dd46e5390956a9424a650c0ce22b9/tiny.pt
 RUN chown -R 1001:0 /opt/app-root/docling-artifacts
 USER default
