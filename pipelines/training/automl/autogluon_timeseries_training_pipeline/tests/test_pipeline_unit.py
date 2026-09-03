@@ -60,6 +60,7 @@ class TestAutogluonTimeseriesTrainingPipelineUnitTests:
         inputs = autogluon_timeseries_training_pipeline.component_spec.inputs
         params = set(inputs.keys())
         assert params == expected_params, f"Pipeline params {params} != expected {expected_params}"
+        assert inputs["id_column"].default == ""
         assert inputs["prediction_length"].default == 1
         assert inputs["top_n"].default == 3
         assert inputs["known_covariates_names"].default == []

@@ -133,7 +133,17 @@ def _pad_timeseries_csv(csv_content: str, min_rows: int = MIN_VALID_RECORDS + 1)
     return header + "\n" + "\n".join(data) + "\n"
 
 
-def _run_loader(tmp_path, csv_body, selection_train_size=0.3):
+def _two_column_timeseries_csv(n_rows=MIN_VALID_RECORDS):
+    """Build deterministic two-column timeseries CSV (timestamp + target only)."""
+    lines = ["timestamp,target"]
+    for i in range(n_rows):
+        day = (i % 28) + 1
+        month = (i // 28) + 1
+        lines.append(f"2024-{month:02d}-{day:02d},{i}")
+    return "\n".join(lines) + "\n"
+
+
+def _run_loader(tmp_path, csv_body, selection_train_size=0.3, id_column="item_id"):
     """Execute ``python_func`` with mocked S3/pandas; return paths and ``sample_config``."""
     sampled_test = _make_test_artifact(tmp_path)
     with _mock_boto3_and_pandas(get_object_return={"Body": io.BytesIO(csv_body.encode("utf-8"))}):
@@ -142,7 +152,7 @@ def _run_loader(tmp_path, csv_body, selection_train_size=0.3):
             bucket_name="b",
             workspace_path=str(tmp_path),
             target="target",
-            id_column="item_id",
+            id_column=id_column,
             timestamp_column="timestamp",
             sampled_test_dataset=sampled_test,
             selection_train_size=selection_train_size,
@@ -594,6 +604,23 @@ class TestTimeseriesDataLoaderUnitTests:
         assert "inf" not in all_targets
         assert len(all_targets) >= MIN_VALID_RECORDS
 
+    @mock.patch.dict(os.environ, mocked_env_variables, clear=True)
+    def test_whitespace_only_id_column_raises(self, tmp_path):
+        """Whitespace-only id_column is rejected (only empty string or real column name allowed)."""
+        csv_body = _timeseries_csv()
+        sampled_test = _make_test_artifact(tmp_path)
+        with _mock_boto3_and_pandas(get_object_return={"Body": io.BytesIO(csv_body.encode("utf-8"))}):
+            with pytest.raises(ValueError, match="whitespace-only values are not allowed"):
+                timeseries_data_loader.python_func(
+                    file_key="ts.csv",
+                    bucket_name="b",
+                    workspace_path=str(tmp_path),
+                    target="target",
+                    id_column="   ",
+                    timestamp_column="timestamp",
+                    sampled_test_dataset=sampled_test,
+                )
+
 
 class TestTimeseriesDataLoaderScenarioMatrix:
     """Scenario tests inspired by fixture-driven and ordering-invariant patterns."""
@@ -736,3 +763,119 @@ class TestTimeseriesDataLoaderScenarioMatrix:
                     timestamp_column="timestamp",
                     sampled_test_dataset=sampled_test,
                 )
+
+    @mock.patch.dict(os.environ, mocked_env_variables, clear=True)
+    def test_effective_id_column_matches_input_for_standard_path(self, tmp_path):
+        """Standard three-column path returns the user-provided id_column as effective_id_column."""
+        result, _ = _run_loader(tmp_path, _timeseries_csv())
+        assert result.effective_id_column == "item_id"
+        assert result.uses_synthetic_id is False
+
+
+class TestTwoColumnSyntheticItemId:
+    """Tests for two-column (timestamp + target) datasets with synthetic item ID injection."""
+
+    @mock.patch.dict(os.environ, mocked_env_variables, clear=True)
+    def test_two_column_csv_injects_synthetic_item_id(self, tmp_path):
+        """Two-column CSV with empty id_column injects synthetic __synthetic_item_id column."""
+        result, sampled_test = _run_loader(tmp_path, _two_column_timeseries_csv(), id_column="")
+
+        assert result.effective_id_column == "__synthetic_item_id"
+        assert result.uses_synthetic_id is True
+
+        selection_rows = _read_csv_rows(result.models_selection_train_data_path)
+        extra_rows = _read_csv_rows(result.extra_train_data_path)
+        test_rows = _read_csv_rows(sampled_test.path)
+
+        assert len(selection_rows) > 0
+        assert len(extra_rows) > 0
+        assert len(test_rows) > 0
+
+        for row in selection_rows:
+            assert "__synthetic_item_id" in row
+            assert row["__synthetic_item_id"] == "item_0"
+
+    @mock.patch.dict(os.environ, mocked_env_variables, clear=True)
+    def test_two_column_split_sizes_match_single_series(self, tmp_path):
+        """Two-column dataset produces the same split sizes as a single-series three-column dataset."""
+        result, sampled_test = _run_loader(tmp_path, _two_column_timeseries_csv(), id_column="")
+
+        selection_rows = _read_csv_rows(result.models_selection_train_data_path)
+        extra_rows = _read_csv_rows(result.extra_train_data_path)
+        test_rows = _read_csv_rows(sampled_test.path)
+
+        assert len(selection_rows) == 24
+        assert len(extra_rows) == 56
+        assert len(test_rows) == 20
+
+    @mock.patch.dict(os.environ, mocked_env_variables, clear=True)
+    def test_two_column_mode_rejects_three_column_dataset(self, tmp_path):
+        """Empty id_column with 3+ columns raises ValueError."""
+        csv_body = _timeseries_csv()
+        sampled_test = _make_test_artifact(tmp_path)
+        with _mock_boto3_and_pandas(get_object_return={"Body": io.BytesIO(csv_body.encode("utf-8"))}):
+            with pytest.raises(ValueError, match="exactly 2 columns"):
+                timeseries_data_loader.python_func(
+                    file_key="ts.csv",
+                    bucket_name="b",
+                    workspace_path=str(tmp_path),
+                    target="target",
+                    id_column="",
+                    timestamp_column="timestamp",
+                    sampled_test_dataset=sampled_test,
+                )
+
+    @mock.patch.dict(os.environ, mocked_env_variables, clear=True)
+    def test_two_column_mode_rejects_missing_target(self, tmp_path):
+        """Empty id_column with two columns but wrong column names raises ValueError."""
+        csv_body = "timestamp,wrong_col\n2024-01-01,1\n"
+        sampled_test = _make_test_artifact(tmp_path)
+        with _mock_boto3_and_pandas(get_object_return={"Body": io.BytesIO(csv_body.encode("utf-8"))}):
+            with pytest.raises(ValueError, match="Missing required columns"):
+                timeseries_data_loader.python_func(
+                    file_key="ts.csv",
+                    bucket_name="b",
+                    workspace_path=str(tmp_path),
+                    target="target",
+                    id_column="",
+                    timestamp_column="timestamp",
+                    sampled_test_dataset=sampled_test,
+                )
+
+    @mock.patch.dict(os.environ, mocked_env_variables, clear=True)
+    def test_three_column_path_unchanged_with_explicit_id_column(self, tmp_path):
+        """Explicit id_column bypasses synthetic injection; effective_id_column matches input."""
+        result, sampled_test = _run_loader(tmp_path, _timeseries_csv(), id_column="item_id")
+
+        assert result.effective_id_column == "item_id"
+        assert result.uses_synthetic_id is False
+
+        selection_rows = _read_csv_rows(result.models_selection_train_data_path)
+        assert "__synthetic_item_id" not in selection_rows[0]
+        assert "item_id" in selection_rows[0]
+
+    @mock.patch.dict(os.environ, mocked_env_variables, clear=True)
+    def test_two_column_too_few_records_raises(self, tmp_path):
+        """Two-column dataset with fewer than 100 records after cleansing raises ValueError."""
+        csv_body = _two_column_timeseries_csv(5)
+        sampled_test = _make_test_artifact(tmp_path)
+        with _mock_boto3_and_pandas(get_object_return={"Body": io.BytesIO(csv_body.encode("utf-8"))}):
+            with pytest.raises(ValueError, match="at least 100"):
+                timeseries_data_loader.python_func(
+                    file_key="ts.csv",
+                    bucket_name="b",
+                    workspace_path=str(tmp_path),
+                    target="target",
+                    id_column="",
+                    timestamp_column="timestamp",
+                    sampled_test_dataset=sampled_test,
+                )
+
+    @mock.patch.dict(os.environ, mocked_env_variables, clear=True)
+    def test_two_column_sample_rows_excludes_synthetic_id(self, tmp_path):
+        """sample_rows JSON from two-column path contains the synthetic column (it is in the CSV)."""
+        result, _ = _run_loader(tmp_path, _two_column_timeseries_csv(), id_column="")
+        parsed = json.loads(result.sample_rows)
+        assert isinstance(parsed, list)
+        assert len(parsed) == 5
+        assert "__synthetic_item_id" in parsed[0]

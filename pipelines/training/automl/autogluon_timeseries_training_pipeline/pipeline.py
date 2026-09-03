@@ -38,8 +38,8 @@ def autogluon_timeseries_training_pipeline(
     train_data_bucket_name: str,
     train_data_file_key: str,
     target: str,
-    id_column: str,
     timestamp_column: str,
+    id_column: str = "",
     known_covariates_names: List[str] = [],
     prediction_length: int = 1,
     top_n: int = 3,
@@ -51,6 +51,9 @@ def autogluon_timeseries_training_pipeline(
     Trains AutoGluon TimeSeries models on data loaded from S3, scores candidates on a per-series
     temporal holdout, refits the top models on the full train portion (selection + extra splits),
     and aggregates metrics into a leaderboard.
+
+    **API breaking change:** Parameter order changed: `timestamp_column` now precedes `id_column`.
+    Update any positional calls to use keyword arguments to avoid errors.
 
     **Compiled pipeline encoding:** Keep this module ASCII-only (no Unicode in docstrings or
     string literals). Some deployments persist compiled pipeline YAML in MySQL ``utf8`` columns,
@@ -70,7 +73,8 @@ def autogluon_timeseries_training_pipeline(
 
     1. **Data loading & splitting** (``timeseries_data_loader``): Loads CSV from S3 (up to 100 MB),
        replaces ``+/-inf`` with NaN (missing targets stay for AutoGluon), requires parseable timestamps
-       and non-null ids, deduplicates ``(id_column, timestamp_column)``, then applies a two-stage
+       and non-null ids (or injects ``__synthetic_item_id`` for two-column datasets when ``id_column=""``),
+       deduplicates ``(id_column, timestamp_column)``, then applies a two-stage
        **per-series temporal** split on ``id_column`` / ``timestamp_column``:
        default **80/20** train vs test per series, then **30/70** of each series' train rows into
        ``models_selection_train_dataset.csv`` and ``extra_train_dataset.csv`` under
@@ -85,15 +89,19 @@ def autogluon_timeseries_training_pipeline(
         train_data_secret_name: Kubernetes secret name containing S3 credentials
             (e.g. AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_S3_ENDPOINT, AWS_DEFAULT_REGION).
         train_data_bucket_name: S3-compatible bucket name containing the time series data file.
-        train_data_file_key: S3 object key of the data file (CSV or Parquet). File must include
-            columns for item_id, timestamp, and target; optional columns for known covariates.
+        train_data_file_key: S3 object key of the data file (CSV or Parquet). When ``id_column`` is
+            provided, file must include columns for id, timestamp, and target. When ``id_column=""``
+            (single-series mode), file must have exactly timestamp and target columns (the loader injects
+            ``__synthetic_item_id``). Optional columns for known covariates.
         target: Name of the column containing the numeric values to forecast. Corresponds to
             :attr:`~autogluon.timeseries.TimeSeriesDataFrame` target column.
-        id_column: Name of the column that identifies each time series (e.g. product_id, store_id).
-            Passed as ``id_column`` when constructing TimeSeriesDataFrame; result uses ``item_id``.
         timestamp_column: Name of the column containing the timestamp/datetime for each observation.
             Passed as ``timestamp_column`` when constructing TimeSeriesDataFrame; result uses
             ``timestamp`` as the second index level.
+        id_column: Name of the column that identifies each time series (e.g. product_id, store_id).
+            Pass an empty string ("") for single-series two-column datasets (timestamp + target only);
+            the loader will inject a synthetic ID column. Passed as ``id_column`` when constructing
+            TimeSeriesDataFrame; result uses ``item_id``.
         known_covariates_names: Column names known in advance for the forecast horizon
             (e.g. holidays, promotions). Defaults to ``[]`` (no known covariates). See
             :attr:`~autogluon.timeseries.TimeSeriesPredictor.known_covariates_names`.
@@ -171,7 +179,7 @@ def autogluon_timeseries_training_pipeline(
     # Resource limits differ by preset: medium_quality needs more CPU/memory.
     _training_kwargs = dict(
         target=target,
-        id_column=id_column,
+        id_column=data_loader_task.outputs["effective_id_column"],
         timestamp_column=timestamp_column,
         train_data_path=data_loader_task.outputs["models_selection_train_data_path"],
         test_data=data_loader_task.outputs["sampled_test_dataset"],
@@ -181,6 +189,7 @@ def autogluon_timeseries_training_pipeline(
         known_covariates_names=known_covariates_names,
         pipeline_name=dsl.PIPELINE_JOB_RESOURCE_NAME_PLACEHOLDER,
         run_id=dsl.PIPELINE_JOB_ID_PLACEHOLDER,
+        uses_synthetic_id=data_loader_task.outputs["uses_synthetic_id"],
         sample_rows=data_loader_task.outputs["sample_rows"],
         sampling_config=data_loader_task.outputs["sample_config"],
         split_config=data_loader_task.outputs["split_config"],

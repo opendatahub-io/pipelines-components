@@ -28,6 +28,7 @@ Refit outputs for all selected models are written under one ``models_artifact``,
 | `extra_train_data_path` | `str` | `None` | Path to extra train split for full refit. |
 | `html_artifact` | `dsl.Output[dsl.HTML]` | `None` | Output HTML artifact containing the ranked leaderboard page. |
 | `component_status` | `dsl.Output[dsl.Artifact]` | `None` | Output artifact containing stage-level progress tracking for this component. |
+| `uses_synthetic_id` | `bool` | `False` | True if the loader injected a synthetic ID column for two-column datasets. |
 | `sample_rows` | `str` | `[]` | Sample rows JSON string used in generated notebook placeholders. |
 | `sampling_config` | `Optional[dict]` | `None` | Optional sampling config stored in artifact metadata. |
 | `split_config` | `Optional[dict]` | `None` | Optional split config stored in artifact metadata. |

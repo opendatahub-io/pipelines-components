@@ -249,7 +249,13 @@ class MockedDataFrame:
 
     def __setitem__(self, key, value):
         """Assign a column from a list or ``MockSeries`` (same length as frame)."""
-        idx = self._columns.index(key)
+        if key in self._columns:
+            idx = self._columns.index(key)
+        else:
+            self._columns.append(key)
+            for row in self._rows:
+                row.append(None)
+            idx = len(self._columns) - 1
         if isinstance(value, MockSeries):
             vals = value._values
         else:

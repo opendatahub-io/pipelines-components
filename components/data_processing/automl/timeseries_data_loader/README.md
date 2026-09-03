@@ -22,17 +22,17 @@ After cleansing, at least **100** valid records must remain; otherwise the compo
 | `bucket_name` | `str` | `None` | S3 bucket name containing the file. |
 | `workspace_path` | `str` | `None` | PVC workspace directory where train CSVs will be written. |
 | `target` | `str` | `None` | Name of the target column to forecast. |
-| `id_column` | `str` | `None` | Name of the column identifying each time series (item_id). |
 | `timestamp_column` | `str` | `None` | Name of the timestamp/datetime column. |
 | `sampled_test_dataset` | `dsl.Output[dsl.Dataset]` | `None` | Output dataset artifact for the test split. |
 | `component_status` | `dsl.Output[dsl.Artifact]` | `None` | Output artifact containing stage-level progress tracking for this component. |
+| `id_column` | `str` | `""` | Name of the column identifying each time series (item_id). Pass an empty string ("") for single-series two-column datasets (timestamp + target only); the loader will inject a synthetic ID column (__synthetic_item_id) with value "item_0". |
 | `selection_train_size` | `float` | `0.3` | Fraction of train portion for model selection (default: 0.3). |
 
 ## Outputs 📤
 
 | Name | Type | Description |
 | ---- | ---- | ----------- |
-| Output | `NamedTuple('outputs', sample_config=dict, split_config=dict, sample_rows=str, models_selection_train_data_path=str, extra_train_data_path=str)` | sample_config, split_config, sample_rows, models_selection_train_data_path, extra_train_data_path. |
+| Output | `NamedTuple('outputs', sample_config=dict, split_config=dict, sample_rows=str, models_selection_train_data_path=str, extra_train_data_path=str, effective_id_column=str, uses_synthetic_id=bool)` | sample_config, split_config, sample_rows, models_selection_train_data_path, extra_train_data_path. |
 
 ## Usage Examples 🧪
 

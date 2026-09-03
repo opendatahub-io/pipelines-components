@@ -13,10 +13,10 @@ def timeseries_data_loader(
     bucket_name: str,
     workspace_path: str,
     target: str,
-    id_column: str,
     timestamp_column: str,
     sampled_test_dataset: dsl.Output[dsl.Dataset],
     component_status: dsl.Output[dsl.Artifact],
+    id_column: str = "",
     selection_train_size: float = 0.3,
 ) -> NamedTuple(
     "outputs",
@@ -25,6 +25,8 @@ def timeseries_data_loader(
     sample_rows=str,
     models_selection_train_data_path=str,
     extra_train_data_path=str,
+    effective_id_column=str,
+    uses_synthetic_id=bool,
 ):
     """Load and split timeseries data from S3 for AutoGluon training.
 
@@ -52,7 +54,9 @@ def timeseries_data_loader(
         bucket_name: S3 bucket name containing the file.
         workspace_path: PVC workspace directory where train CSVs will be written.
         target: Name of the target column to forecast.
-        id_column: Name of the column identifying each time series (item_id).
+        id_column: Name of the column identifying each time series (item_id). Pass an empty
+            string ("") for single-series two-column datasets (timestamp + target only);
+            the loader will inject a synthetic ID column (__synthetic_item_id) with value "item_0".
         timestamp_column: Name of the timestamp/datetime column.
         sampled_test_dataset: Output dataset artifact for the test split.
         component_status: Output artifact containing stage-level progress tracking for this component.
@@ -77,22 +81,46 @@ def timeseries_data_loader(
     PANDAS_CHUNK_SIZE = 10000  # Rows per batch for streaming read
     DEFAULT_TEST_SIZE = 0.2
 
+    SYNTHETIC_ITEM_ID_COLUMN = "__synthetic_item_id"
+    SYNTHETIC_ITEM_ID_VALUE = "item_0"
+
     # Input validation
     for param, value in (
         ("bucket_name", bucket_name),
         ("file_key", file_key),
         ("workspace_path", workspace_path),
         ("target", target),
-        ("id_column", id_column),
         ("timestamp_column", timestamp_column),
     ):
         if not isinstance(value, str) or not value.strip():
             raise ValueError(f"{param} must be a non-empty string.")
+    if not isinstance(id_column, str):
+        raise ValueError("id_column must be a string.")
+    if id_column == "":
+        pass  # Empty string is valid for two-column datasets
+    elif not id_column.strip():
+        raise ValueError(
+            "id_column must be an empty string or a non-empty column name (whitespace-only values are not allowed)."
+        )
     if selection_train_size <= 0 or selection_train_size >= 1:
         raise ValueError("selection_train_size must be in a range 0 to 1.")
 
     if file_key.startswith("/") or file_key.endswith("/") or "//" in file_key:
         raise ValueError("file_key must be a valid S3 object key and must not start/end with '/' or contain '//'.")
+
+    # Validate workspace_path to prevent path traversal
+    workspace_path_obj = Path(workspace_path)
+    if not workspace_path_obj.is_absolute():
+        raise ValueError(f"workspace_path must be an absolute path; got {workspace_path!r}")
+
+    workspace_path_resolved = workspace_path_obj.resolve()
+    try:
+        workspace_path_resolved.relative_to(workspace_path_obj)
+    except ValueError:
+        raise ValueError(
+            f"workspace_path resolves outside the trusted workspace boundary: "
+            f"{workspace_path!r} -> {workspace_path_resolved}"
+        )
 
     from kfp_components.components.training.automl.shared.component_status import ComponentStatusTracker
 
@@ -302,17 +330,58 @@ def timeseries_data_loader(
         )
         df = load_timeseries_data_truncate(bucket_name, file_key, MAX_SIZE_BYTES, PANDAS_CHUNK_SIZE)
 
-        required_columns = {id_column, timestamp_column, target}
-        missing_columns = required_columns - set(df.columns)
-        if missing_columns:
+        # Reject collision with reserved synthetic-ID column (CWE-20)
+        # Check if any user-specified column uses the reserved name before we try to inject it.
+        reserved_columns = {timestamp_column, target}
+        if id_column:
+            reserved_columns.add(id_column)
+        if SYNTHETIC_ITEM_ID_COLUMN in reserved_columns:
             raise ValueError(
-                f"Missing required columns in dataset: {missing_columns}. Available columns: {list(df.columns)}"
+                f"Column name {SYNTHETIC_ITEM_ID_COLUMN!r} is reserved for synthetic ID injection. "
+                f"Please rename your timestamp, target, or id_column to avoid collision."
             )
+
+        uses_synthetic_id = False
+        if id_column == "":
+            # Two-column mode: dataset must have exactly timestamp + target columns.
+            required_columns = {timestamp_column, target}
+            missing_columns = required_columns - set(df.columns)
+            if missing_columns:
+                raise ValueError(
+                    f"Missing required columns in dataset: {missing_columns}. Available columns: {list(df.columns)}"
+                )
+            if len(df.columns) != 2:
+                raise ValueError(
+                    f"When id_column is not provided, the dataset must have exactly 2 columns "
+                    f"(timestamp + target), but found {len(df.columns)} columns: {list(df.columns)}. "
+                    f"Provide id_column to identify the series column for datasets with more than 2 columns."
+                )
+            # Check for collision with existing columns in the dataset
+            if SYNTHETIC_ITEM_ID_COLUMN in df.columns:
+                raise ValueError(
+                    f"Dataset already contains a column named {SYNTHETIC_ITEM_ID_COLUMN!r}. "
+                    f"This name is reserved for synthetic ID injection. Please rename the existing column."
+                )
+            df[SYNTHETIC_ITEM_ID_COLUMN] = SYNTHETIC_ITEM_ID_VALUE
+            id_column = SYNTHETIC_ITEM_ID_COLUMN
+            uses_synthetic_id = True
+            logger.info(
+                "Two-column dataset detected; injected synthetic item ID column %r with value %r.",
+                SYNTHETIC_ITEM_ID_COLUMN,
+                SYNTHETIC_ITEM_ID_VALUE,
+            )
+        else:
+            required_columns = {id_column, timestamp_column, target}
+            missing_columns = required_columns - set(df.columns)
+            if missing_columns:
+                raise ValueError(
+                    f"Missing required columns in dataset: {missing_columns}. Available columns: {list(df.columns)}"
+                )
 
         if len(df) == 0:
             raise ValueError(
                 "The loaded dataset has no data rows. Provide at least one row per time series "
-                f"with columns {sorted(required_columns)}."
+                f"with columns {sorted({id_column, timestamp_column, target})}."
             )
 
         df = _clean_timeseries_dataframe(df, id_column, timestamp_column, logger)
@@ -328,8 +397,8 @@ def timeseries_data_loader(
         status.record("prepare_data", "completed", metrics={"rows": n_valid})
         status.record("split_and_export", "started")
 
-        # Create workspace datasets directory
-        datasets_dir = Path(workspace_path) / "datasets"
+        # Create workspace datasets directory (use validated resolved path)
+        datasets_dir = workspace_path_resolved / "datasets"
         datasets_dir.mkdir(parents=True, exist_ok=True)
 
         # Stable ordering for downstream I/O (redundant if cleanse already sorted; kept for clarity)
@@ -445,12 +514,16 @@ def timeseries_data_loader(
             sample_rows=str,
             models_selection_train_data_path=str,
             extra_train_data_path=str,
+            effective_id_column=str,
+            uses_synthetic_id=bool,
         )(
             sample_config=sample_config,
             split_config=split_config,
             sample_rows=sample_rows,
             models_selection_train_data_path=str(selection_path),
             extra_train_data_path=str(extra_path),
+            effective_id_column=id_column,
+            uses_synthetic_id=uses_synthetic_id,
         )
 
 
