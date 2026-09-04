@@ -25,9 +25,9 @@ def _format_metric_value(val) -> str:
         return str(val)
     if val != val or val in (float("inf"), float("-inf")):
         return str(val)
-    sign = "-" if val < 0 else ""
     int_part, _, dec_part = f"{abs(val):.10f}".partition(".")
     dec_part = dec_part[:3].rstrip("0")
+    sign = "-" if val < 0 and (int_part != "0" or dec_part) else ""
     return f"{sign}{int_part}.{dec_part}" if dec_part else f"{sign}{int_part}"
 
 
