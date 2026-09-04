@@ -8,7 +8,7 @@ import pytest
 # Importable via the sys.path insertion in components/training/automl/conftest.py,
 # which replicates what KFP does at container runtime (adding the embedded
 # artifact directory to sys.path).
-from ..leaderboard_utils import _build_leaderboard_html, _build_leaderboard_table
+from ..leaderboard_utils import _build_leaderboard_html, _build_leaderboard_table, _format_metric_value
 
 
 @pytest.fixture()
@@ -98,6 +98,15 @@ class TestBuildLeaderboardTable:
         html = _build_leaderboard_table(self._make_df(rows, columns))
         assert "<td>7</td>" in html
 
+    def test_metric_values_truncated_in_output(self):
+        """Metric cell values go through the same truncation as _format_metric_value."""
+        columns = ["model", "rmse", "notebook", "predictor"]
+        rows = [(1, {"model": "M1", "rmse": 0.1238, "notebook": "nb", "predictor": "pred"})]
+        html = _build_leaderboard_table(self._make_df(rows, columns))
+        assert "<td>0.123</td>" in html
+        assert "0.1238" not in html
+        assert "0.124" not in html
+
     def test_custom_index_name(self):
         """A custom index name is used instead of 'rank'."""
         columns = ["model", "notebook", "predictor"]
@@ -105,6 +114,79 @@ class TestBuildLeaderboardTable:
         html = _build_leaderboard_table(self._make_df(rows, columns, index_name="position"))
         assert "<th>position</th>" in html
         assert "<th>rank</th>" not in html
+
+
+class TestFormatMetricValue:
+    """Tests for _format_metric_value."""
+
+    def test_truncates_not_rounds(self):
+        """0.1238 truncates to 0.123, it does not round up to 0.124."""
+        assert _format_metric_value(0.1238) == "0.123"
+
+    def test_truncates_not_rounds_up_edge(self):
+        """0.1239999 truncates down to 0.123 instead of rounding to 0.124."""
+        assert _format_metric_value(0.1239999) == "0.123"
+
+    def test_strips_trailing_zeros(self):
+        """0.3 stays 0.3 instead of being padded to 0.300."""
+        assert _format_metric_value(0.3) == "0.3"
+
+    def test_strips_trailing_zeros_with_float_imprecision(self):
+        """A float that is nearly 0.3 due to binary imprecision still renders as 0.3."""
+        assert _format_metric_value(0.30000000004) == "0.3"
+
+    def test_exact_three_decimals_kept(self):
+        """A value with exactly 3 significant decimals is kept as-is."""
+        assert _format_metric_value(0.123) == "0.123"
+
+    def test_more_than_three_decimals_truncated(self):
+        """Values with more than 3 decimals are truncated to 3, no rounding."""
+        assert _format_metric_value(0.123456789) == "0.123"
+
+    def test_whole_number_float_has_no_decimal_point(self):
+        """A float with no fractional part (e.g. 1.0) renders without a trailing '.0'."""
+        assert _format_metric_value(1.0) == "1"
+
+    def test_negative_value_truncated(self):
+        """Negative floats are truncated toward zero, not rounded, and keep their sign."""
+        assert _format_metric_value(-0.1239) == "-0.123"
+
+    def test_negative_value_strips_trailing_zeros(self):
+        """Negative floats also strip trailing zeros instead of padding."""
+        assert _format_metric_value(-0.3) == "-0.3"
+
+    def test_small_value_below_precision(self):
+        """A value smaller than the truncation precision renders as 0."""
+        assert _format_metric_value(0.0001) == "0"
+
+    def test_value_at_precision_boundary(self):
+        """A value exactly at the 3-decimal boundary is kept."""
+        assert _format_metric_value(0.001) == "0.001"
+
+    def test_nan_not_mangled(self):
+        """NaN is passed through as a string rather than truncated/garbled."""
+        assert _format_metric_value(float("nan")) == "nan"
+
+    def test_infinity_not_mangled(self):
+        """Infinity is passed through as a string rather than truncated/garbled."""
+        assert _format_metric_value(float("inf")) == "inf"
+        assert _format_metric_value(float("-inf")) == "-inf"
+
+    def test_integer_passthrough(self):
+        """Plain ints are not treated as floats and are stringified as-is."""
+        assert _format_metric_value(5) == "5"
+
+    def test_boolean_passthrough(self):
+        """Booleans are not treated as floats (bool is a subclass of int)."""
+        assert _format_metric_value(True) == "True"
+
+    def test_string_passthrough(self):
+        """Non-numeric values (e.g. model names) are stringified unchanged."""
+        assert _format_metric_value("model_a") == "model_a"
+
+    def test_large_float_value(self):
+        """Large floats are truncated to 3 decimals like any other float."""
+        assert _format_metric_value(12345.6789) == "12345.678"
 
 
 class TestBuildLeaderboardHtml:
