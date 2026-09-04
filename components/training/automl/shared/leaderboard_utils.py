@@ -9,6 +9,28 @@ import html as _html_module
 from pathlib import Path
 
 
+def _format_metric_value(val) -> str:
+    """Format a leaderboard cell value, truncating floats to 3 decimals.
+
+    Values are truncated (not rounded) so ``0.1238`` becomes ``0.123``, and
+    trailing zeros are stripped so ``0.3`` stays ``0.3`` instead of ``0.300``.
+
+    Args:
+        val: Cell value from the leaderboard DataFrame.
+
+    Returns:
+        String representation of ``val``.
+    """
+    if isinstance(val, bool) or not isinstance(val, float):
+        return str(val)
+    if val != val or val in (float("inf"), float("-inf")):
+        return str(val)
+    sign = "-" if val < 0 else ""
+    int_part, _, dec_part = f"{abs(val):.10f}".partition(".")
+    dec_part = dec_part[:3].rstrip("0")
+    return f"{sign}{int_part}.{dec_part}" if dec_part else f"{sign}{int_part}"
+
+
 def _build_leaderboard_table(df) -> str:
     """Build table HTML with Notebook and Predictor as separate URI columns.
 
@@ -30,7 +52,7 @@ def _build_leaderboard_table(df) -> str:
         cells = [f"<td>{_html_module.escape(str(idx))}</td>"]
         for col in display_cols:
             val = row[col]
-            cells.append(f"<td>{_html_module.escape(str(val))}</td>")
+            cells.append(f"<td>{_html_module.escape(_format_metric_value(val))}</td>")
         notebook_uri = _html_module.escape(str(row["notebook"]))
         predictor_uri = _html_module.escape(str(row["predictor"]))
         cells.append(
