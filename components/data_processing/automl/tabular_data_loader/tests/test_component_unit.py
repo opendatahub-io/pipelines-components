@@ -13,12 +13,11 @@ from pathlib import Path
 from unittest import mock
 
 import pytest
-
 from kfp_components.components.training.automl.shared.run_status import (
-    COMPONENT_DATA_LOADER,
     PIPELINE_TABULAR_TRAINING,
     validate_component_status_against_manifest,
 )
+
 from ..component import automl_data_loader
 from .mocked_pandas import (
     MockedDataFrame,
@@ -1061,7 +1060,7 @@ class TestUserProvidedTestData:
         try:
             with caplog.at_level("WARNING"):
                 with _mock_boto3_and_pandas(get_object_side_effect=get_object_side_effect):
-                    result = automl_data_loader.python_func(
+                    automl_data_loader.python_func(
                         file_key="data/train.csv",
                         bucket_name="my-bucket",
                         workspace_path=str(tmp_path),
@@ -1120,7 +1119,7 @@ class TestUserProvidedTestData:
         sampled_test = _make_test_artifact(tmp_path)
 
         with _mock_boto3_and_pandas(get_object_side_effect=get_object_side_effect) as mock_s3:
-            result = automl_data_loader.python_func(
+            automl_data_loader.python_func(
                 file_key="data/train.csv",
                 bucket_name="my-bucket",
                 workspace_path=str(tmp_path),

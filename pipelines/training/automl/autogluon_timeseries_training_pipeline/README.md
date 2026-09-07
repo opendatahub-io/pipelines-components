@@ -43,9 +43,9 @@ to a single combined ``models_artifact``.
 | `top_n` | `int` | `3` | Number of top models to select for the leaderboard and output (default: 3). |
 | `eval_metric` | `str` | `mean_absolute_scaled_error` | Metric for model ranking in snake_case (e.g. ``"mean_absolute_scaled_error"``, ``"weighted_quantile_loss"``) or legacy uppercase acronym form. Defaults to ``"mean_absolute_scaled_error"``. |
 | `preset` | `str` | `speed` | Training quality tier. ``"speed"`` (default, 4 vCPU / 16 GiB) or ``"balanced"`` (may run more than 2x longer, 8 vCPU / 32 GiB). |
-| `test_data_secret_name` | `str` | `""` | Optional Kubernetes secret name with S3 credentials for the user-provided test dataset (`TEST_DATA_AWS_*` environment variables). When empty, test data is read with `train_data_secret_name` credentials. |
-| `test_data_bucket_name` | `str` | `""` | Optional S3-compatible bucket name containing user-provided test dataset. If provided, `test_data_file_key` must also be specified. |
-| `test_data_file_key` | `str` | `""` | Optional S3 object key of the test CSV file. If provided, `test_data_bucket_name` must also be specified. The test CSV must carry the same id/timestamp/target and `known_covariates_names` columns as the training data, cover the same series, and give each series at least `prediction_length` rows; the data loader fails on a mismatch before training starts. |
+| `test_data_secret_name` | `str` | `""` | Optional Kubernetes secret name with S3 credentials for the user-provided test dataset (``TEST_DATA_AWS_*`` environment variables). When empty, test data is read with ``train_data_secret_name`` credentials. |
+| `test_data_bucket_name` | `str` | `""` | Optional S3-compatible bucket name containing user-provided test dataset. If provided, ``test_data_file_key`` must also be specified. |
+| `test_data_file_key` | `str` | `""` | Optional S3 object key of the test CSV file. If provided, ``test_data_bucket_name`` must also be specified. The test CSV must carry the same id/timestamp/target and ``known_covariates_names`` columns as the training data, cover the same series, and give each series at least ``prediction_length`` rows; the data loader fails on a mismatch before training starts. |
 
 ## Metadata 🗂️
 

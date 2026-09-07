@@ -16,11 +16,11 @@ from pathlib import Path
 from unittest import mock
 
 import pytest
-
 from kfp_components.components.training.automl.shared.run_status import (
     PIPELINE_TIMESERIES_TRAINING,
     validate_component_status_against_manifest,
 )
+
 from ..component import timeseries_data_loader
 from .mocked_pandas import MockedDataFrame, make_mocked_pandas_module
 
@@ -768,7 +768,6 @@ class TestTimeseriesDataLoaderScenarioMatrix:
                     sampled_test_dataset=sampled_test,
                 )
 
-
     @mock.patch.dict(os.environ, mocked_env_variables, clear=True)
     def test_effective_id_column_matches_input_for_standard_path(self, tmp_path):
         """Standard three-column path returns the user-provided id_column as effective_id_column."""
@@ -1161,7 +1160,7 @@ class TestUserProvidedTestData:
         try:
             with caplog.at_level("WARNING"):
                 with _mock_boto3_and_pandas(get_object_side_effect=get_object_side_effect):
-                    result = timeseries_data_loader.python_func(
+                    timeseries_data_loader.python_func(
                         file_key="train.csv",
                         bucket_name="b",
                         workspace_path=str(tmp_path),
@@ -1224,7 +1223,7 @@ class TestUserProvidedTestData:
         sampled_test = _make_test_artifact(tmp_path)
 
         with _mock_boto3_and_pandas(get_object_side_effect=get_object_side_effect) as mock_s3:
-            result = timeseries_data_loader.python_func(
+            timeseries_data_loader.python_func(
                 file_key="train.csv",
                 bucket_name="b",
                 workspace_path=str(tmp_path),

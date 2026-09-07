@@ -4,7 +4,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from kfp_components.components.training.automl.shared.run_status import (
     COMPONENT_DATA_LOADER,
     COMPONENT_MODELS_TRAINING,
@@ -30,8 +29,8 @@ from kfp_components.components.training.automl.shared.run_status import (
     record_stage,
     resolve_templates_dir,
     run_status_file_path,
-    validate_component_status_against_manifest,
     validate_component_stages,
+    validate_component_status_against_manifest,
 )
 
 

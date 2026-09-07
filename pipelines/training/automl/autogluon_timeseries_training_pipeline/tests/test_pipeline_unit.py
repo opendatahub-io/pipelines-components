@@ -97,7 +97,7 @@ class TestAutogluonTimeseriesTrainingPipelineUnitTests:
                 "preset",
                 "eval_metric",
                 "test_data_secret_name",
-            "test_data_bucket_name",
+                "test_data_bucket_name",
                 "test_data_file_key",
             ):
                 assert name in content, f"Expected pipeline input '{name}' in compiled YAML"
@@ -192,6 +192,7 @@ class TestAutogluonTimeseriesTrainingPipelineUnitTests:
         assert "test_data_file_key:" in content
         assert "componentInputParameter: test_data_bucket_name" in content
         assert "componentInputParameter: test_data_file_key" in content
+
 
 class TestTimeseriesTestConfigs:
     """Unit tests for test_configs.json loading (integration configs live in autox-ci)."""

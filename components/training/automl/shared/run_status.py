@@ -413,9 +413,7 @@ def validate_component_status_against_manifest(
     recorded_ids = {stage["id"] for stage in data["stages"] if stage.get("id")}
     unknown = recorded_ids - expected
     if unknown:
-        raise ValueError(
-            f"component_status for {component_id!r} has stages not in manifest: {sorted(unknown)}"
-        )
+        raise ValueError(f"component_status for {component_id!r} has stages not in manifest: {sorted(unknown)}")
 
 
 def validate_component_stages(
