@@ -27,6 +27,10 @@ After cleansing, at least **100** valid records must remain; otherwise the compo
 | `component_status` | `dsl.Output[dsl.Artifact]` | `None` | Output artifact containing stage-level progress tracking for this component. |
 | `id_column` | `str` | `""` | Name of the column identifying each time series (item_id). Pass an empty string ("") for single-series two-column datasets (timestamp + target only); the loader will inject a synthetic ID column (__synthetic_item_id) with value "item_0". |
 | `selection_train_size` | `float` | `0.3` | Fraction of train portion for model selection (default: 0.3). |
+| `prediction_length` | `int` | `1` | Forecast horizon used downstream (default: 1). Only used to fail fast when a user-provided test series is too short to be evaluated. |
+| `known_covariates_names` | `Optional[List[str]]` | `None` | Covariate columns known in advance downstream (default: none). Only used to fail fast when a user-provided test dataset omits one of them. |
+| `test_data_bucket_name` | `str` | `""` | S3 bucket name for user-provided test dataset (default: empty string). Read with the same credentials and endpoint as the training data. |
+| `test_data_file_key` | `str` | `""` | S3 object key for user-provided test dataset (default: empty string). Must be set together with ``test_data_bucket_name``. When set, the primary temporal split is skipped and this dataset is written to ``sampled_test_dataset``. |
 
 ## Outputs 📤
 

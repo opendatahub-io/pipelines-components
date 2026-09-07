@@ -45,6 +45,9 @@ def autogluon_timeseries_training_pipeline(
     top_n: int = 3,
     eval_metric: str = "mean_absolute_scaled_error",
     preset: str = "speed",
+    test_data_secret_name: str = "",
+    test_data_bucket_name: str = "",
+    test_data_file_key: str = "",
 ):
     """AutoGluon time series training pipeline.
 
@@ -113,6 +116,16 @@ def autogluon_timeseries_training_pipeline(
             ``"mean_absolute_scaled_error"``.
         preset: Training quality tier. ``"speed"`` (default, 4 vCPU / 16 GiB) or
             ``"balanced"`` (may run more than 2x longer, 8 vCPU / 32 GiB).
+        test_data_secret_name: Optional Kubernetes secret name with S3 credentials for the user-provided
+            test dataset (``TEST_DATA_AWS_*`` environment variables). When empty, test data is read
+            with ``train_data_secret_name`` credentials.
+        test_data_bucket_name: Optional S3-compatible bucket name containing user-provided test dataset.
+            If provided, ``test_data_file_key`` must also be specified.
+        test_data_file_key: Optional S3 object key of the test CSV file. If provided,
+            ``test_data_bucket_name`` must also be specified. The test CSV must carry the same
+            id/timestamp/target and ``known_covariates_names`` columns as the training data, cover the
+            same series, and give each series at least ``prediction_length`` rows; the data loader
+            fails on a mismatch before training starts.
 
     Returns:
         This pipeline wires task outputs between components; compiled runs expose the combined models artifact
@@ -155,6 +168,10 @@ def autogluon_timeseries_training_pipeline(
         target=target,
         id_column=id_column,
         timestamp_column=timestamp_column,
+        prediction_length=prediction_length,
+        known_covariates_names=known_covariates_names,
+        test_data_bucket_name=test_data_bucket_name,
+        test_data_file_key=test_data_file_key,
     )
     data_loader_task.after(component_stage_map_task)
     data_loader_task.set_caching_options(False)
@@ -171,6 +188,17 @@ def autogluon_timeseries_training_pipeline(
             "AWS_SECRET_ACCESS_KEY": "AWS_SECRET_ACCESS_KEY",
             "AWS_S3_ENDPOINT": "AWS_S3_ENDPOINT",
             "AWS_DEFAULT_REGION": "AWS_DEFAULT_REGION",
+        },
+        optional=True,
+    )
+    use_secret_as_env(
+        data_loader_task,
+        secret_name=test_data_secret_name,
+        secret_key_to_env={
+            "AWS_ACCESS_KEY_ID": "TEST_DATA_AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY": "TEST_DATA_AWS_SECRET_ACCESS_KEY",
+            "AWS_S3_ENDPOINT": "TEST_DATA_AWS_S3_ENDPOINT",
+            "AWS_DEFAULT_REGION": "TEST_DATA_AWS_DEFAULT_REGION",
         },
         optional=True,
     )

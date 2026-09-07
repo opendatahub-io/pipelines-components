@@ -3,6 +3,8 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from kfp_components.components.training.automl.shared.run_status import (
     COMPONENT_DATA_LOADER,
     COMPONENT_MODELS_TRAINING,
@@ -28,6 +30,7 @@ from kfp_components.components.training.automl.shared.run_status import (
     record_stage,
     resolve_templates_dir,
     run_status_file_path,
+    validate_component_status_against_manifest,
     validate_component_stages,
 )
 
@@ -257,6 +260,45 @@ def test_publish_run_status_artifact(tmp_path):
     doc = publish_run_status_artifact(artifact_dir, ws)
     assert doc["kfp_run_id"] == "run-1"
     assert (Path(artifact_dir) / RUN_STATUS_ARTIFACT_FILENAME).exists()
+
+
+def test_validate_component_status_against_manifest_rejects_unknown_stage():
+    """component_status stage ids must match the pipeline manifest."""
+    payload = {
+        "component_id": COMPONENT_DATA_LOADER,
+        "started_at": "2026-01-01T00:00:00Z",
+        "completed_at": "2026-01-01T00:01:00Z",
+        "metadata": {"display_name": "Data Loader Status"},
+        "stages": [
+            {"id": "prepare_data", "status": {"state": "completed"}},
+            {"id": "nonexistent_stage", "status": {"state": "completed"}},
+        ],
+    }
+    with pytest.raises(ValueError, match="stages not in manifest"):
+        validate_component_status_against_manifest(payload, pipeline_id=PIPELINE_TABULAR_TRAINING)
+
+
+def test_validate_component_status_against_manifest_accepts_loader_payload():
+    """Loader component_status with manifest stage ids passes validation."""
+    payload = {
+        "component_id": COMPONENT_DATA_LOADER,
+        "started_at": "2026-01-01T00:00:00Z",
+        "completed_at": "2026-01-01T00:01:00Z",
+        "metadata": {"display_name": "Data Loader Status"},
+        "stages": [
+            {
+                "id": "prepare_data",
+                "status": {"state": "completed"},
+                "metrics": {"rows": 100},
+            },
+            {
+                "id": "split_and_export",
+                "status": {"state": "completed"},
+                "metrics": {"test_size": 0.0, "test_rows": 25, "truncated": False},
+            },
+        ],
+    }
+    validate_component_status_against_manifest(payload, pipeline_id=PIPELINE_TABULAR_TRAINING)
 
 
 def test_validate_component_stages_warns_on_missing(caplog):

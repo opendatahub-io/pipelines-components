@@ -276,3 +276,31 @@ def load_component_status(artifact_path: str) -> dict[str, Any]:
     except (json.JSONDecodeError, OSError) as e:
         logger.warning("Failed to load status from %s: %s", status_file, e)
         return {}
+
+
+_ALLOWED_STAGE_KEYS = frozenset({"id", "status", "metrics", "error"})
+
+
+def validate_component_status_document(data: dict[str, Any]) -> None:
+    """Raise ValueError when ``data`` does not match the canonical component_status schema.
+
+    Stages use a nested ``status`` object and optional ``metrics`` bag; counters must not
+    be emitted as top-level stage keys.
+    """
+    required = {"component_id", "started_at", "stages", "metadata"}
+    missing = required - set(data.keys())
+    if missing:
+        raise ValueError(f"component_status missing required fields: {sorted(missing)}")
+
+    if not isinstance(data["stages"], list):
+        raise ValueError("component_status stages must be a list")
+
+    for stage in data["stages"]:
+        if not isinstance(stage, dict):
+            raise ValueError("each component_status stage must be an object")
+        extra = set(stage.keys()) - _ALLOWED_STAGE_KEYS
+        if extra:
+            raise ValueError(f"component_status stage has unexpected top-level keys: {sorted(extra)}")
+        status_obj = stage.get("status")
+        if not isinstance(status_obj, dict) or "state" not in status_obj:
+            raise ValueError("each component_status stage must include status.state")

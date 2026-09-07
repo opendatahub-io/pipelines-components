@@ -14,6 +14,11 @@ from unittest import mock
 
 import pytest
 
+from kfp_components.components.training.automl.shared.run_status import (
+    COMPONENT_DATA_LOADER,
+    PIPELINE_TABULAR_TRAINING,
+    validate_component_status_against_manifest,
+)
 from ..component import automl_data_loader
 from .mocked_pandas import (
     MockedDataFrame,
@@ -210,10 +215,14 @@ class TestComponentStatusArtifact:
         status_path = Path(component_status.path) / "component_status.json"
         assert status_path.is_file()
         payload = json.loads(status_path.read_text())
+        validate_component_status_against_manifest(payload, pipeline_id=PIPELINE_TABULAR_TRAINING)
         assert payload["component_id"] == "automl_data_loader"
         stage_ids = [stage["id"] for stage in payload["stages"]]
-        assert "prepare_data" in stage_ids
-        assert "split_and_export" in stage_ids
+        assert stage_ids == ["prepare_data", "split_and_export"]
+        split_stage = next(stage for stage in payload["stages"] if stage["id"] == "split_and_export")
+        assert split_stage["status"]["state"] == "completed"
+        assert split_stage["metrics"]["test_size"] == 0.2
+        assert "test_rows" not in split_stage.get("metrics", {})
 
     @mock.patch.dict("os.environ", mocked_env_variables)
     def test_sets_component_status_display_name(self, tmp_path):
@@ -321,7 +330,7 @@ class TestAutomlDataLoaderUnitTests:
         sampled_test = _make_test_artifact(tmp_path)
 
         with _mock_boto3_and_pandas() as mock_s3:
-            with pytest.raises(TypeError, match="label_column must be a non-empty string"):
+            with pytest.raises(ValueError, match="label_column must be a non-empty string"):
                 automl_data_loader.python_func(
                     file_key="data/file.csv",
                     bucket_name="bucket",
@@ -776,6 +785,415 @@ class TestAutomlDataLoaderUnitTests:
         assert (tmp_path / "datasets" / "models_selection_train_dataset.csv").exists()
 
 
+class TestUserProvidedTestData:
+    """Tests for user-provided test dataset feature."""
+
+    @mock.patch.dict("os.environ", mocked_env_variables)
+    def test_user_provided_test_data_happy_path(self, tmp_path):
+        """User-provided test data is written to sampled_test_dataset."""
+        train_csv = "a,b,target\n1,2,3\n4,5,6\n"
+        test_csv = "a,b,target\n10,20,30\n40,50,60\n"
+
+        call_count = 0
+
+        def get_object_side_effect(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return {"Body": _csv_body(train_csv)}
+            return {"Body": _csv_body(test_csv)}
+
+        sampled_test = _make_test_artifact(tmp_path)
+
+        with _mock_boto3_and_pandas(get_object_side_effect=get_object_side_effect):
+            result = automl_data_loader.python_func(
+                file_key="data/train.csv",
+                bucket_name="my-bucket",
+                workspace_path=str(tmp_path),
+                label_column="target",
+                sampled_test_dataset=sampled_test,
+                test_data_bucket_name="test-bucket",
+                test_data_file_key="data/test.csv",
+            )
+
+        assert result.split_config["test_size"] == 0.0
+        # Test data artifact should contain test CSV rows, not auto-split rows
+        test_path = Path(sampled_test.path)
+        assert test_path.exists()
+        header, rows = _read_csv_path(str(test_path))
+        assert "target" in header
+        assert len(rows) >= MIN_VALID_RECORDS
+        assert all(row[header.index("target")] != "" for row in rows)
+        # Distinctive values that only exist in the test CSV must be present, and the
+        # training-only rows must be absent -- proves the artifact is the user's test
+        # data rather than an auto-split slice of the training data.
+        triples = {(row[header.index("a")], row[header.index("b")], row[header.index("target")]) for row in rows}
+        assert ("10", "20", "30") in triples
+        assert ("40", "50", "60") in triples
+        assert ("1", "2", "3") not in triples
+        assert ("4", "5", "6") not in triples
+        # Selection train and extra train paths should be written
+        assert Path(result.models_selection_train_data_path).exists()
+        assert Path(result.extra_train_data_path).exists()
+        # User test metadata is recorded on split_and_export
+        payload = json.loads((tmp_path / "component_status" / "component_status.json").read_text())
+        validate_component_status_against_manifest(payload, pipeline_id=PIPELINE_TABULAR_TRAINING)
+        stages = {stage["id"]: stage for stage in payload["stages"]}
+        assert stages["split_and_export"]["status"]["state"] == "completed"
+        assert stages["split_and_export"]["metrics"]["test_rows"] == len(rows)
+        assert stages["split_and_export"]["metrics"]["truncated"] is False
+        assert stages["split_and_export"]["metrics"]["user_test_source"] == "s3://test-bucket/data/test.csv"
+
+    @mock.patch.dict("os.environ", mocked_env_variables)
+    def test_user_test_data_skips_internal_holdout_split(self, tmp_path):
+        """External test data disables the primary holdout; all training rows feed selection/extra."""
+        train_csv = "a,b,target\n1,2,3\n4,5,6\n"
+        test_csv = "a,b,target\n10,20,30\n"
+
+        call_count = 0
+
+        def get_object_side_effect(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return {"Body": _csv_body(train_csv)}
+            return {"Body": _csv_body(test_csv)}
+
+        split_calls = []
+
+        def tracking_split(*args, **kwargs):
+            split_calls.append(kwargs.get("test_size"))
+            return _mock_train_test_split(*args, **kwargs)
+
+        sampled_test = _make_test_artifact(tmp_path)
+
+        with _mock_boto3_pandas_custom_train_test_split(
+            tracking_split,
+            get_object_side_effect=get_object_side_effect,
+        ):
+            result = automl_data_loader.python_func(
+                file_key="data/train.csv",
+                bucket_name="my-bucket",
+                workspace_path=str(tmp_path),
+                label_column="target",
+                sampled_test_dataset=sampled_test,
+                test_data_bucket_name="test-bucket",
+                test_data_file_key="data/test.csv",
+            )
+
+        assert result.split_config["test_size"] == 0.0
+        assert len(split_calls) == 1
+        assert split_calls[0] == pytest.approx(0.7)
+
+        _, sel_rows = _read_csv_path(result.models_selection_train_data_path)
+        _, ext_rows = _read_csv_path(result.extra_train_data_path)
+        assert len(sel_rows) + len(ext_rows) == result.sample_config["n_samples"]
+
+    @mock.patch.dict("os.environ", mocked_env_variables)
+    def test_no_test_data_backward_compatible(self, tmp_path):
+        """Default empty test data params yield unchanged auto-split behavior."""
+        csv_content = "a,b,target\n1,2,3\n4,5,6\n"
+        body_stream = _csv_body(csv_content)
+        sampled_test = _make_test_artifact(tmp_path)
+
+        with _mock_boto3_and_pandas(get_object_return={"Body": body_stream}):
+            result = automl_data_loader.python_func(
+                file_key="data/file.csv",
+                bucket_name="my-bucket",
+                workspace_path=str(tmp_path),
+                label_column="target",
+                sampled_test_dataset=sampled_test,
+            )
+
+        assert Path(result.models_selection_train_data_path).exists()
+        assert Path(result.extra_train_data_path).exists()
+        assert result.split_config["test_size"] == 0.2
+
+    @mock.patch.dict("os.environ", mocked_env_variables)
+    def test_user_test_data_empty_file(self, tmp_path):
+        """Test dataset with headers only (zero data rows) raises ValueError."""
+        train_csv = "a,b,target\n1,2,3\n4,5,6\n"
+        test_csv = "a,b,target\n"
+
+        call_count = 0
+
+        def get_object_side_effect(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return {"Body": _csv_body(train_csv)}
+            return {"Body": _csv_body(test_csv, pad=False)}
+
+        sampled_test = _make_test_artifact(tmp_path)
+
+        with _mock_boto3_and_pandas(get_object_side_effect=get_object_side_effect):
+            with pytest.raises(ValueError, match="Test dataset contains no data rows"):
+                automl_data_loader.python_func(
+                    file_key="data/train.csv",
+                    bucket_name="my-bucket",
+                    workspace_path=str(tmp_path),
+                    label_column="target",
+                    sampled_test_dataset=sampled_test,
+                    test_data_bucket_name="test-bucket",
+                    test_data_file_key="data/test.csv",
+                )
+
+    @mock.patch.dict("os.environ", mocked_env_variables)
+    def test_user_test_data_s3_download_failure(self, tmp_path):
+        """Inaccessible test data S3 path raises ValueError mentioning 'test dataset'."""
+        train_csv = "a,b,target\n1,2,3\n4,5,6\n"
+
+        call_count = 0
+
+        def get_object_side_effect(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return {"Body": _csv_body(train_csv)}
+            raise Exception("NoSuchKey: The specified key does not exist.")
+
+        sampled_test = _make_test_artifact(tmp_path)
+
+        with _mock_boto3_and_pandas(get_object_side_effect=get_object_side_effect):
+            with pytest.raises(ValueError, match="test dataset"):
+                automl_data_loader.python_func(
+                    file_key="data/train.csv",
+                    bucket_name="my-bucket",
+                    workspace_path=str(tmp_path),
+                    label_column="target",
+                    sampled_test_dataset=sampled_test,
+                    test_data_bucket_name="test-bucket",
+                    test_data_file_key="data/nonexistent.csv",
+                )
+
+    @mock.patch.dict("os.environ", mocked_env_variables)
+    def test_user_test_data_missing_label_column(self, tmp_path):
+        """Test CSV missing the label column raises ValueError."""
+        train_csv = "a,b,target\n1,2,3\n4,5,6\n"
+        test_csv = "a,b,other_col\n10,20,30\n40,50,60\n"
+
+        call_count = 0
+
+        def get_object_side_effect(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return {"Body": _csv_body(train_csv)}
+            return {"Body": _csv_body(test_csv)}
+
+        sampled_test = _make_test_artifact(tmp_path)
+
+        with _mock_boto3_and_pandas(get_object_side_effect=get_object_side_effect):
+            with pytest.raises(ValueError, match="Label column.*not found in test dataset"):
+                automl_data_loader.python_func(
+                    file_key="data/train.csv",
+                    bucket_name="my-bucket",
+                    workspace_path=str(tmp_path),
+                    label_column="target",
+                    sampled_test_dataset=sampled_test,
+                    test_data_bucket_name="test-bucket",
+                    test_data_file_key="data/test.csv",
+                )
+
+    @mock.patch.dict("os.environ", mocked_env_variables)
+    def test_user_test_data_bucket_without_key(self, tmp_path):
+        """Providing test_data_bucket_name without test_data_file_key raises ValueError."""
+        sampled_test = _make_test_artifact(tmp_path)
+        csv_content = "a,b,target\n1,2,3\n"
+
+        with _mock_boto3_and_pandas(get_object_return={"Body": _csv_body(csv_content)}):
+            with pytest.raises(ValueError, match="test_data_file_key must be provided"):
+                automl_data_loader.python_func(
+                    file_key="data/file.csv",
+                    bucket_name="my-bucket",
+                    workspace_path=str(tmp_path),
+                    label_column="target",
+                    sampled_test_dataset=sampled_test,
+                    test_data_bucket_name="test-bucket",
+                    test_data_file_key="",
+                )
+
+    @mock.patch.dict("os.environ", mocked_env_variables)
+    def test_user_test_data_key_without_bucket(self, tmp_path):
+        """Providing test_data_file_key without test_data_bucket_name raises ValueError."""
+        sampled_test = _make_test_artifact(tmp_path)
+        csv_content = "a,b,target\n1,2,3\n"
+
+        with _mock_boto3_and_pandas(get_object_return={"Body": _csv_body(csv_content)}):
+            with pytest.raises(ValueError, match="test_data_bucket_name must be provided"):
+                automl_data_loader.python_func(
+                    file_key="data/file.csv",
+                    bucket_name="my-bucket",
+                    workspace_path=str(tmp_path),
+                    label_column="target",
+                    sampled_test_dataset=sampled_test,
+                    test_data_bucket_name="",
+                    test_data_file_key="data/test.csv",
+                )
+
+    @mock.patch.dict("os.environ", mocked_env_variables)
+    def test_user_provided_test_data_truncation_warns_and_is_recorded(self, tmp_path, caplog):
+        """A test dataset over the 50 MB load limit is truncated with a WARNING and a status flag.
+
+        BYTES_PER_ROW is inflated only on the second S3 call (test data fetch) so the
+        training data loads normally (default 100 bytes/row, no sampling truncation).
+        """
+        from .mocked_pandas import MockedDataFrame
+
+        train_csv = "a,b,target\n1,2,3\n4,5,6\n"
+        test_csv = "a,b,target\n10,20,30\n40,50,60\n"
+
+        call_count = 0
+
+        def get_object_side_effect(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return {"Body": _csv_body(train_csv)}
+            # 40 MB per row: exceeds the 50 MB test-data cap after the first row, so the
+            # reader stops early and reports the truncation.
+            MockedDataFrame.BYTES_PER_ROW = 40_000_000
+            return {"Body": _csv_body(test_csv)}
+
+        sampled_test = _make_test_artifact(tmp_path)
+
+        original_bytes_per_row = MockedDataFrame.BYTES_PER_ROW
+        try:
+            with caplog.at_level("WARNING"):
+                with _mock_boto3_and_pandas(get_object_side_effect=get_object_side_effect):
+                    result = automl_data_loader.python_func(
+                        file_key="data/train.csv",
+                        bucket_name="my-bucket",
+                        workspace_path=str(tmp_path),
+                        label_column="target",
+                        sampled_test_dataset=sampled_test,
+                        test_data_bucket_name="test-bucket",
+                        test_data_file_key="data/test.csv",
+                    )
+        finally:
+            MockedDataFrame.BYTES_PER_ROW = original_bytes_per_row
+
+        assert "was truncated" in caplog.text
+        payload = json.loads((tmp_path / "component_status" / "component_status.json").read_text())
+        stages = {stage["id"]: stage for stage in payload["stages"]}
+        assert stages["split_and_export"]["metrics"]["truncated"] is True
+        assert stages["split_and_export"]["metrics"]["test_rows"] > 0
+        assert stages["split_and_export"]["status"]["state"] == "completed"
+
+    @mock.patch.dict("os.environ", mocked_env_variables)
+    @pytest.mark.parametrize(
+        "bad_key",
+        ["/data/test.csv", "data/test.csv/", "data//test.csv"],
+    )
+    def test_user_test_data_rejects_malformed_s3_key(self, tmp_path, bad_key):
+        """Keys with a leading/trailing '/' or an empty path segment are rejected up front."""
+        sampled_test = _make_test_artifact(tmp_path)
+        csv_content = "a,b,target\n1,2,3\n"
+
+        with _mock_boto3_and_pandas(get_object_return={"Body": _csv_body(csv_content)}):
+            with pytest.raises(ValueError, match="must be a valid S3 object key"):
+                automl_data_loader.python_func(
+                    file_key="data/file.csv",
+                    bucket_name="my-bucket",
+                    workspace_path=str(tmp_path),
+                    label_column="target",
+                    sampled_test_dataset=sampled_test,
+                    test_data_bucket_name="test-bucket",
+                    test_data_file_key=bad_key,
+                )
+
+    @mock.patch.dict("os.environ", mocked_env_variables)
+    def test_user_test_data_params_are_stripped(self, tmp_path):
+        """Surrounding whitespace is stripped before the S3 request is issued."""
+        train_csv = "a,b,target\n1,2,3\n4,5,6\n"
+        test_csv = "a,b,target\n10,20,30\n40,50,60\n"
+
+        call_count = 0
+
+        def get_object_side_effect(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return {"Body": _csv_body(train_csv)}
+            return {"Body": _csv_body(test_csv)}
+
+        sampled_test = _make_test_artifact(tmp_path)
+
+        with _mock_boto3_and_pandas(get_object_side_effect=get_object_side_effect) as mock_s3:
+            result = automl_data_loader.python_func(
+                file_key="data/train.csv",
+                bucket_name="my-bucket",
+                workspace_path=str(tmp_path),
+                label_column="target",
+                sampled_test_dataset=sampled_test,
+                test_data_bucket_name="  test-bucket  ",
+                test_data_file_key="  data/test.csv  ",
+            )
+
+        test_call = mock_s3.get_object.call_args_list[1]
+        assert test_call.kwargs["Bucket"] == "test-bucket"
+        assert test_call.kwargs["Key"] == "data/test.csv"
+
+    @mock.patch.dict("os.environ", mocked_env_variables)
+    def test_user_test_data_missing_feature_column(self, tmp_path):
+        """A test dataset missing a training feature column fails before training starts."""
+        train_csv = "a,b,target\n1,2,3\n4,5,6\n"
+        test_csv = "a,target\n10,30\n40,60\n"
+
+        call_count = 0
+
+        def get_object_side_effect(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return {"Body": _csv_body(train_csv)}
+            return {"Body": _csv_body(test_csv)}
+
+        sampled_test = _make_test_artifact(tmp_path)
+
+        with _mock_boto3_and_pandas(get_object_side_effect=get_object_side_effect):
+            with pytest.raises(ValueError, match="missing feature column"):
+                automl_data_loader.python_func(
+                    file_key="data/train.csv",
+                    bucket_name="my-bucket",
+                    workspace_path=str(tmp_path),
+                    label_column="target",
+                    sampled_test_dataset=sampled_test,
+                    test_data_bucket_name="test-bucket",
+                    test_data_file_key="data/test.csv",
+                )
+
+    @mock.patch.dict("os.environ", mocked_env_variables)
+    def test_user_provided_test_data_empty_after_cleansing(self, tmp_path):
+        """Test dataset with rows that become empty after cleansing raises ValueError."""
+        train_csv = "a,b,target\n1,2,3\n4,5,6\n"
+        # All test data rows have NaN in the label column -> empty after cleansing
+        test_csv = "a,b,target\n10,20,\n40,50,\n"
+
+        call_count = 0
+
+        def get_object_side_effect(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return {"Body": _csv_body(train_csv)}
+            return {"Body": _csv_body(test_csv, pad=False)}
+
+        sampled_test = _make_test_artifact(tmp_path)
+
+        with _mock_boto3_and_pandas(get_object_side_effect=get_object_side_effect):
+            with pytest.raises(ValueError, match="no valid rows after cleansing"):
+                automl_data_loader.python_func(
+                    file_key="data/train.csv",
+                    bucket_name="my-bucket",
+                    workspace_path=str(tmp_path),
+                    label_column="target",
+                    sampled_test_dataset=sampled_test,
+                    test_data_bucket_name="test-bucket",
+                    test_data_file_key="data/test.csv",
+                )
+
+
 class TestDataLoaderSplitLogic:
     """Tests for the train/test split logic integrated into the data loader."""
 
@@ -923,6 +1341,9 @@ class TestDataLoaderSplitLogic:
         header, rows = _read_csv_path(sampled_test.path)
         assert "target" in header
         assert len(rows) >= 1
+        # Verify CSV content: row count matches expected split and values are present
+        target_idx = header.index("target")
+        assert all(row[target_idx].strip() != "" for row in rows), "All test rows must have a target value"
 
     @mock.patch.dict("os.environ", mocked_env_variables)
     def test_all_return_fields_present(self, tmp_path):

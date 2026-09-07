@@ -307,6 +307,7 @@ def autogluon_timeseries_models_training(
                 cell["source"] = new_source
             return notebook
 
+
         def _dtype_to_datatype(dtype) -> str:
             name = str(dtype).lower()
             match name:

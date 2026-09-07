@@ -388,6 +388,36 @@ def _log_expected_stages(
         )
 
 
+def validate_component_status_against_manifest(
+    data: dict[str, Any],
+    *,
+    pipeline_id: str,
+    templates_root: str | None = None,
+) -> None:
+    """Raise ValueError when ``component_status.json`` diverges from the pipeline manifest.
+
+    Ensures the document matches :func:`~component_status.validate_component_status_document`
+    and that every recorded stage id is defined in the pipeline template for
+    ``data["component_id"]``.
+    """
+    from kfp_components.components.training.automl.shared.component_status import (
+        validate_component_status_document,
+    )
+
+    validate_component_status_document(data)
+    component_id = data["component_id"]
+    expected = set(expected_stage_ids(component_id, pipeline_id=pipeline_id, templates_root=templates_root))
+    if not expected:
+        return
+
+    recorded_ids = {stage["id"] for stage in data["stages"] if stage.get("id")}
+    unknown = recorded_ids - expected
+    if unknown:
+        raise ValueError(
+            f"component_status for {component_id!r} has stages not in manifest: {sorted(unknown)}"
+        )
+
+
 def validate_component_stages(
     document: dict[str, Any],
     component_name: str,

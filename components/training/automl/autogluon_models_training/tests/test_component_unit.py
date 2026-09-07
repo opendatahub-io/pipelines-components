@@ -234,7 +234,6 @@ def _base_call_kwargs(workspace_path, models_artifact, test_data, tmp_path=None)
         extra_train_data_path="/tmp/extra.csv",
     )
 
-
 _NOTEBOOK_TEMPLATES_DIR = Path(__file__).resolve().parents[2] / "shared" / "notebook_templates"
 _DEFAULT_COMPONENT_STATUS = _make_component_status_artifact(Path("/tmp"))
 _DEFAULT_HTML_ARTIFACT = _make_html_artifact(Path("/tmp"))

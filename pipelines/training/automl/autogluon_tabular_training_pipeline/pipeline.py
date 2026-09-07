@@ -41,6 +41,9 @@ def autogluon_tabular_training_pipeline(
     positive_class: str = "",
     eval_metric: str = "",
     preset: str = "speed",
+    test_data_secret_name: str = "",
+    test_data_bucket_name: str = "",
+    test_data_file_key: str = "",
 ):
     """AutoGluon Tabular Training Pipeline.
 
@@ -121,6 +124,15 @@ def autogluon_tabular_training_pipeline(
         positive_class: Optional label value for the positive class in binary classification. Defaults to the second unique class after sorting label values.
         eval_metric: Metric used for model ranking. Empty string (default) is resolved by the component to "r2" for regression and "accuracy" for binary and multiclass classification.
         preset: Training quality tier. "speed" (default, 4 vCPU / 16 GiB) or "balanced" (may run more than 2x longer, 8 vCPU / 32 GiB).
+        test_data_secret_name: Optional Kubernetes secret name with S3 credentials for the user-provided
+            test dataset (``TEST_DATA_AWS_*`` environment variables). When empty, test data is read
+            with ``train_data_secret_name`` credentials.
+        test_data_bucket_name: Optional S3-compatible bucket name containing user-provided test dataset.
+            If provided, ``test_data_file_key`` must also be specified.
+        test_data_file_key: Optional S3 object key of the test CSV file (features and target column).
+            If provided, ``test_data_bucket_name`` must also be specified. The test CSV must carry the
+            same feature columns and label column as the training data; a mismatch fails the data
+            loader before training starts.
 
     Returns:
         HTML artifact with leaderboard of refitted models ranked by task_type metric (e.g. accuracy, r2).
@@ -164,6 +176,8 @@ def autogluon_tabular_training_pipeline(
         workspace_path=dsl.WORKSPACE_PATH_PLACEHOLDER,
         label_column=label_column,
         task_type=task_type,
+        test_data_bucket_name=test_data_bucket_name,
+        test_data_file_key=test_data_file_key,
     )
     data_loader_task.after(component_stage_map_task)
     data_loader_task.set_caching_options(False)
@@ -179,6 +193,17 @@ def autogluon_tabular_training_pipeline(
             "AWS_DEFAULT_REGION": "AWS_DEFAULT_REGION",
         },
         optional=True,  # Mark as optional to not block the pipeline. If needed, error will be raised by component
+    )
+    use_secret_as_env(
+        data_loader_task,
+        secret_name=test_data_secret_name,
+        secret_key_to_env={
+            "AWS_ACCESS_KEY_ID": "TEST_DATA_AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY": "TEST_DATA_AWS_SECRET_ACCESS_KEY",
+            "AWS_S3_ENDPOINT": "TEST_DATA_AWS_S3_ENDPOINT",
+            "AWS_DEFAULT_REGION": "TEST_DATA_AWS_DEFAULT_REGION",
+        },
+        optional=True,
     )
 
     # Stage 1 + 2: Model selection and sequential refit of top N models.
