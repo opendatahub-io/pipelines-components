@@ -82,6 +82,7 @@ def automl_data_loader(  # noqa: D417
         test_data_file_key: S3 object key for user-provided test dataset (default: empty string).
             Must be set together with ``test_data_bucket_name``. When set, the primary 80/20
             split is skipped and this dataset is written to ``sampled_test_dataset`` instead.
+            User-provided test data is capped at 50 MB; larger files are truncated to leading rows.
 
     Raises:
         ValueError: If sampling_method or task_type is invalid, if required parameters are missing,

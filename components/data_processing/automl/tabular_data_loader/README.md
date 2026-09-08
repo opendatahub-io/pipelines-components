@@ -40,7 +40,7 @@ Authentication uses AWS-style credentials provided via environment variables (e.
 | `split_config` | `Optional[dict]` | `None` | Split configuration dictionary. Available keys: "test_size" (float), "random_state" (int), "stratify" (bool). |
 | `selection_train_size` | `float` | `0.3` | Fraction of the train portion used for model selection (default 0.3). |
 | `test_data_bucket_name` | `str` | `""` | S3 bucket name for user-provided test dataset (default: empty string). Uses ``TEST_DATA_AWS_*`` credentials when injected (see ``test_data_secret_name`` in the pipeline); otherwise falls back to the training ``AWS_*`` credentials. |
-| `test_data_file_key` | `str` | `""` | S3 object key for user-provided test dataset (default: empty string). Must be set together with ``test_data_bucket_name``. When set, the primary 80/20 split is skipped and this dataset is written to ``sampled_test_dataset`` instead. |
+| `test_data_file_key` | `str` | `""` | S3 object key for user-provided test dataset (default: empty string). Must be set together with ``test_data_bucket_name``. When set, the primary 80/20 split is skipped and this dataset is written to ``sampled_test_dataset`` instead. User-provided test data is capped at 50 MB; larger files are truncated to leading rows. |
 
 ## Outputs 📤
 

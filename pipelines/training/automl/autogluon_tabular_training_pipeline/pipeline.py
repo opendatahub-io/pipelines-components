@@ -133,7 +133,8 @@ def autogluon_tabular_training_pipeline(
         test_data_file_key: Optional S3 object key of the test CSV file (features and target column).
             If provided, ``test_data_bucket_name`` must also be specified. The test CSV must carry the
             same feature columns and label column as the training data; a mismatch fails the data
-            loader before training starts.
+            loader before training starts. User-provided test data is capped at 50 MB; larger files are
+            truncated to leading rows and evaluation metrics apply to that prefix only.
 
     Returns:
         HTML artifact with leaderboard of refitted models ranked by task_type metric (e.g. accuracy, r2).

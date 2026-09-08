@@ -75,6 +75,7 @@ def timeseries_data_loader(
         test_data_file_key: S3 object key for user-provided test dataset (default: empty string).
             Must be set together with ``test_data_bucket_name``. When set, the primary
             temporal split is skipped and this dataset is written to ``sampled_test_dataset``.
+            User-provided test data is capped at 50 MB; larger files are truncated to leading rows.
 
     Raises:
         ValueError: If a required parameter is empty or invalid, if only one of the

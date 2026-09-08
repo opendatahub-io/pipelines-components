@@ -126,7 +126,8 @@ def autogluon_timeseries_training_pipeline(
             ``test_data_bucket_name`` must also be specified. The test CSV must carry the same
             id/timestamp/target and ``known_covariates_names`` columns as the training data, cover the
             same series, and give each series more than ``prediction_length`` rows; the data loader
-            fails on a mismatch before training starts.
+            fails on a mismatch before training starts. User-provided test data is capped at 50 MB;
+            larger files are truncated to leading rows and evaluation metrics apply to that prefix only.
 
     Returns:
         This pipeline wires task outputs between components; compiled runs expose the combined models artifact
