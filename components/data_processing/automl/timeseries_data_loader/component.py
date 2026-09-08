@@ -70,12 +70,7 @@ def timeseries_data_loader(
         known_covariates_names: Covariate columns known in advance downstream (default: none).
             Only used to fail fast when a user-provided test dataset omits one of them.
         test_data_bucket_name: S3 bucket name for user-provided test dataset (default: empty string).
-            Uses ``TEST_DATA_AWS_*`` credentials when injected (see ``test_data_secret_name``
-            in the pipeline); otherwise falls back to the training ``AWS_*`` credentials.
-        test_data_file_key: S3 object key for user-provided test dataset (default: empty string).
-            Must be set together with ``test_data_bucket_name``. When set, the primary
-            temporal split is skipped and this dataset is written to ``sampled_test_dataset``.
-            User-provided test data is capped at 50 MB; larger files are truncated to leading rows.
+        test_data_file_key: S3 object key of the user-provided test CSV (default: empty string).
 
     Raises:
         ValueError: If a required parameter is empty or invalid, if only one of the

@@ -13,7 +13,8 @@ from kfp_components.utils.pipeline_dag_tasks import (
 from ..pipeline import autogluon_timeseries_training_pipeline
 
 _EXPECTED_ROOT_DAG_TASK_IDS = (
-    "condition-branches-1",
+    "condition-1",
+    "condition-branches-2",
     "publish-component-stage-map",
     "timeseries-data-loader",
 )
@@ -148,7 +149,7 @@ class TestAutogluonTimeseriesTrainingPipelineUnitTests:
             Path(tmp_path).unlink(missing_ok=True)
 
         assert "componentInputParameter: preset" in content
-        assert "condition-branches-1" in content
+        assert "condition-branches-2" in content
 
     def test_compiled_pipeline_declares_speed_and_balanced_resource_tiers(self):
         """Speed and balanced preset branches request different training CPU/memory."""
@@ -193,8 +194,8 @@ class TestAutogluonTimeseriesTrainingPipelineUnitTests:
         assert "componentInputParameter: test_data_bucket_name" in content
         assert "componentInputParameter: test_data_file_key" in content
 
-    def test_compiled_pipeline_wires_test_secret_binding_to_data_loader(self):
-        """Test-data secret is mounted on the data loader with optional binding (autorag pattern)."""
+    def test_compiled_pipeline_omits_test_secret_binding_when_name_empty(self):
+        """Test-data secret mount is conditional; default empty name skips KFP secret resolution."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as tmp_file:
             tmp_path = tmp_file.name
         try:
@@ -207,8 +208,10 @@ class TestAutogluonTimeseriesTrainingPipelineUnitTests:
             Path(tmp_path).unlink(missing_ok=True)
 
         assert "componentInputParameter: test_data_secret_name" in content
+        assert "condition-1" in content
+        assert "inputs.parameter_values['pipelinechannel--test_data_secret_name']" in content
         test_secret_block = content.split("envVar: TEST_DATA_AWS_ACCESS_KEY_ID", 1)[1]
-        assert "optional: true" in test_secret_block[:500]
+        assert "optional: false" in test_secret_block[:500]
         assert "componentInputParameter: test_data_secret_name" in test_secret_block[:500]
 
 
