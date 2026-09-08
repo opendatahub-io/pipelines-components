@@ -13,8 +13,7 @@ from ..pipeline import autogluon_tabular_training_pipeline
 
 # Root DAG task IDs from ``root.dag.tasks`` (fresh compile). Update when the graph changes.
 _EXPECTED_ROOT_DAG_TASK_IDS = (
-    "condition-1",
-    "condition-branches-2",
+    "condition-branches-1",
     "automl-data-loader",
     "publish-component-stage-map",
 )
@@ -66,9 +65,9 @@ class TestAutogluonTabularTrainingPipelineUnitTests:
         assert inputs["top_n"].default == 3
         assert inputs["preset"].default == "speed"
         assert inputs["eval_metric"].default == ""
-        assert inputs["test_data_secret_name"].default == ""
-        assert inputs["test_data_bucket_name"].default == ""
-        assert inputs["test_data_file_key"].default == ""
+        assert "test_data_secret_name" not in inputs or inputs["test_data_secret_name"].default in (None, "")
+        assert "test_data_bucket_name" not in inputs or inputs["test_data_bucket_name"].default in (None, "")
+        assert "test_data_file_key" not in inputs or inputs["test_data_file_key"].default in (None, "")
 
     def test_compiled_pipeline_has_expected_inputs(self):
         """Test that the compiled pipeline YAML contains expected pipeline inputs."""
@@ -91,6 +90,7 @@ class TestAutogluonTabularTrainingPipelineUnitTests:
                 "positive_class",
                 "preset",
                 "eval_metric",
+                "test_data_secret_name",
                 "test_data_bucket_name",
                 "test_data_file_key",
             ):
@@ -179,7 +179,7 @@ class TestAutogluonTabularTrainingPipelineUnitTests:
             Path(tmp_path).unlink(missing_ok=True)
 
         assert "componentInputParameter: preset" in content
-        assert "condition-branches-2" in content
+        assert "condition-branches-1" in content
 
     def test_compiled_pipeline_declares_speed_and_balanced_resource_tiers(self):
         """Speed and balanced preset branches request different training CPU/memory."""
@@ -238,8 +238,8 @@ class TestAutogluonTabularTrainingPipelineUnitTests:
         assert "componentInputParameter: test_data_bucket_name" in content
         assert "componentInputParameter: test_data_file_key" in content
 
-    def test_compiled_pipeline_omits_test_secret_binding_when_name_empty(self):
-        """Test-data secret mount is conditional; default empty name skips KFP secret resolution."""
+    def test_compiled_pipeline_binds_test_secret_to_data_loader(self):
+        """Test-data secret is mounted unconditionally (optional) on the data loader task."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as tmp_file:
             tmp_path = tmp_file.name
         try:
@@ -251,9 +251,8 @@ class TestAutogluonTabularTrainingPipelineUnitTests:
         finally:
             Path(tmp_path).unlink(missing_ok=True)
 
+        assert "condition-1" not in content
         assert "componentInputParameter: test_data_secret_name" in content
-        assert "condition-1" in content
-        assert "inputs.parameter_values['pipelinechannel--test_data_secret_name']" in content
         test_secret_block = content.split("envVar: TEST_DATA_AWS_ACCESS_KEY_ID", 1)[1]
-        assert "optional: false" in test_secret_block[:500]
+        assert "optional: true" in test_secret_block[:500]
         assert "componentInputParameter: test_data_secret_name" in test_secret_block[:500]

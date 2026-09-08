@@ -38,6 +38,9 @@ def autogluon_timeseries_training_pipeline(
     train_data_secret_name: str,
     train_data_bucket_name: str,
     train_data_file_key: str,
+    test_data_secret_name: str,
+    test_data_bucket_name: str,
+    test_data_file_key: str,
     target: str,
     timestamp_column: str,
     id_column: str = "",
@@ -46,9 +49,6 @@ def autogluon_timeseries_training_pipeline(
     top_n: int = 3,
     eval_metric: str = "mean_absolute_scaled_error",
     preset: str = "speed",
-    test_data_secret_name: str = "",
-    test_data_bucket_name: str = "",
-    test_data_file_key: str = "",
 ):
     """AutoGluon time series training pipeline.
 
@@ -97,6 +97,15 @@ def autogluon_timeseries_training_pipeline(
             provided, file must include columns for id, timestamp, and target. When ``id_column=""``
             (single-series mode), file must have exactly timestamp and target columns (the loader injects
             ``__synthetic_item_id``). Optional columns for known covariates.
+        test_data_secret_name: Name of the Kubernetes secret holding S3-compatible credentials for
+            test data access. The following environment variables are required:
+            AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_S3_ENDPOINT.
+            AWS_DEFAULT_REGION is optional. Pass the same value as train_data_secret_name when
+            test data uses the training credentials.
+        test_data_bucket_name: S3-compatible bucket name for the user-provided test dataset.
+            Pass an empty string when no external test dataset is provided.
+        test_data_file_key: Object key (path) of the user-provided test CSV file.
+            Pass an empty string when no external test dataset is provided.
         target: Name of the column containing the numeric values to forecast. Corresponds to
             :attr:`~autogluon.timeseries.TimeSeriesDataFrame` target column.
         timestamp_column: Name of the column containing the timestamp/datetime for each observation.
@@ -117,12 +126,6 @@ def autogluon_timeseries_training_pipeline(
             ``"mean_absolute_scaled_error"``.
         preset: Training quality tier. ``"speed"`` (default, 4 vCPU / 16 GiB) or
             ``"balanced"`` (may run more than 2x longer, 8 vCPU / 32 GiB).
-        test_data_secret_name: Optional Kubernetes secret name containing S3 credentials for the
-            user-provided test dataset (e.g. TEST_DATA_AWS_ACCESS_KEY_ID, TEST_DATA_AWS_SECRET_ACCESS_KEY,
-            TEST_DATA_AWS_S3_ENDPOINT, TEST_DATA_AWS_DEFAULT_REGION). Default: empty string.
-        test_data_bucket_name: Optional S3-compatible bucket name containing user-provided test dataset.
-            Default: empty string.
-        test_data_file_key: Optional S3 object key of the test CSV file. Default: empty string.
 
     Returns:
         This pipeline wires task outputs between components; compiled runs expose the combined models artifact
@@ -139,6 +142,9 @@ def autogluon_timeseries_training_pipeline(
             train_data_secret_name="my-s3-secret",
             train_data_bucket_name="my-bucket",
             train_data_file_key="ts/sales.csv",
+            test_data_secret_name="my-s3-secret",
+            test_data_bucket_name="",
+            test_data_file_key="",
             target="sales",
             id_column="product_id",
             timestamp_column="date",
@@ -174,7 +180,7 @@ def autogluon_timeseries_training_pipeline(
     data_loader_task.set_caching_options(False)
     data_loader_task.set_cpu_request("2").set_memory_request("8Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(MAX_MEMORY)
 
-    # Configure S3 secret for data loader
+    # Object storage credentials for data loading.
     use_secret_as_env(
         data_loader_task,
         secret_name=train_data_secret_name,
@@ -186,18 +192,17 @@ def autogluon_timeseries_training_pipeline(
         },
         optional=True,
     )
-    with dsl.If(test_data_secret_name != ""):
-        use_secret_as_env(
-            data_loader_task,
-            secret_name=test_data_secret_name,
-            secret_key_to_env={
-                "AWS_ACCESS_KEY_ID": "TEST_DATA_AWS_ACCESS_KEY_ID",
-                "AWS_SECRET_ACCESS_KEY": "TEST_DATA_AWS_SECRET_ACCESS_KEY",
-                "AWS_S3_ENDPOINT": "TEST_DATA_AWS_S3_ENDPOINT",
-                "AWS_DEFAULT_REGION": "TEST_DATA_AWS_DEFAULT_REGION",
-            },
-            optional=False,
-        )
+    use_secret_as_env(
+        data_loader_task,
+        secret_name=test_data_secret_name,
+        secret_key_to_env={
+            "AWS_ACCESS_KEY_ID": "TEST_DATA_AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY": "TEST_DATA_AWS_SECRET_ACCESS_KEY",
+            "AWS_S3_ENDPOINT": "TEST_DATA_AWS_S3_ENDPOINT",
+            "AWS_DEFAULT_REGION": "TEST_DATA_AWS_DEFAULT_REGION",
+        },
+        optional=True,
+    )
 
     # Stage 2: Combined model generation + full refit.
     # Resource limits differ by preset: medium_quality needs more CPU/memory.

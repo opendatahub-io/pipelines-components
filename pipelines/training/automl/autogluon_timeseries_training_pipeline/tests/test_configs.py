@@ -41,8 +41,11 @@ class TestConfig:
         """Build pipeline arguments dict for this config."""
         args: dict[str, Any] = {
             "train_data_secret_name": train_data_secret_name,
+            "test_data_secret_name": train_data_secret_name,
             "train_data_bucket_name": train_data_bucket_name,
             "train_data_file_key": train_data_file_key,
+            "test_data_bucket_name": "",
+            "test_data_file_key": "",
             "target": self.target,
             "id_column": self.id_column,
             "timestamp_column": self.timestamp_column,

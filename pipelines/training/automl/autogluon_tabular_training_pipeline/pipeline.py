@@ -36,15 +36,15 @@ def autogluon_tabular_training_pipeline(
     train_data_secret_name: str,
     train_data_bucket_name: str,
     train_data_file_key: str,
+    test_data_secret_name: str,
+    test_data_bucket_name: str,
+    test_data_file_key: str,
     label_column: str,
     task_type: str,
     top_n: int = 3,
     positive_class: str = "",
     eval_metric: str = "",
     preset: str = "speed",
-    test_data_secret_name: str = "",
-    test_data_bucket_name: str = "",
-    test_data_file_key: str = "",
 ):
     """AutoGluon Tabular Training Pipeline.
 
@@ -119,19 +119,21 @@ def autogluon_tabular_training_pipeline(
         train_data_secret_name: Kubernetes secret name with S3 credentials (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_S3_ENDPOINT, AWS_DEFAULT_REGION).
         train_data_bucket_name: S3-compatible bucket name containing the tabular data file.
         train_data_file_key: S3 object key of the CSV file (features and target column).
+        test_data_secret_name: Name of the Kubernetes secret holding S3-compatible credentials for
+            test data access. The following environment variables are required:
+            AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_S3_ENDPOINT.
+            AWS_DEFAULT_REGION is optional. Pass the same value as train_data_secret_name when
+            test data uses the training credentials.
+        test_data_bucket_name: S3-compatible bucket name for the user-provided test dataset.
+            Pass an empty string when no external test dataset is provided.
+        test_data_file_key: Object key (path) of the user-provided test CSV file.
+            Pass an empty string when no external test dataset is provided.
         label_column: Name of the target/label column in the dataset.
         task_type: "binary", "multiclass", or "regression"; drives metrics and model types.
         top_n: Number of top models to select and refit (default: 3); positive integer from range [1, 10].
         positive_class: Optional label value for the positive class in binary classification. Defaults to the second unique class after sorting label values.
         eval_metric: Metric used for model ranking. Empty string (default) is resolved by the component to "r2" for regression and "accuracy" for binary and multiclass classification.
         preset: Training quality tier. "speed" (default, 4 vCPU / 16 GiB) or "balanced" (may run more than 2x longer, 8 vCPU / 32 GiB).
-        test_data_secret_name: Optional Kubernetes secret name with S3 credentials for the user-provided
-            test dataset (TEST_DATA_AWS_ACCESS_KEY_ID, TEST_DATA_AWS_SECRET_ACCESS_KEY, TEST_DATA_AWS_S3_ENDPOINT,
-            TEST_DATA_AWS_DEFAULT_REGION). Default: empty string.
-        test_data_bucket_name: Optional S3-compatible bucket name containing user-provided test dataset.
-            Default: empty string.
-        test_data_file_key: Optional S3 object key of the test CSV file (features and target column).
-            Default: empty string.
 
     Returns:
         HTML artifact with leaderboard of refitted models ranked by task_type metric (e.g. accuracy, r2).
@@ -152,6 +154,9 @@ def autogluon_tabular_training_pipeline(
             train_data_secret_name="my-s3-secret",
             train_data_bucket_name="my-data-bucket",
             train_data_file_key="datasets/housing_prices.csv",
+            test_data_secret_name="my-s3-secret",
+            test_data_bucket_name="",
+            test_data_file_key="",
             label_column="price",
             task_type="regression",
             top_n=3,
@@ -180,6 +185,7 @@ def autogluon_tabular_training_pipeline(
     data_loader_task.set_caching_options(False)
     data_loader_task.set_cpu_request("2").set_memory_request("8Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(MAX_MEMORY)
 
+    # Object storage credentials for data loading.
     use_secret_as_env(
         data_loader_task,
         secret_name=train_data_secret_name,
@@ -189,20 +195,19 @@ def autogluon_tabular_training_pipeline(
             "AWS_S3_ENDPOINT": "AWS_S3_ENDPOINT",
             "AWS_DEFAULT_REGION": "AWS_DEFAULT_REGION",
         },
-        optional=True,  # Mark as optional to not block the pipeline. If needed, error will be raised by component
+        optional=True,
     )
-    with dsl.If(test_data_secret_name != ""):
-        use_secret_as_env(
-            data_loader_task,
-            secret_name=test_data_secret_name,
-            secret_key_to_env={
-                "AWS_ACCESS_KEY_ID": "TEST_DATA_AWS_ACCESS_KEY_ID",
-                "AWS_SECRET_ACCESS_KEY": "TEST_DATA_AWS_SECRET_ACCESS_KEY",
-                "AWS_S3_ENDPOINT": "TEST_DATA_AWS_S3_ENDPOINT",
-                "AWS_DEFAULT_REGION": "TEST_DATA_AWS_DEFAULT_REGION",
-            },
-            optional=False,
-        )
+    use_secret_as_env(
+        data_loader_task,
+        secret_name=test_data_secret_name,
+        secret_key_to_env={
+            "AWS_ACCESS_KEY_ID": "TEST_DATA_AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY": "TEST_DATA_AWS_SECRET_ACCESS_KEY",
+            "AWS_S3_ENDPOINT": "TEST_DATA_AWS_S3_ENDPOINT",
+            "AWS_DEFAULT_REGION": "TEST_DATA_AWS_DEFAULT_REGION",
+        },
+        optional=True,
+    )
 
     # Stage 1 + 2: Model selection and sequential refit of top N models.
     # Resource limits differ by preset: balanced needs more CPU/memory than speed.
