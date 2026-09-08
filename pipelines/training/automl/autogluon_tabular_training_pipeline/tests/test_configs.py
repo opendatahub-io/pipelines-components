@@ -59,11 +59,8 @@ class PipelineConfig:
         """Build pipeline arguments dict for this config."""
         return {
             "train_data_secret_name": train_data_secret_name,
-            "test_data_secret_name": train_data_secret_name,
             "train_data_bucket_name": train_data_bucket_name,
             "train_data_file_key": train_data_file_key,
-            "test_data_bucket_name": "",
-            "test_data_file_key": "",
             "label_column": self.label_column,
             "task_type": self.task_type,
             **self.automl_settings,

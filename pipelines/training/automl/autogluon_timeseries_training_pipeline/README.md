@@ -32,12 +32,9 @@ to a single combined ``models_artifact``.
 
 | Parameter | Type | Default | Description |
 | --------- | ---- | ------- | ----------- |
-| `train_data_secret_name` | `str` | `None` | Kubernetes secret name containing S3 credentials (e.g. AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_S3_ENDPOINT, AWS_DEFAULT_REGION). |
+| `train_data_secret_name` | `str` | `None` | Kubernetes secret name containing S3 credentials (e.g. AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_S3_ENDPOINT, AWS_DEFAULT_REGION). Used for training data and optional user-provided external test data. |
 | `train_data_bucket_name` | `str` | `None` | S3-compatible bucket name containing the time series data file. |
 | `train_data_file_key` | `str` | `None` | S3 object key of the data file (CSV or Parquet). When ``id_column`` is provided, file must include columns for id, timestamp, and target. When ``id_column=""`` (single-series mode), file must have exactly timestamp and target columns (the loader injects ``__synthetic_item_id``). Optional columns for known covariates. |
-| `test_data_secret_name` | `str` | `None` | Name of the Kubernetes secret holding S3-compatible credentials for test data access. The following environment variables are required: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_S3_ENDPOINT. AWS_DEFAULT_REGION is optional. Pass the same value as train_data_secret_name when test data uses the training credentials. |
-| `test_data_bucket_name` | `str` | `None` | S3-compatible bucket name for the user-provided test dataset. Pass an empty string when no external test dataset is provided. |
-| `test_data_file_key` | `str` | `None` | Object key (path) of the user-provided test CSV file. Pass an empty string when no external test dataset is provided. |
 | `target` | `str` | `None` | Name of the column containing the numeric values to forecast. Corresponds to :attr:`~autogluon.timeseries.TimeSeriesDataFrame` target column. |
 | `timestamp_column` | `str` | `None` | Name of the column containing the timestamp/datetime for each observation. Passed as ``timestamp_column`` when constructing TimeSeriesDataFrame; result uses ``timestamp`` as the second index level. |
 | `id_column` | `str` | `""` | Name of the column that identifies each time series (e.g. product_id, store_id). Pass an empty string ("") for single-series two-column datasets (timestamp + target only); the loader will inject a synthetic ID column. Passed as ``id_column`` when constructing TimeSeriesDataFrame; result uses ``item_id``. |
@@ -46,6 +43,8 @@ to a single combined ``models_artifact``.
 | `top_n` | `int` | `3` | Number of top models to select for the leaderboard and output (default: 3). |
 | `eval_metric` | `str` | `mean_absolute_scaled_error` | Metric for model ranking in snake_case (e.g. ``"mean_absolute_scaled_error"``, ``"weighted_quantile_loss"``) or legacy uppercase acronym form. Defaults to ``"mean_absolute_scaled_error"``. |
 | `preset` | `str` | `speed` | Training quality tier. ``"speed"`` (default, 4 vCPU / 16 GiB) or ``"balanced"`` (may run more than 2x longer, 8 vCPU / 32 GiB). |
+| `test_data_bucket_name` | `str` | `""` | Optional S3-compatible bucket name for a user-provided test dataset. Default: empty string (use the per-series holdout split from training data). |
+| `test_data_file_key` | `str` | `""` | Optional S3 object key for a user-provided test CSV file. Default: empty string (use the per-series holdout split from training data). |
 
 ## Metadata 🗂️
 

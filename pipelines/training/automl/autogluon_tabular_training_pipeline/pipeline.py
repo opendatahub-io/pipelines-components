@@ -36,15 +36,14 @@ def autogluon_tabular_training_pipeline(
     train_data_secret_name: str,
     train_data_bucket_name: str,
     train_data_file_key: str,
-    test_data_secret_name: str,
-    test_data_bucket_name: str,
-    test_data_file_key: str,
     label_column: str,
     task_type: str,
     top_n: int = 3,
     positive_class: str = "",
     eval_metric: str = "",
     preset: str = "speed",
+    test_data_bucket_name: str = "",
+    test_data_file_key: str = "",
 ):
     """AutoGluon Tabular Training Pipeline.
 
@@ -116,24 +115,21 @@ def autogluon_tabular_training_pipeline(
     - Selecting optimal ensemble configurations
 
     Args:
-        train_data_secret_name: Kubernetes secret name with S3 credentials (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_S3_ENDPOINT, AWS_DEFAULT_REGION).
+        train_data_secret_name: Kubernetes secret name with S3 credentials (AWS_ACCESS_KEY_ID,
+            AWS_SECRET_ACCESS_KEY, AWS_S3_ENDPOINT, AWS_DEFAULT_REGION). Used for training data
+            and optional user-provided external test data.
         train_data_bucket_name: S3-compatible bucket name containing the tabular data file.
         train_data_file_key: S3 object key of the CSV file (features and target column).
-        test_data_secret_name: Name of the Kubernetes secret holding S3-compatible credentials for
-            test data access. The following environment variables are required:
-            AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_S3_ENDPOINT.
-            AWS_DEFAULT_REGION is optional. Pass the same value as train_data_secret_name when
-            test data uses the training credentials.
-        test_data_bucket_name: S3-compatible bucket name for the user-provided test dataset.
-            Pass an empty string when no external test dataset is provided.
-        test_data_file_key: Object key (path) of the user-provided test CSV file.
-            Pass an empty string when no external test dataset is provided.
         label_column: Name of the target/label column in the dataset.
         task_type: "binary", "multiclass", or "regression"; drives metrics and model types.
         top_n: Number of top models to select and refit (default: 3); positive integer from range [1, 10].
         positive_class: Optional label value for the positive class in binary classification. Defaults to the second unique class after sorting label values.
         eval_metric: Metric used for model ranking. Empty string (default) is resolved by the component to "r2" for regression and "accuracy" for binary and multiclass classification.
         preset: Training quality tier. "speed" (default, 4 vCPU / 16 GiB) or "balanced" (may run more than 2x longer, 8 vCPU / 32 GiB).
+        test_data_bucket_name: Optional S3-compatible bucket name for a user-provided test dataset.
+            Default: empty string (use the holdout split from training data).
+        test_data_file_key: Optional S3 object key for a user-provided test CSV file.
+            Default: empty string (use the holdout split from training data).
 
     Returns:
         HTML artifact with leaderboard of refitted models ranked by task_type metric (e.g. accuracy, r2).
@@ -154,9 +150,6 @@ def autogluon_tabular_training_pipeline(
             train_data_secret_name="my-s3-secret",
             train_data_bucket_name="my-data-bucket",
             train_data_file_key="datasets/housing_prices.csv",
-            test_data_secret_name="my-s3-secret",
-            test_data_bucket_name="",
-            test_data_file_key="",
             label_column="price",
             task_type="regression",
             top_n=3,
@@ -199,7 +192,7 @@ def autogluon_tabular_training_pipeline(
     )
     use_secret_as_env(
         data_loader_task,
-        secret_name=test_data_secret_name,
+        secret_name=train_data_secret_name,
         secret_key_to_env={
             "AWS_ACCESS_KEY_ID": "TEST_DATA_AWS_ACCESS_KEY_ID",
             "AWS_SECRET_ACCESS_KEY": "TEST_DATA_AWS_SECRET_ACCESS_KEY",

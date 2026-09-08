@@ -38,9 +38,6 @@ def autogluon_timeseries_training_pipeline(
     train_data_secret_name: str,
     train_data_bucket_name: str,
     train_data_file_key: str,
-    test_data_secret_name: str,
-    test_data_bucket_name: str,
-    test_data_file_key: str,
     target: str,
     timestamp_column: str,
     id_column: str = "",
@@ -49,6 +46,8 @@ def autogluon_timeseries_training_pipeline(
     top_n: int = 3,
     eval_metric: str = "mean_absolute_scaled_error",
     preset: str = "speed",
+    test_data_bucket_name: str = "",
+    test_data_file_key: str = "",
 ):
     """AutoGluon time series training pipeline.
 
@@ -92,20 +91,12 @@ def autogluon_timeseries_training_pipeline(
     Args:
         train_data_secret_name: Kubernetes secret name containing S3 credentials
             (e.g. AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_S3_ENDPOINT, AWS_DEFAULT_REGION).
+            Used for training data and optional user-provided external test data.
         train_data_bucket_name: S3-compatible bucket name containing the time series data file.
         train_data_file_key: S3 object key of the data file (CSV or Parquet). When ``id_column`` is
             provided, file must include columns for id, timestamp, and target. When ``id_column=""``
             (single-series mode), file must have exactly timestamp and target columns (the loader injects
             ``__synthetic_item_id``). Optional columns for known covariates.
-        test_data_secret_name: Name of the Kubernetes secret holding S3-compatible credentials for
-            test data access. The following environment variables are required:
-            AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_S3_ENDPOINT.
-            AWS_DEFAULT_REGION is optional. Pass the same value as train_data_secret_name when
-            test data uses the training credentials.
-        test_data_bucket_name: S3-compatible bucket name for the user-provided test dataset.
-            Pass an empty string when no external test dataset is provided.
-        test_data_file_key: Object key (path) of the user-provided test CSV file.
-            Pass an empty string when no external test dataset is provided.
         target: Name of the column containing the numeric values to forecast. Corresponds to
             :attr:`~autogluon.timeseries.TimeSeriesDataFrame` target column.
         timestamp_column: Name of the column containing the timestamp/datetime for each observation.
@@ -126,6 +117,10 @@ def autogluon_timeseries_training_pipeline(
             ``"mean_absolute_scaled_error"``.
         preset: Training quality tier. ``"speed"`` (default, 4 vCPU / 16 GiB) or
             ``"balanced"`` (may run more than 2x longer, 8 vCPU / 32 GiB).
+        test_data_bucket_name: Optional S3-compatible bucket name for a user-provided test dataset.
+            Default: empty string (use the per-series holdout split from training data).
+        test_data_file_key: Optional S3 object key for a user-provided test CSV file.
+            Default: empty string (use the per-series holdout split from training data).
 
     Returns:
         This pipeline wires task outputs between components; compiled runs expose the combined models artifact
@@ -142,9 +137,6 @@ def autogluon_timeseries_training_pipeline(
             train_data_secret_name="my-s3-secret",
             train_data_bucket_name="my-bucket",
             train_data_file_key="ts/sales.csv",
-            test_data_secret_name="my-s3-secret",
-            test_data_bucket_name="",
-            test_data_file_key="",
             target="sales",
             id_column="product_id",
             timestamp_column="date",
@@ -194,7 +186,7 @@ def autogluon_timeseries_training_pipeline(
     )
     use_secret_as_env(
         data_loader_task,
-        secret_name=test_data_secret_name,
+        secret_name=train_data_secret_name,
         secret_key_to_env={
             "AWS_ACCESS_KEY_ID": "TEST_DATA_AWS_ACCESS_KEY_ID",
             "AWS_SECRET_ACCESS_KEY": "TEST_DATA_AWS_SECRET_ACCESS_KEY",

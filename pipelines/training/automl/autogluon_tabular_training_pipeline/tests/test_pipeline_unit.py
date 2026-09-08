@@ -55,7 +55,6 @@ class TestAutogluonTabularTrainingPipelineUnitTests:
             "positive_class",
             "preset",
             "eval_metric",
-            "test_data_secret_name",
             "test_data_bucket_name",
             "test_data_file_key",
         }
@@ -65,9 +64,8 @@ class TestAutogluonTabularTrainingPipelineUnitTests:
         assert inputs["top_n"].default == 3
         assert inputs["preset"].default == "speed"
         assert inputs["eval_metric"].default == ""
-        assert "test_data_secret_name" not in inputs or inputs["test_data_secret_name"].default in (None, "")
-        assert "test_data_bucket_name" not in inputs or inputs["test_data_bucket_name"].default in (None, "")
-        assert "test_data_file_key" not in inputs or inputs["test_data_file_key"].default in (None, "")
+        assert inputs["test_data_bucket_name"].default == ""
+        assert inputs["test_data_file_key"].default == ""
 
     def test_compiled_pipeline_has_expected_inputs(self):
         """Test that the compiled pipeline YAML contains expected pipeline inputs."""
@@ -90,7 +88,6 @@ class TestAutogluonTabularTrainingPipelineUnitTests:
                 "positive_class",
                 "preset",
                 "eval_metric",
-                "test_data_secret_name",
                 "test_data_bucket_name",
                 "test_data_file_key",
             ):
@@ -238,8 +235,8 @@ class TestAutogluonTabularTrainingPipelineUnitTests:
         assert "componentInputParameter: test_data_bucket_name" in content
         assert "componentInputParameter: test_data_file_key" in content
 
-    def test_compiled_pipeline_binds_test_secret_to_data_loader(self):
-        """Test-data secret is mounted unconditionally (optional) on the data loader task."""
+    def test_compiled_pipeline_maps_train_secret_to_test_data_env(self):
+        """Train secret is also mapped to TEST_DATA_AWS_* for optional external test data."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as tmp_file:
             tmp_path = tmp_file.name
         try:
@@ -252,7 +249,6 @@ class TestAutogluonTabularTrainingPipelineUnitTests:
             Path(tmp_path).unlink(missing_ok=True)
 
         assert "condition-1" not in content
-        assert "componentInputParameter: test_data_secret_name" in content
         test_secret_block = content.split("envVar: TEST_DATA_AWS_ACCESS_KEY_ID", 1)[1]
         assert "optional: true" in test_secret_block[:500]
-        assert "componentInputParameter: test_data_secret_name" in test_secret_block[:500]
+        assert "componentInputParameter: train_data_secret_name" in test_secret_block[:500]

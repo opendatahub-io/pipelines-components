@@ -50,7 +50,7 @@ def resolve_s3_env_credentials(for_test_data: bool = False) -> dict[str, str | N
                     "S3 credentials misconfigured for test data: TEST_DATA_AWS_ACCESS_KEY_ID and "
                     "TEST_DATA_AWS_SECRET_ACCESS_KEY must both be set, or both be unset to fall "
                     "back to the training AWS_* credentials. "
-                    "Check the Kubernetes secret named by test_data_secret_name."
+                    "Check the Kubernetes secret named by train_data_secret_name."
                 )
             return {
                 "access_key": test_access_key,
