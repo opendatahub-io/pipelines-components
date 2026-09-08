@@ -29,7 +29,7 @@ After cleansing, at least **100** valid records must remain; otherwise the compo
 | `selection_train_size` | `float` | `0.3` | Fraction of train portion for model selection (default: 0.3). |
 | `prediction_length` | `int` | `1` | Forecast horizon used downstream (default: 1). Only used to fail fast when a user-provided test series is too short to be evaluated. |
 | `known_covariates_names` | `Optional[List[str]]` | `None` | Covariate columns known in advance downstream (default: none). Only used to fail fast when a user-provided test dataset omits one of them. |
-| `test_data_bucket_name` | `str` | `""` | S3 bucket name for user-provided test dataset (default: empty string). Read with the same credentials and endpoint as the training data. |
+| `test_data_bucket_name` | `str` | `""` | S3 bucket name for user-provided test dataset (default: empty string). Uses ``TEST_DATA_AWS_*`` credentials when injected (see ``test_data_secret_name`` in the pipeline); otherwise falls back to the training ``AWS_*`` credentials. |
 | `test_data_file_key` | `str` | `""` | S3 object key for user-provided test dataset (default: empty string). Must be set together with ``test_data_bucket_name``. When set, the primary temporal split is skipped and this dataset is written to ``sampled_test_dataset``. |
 
 ## Outputs 📤

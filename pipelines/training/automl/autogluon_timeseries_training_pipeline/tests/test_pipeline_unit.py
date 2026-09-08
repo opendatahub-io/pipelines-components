@@ -193,6 +193,24 @@ class TestAutogluonTimeseriesTrainingPipelineUnitTests:
         assert "componentInputParameter: test_data_bucket_name" in content
         assert "componentInputParameter: test_data_file_key" in content
 
+    def test_compiled_pipeline_wires_test_secret_binding_to_data_loader(self):
+        """Test-data secret is mounted on the data loader with optional binding (autorag pattern)."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as tmp_file:
+            tmp_path = tmp_file.name
+        try:
+            compiler.Compiler().compile(
+                pipeline_func=autogluon_timeseries_training_pipeline,
+                package_path=tmp_path,
+            )
+            content = Path(tmp_path).read_text(encoding="utf-8")
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
+
+        assert "componentInputParameter: test_data_secret_name" in content
+        test_secret_block = content.split("envVar: TEST_DATA_AWS_ACCESS_KEY_ID", 1)[1]
+        assert "optional: true" in test_secret_block[:500]
+        assert "componentInputParameter: test_data_secret_name" in test_secret_block[:500]
+
 
 class TestTimeseriesTestConfigs:
     """Unit tests for test_configs.json loading (integration configs live in autox-ci)."""

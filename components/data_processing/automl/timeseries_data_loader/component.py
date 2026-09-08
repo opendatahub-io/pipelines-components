@@ -70,7 +70,8 @@ def timeseries_data_loader(
         known_covariates_names: Covariate columns known in advance downstream (default: none).
             Only used to fail fast when a user-provided test dataset omits one of them.
         test_data_bucket_name: S3 bucket name for user-provided test dataset (default: empty string).
-            Read with the same credentials and endpoint as the training data.
+            Uses ``TEST_DATA_AWS_*`` credentials when injected (see ``test_data_secret_name``
+            in the pipeline); otherwise falls back to the training ``AWS_*`` credentials.
         test_data_file_key: S3 object key for user-provided test dataset (default: empty string).
             Must be set together with ``test_data_bucket_name``. When set, the primary
             temporal split is skipped and this dataset is written to ``sampled_test_dataset``.
@@ -194,6 +195,10 @@ def timeseries_data_loader(
             size limit stopped the read before the stream was exhausted. The signal is
             conservative: a stream whose rows add up to exactly ``max_size_bytes`` is also
             reported, since the read stops without proving no rows follow.
+
+            ``for_test_data`` selects the test-data credentials and makes the read fail
+            closed: a mid-stream error must not silently yield a partial test set that
+            evaluation would then treat as authoritative.
             """
             from botocore.exceptions import SSLError
 
@@ -245,10 +250,23 @@ def timeseries_data_loader(
                         break
 
             except Exception as e:
-                if not chunk_list:
+                if not chunk_list or for_test_data:
                     raise ValueError(f"Error reading CSV from S3: {str(e)}") from e
+                logger.warning(
+                    "Partial CSV read from s3://%s/%s, keeping the %s row(s) read so far: %s",
+                    bucket_name,
+                    file_key,
+                    total_rows_read,
+                    e,
+                )
+                _mark_truncated()
 
             if not chunk_list:
+                if for_test_data:
+                    # A header-only CSV yields no chunks at all, so the header is gone
+                    # too. Return an empty frame and let the caller report it as an
+                    # empty test dataset rather than as an inaccessible file.
+                    return pd.DataFrame()
                 raise ValueError("No data was loaded from S3. The file may be empty or inaccessible.")
 
             logger.debug(
@@ -480,17 +498,24 @@ def timeseries_data_loader(
             except Exception as e:
                 raise test_data_load_error(test_data_source, e) from e
 
-            # Validate required columns
-            required_columns = {id_column, timestamp_column, target}
+            # Validate non-empty (AC4). Runs before the column checks: a header-only CSV
+            # comes back with no columns at all, so "no data rows" is the accurate report.
+            raise_if_test_data_empty(len(user_test_df), test_data_source)
+
+            # Validate required columns. In synthetic-id mode the user cannot supply the
+            # reserved id column -- the training path above rejects it by name -- so
+            # require only the real columns and inject the id afterwards.
+            required_columns = {timestamp_column, target}
+            if not uses_synthetic_id:
+                required_columns.add(id_column)
             missing_columns = required_columns - set(user_test_df.columns)
             if missing_columns:
                 raise ValueError(
                     f"Missing required columns in test dataset: {missing_columns}. "
                     f"Available columns: {list(user_test_df.columns)}"
                 )
-
-            # Validate non-empty (AC4)
-            raise_if_test_data_empty(len(user_test_df), test_data_source)
+            if uses_synthetic_id:
+                user_test_df[SYNTHETIC_ITEM_ID_COLUMN] = SYNTHETIC_ITEM_ID_VALUE
 
             if truncation_report.get("truncated"):
                 report_test_data_truncation(
@@ -510,33 +535,40 @@ def timeseries_data_loader(
 
             # A test set that shares no series with the training data cannot be scored:
             # every forecast would be for an item the predictor never saw.
-            train_item_ids = {item_id for item_id, _ in df.groupby(id_column, sort=False)}
+            # Compare as strings: pandas infers dtypes per file, so a training frame with
+            # mixed ids (object) and a numeric-only test frame (int64) would otherwise
+            # look disjoint and reject a perfectly valid test set.
+            train_item_ids = {str(item_id) for item_id, _ in df.groupby(id_column, sort=False)}
             test_series_lengths = {
-                item_id: len(series_df) for item_id, series_df in user_test_df.groupby(id_column, sort=False)
+                str(item_id): len(series_df) for item_id, series_df in user_test_df.groupby(id_column, sort=False)
             }
-            unknown_item_ids = sorted(str(i) for i in test_series_lengths if i not in train_item_ids)
+            unknown_item_ids = sorted(i for i in test_series_lengths if i not in train_item_ids)
             if len(unknown_item_ids) == len(test_series_lengths):
                 raise ValueError(
                     f"Test dataset shares no {id_column!r} values with the training data "
                     f"(test ids: {unknown_item_ids[:10]}). Provide a test dataset for the same time series."
                 )
             if unknown_item_ids:
+                # Counts only: a series id can be an email address or a customer number.
                 logger.warning(
-                    "Test dataset contains %s %r value(s) absent from the training data: %s. "
+                    "Test dataset contains %s %r value(s) absent from the training data. "
                     "Those series cannot be forecast and are expected to be skipped downstream.",
                     len(unknown_item_ids),
                     id_column,
-                    unknown_item_ids[:10],
                 )
 
+            # AutoGluon reserves the last prediction_length steps of each series as ground
+            # truth and needs at least one historical step before them, so a series of
+            # exactly prediction_length rows fails in leaderboard()/evaluate() -- hours
+            # into the run -- rather than here.
             short_series = sorted(
-                str(item_id) for item_id, length in test_series_lengths.items() if length < prediction_length
+                item_id for item_id, length in test_series_lengths.items() if length <= prediction_length
             )
             if short_series:
                 raise ValueError(
-                    f"Test dataset series shorter than prediction_length ({prediction_length}): "
-                    f"{short_series[:10]}. Each series needs at least {prediction_length} row(s) to be "
-                    "evaluated over the forecast horizon."
+                    f"Test dataset series too short for prediction_length ({prediction_length}): "
+                    f"{short_series[:10]}. Each series needs more than {prediction_length} row(s) -- the "
+                    "forecast horizon plus at least one historical step -- to be evaluated."
                 )
 
             # Write user test data to artifact

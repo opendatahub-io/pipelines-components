@@ -360,7 +360,8 @@ def _read_csv_chunks(text_stream, chunksize):
         return
     rows = list(reader)
     if not rows:
-        yield MockedDataFrame(header, [])
+        # Match pandas: a header-only CSV yields no chunks at all, so the caller never
+        # sees the header either. The tabular mock behaves the same way.
         return
     for start in range(0, len(rows), chunksize):
         chunk_rows = [[_parse_csv_cell(c) for c in row] for row in rows[start : start + chunksize]]

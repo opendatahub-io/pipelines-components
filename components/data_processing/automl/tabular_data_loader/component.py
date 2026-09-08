@@ -192,13 +192,19 @@ def automl_data_loader(  # noqa: D417
                 verify=verify,
             )
 
-        def _sample_first_n_rows(text_stream, chunk_size, max_size_bytes, truncation_report=None):
+        def _sample_first_n_rows(
+            text_stream, chunk_size, max_size_bytes, truncation_report=None, fail_on_partial_read=False
+        ):
             """Take rows from the start of the stream until the size limit is reached.
 
             When ``truncation_report`` is a dict, its ``"truncated"`` key is set to True if
             the size limit stopped the read before the stream was exhausted. The signal is
             conservative: a stream whose rows add up to exactly ``max_size_bytes`` is also
             reported, since the read stops without proving no rows follow.
+
+            ``fail_on_partial_read`` makes a mid-stream error fatal instead of returning the
+            rows read so far. Test data must fail closed: a partial holdout set would be
+            scored as if it were complete.
             """
             chunk_list = []
             accumulated_size = 0
@@ -232,8 +238,10 @@ def automl_data_loader(  # noqa: D417
                         _mark_truncated()
                         break
             except Exception as e:
-                if not chunk_list:
+                if not chunk_list or fail_on_partial_read:
                     raise ValueError(f"Error reading CSV from S3: {str(e)}") from e
+                logger.warning("Partial CSV read, keeping the %s chunk(s) read so far: %s", len(chunk_list), e)
+                _mark_truncated()
 
             return pd.concat(chunk_list, ignore_index=True) if chunk_list else pd.DataFrame()
 
@@ -314,11 +322,15 @@ def automl_data_loader(  # noqa: D417
             sampling_method,
             label_column,
             truncation_report=None,
+            for_test_data: bool = False,
         ):
             """Load CSV from S3 in batches and return a sampled dataframe using the chosen strategy.
 
             ``truncation_report`` is only honoured by the ``first_n_rows`` strategy; the
             subsampling strategies keep a representative sample of the whole stream.
+
+            ``for_test_data`` keeps the test-data credential scope on the SSL retry path and
+            makes a partial read fatal.
             """
             from botocore.exceptions import SSLError
 
@@ -333,7 +345,7 @@ def automl_data_loader(  # noqa: D417
                     bucket_name,
                     file_key,
                 )
-                no_verify_client = get_s3_client(verify=False)
+                no_verify_client = get_s3_client(verify=False, for_test_data=for_test_data)
                 response = no_verify_client.get_object(Bucket=bucket_name, Key=file_key)
             text_stream = io.TextIOWrapper(response["Body"], encoding="utf-8")
 
@@ -342,7 +354,11 @@ def automl_data_loader(  # noqa: D417
             if sampling_method == "random":
                 return _sample_random(text_stream, PANDAS_CHUNK_SIZE, max_size_bytes)
             return _sample_first_n_rows(
-                text_stream, PANDAS_CHUNK_SIZE, max_size_bytes, truncation_report=truncation_report
+                text_stream,
+                PANDAS_CHUNK_SIZE,
+                max_size_bytes,
+                truncation_report=truncation_report,
+                fail_on_partial_read=for_test_data,
             )
 
         status.record(
@@ -458,6 +474,7 @@ def automl_data_loader(  # noqa: D417
                     sampling_method="first_n_rows",
                     label_column=label_column,
                     truncation_report=truncation_report,
+                    for_test_data=True,
                 )
             except Exception as e:
                 raise test_data_load_error(test_data_source, e) from e
@@ -492,9 +509,13 @@ def automl_data_loader(  # noqa: D417
             if extra_features:
                 logger.warning(
                     "Test dataset has column(s) not present in the training data: %s. "
-                    "They are ignored during evaluation.",
+                    "They are dropped before evaluation.",
                     extra_features,
                 )
+                # Drop rather than carry: these columns would otherwise reach the
+                # sampled_test_dataset artifact and the notebook sample payload built from
+                # user_test_df.head(1), advertising features the predictor cannot accept.
+                user_test_df = user_test_df.drop(columns=extra_features)
 
             # Apply same cleansing as training data
             user_test_df.replace([math.inf, -math.inf], float("nan"), inplace=True)

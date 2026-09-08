@@ -30,17 +30,39 @@ def resolve_s3_env_credentials(for_test_data: bool = False) -> dict[str, str | N
 
     When ``for_test_data`` is True, ``TEST_DATA_AWS_*`` variables are preferred and
     fall back to the training ``AWS_*`` variables so a dedicated test secret is optional.
+    The access key and secret key are resolved as a pair: a partially populated test
+    secret is an error rather than a silent mix of the two identities.
+
+    Raises:
+        ValueError: If exactly one of the ``TEST_DATA_AWS_*`` key pair is set.
     """
     if for_test_data:
-        access_key = os.environ.get("TEST_DATA_AWS_ACCESS_KEY_ID") or os.environ.get("AWS_ACCESS_KEY_ID")
-        secret_key = os.environ.get("TEST_DATA_AWS_SECRET_ACCESS_KEY") or os.environ.get("AWS_SECRET_ACCESS_KEY")
-        endpoint_url = os.environ.get("TEST_DATA_AWS_S3_ENDPOINT") or os.environ.get("AWS_S3_ENDPOINT")
-        region_name = os.environ.get("TEST_DATA_AWS_DEFAULT_REGION") or os.environ.get("AWS_DEFAULT_REGION")
-    else:
-        access_key = os.environ.get("AWS_ACCESS_KEY_ID")
-        secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY")
-        endpoint_url = os.environ.get("AWS_S3_ENDPOINT")
-        region_name = os.environ.get("AWS_DEFAULT_REGION")
+        test_access_key = os.environ.get("TEST_DATA_AWS_ACCESS_KEY_ID")
+        test_secret_key = os.environ.get("TEST_DATA_AWS_SECRET_ACCESS_KEY")
+        # Resolve the key pair as a unit. Falling back per-variable would pair a test
+        # access key with the training secret key; both slots end up non-empty, so
+        # validate_s3_env_credentials cannot see it and S3 fails later with an opaque
+        # SignatureDoesNotMatch. Endpoint and region keep their individual fallback:
+        # separate credentials against a shared endpoint is a real configuration.
+        if test_access_key or test_secret_key:
+            if not (test_access_key and test_secret_key):
+                raise ValueError(
+                    "S3 credentials misconfigured for test data: TEST_DATA_AWS_ACCESS_KEY_ID and "
+                    "TEST_DATA_AWS_SECRET_ACCESS_KEY must both be set, or both be unset to fall "
+                    "back to the training AWS_* credentials. "
+                    "Check the Kubernetes secret named by test_data_secret_name."
+                )
+            return {
+                "access_key": test_access_key,
+                "secret_key": test_secret_key,
+                "endpoint_url": os.environ.get("TEST_DATA_AWS_S3_ENDPOINT") or os.environ.get("AWS_S3_ENDPOINT"),
+                "region_name": os.environ.get("TEST_DATA_AWS_DEFAULT_REGION") or os.environ.get("AWS_DEFAULT_REGION"),
+            }
+
+    access_key = os.environ.get("AWS_ACCESS_KEY_ID")
+    secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY")
+    endpoint_url = os.environ.get("AWS_S3_ENDPOINT")
+    region_name = os.environ.get("AWS_DEFAULT_REGION")
 
     return {
         "access_key": access_key,
