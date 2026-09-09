@@ -528,6 +528,12 @@ def timeseries_data_loader(
             # Apply same cleansing
             user_test_df = _clean_timeseries_dataframe(user_test_df, id_column, timestamp_column, logger)
 
+            if not user_test_df[target].notna().any():
+                raise ValueError(
+                    f"Test dataset has no observed values in target column {target!r}. "
+                    f"Source: {test_data_source}. Provide at least one non-null target for evaluation."
+                )
+
             # A test set that shares no series with the training data cannot be scored:
             # every forecast would be for an item the predictor never saw.
             # Compare as strings: pandas infers dtypes per file, so a training frame with

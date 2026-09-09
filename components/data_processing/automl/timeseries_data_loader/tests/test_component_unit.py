@@ -1065,6 +1065,42 @@ class TestUserProvidedTestData:
                 )
 
     @mock.patch.dict(os.environ, mocked_env_variables, clear=True)
+    def test_user_test_data_all_null_targets_raises(self, tmp_path):
+        """External test data with rows but no observed targets fails before training."""
+        train_csv = _timeseries_csv(n_rows=MIN_VALID_RECORDS + 10)
+        test_csv = (
+            "item_id,timestamp,target,feature\n"
+            "series-1,2025-01-01,,1000\n"
+            "series-1,2025-01-02,,2000\n"
+            "series-1,2025-01-03,,3000\n"
+        )
+
+        call_count = 0
+
+        def get_object_side_effect(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return {"Body": io.BytesIO(train_csv.encode("utf-8"))}
+            return {"Body": io.BytesIO(test_csv.encode("utf-8"))}
+
+        sampled_test = _make_test_artifact(tmp_path)
+
+        with _mock_boto3_and_pandas(get_object_side_effect=get_object_side_effect):
+            with pytest.raises(ValueError, match="no observed values in target column 'target'"):
+                timeseries_data_loader.python_func(
+                    file_key="train.csv",
+                    bucket_name="b",
+                    workspace_path=str(tmp_path),
+                    target="target",
+                    id_column="item_id",
+                    timestamp_column="timestamp",
+                    sampled_test_dataset=sampled_test,
+                    test_data_bucket_name="test-bucket",
+                    test_data_file_key="test.csv",
+                )
+
+    @mock.patch.dict(os.environ, mocked_env_variables, clear=True)
     def test_user_test_data_missing_required_columns(self, tmp_path):
         """Test data missing required columns raises ValueError."""
         train_csv = _timeseries_csv(n_rows=MIN_VALID_RECORDS + 10)
