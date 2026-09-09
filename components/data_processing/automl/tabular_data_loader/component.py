@@ -526,42 +526,16 @@ def automl_data_loader(  # noqa: D417
             # Write user test data to the sampled_test_dataset artifact
             user_test_df.to_csv(sampled_test_dataset.path, index=False)
 
-            # Skip primary 80/20 split -- use ALL sampled training data for secondary split
-            X = sampled_dataframe.drop(columns=[label_column], inplace=False)
-            y = sampled_dataframe[label_column]
-
-            X_sel, X_extra, y_sel, y_extra = train_test_split(
-                X,
-                y,
-                test_size=(1 - selection_train_size),
-                stratify=(y if stratify_effective else None),
-                random_state=random_state,
-            )
-
-            X_y_sel = pd.concat([X_sel, y_sel], axis=1)
-            X_y_extra = pd.concat([X_extra, y_extra], axis=1)
-
-            if len(X_y_sel) == 0:
-                raise ValueError(
-                    "Secondary split produced an empty selection-train dataset; "
-                    "models_selection_train_dataset.csv would be empty and downstream training would fail. "
-                    "Increase training data size and/or selection_train_size."
-                )
-
-            sample_row = user_test_df.head(1).to_json(orient="records")
-
-            split_config_out = {
-                "test_size": 0.0,
-                "random_state": random_state,
-                "stratify": stratify_effective,
-            }
+            # Skip primary holdout -- use all sampled training rows for the secondary split.
+            selection_X = sampled_dataframe.drop(columns=[label_column], inplace=False)
+            selection_y = sampled_dataframe[label_column]
+            test_sample_df = user_test_df
+            effective_test_size = 0.0
 
         else:
-            # Features and target
             X = sampled_dataframe.drop(columns=[label_column], inplace=False)
             y = sampled_dataframe[label_column]
 
-            # Primary split: train vs test
             X_train, X_test, y_train, y_test = train_test_split(
                 X,
                 y,
@@ -570,29 +544,37 @@ def automl_data_loader(  # noqa: D417
                 random_state=random_state,
             )
 
-            # Secondary split: selection train vs extra train
-            X_sel, X_extra, y_sel, y_extra = train_test_split(
-                X_train,
-                y_train,
-                test_size=(1 - selection_train_size),
-                stratify=(y_train if stratify_effective else None),
-                random_state=random_state,
+            selection_X = X_train
+            selection_y = y_train
+            test_sample_df = pd.concat([X_test, y_test], axis=1)
+            test_sample_df.to_csv(sampled_test_dataset.path, index=False)
+            effective_test_size = test_size
+
+        X_sel, X_extra, y_sel, y_extra = train_test_split(
+            selection_X,
+            selection_y,
+            test_size=(1 - selection_train_size),
+            stratify=(selection_y if stratify_effective else None),
+            random_state=random_state,
+        )
+
+        X_y_sel = pd.concat([X_sel, y_sel], axis=1)
+        X_y_extra = pd.concat([X_extra, y_extra], axis=1)
+
+        if len(X_y_sel) == 0:
+            raise ValueError(
+                "Secondary split produced an empty selection-train dataset; "
+                "models_selection_train_dataset.csv would be empty and downstream training would fail. "
+                "Increase training data size and/or selection_train_size."
             )
 
-            X_y_sel = pd.concat([X_sel, y_sel], axis=1)
-            X_y_extra = pd.concat([X_extra, y_extra], axis=1)
-            X_y_test = pd.concat([X_test, y_test], axis=1)
+        sample_row = test_sample_df.head(1).to_json(orient="records")
 
-            # Write test to S3 artifact
-            X_y_test.to_csv(sampled_test_dataset.path, index=False)
-
-            sample_row = X_y_test.head(1).to_json(orient="records")
-
-            split_config_out = {
-                "test_size": test_size,
-                "random_state": random_state,
-                "stratify": stratify_effective,
-            }
+        split_config_out = {
+            "test_size": effective_test_size,
+            "random_state": random_state,
+            "stratify": stratify_effective,
+        }
 
         # Common post-split: write selection-train and extra-train CSVs to workspace
         models_selection_train_data_path = str(datasets_dir / "models_selection_train_dataset.csv")
