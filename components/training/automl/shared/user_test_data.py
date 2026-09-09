@@ -21,9 +21,6 @@ from __future__ import annotations
 
 import os
 
-TRAIN_DATA_MAX_SIZE_BYTES = 100 * 1024 * 1024  # 100 MB
-TEST_DATA_MAX_SIZE_BYTES = 50 * 1024 * 1024  # 50 MB — smaller cap for user-provided holdout sets
-
 
 def resolve_s3_env_credentials() -> dict[str, str | None]:
     """Resolve S3 credential environment variables from ``AWS_*``."""

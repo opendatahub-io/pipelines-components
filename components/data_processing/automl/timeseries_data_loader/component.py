@@ -95,8 +95,6 @@ def timeseries_data_loader(
 
     from kfp_components.components.training.automl.shared.component_status import ComponentStatusTracker
     from kfp_components.components.training.automl.shared.user_test_data import (
-        TEST_DATA_MAX_SIZE_BYTES,
-        TRAIN_DATA_MAX_SIZE_BYTES,
         raise_if_test_data_empty,
         report_test_data_truncation,
         resolve_s3_env_credentials,
@@ -106,7 +104,8 @@ def timeseries_data_loader(
         validate_test_data_params,
     )
 
-    MAX_SIZE_BYTES = TRAIN_DATA_MAX_SIZE_BYTES
+    MAX_SIZE_BYTES = 100 * 1024 * 1024  # 100 MB
+    TEST_DATA_MAX_SIZE_BYTES = 50 * 1024 * 1024  # 50 MB — smaller cap for user-provided holdout sets
     MIN_VALID_RECORDS_AFTER_CLEANSING = 100
     PANDAS_CHUNK_SIZE = 10000  # Rows per batch for streaming read
     DEFAULT_TEST_SIZE = 0.2
