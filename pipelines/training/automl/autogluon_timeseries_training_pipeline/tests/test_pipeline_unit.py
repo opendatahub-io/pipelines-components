@@ -190,8 +190,8 @@ class TestAutogluonTimeseriesTrainingPipelineUnitTests:
         assert "componentInputParameter: test_data_bucket_name" in content
         assert "componentInputParameter: test_data_file_key" in content
 
-    def test_compiled_pipeline_maps_train_secret_to_test_data_env(self):
-        """Train secret is also mapped to TEST_DATA_AWS_* for optional external test data."""
+    def test_compiled_pipeline_uses_single_train_secret_mount(self):
+        """Train secret is mounted once; test data reuses AWS_* via component fallback."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as tmp_file:
             tmp_path = tmp_file.name
         try:
@@ -204,9 +204,10 @@ class TestAutogluonTimeseriesTrainingPipelineUnitTests:
             Path(tmp_path).unlink(missing_ok=True)
 
         assert "condition-1" not in content
-        test_secret_block = content.split("envVar: TEST_DATA_AWS_ACCESS_KEY_ID", 1)[1]
-        assert "optional: true" in test_secret_block[:500]
-        assert "componentInputParameter: train_data_secret_name" in test_secret_block[:500]
+        assert "TEST_DATA_AWS_ACCESS_KEY_ID" not in content
+        train_secret_block = content.split("envVar: AWS_ACCESS_KEY_ID", 1)[1]
+        assert "optional: true" in train_secret_block[:500]
+        assert "componentInputParameter: train_data_secret_name" in train_secret_block[:500]
 
 
 class TestTimeseriesTestConfigs:

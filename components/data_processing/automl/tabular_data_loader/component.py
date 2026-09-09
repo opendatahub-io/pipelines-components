@@ -174,10 +174,10 @@ def automl_data_loader(  # noqa: D417
                 )
             logger.info("Performing sampling: method=%s", sampling_method)
 
-        def get_s3_client(verify=True, for_test_data: bool = False):
+        def get_s3_client(verify=True):
             """Create and return an S3 client using credentials from environment variables."""
-            credentials = resolve_s3_env_credentials(for_test_data=for_test_data)
-            validate_s3_env_credentials(credentials, for_test_data=for_test_data)
+            credentials = resolve_s3_env_credentials()
+            validate_s3_env_credentials(credentials)
 
             return boto3.client(
                 "s3",
@@ -325,8 +325,7 @@ def automl_data_loader(  # noqa: D417
             ``truncation_report`` is only honoured by the ``first_n_rows`` strategy; the
             subsampling strategies keep a representative sample of the whole stream.
 
-            ``for_test_data`` keeps the test-data credential scope on the SSL retry path and
-            makes a partial read fatal.
+            ``for_test_data`` makes a partial read fatal for user-provided test datasets.
             """
             from botocore.exceptions import SSLError
 
@@ -341,7 +340,7 @@ def automl_data_loader(  # noqa: D417
                     bucket_name,
                     file_key,
                 )
-                no_verify_client = get_s3_client(verify=False, for_test_data=for_test_data)
+                no_verify_client = get_s3_client(verify=False)
                 response = no_verify_client.get_object(Bucket=bucket_name, Key=file_key)
             text_stream = io.TextIOWrapper(response["Body"], encoding="utf-8")
 
@@ -460,7 +459,7 @@ def automl_data_loader(  # noqa: D417
 
             # Download user test data from S3 (AC5: distinguishable error message)
             truncation_report = {}
-            test_s3_client = get_s3_client(for_test_data=True)
+            test_s3_client = get_s3_client()
             try:
                 user_test_df = load_data_in_batches(
                     test_s3_client,

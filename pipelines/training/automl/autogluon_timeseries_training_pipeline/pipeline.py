@@ -184,17 +184,6 @@ def autogluon_timeseries_training_pipeline(
         },
         optional=True,
     )
-    use_secret_as_env(
-        data_loader_task,
-        secret_name=train_data_secret_name,
-        secret_key_to_env={
-            "AWS_ACCESS_KEY_ID": "TEST_DATA_AWS_ACCESS_KEY_ID",
-            "AWS_SECRET_ACCESS_KEY": "TEST_DATA_AWS_SECRET_ACCESS_KEY",
-            "AWS_S3_ENDPOINT": "TEST_DATA_AWS_S3_ENDPOINT",
-            "AWS_DEFAULT_REGION": "TEST_DATA_AWS_DEFAULT_REGION",
-        },
-        optional=True,
-    )
 
     # Stage 2: Combined model generation + full refit.
     # Resource limits differ by preset: medium_quality needs more CPU/memory.

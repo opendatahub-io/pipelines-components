@@ -163,10 +163,10 @@ def timeseries_data_loader(
         component_status.metadata["display_name"] = "Timeseries Data Loader Status"
         status.record("prepare_data", "started")
 
-        def get_s3_client(verify=True, for_test_data: bool = False):
+        def get_s3_client(verify=True):
             """Create and return an S3 client using credentials from environment variables."""
-            credentials = resolve_s3_env_credentials(for_test_data=for_test_data)
-            validate_s3_env_credentials(credentials, for_test_data=for_test_data)
+            credentials = resolve_s3_env_credentials()
+            validate_s3_env_credentials(credentials)
 
             return boto3.client(
                 "s3",
@@ -192,13 +192,12 @@ def timeseries_data_loader(
             conservative: a stream whose rows add up to exactly ``max_size_bytes`` is also
             reported, since the read stops without proving no rows follow.
 
-            ``for_test_data`` selects the test-data credentials and makes the read fail
-            closed: a mid-stream error must not silently yield a partial test set that
-            evaluation would then treat as authoritative.
+            ``for_test_data`` makes the read fail closed: a mid-stream error must not
+            silently yield a partial test set that evaluation would then treat as authoritative.
             """
             from botocore.exceptions import SSLError
 
-            s3_client = get_s3_client(for_test_data=for_test_data)
+            s3_client = get_s3_client()
             try:
                 response = s3_client.get_object(Bucket=bucket_name, Key=file_key)
             except SSLError:
@@ -207,7 +206,7 @@ def timeseries_data_loader(
                     bucket_name,
                     file_key,
                 )
-                no_verify_client = get_s3_client(verify=False, for_test_data=for_test_data)
+                no_verify_client = get_s3_client(verify=False)
                 response = no_verify_client.get_object(Bucket=bucket_name, Key=file_key)
             text_stream = io.TextIOWrapper(response["Body"], encoding="utf-8")
 

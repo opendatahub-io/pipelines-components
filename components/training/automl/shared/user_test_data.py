@@ -25,74 +25,36 @@ TRAIN_DATA_MAX_SIZE_BYTES = 100 * 1024 * 1024  # 100 MB
 TEST_DATA_MAX_SIZE_BYTES = 50 * 1024 * 1024  # 50 MB — smaller cap for user-provided holdout sets
 
 
-def resolve_s3_env_credentials(for_test_data: bool = False) -> dict[str, str | None]:
-    """Resolve S3 credential environment variables for training or test-data access.
-
-    When ``for_test_data`` is True, ``TEST_DATA_AWS_*`` variables are preferred and
-    fall back to the training ``AWS_*`` variables so a dedicated test secret is optional.
-    The access key and secret key are resolved as a pair: a partially populated test
-    secret is an error rather than a silent mix of the two identities.
-
-    Raises:
-        ValueError: If exactly one of the ``TEST_DATA_AWS_*`` key pair is set.
-    """
-    if for_test_data:
-        test_access_key = os.environ.get("TEST_DATA_AWS_ACCESS_KEY_ID")
-        test_secret_key = os.environ.get("TEST_DATA_AWS_SECRET_ACCESS_KEY")
-        # Resolve the key pair as a unit. Falling back per-variable would pair a test
-        # access key with the training secret key; both slots end up non-empty, so
-        # validate_s3_env_credentials cannot see it and S3 fails later with an opaque
-        # SignatureDoesNotMatch. Endpoint and region keep their individual fallback:
-        # separate credentials against a shared endpoint is a real configuration.
-        if test_access_key or test_secret_key:
-            if not (test_access_key and test_secret_key):
-                raise ValueError(
-                    "S3 credentials misconfigured for test data: TEST_DATA_AWS_ACCESS_KEY_ID and "
-                    "TEST_DATA_AWS_SECRET_ACCESS_KEY must both be set, or both be unset to fall "
-                    "back to the training AWS_* credentials. "
-                    "Check the Kubernetes secret named by train_data_secret_name."
-                )
-            return {
-                "access_key": test_access_key,
-                "secret_key": test_secret_key,
-                "endpoint_url": os.environ.get("TEST_DATA_AWS_S3_ENDPOINT") or os.environ.get("AWS_S3_ENDPOINT"),
-                "region_name": os.environ.get("TEST_DATA_AWS_DEFAULT_REGION") or os.environ.get("AWS_DEFAULT_REGION"),
-            }
-
-    access_key = os.environ.get("AWS_ACCESS_KEY_ID")
-    secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY")
-    endpoint_url = os.environ.get("AWS_S3_ENDPOINT")
-    region_name = os.environ.get("AWS_DEFAULT_REGION")
-
+def resolve_s3_env_credentials() -> dict[str, str | None]:
+    """Resolve S3 credential environment variables from ``AWS_*``."""
     return {
-        "access_key": access_key,
-        "secret_key": secret_key,
-        "endpoint_url": endpoint_url,
-        "region_name": region_name,
+        "access_key": os.environ.get("AWS_ACCESS_KEY_ID"),
+        "secret_key": os.environ.get("AWS_SECRET_ACCESS_KEY"),
+        "endpoint_url": os.environ.get("AWS_S3_ENDPOINT"),
+        "region_name": os.environ.get("AWS_DEFAULT_REGION"),
     }
 
 
-def validate_s3_env_credentials(credentials: dict[str, str | None], *, for_test_data: bool) -> None:
+def validate_s3_env_credentials(credentials: dict[str, str | None]) -> None:
     """Raise ValueError when required S3 credentials are missing or misconfigured."""
     access_key = credentials["access_key"]
     secret_key = credentials["secret_key"]
     endpoint_url = credentials["endpoint_url"]
-    scope = "test data" if for_test_data else "training"
 
     if (access_key and not secret_key) or (secret_key and not access_key):
         raise ValueError(
-            f"S3 credentials misconfigured for {scope}: access key and secret key must either "
+            "S3 credentials misconfigured: access key and secret key must either "
             "both be set and non-empty, or both be unset. "
             "Check the Kubernetes secret or environment configuration."
         )
     if not access_key and not secret_key:
         raise ValueError(
-            f"S3 credentials missing for {scope}: access key and secret key must be provided via "
+            "S3 credentials missing: access key and secret key must be provided via "
             "a Kubernetes secret or environment configuration when using s3:// dataset URIs."
         )
     if not endpoint_url:
         raise ValueError(
-            f"S3 endpoint missing for {scope}: endpoint URL must be provided via "
+            "S3 endpoint missing: endpoint URL must be provided via "
             "a Kubernetes secret or environment configuration."
         )
 

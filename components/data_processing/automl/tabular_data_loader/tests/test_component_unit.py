@@ -1289,60 +1289,6 @@ class TestUserProvidedTestData:
                         test_data_file_key="data/test.csv",
                     )
 
-    @mock.patch.dict(
-        "os.environ",
-        {
-            **mocked_env_variables,
-            "TEST_DATA_AWS_ACCESS_KEY_ID": "test_data_key",
-            "TEST_DATA_AWS_SECRET_ACCESS_KEY": "test_data_secret",
-            "TEST_DATA_AWS_S3_ENDPOINT": "https://test-s3.example.local",
-            "TEST_DATA_AWS_DEFAULT_REGION": "eu-west-1",
-        },
-        clear=True,
-    )
-    def test_user_test_data_ssl_retry_keeps_test_credentials(self, tmp_path):
-        """The verify=False retry for test data re-authenticates with ``TEST_DATA_AWS_*``.
-
-        Retrying with the training credentials would hit the wrong endpoint entirely when the
-        test dataset lives in a separate bucket.
-        """
-        train_csv = "a,b,target\n1,2,3\n4,5,6\n"
-        test_csv = "a,b,target\n10,20,30\n40,50,60\n"
-
-        call_count = 0
-
-        def get_object_side_effect(**kwargs):
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                return {"Body": _csv_body(train_csv)}
-            if call_count == 2:
-                raise _MockSSLError("SSL validation failed")
-            return {"Body": _csv_body(test_csv)}
-
-        sampled_test = _make_test_artifact(tmp_path)
-
-        with _mock_boto3_and_pandas(get_object_side_effect=get_object_side_effect):
-            import boto3
-
-            automl_data_loader.python_func(
-                file_key="data/train.csv",
-                bucket_name="my-bucket",
-                workspace_path=str(tmp_path),
-                label_column="target",
-                sampled_test_dataset=sampled_test,
-                test_data_bucket_name="test-bucket",
-                test_data_file_key="data/test.csv",
-            )
-
-            retry_kwargs = boto3.client.call_args_list[-1].kwargs
-
-        assert retry_kwargs["verify"] is False
-        assert retry_kwargs["aws_access_key_id"] == "test_data_key"
-        assert retry_kwargs["aws_secret_access_key"] == "test_data_secret"
-        assert retry_kwargs["endpoint_url"] == "https://test-s3.example.local"
-
-
 class TestDataLoaderSplitLogic:
     """Tests for the train/test split logic integrated into the data loader."""
 
