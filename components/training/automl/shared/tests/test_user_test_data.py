@@ -18,6 +18,7 @@ class TestResolveS3EnvCredentials:
 
     @mock.patch.dict(os.environ, TRAIN_ENV, clear=True)
     def test_reads_aws_variables(self):
+        """Training and test data both resolve credentials from ``AWS_*``."""
         assert resolve_s3_env_credentials() == {
             "access_key": "train_key",
             "secret_key": "train_secret",

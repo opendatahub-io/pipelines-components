@@ -54,8 +54,7 @@ def validate_s3_env_credentials(credentials: dict[str, str | None]) -> None:
         )
     if not endpoint_url:
         raise ValueError(
-            "S3 endpoint missing: endpoint URL must be provided via "
-            "a Kubernetes secret or environment configuration."
+            "S3 endpoint missing: endpoint URL must be provided via a Kubernetes secret or environment configuration."
         )
 
 
