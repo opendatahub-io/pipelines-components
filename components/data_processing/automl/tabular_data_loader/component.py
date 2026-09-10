@@ -317,14 +317,15 @@ def automl_data_loader(  # noqa: D417
             sampling_method,
             label_column,
             truncation_report=None,
-            for_test_data: bool = False,
+            fail_on_partial_read: bool = False,
         ):
             """Load CSV from S3 in batches and return a sampled dataframe using the chosen strategy.
 
             ``truncation_report`` is only honoured by the ``first_n_rows`` strategy; the
             subsampling strategies keep a representative sample of the whole stream.
 
-            ``for_test_data`` makes a partial read fatal for user-provided test datasets.
+            ``fail_on_partial_read`` makes a mid-stream read error fatal instead of returning
+            a partial dataframe.
             """
             from botocore.exceptions import SSLError
 
@@ -352,7 +353,7 @@ def automl_data_loader(  # noqa: D417
                 PANDAS_CHUNK_SIZE,
                 max_size_bytes,
                 truncation_report=truncation_report,
-                fail_on_partial_read=for_test_data,
+                fail_on_partial_read=fail_on_partial_read,
             )
 
         status.record(
@@ -468,7 +469,7 @@ def automl_data_loader(  # noqa: D417
                     sampling_method="first_n_rows",
                     label_column=label_column,
                     truncation_report=truncation_report,
-                    for_test_data=True,
+                    fail_on_partial_read=True,
                 )
             except Exception as e:
                 raise test_data_load_error(test_data_source, e) from e

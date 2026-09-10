@@ -182,7 +182,7 @@ def timeseries_data_loader(
             max_size_bytes,
             chunk_size,
             truncation_report=None,
-            for_test_data: bool = False,
+            fail_on_partial_read: bool = False,
         ):
             """Load time series CSV from S3, truncating to max_size_bytes while preserving order.
 
@@ -191,8 +191,8 @@ def timeseries_data_loader(
             conservative: a stream whose rows add up to exactly ``max_size_bytes`` is also
             reported, since the read stops without proving no rows follow.
 
-            ``for_test_data`` makes the read fail closed: a mid-stream error must not
-            silently yield a partial test set that evaluation would then treat as authoritative.
+            When ``fail_on_partial_read`` is True, a mid-stream error is fatal. If no rows were
+            read, an empty dataframe is returned so the caller can report an empty test dataset.
             """
             from botocore.exceptions import SSLError
 
@@ -244,7 +244,7 @@ def timeseries_data_loader(
                         break
 
             except Exception as e:
-                if not chunk_list or for_test_data:
+                if not chunk_list or fail_on_partial_read:
                     raise ValueError(f"Error reading CSV from S3: {str(e)}") from e
                 logger.warning(
                     "Partial CSV read from s3://%s/%s, keeping the %s row(s) read so far: %s",
@@ -256,7 +256,7 @@ def timeseries_data_loader(
                 _mark_truncated()
 
             if not chunk_list:
-                if for_test_data:
+                if fail_on_partial_read:
                     # A header-only CSV yields no chunks at all, so the header is gone
                     # too. Return an empty frame and let the caller report it as an
                     # empty test dataset rather than as an inaccessible file.
@@ -487,7 +487,7 @@ def timeseries_data_loader(
                     TEST_DATA_MAX_SIZE_BYTES,
                     PANDAS_CHUNK_SIZE,
                     truncation_report=truncation_report,
-                    for_test_data=True,
+                    fail_on_partial_read=True,
                 )
             except Exception as e:
                 raise test_data_load_error(test_data_source, e) from e
