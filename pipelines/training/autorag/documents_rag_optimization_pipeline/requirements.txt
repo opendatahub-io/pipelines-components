@@ -33,8 +33,8 @@ annotated-types==0.8.0 \
 antlr4-python3-runtime==4.9.3 \
     --hash=sha256:3eefc3aac8934956121f0273735d464561bde50cbd9d7f0dd564c6ae742f4856
     # via omegaconf
-anyio==4.15.0 \
-    --hash=sha256:28b04815490513b6faabe042cf3e3ee4fc9eadd8152c06e37b0d0aab90b0980a
+anyio==4.15.1 \
+    --hash=sha256:d1f60aa8c41adf7308c80b55a17904795f9dc042add5c4d4cf2443ab72576287
     # via
     #   httpx
     #   httpx2
@@ -439,8 +439,8 @@ langgraph-prebuilt==1.1.0 \
 langgraph-sdk==0.4.4 \
     --hash=sha256:f481f4c69d93a871c7e7a1a9f3238a23383e14d572f5f009ceaa693e1b7de998
     # via langgraph
-langsmith==0.12.1 \
-    --hash=sha256:a543cfb8f6fe5173d2008bf174fe4d911a8b04a030e845ece7a84e17fc48dfe0
+langsmith==0.12.2 \
+    --hash=sha256:62f8fa4384f5c910ed5b970da8b70a0e72a2e017b92917da02e6e9cacb987cc8
     # via
     #   langchain-classic
     #   langchain-community
@@ -535,11 +535,11 @@ numba==0.67.0 \
     # via
     #   docling-slim
     #   openai-whisper
-numpy==2.5.2 \
-    --hash=sha256:0044665c94ad26cb4ba49db1b50e3634de4f7773859c90c612da981ab08fbd2f \
-    --hash=sha256:68df8564f43607eefa4460cb5f2ed2253edb9ad9bd40c84aa8d874ab75ec66d4 \
-    --hash=sha256:92b58e25cab7bc6e7ebc69952a84acdf7563af8b68ffc3296a6ae35fd347c6ed \
-    --hash=sha256:afaa711680b33da727d91bcfd75b131fee66f392bea5acd140df9e7907ed02b6
+numpy==2.5.3 \
+    --hash=sha256:3ac37c440e68634e3d8dbefa497975698806c7eac3cb6d123c247f0e53408c6a \
+    --hash=sha256:8b8246360f7e8412b509acf19c565d8d1128abc99be5d7c3dd4ebb09ad629bb1 \
+    --hash=sha256:cee9ea66a9881e777e811ee0b464ef1c80222d4dedef37c03b8b75d547dc7777 \
+    --hash=sha256:f1bc5ed81669c0cfbadd178ef509f47d489ca9cf36255e9cfc9678aaa6c2532e
     # via
     #   accelerate
     #   chromadb
@@ -566,8 +566,8 @@ numpy==2.5.2 \
 oauthlib==3.3.1 \
     --hash=sha256:f370abab1b1c2a6c4cee58209d430d26d73807b4e30980e78e9801788f534cf3
     # via requests-oauthlib
-odfdo==3.24.7 \
-    --hash=sha256:318228ebd3c20b00305949b072c54ab60ecaf846210ac42c1b15c7a8beb082c2
+odfdo==3.25.0 \
+    --hash=sha256:e8fbf8bdda7cb77a89d9e28a1f2bc004266b81b3dcbf45ef2fe44fc60d1a84d2
     # via docling-slim
 omegaconf==2.3.1 \
     --hash=sha256:e662f1c0660e1b9185dd8f400ba244384e1e1f6a7372d88f4d95466c101770c5

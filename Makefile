@@ -106,7 +106,7 @@ readme:
 sync-packages:
 	@$(UVRUN) python -m scripts.sync_packages.sync_packages
 
-AIPCC_INDEX_URL := https://console.redhat.com/api/pypi/public-rhai/rhoai/3.5/cpu-ubi9/simple
+AIPCC_INDEX_URL := https://console.redhat.com/api/pypi/public-rhai/rhoai/3.6-EA2/cpu-ubi9-test/simple
 # Refresh Hermeto-compatible requirements.txt for RHOAI pipelines (requires Podman or Docker)
 # Usage: make pipeline-requirements [PIPELINE=path/to/pipeline] [RUNTIME=podman|docker] [IMAGE=...] [NO_UPGRADE=true] [DRY_RUN=true] [QUIET=true]
 pipeline-requirements:
