@@ -51,7 +51,7 @@ def documents_rag_optimization_pipeline(
     vector_db_secret_name: str,
     embedding_models: list[str],
     generation_models: list[str],
-    input_data_key: str = "",
+    input_data_keys: list[str] = [],
     optimization_metric: str = "overall_score",
     optimization_max_rag_patterns: int = 8,
     preset: str = "speed",
@@ -92,7 +92,8 @@ def documents_rag_optimization_pipeline(
         generation_models: List of foundation/generation model identifiers to use in the
             search space. Required: MaaS exposes no metadata to distinguish model types, so
             generation models can no longer be inferred and must be declared explicitly.
-        input_data_key: Object key (path) of the input documents in the input data bucket.
+        input_data_keys: Object keys (paths) of the input documents in the input data bucket.
+            Only the first entry is used by document discovery.
         optimization_metric: Quality metric used to rank RAG patterns. Supported values:
             "faithfulness", "answer_correctness", "context_correctness", "answer_relevance",
             and "overall_score" (default). "faithfulness", "answer_correctness", and
@@ -120,7 +121,7 @@ def documents_rag_optimization_pipeline(
         input_data_bucket_name=input_data_bucket_name,
         test_data_bucket_name=test_data_bucket_name,
         test_data_path_key=test_data_key,
-        input_data_path=input_data_key,
+        input_data_keys=input_data_keys,
     )
     documents_discovery_task.after(component_stage_map_task)
 
@@ -177,7 +178,7 @@ def documents_rag_optimization_pipeline(
             "max_number_of_rag_patterns": optimization_max_rag_patterns,
         },
         test_data_key=test_data_key,
-        input_data_key=input_data_key,
+        input_data_keys=input_data_keys,
         preset=preset,
     )
 

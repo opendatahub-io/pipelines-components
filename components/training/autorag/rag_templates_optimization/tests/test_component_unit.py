@@ -169,6 +169,7 @@ def _make_ai4rag_mocks() -> SimpleNamespace:
         get_foundation_models=get_foundation_models,
         get_embedding_models=get_embedding_models,
         build_leaderboard_html=build_leaderboard_html,
+        generate_notebook_from_template=generate_notebook_from_template,
         create_maas_client=create_maas_client,
         KFPEventHandler=event_handler_cls,
         pandas=pandas_mock,
@@ -250,7 +251,7 @@ class TestRagTemplatesOptimizationInterface:
             "leaderboard",
             "embedded_artifact",
             "optimization_settings",
-            "input_data_key",
+            "input_data_keys",
             "component_status",
             "preset",
         ):
@@ -476,7 +477,7 @@ class TestRagTemplatesOptimizationRun:
                 input_data_secret_name="s3-input-connection",
                 input_data_bucket_name="customer-docs",
                 leaderboard=leaderboard_html,
-                input_data_key="data/docs/",
+                input_data_keys=["data/docs/"],
             )
 
         mocks.create_maas_client.assert_called_once_with(
@@ -496,6 +497,14 @@ class TestRagTemplatesOptimizationRun:
         pattern_dir = Path(rag_patterns.path) / "pattern_a"
         assert (pattern_dir / "pattern.json").exists()
         assert (pattern_dir / "evaluation_results.json").exists()
+
+        # The whole list reaches the indexing blueprint, but the notebook takes the first key.
+        pattern_json = json.loads((pattern_dir / "pattern.json").read_text(encoding="utf-8"))
+        assert pattern_json["indexing"]["pipeline_spec"]["parameters"]["input_data_keys"] == ["data/docs/"]
+        indexing_notebook_call = next(
+            call for call in mocks.generate_notebook_from_template.call_args_list if call.args[0] == "maas_indexing"
+        )
+        assert indexing_notebook_call.kwargs["input_data_key"] == "data/docs/"
 
         assert rag_patterns.metadata["name"] == "rag_patterns_artifact"
         assert rag_patterns.metadata["uri"] == "gs://bucket/rag_patterns"
@@ -537,8 +546,8 @@ class TestRagTemplatesOptimizationRun:
         mocks.get_vector_store_config.assert_called_once_with("pgvector")
 
     @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
-    def test_none_input_data_key_defaults_to_empty_string(self, tmp_path):
-        """A None input_data_key is normalized to '' in the indexing pipeline params."""
+    def test_none_input_data_keys_defaults_to_empty_list(self, tmp_path):
+        """A None input_data_keys is normalized to [] in the indexing pipeline params."""
         mocks = _make_ai4rag_mocks()
         search_space_path = _write_search_space_report(tmp_path)
         mocks.KFPEventHandler.return_value.patterns = [
@@ -558,12 +567,12 @@ class TestRagTemplatesOptimizationRun:
                 input_data_secret_name="s3-secret",
                 input_data_bucket_name="bucket",
                 leaderboard=leaderboard_html,
-                input_data_key=None,
+                input_data_keys=None,
             )
 
         pattern_json = json.loads((Path(rag_patterns.path) / "pattern_a" / "pattern.json").read_text(encoding="utf-8"))
         indexing_params = pattern_json["indexing"]["pipeline_spec"]["parameters"]
-        assert indexing_params["input_data_key"] == ""
+        assert indexing_params["input_data_keys"] == []
 
     @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
     def test_propagates_ai4rag_exception(self, tmp_path):

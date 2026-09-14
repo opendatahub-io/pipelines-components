@@ -13,7 +13,7 @@ _AUTORAG_SHARED = Path(__file__).parents[3] / "training" / "autorag" / "shared"
 )
 def documents_discovery(
     input_data_bucket_name: str,
-    input_data_path: str = "",
+    input_data_keys: list[str] = [],
     test_data_bucket_name: str = "",
     test_data_path_key: str = "",
     benchmark_sample_size: int = 25,
@@ -33,7 +33,9 @@ def documents_discovery(
 
     Args:
         input_data_bucket_name: S3 (or compatible) bucket containing input documents.
-        input_data_path: Path to folder with input documents within the bucket.
+        input_data_keys: Paths to folders with input documents within the bucket.  Only the
+            first entry is used; the remaining ones are ignored until multi-folder discovery
+            is supported.  Leave empty to discover the whole bucket.
         test_data_bucket_name: S3 bucket containing the test data file.  Leave empty
             to skip test data loading (e.g. for the indexing pipeline).
         test_data_path_key: S3 object key to the JSON test data file.
@@ -126,9 +128,18 @@ def documents_discovery(
             else:
                 input_s3_client = create_s3_client()
 
+            # Discovery accepts a single prefix, so only the first key is honoured.
+            input_data_prefix = input_data_keys[0] if input_data_keys else ""
+            if input_data_keys and len(input_data_keys) > 1:
+                logging.warning(
+                    "Received %d input data keys; only the first one (%s) is used for discovery.",
+                    len(input_data_keys),
+                    input_data_prefix,
+                )
+
             result = discover_documents(
                 bucket_name=input_data_bucket_name,
-                prefix=input_data_path,
+                prefix=input_data_prefix,
                 test_data_doc_names=test_data_doc_names,
                 sampling_enabled=sampling_enabled,
                 sampling_max_size_gb=sampling_max_size,

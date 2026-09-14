@@ -25,7 +25,7 @@ def documents_indexing_pipeline(
     embedding_model_id: str,
     input_data_secret_name: str,
     input_data_bucket_name: str,
-    input_data_key: Optional[str] = None,
+    input_data_keys: Optional[list[str]] = None,
     collection_name: Optional[str] = None,
     embedding_params: Optional[dict] = None,
     chunking_method: str = "recursive",
@@ -49,7 +49,8 @@ def documents_indexing_pipeline(
         input_data_secret_name: Name of the secret with S3 credentials for input data
             ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_S3_ENDPOINT", "AWS_DEFAULT_REGION").
         input_data_bucket_name: Name of the S3 bucket containing input data.
-        input_data_key: Path to folder with input documents within bucket.
+        input_data_keys: Paths to folders with input documents within bucket. Only the
+            first entry is used by document discovery.
         collection_name: Vector store collection to reuse (aligned with
             ``pattern.json`` ``settings.vector_store_binding.collection_name``).
             Omit to create a new collection.
@@ -62,7 +63,7 @@ def documents_indexing_pipeline(
     """
     documents_discovery_task = documents_discovery(
         input_data_bucket_name=input_data_bucket_name,
-        input_data_path=input_data_key,
+        input_data_keys=input_data_keys,
     )
     documents_discovery_task.set_caching_options(False)
     documents_discovery_task.set_cpu_request("2").set_memory_request("8Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(

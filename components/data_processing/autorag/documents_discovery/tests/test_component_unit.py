@@ -64,7 +64,7 @@ class TestDocumentsDiscoveryUnitTests:
         sig = inspect.signature(documents_discovery.python_func)
         params = list(sig.parameters)
         assert "input_data_bucket_name" in params
-        assert "input_data_path" in params
+        assert "input_data_keys" in params
         assert "test_data_bucket_name" in params
         assert "test_data_path_key" in params
         assert "benchmark_sample_size" in params
@@ -86,7 +86,7 @@ class TestDocumentsDiscoveryUnitTests:
         with mock.patch.dict("sys.modules", modules):
             documents_discovery.python_func(
                 input_data_bucket_name="my-bucket",
-                input_data_path="docs/",
+                input_data_keys=["docs/"],
                 sampling_enabled=True,
                 sampling_max_size=2.5,
                 discovered_documents=discovered,
@@ -102,6 +102,43 @@ class TestDocumentsDiscoveryUnitTests:
             s3_client=mock_s3_client,
         )
 
+    def test_uses_only_the_first_input_data_key(self, tmp_path):
+        """Discovery takes a single prefix, so only the first key is forwarded."""
+        modules, mock_create_s3, mock_discover, _ = _make_ai4rag_mocks()
+        mock_create_s3.return_value = mock.MagicMock()
+        mock_discover.return_value = mock.MagicMock()
+
+        discovered = mock.MagicMock()
+        discovered.path = str(tmp_path / "descriptor")
+
+        with mock.patch.dict("sys.modules", modules):
+            documents_discovery.python_func(
+                input_data_bucket_name="my-bucket",
+                input_data_keys=["first/", "second/", "third/"],
+                discovered_documents=discovered,
+            )
+
+        assert mock_discover.call_args.kwargs["prefix"] == "first/"
+
+    @pytest.mark.parametrize("input_data_keys", [[], None])
+    def test_empty_input_data_keys_discovers_whole_bucket(self, tmp_path, input_data_keys):
+        """An empty (or unset) key list falls back to an empty prefix."""
+        modules, mock_create_s3, mock_discover, _ = _make_ai4rag_mocks()
+        mock_create_s3.return_value = mock.MagicMock()
+        mock_discover.return_value = mock.MagicMock()
+
+        discovered = mock.MagicMock()
+        discovered.path = str(tmp_path / "descriptor")
+
+        with mock.patch.dict("sys.modules", modules):
+            documents_discovery.python_func(
+                input_data_bucket_name="my-bucket",
+                input_data_keys=input_data_keys,
+                discovered_documents=discovered,
+            )
+
+        assert mock_discover.call_args.kwargs["prefix"] == ""
+
     def test_saves_result_to_artifact_path(self, tmp_path):
         """DiscoveryResult.save is called with the correct output path."""
         modules, mock_create_s3, mock_discover, _ = _make_ai4rag_mocks()
@@ -115,7 +152,7 @@ class TestDocumentsDiscoveryUnitTests:
         with mock.patch.dict("sys.modules", modules):
             documents_discovery.python_func(
                 input_data_bucket_name="my-bucket",
-                input_data_path="docs/",
+                input_data_keys=["docs/"],
                 discovered_documents=discovered,
             )
 
@@ -138,7 +175,7 @@ class TestDocumentsDiscoveryUnitTests:
         with mock.patch.dict("sys.modules", modules):
             documents_discovery.python_func(
                 input_data_bucket_name="my-bucket",
-                input_data_path="docs/",
+                input_data_keys=["docs/"],
                 test_data_bucket_name="",
                 discovered_documents=discovered,
             )
@@ -159,7 +196,7 @@ class TestDocumentsDiscoveryUnitTests:
             with pytest.raises(ValueError, match="No documents to process"):
                 documents_discovery.python_func(
                     input_data_bucket_name="my-bucket",
-                    input_data_path="docs/",
+                    input_data_keys=["docs/"],
                     discovered_documents=discovered,
                 )
 
@@ -188,7 +225,7 @@ class TestDocumentsDiscoveryWithTestDataUnitTests:
                 input_data_bucket_name="input-bucket",
                 test_data_bucket_name="test-bucket",
                 test_data_path_key="data/test.json",
-                input_data_path="docs/",
+                input_data_keys=["docs/"],
                 test_data=test_data_artifact,
                 discovered_documents=discovered,
             )

@@ -13,7 +13,7 @@ def example_pipeline(
     vector_db_secret_name: str = "vector-db-connection",
     input_data_secret_name: str = "s3-input-connection",
     input_data_bucket_name: str = "my-bucket",
-    input_data_key: str = "",
+    input_data_keys: list[str] = [],
 ):
     """Example pipeline using rag_templates_optimization.
 
@@ -24,7 +24,7 @@ def example_pipeline(
             configuration (MILVUS_* selects Milvus, PGVECTOR_* selects PGVector).
         input_data_secret_name: Name of the K8s secret with S3 credentials.
         input_data_bucket_name: S3 bucket containing input documents.
-        input_data_key: Key for the input data.
+        input_data_keys: Keys for the input data; only the first one is used for discovery.
     """
     extracted_text = dsl.importer(
         artifact_uri="gs://placeholder/extracted_text",
@@ -47,5 +47,5 @@ def example_pipeline(
         vector_db_secret_name=vector_db_secret_name,
         input_data_secret_name=input_data_secret_name,
         input_data_bucket_name=input_data_bucket_name,
-        input_data_key=input_data_key,
+        input_data_keys=input_data_keys,
     )

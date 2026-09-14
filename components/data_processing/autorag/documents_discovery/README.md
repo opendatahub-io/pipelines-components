@@ -13,7 +13,7 @@ Discovers input documents in S3 and optionally downloads benchmark test data for
 | Parameter | Type | Default | Description |
 | --------- | ---- | ------- | ----------- |
 | `input_data_bucket_name` | `str` | `None` | S3 (or compatible) bucket containing input documents. |
-| `input_data_path` | `str` | `""` | Path to folder with input documents within the bucket. |
+| `input_data_keys` | `list[str]` | `[]` | Paths to folders with input documents within the bucket.  Only the first entry is used; the remaining ones are ignored until multi-folder discovery is supported.  Leave empty to discover the whole bucket. |
 | `test_data_bucket_name` | `str` | `""` | S3 bucket containing the test data file.  Leave empty to skip test data loading (e.g. for the indexing pipeline). |
 | `test_data_path_key` | `str` | `""` | S3 object key to the JSON test data file. |
 | `benchmark_sample_size` | `int` | `25` | Maximum number of benchmark records to keep. When the dataset exceeds this limit, a reproducible random sample is drawn (seed 42). Set to 0 to disable sampling. |
@@ -36,7 +36,7 @@ from kfp_components.components.data_processing.autorag.documents_discovery impor
 @dsl.pipeline(name="documents-discovery-example")
 def example_pipeline(
     input_data_bucket_name: str = "my-bucket",
-    input_data_path: str = "documents/",
+    input_data_keys: list[str] = ["documents/"],
     sampling_enabled: bool = True,
     sampling_max_size: float = 1,
 ):
@@ -44,13 +44,13 @@ def example_pipeline(
 
     Args:
         input_data_bucket_name: S3 bucket containing input documents.
-        input_data_path: Path prefix within the bucket.
+        input_data_keys: Path prefixes within the bucket; only the first one is used.
         sampling_enabled: Whether to enable sampling.
         sampling_max_size: Maximum sample size in GB.
     """
     documents_discovery(
         input_data_bucket_name=input_data_bucket_name,
-        input_data_path=input_data_path,
+        input_data_keys=input_data_keys,
         sampling_enabled=sampling_enabled,
         sampling_max_size=sampling_max_size,
     )
