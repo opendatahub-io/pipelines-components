@@ -36,6 +36,11 @@ Refit outputs for all selected models are written under one ``models_artifact``,
 | `known_covariates_names` | `Optional[List[str]]` | `None` | Optional list of known covariate column names. |
 | `preset` | `str` | `speed` | Training quality tier. ``"speed"`` (default) or ``"balanced"`` (may run more than 2x longer). |
 | `eval_metric` | `str` | `mean_absolute_scaled_error` | Metric for model ranking (e.g. ``"mean_absolute_scaled_error"``, ``"weighted_quantile_loss"``). Defaults to ``"mean_absolute_scaled_error"``. Legacy uppercase acronyms (e.g. ``"MASE"``) are accepted and normalized to snake_case. |
+| `run_name` | `str` | `""` | Per-execution MLflow run name recorded as a tag on child runs. Falls back to ``pipeline_name`` when empty. |
+| `log_model_artifacts` | `bool` | `True` | When True, upload each model's predictor and notebook to its MLflow child run. |
+| `register_best_model` | `bool` | `False` | When True, register the best model in the MLflow Model Registry (requires ``model_registry_name``). |
+| `model_registry_name` | `str` | `""` | Registered-model name to use when ``register_best_model`` is True. |
+| `target_stage` | `str` | `""` | Optional deployment-stage value set as a ``target_stage`` tag on the registered best-model version. |
 
 ## Outputs 📤
 

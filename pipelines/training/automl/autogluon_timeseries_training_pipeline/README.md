@@ -43,6 +43,9 @@ to a single combined ``models_artifact``.
 | `top_n` | `int` | `3` | Number of top models to select for the leaderboard and output (default: 3). |
 | `eval_metric` | `str` | `mean_absolute_scaled_error` | Metric for model ranking in snake_case (e.g. ``"mean_absolute_scaled_error"``, ``"weighted_quantile_loss"``) or legacy uppercase acronym form. Defaults to ``"mean_absolute_scaled_error"``. |
 | `preset` | `str` | `speed` | Training quality tier. ``"speed"`` (default, 4 vCPU / 16 GiB) or ``"balanced"`` (may run more than 2x longer, 8 vCPU / 32 GiB). |
+| `register_best_model` | `bool` | `False` | When True, register the best model in the MLflow Model Registry (requires model_registry_name). |
+| `model_registry_name` | `str` | `""` | Registered-model name to use when register_best_model is True. |
+| `target_stage` | `str` | `""` | Optional deployment-stage value set as a ``target_stage`` tag on the registered best-model version. |
 | `test_data_bucket_name` | `str` | `""` | Optional S3-compatible bucket name for a user-provided test dataset. Default: empty string (use the per-series holdout split from training data). |
 | `test_data_file_key` | `str` | `""` | Optional S3 object key for a user-provided test CSV file. Default: empty string (use the per-series holdout split from training data). |
 

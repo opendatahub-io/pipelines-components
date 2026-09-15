@@ -46,6 +46,9 @@ def autogluon_timeseries_training_pipeline(
     top_n: int = 3,
     eval_metric: str = "mean_absolute_scaled_error",
     preset: str = "speed",
+    register_best_model: bool = False,
+    model_registry_name: str = "",
+    target_stage: str = "",
     test_data_bucket_name: str = "",
     test_data_file_key: str = "",
 ):
@@ -117,6 +120,11 @@ def autogluon_timeseries_training_pipeline(
             ``"mean_absolute_scaled_error"``.
         preset: Training quality tier. ``"speed"`` (default, 4 vCPU / 16 GiB) or
             ``"balanced"`` (may run more than 2x longer, 8 vCPU / 32 GiB).
+        register_best_model: When True, register the best model in the MLflow Model Registry
+            (requires model_registry_name).
+        model_registry_name: Registered-model name to use when register_best_model is True.
+        target_stage: Optional deployment-stage value set as a ``target_stage`` tag on the
+            registered best-model version.
         test_data_bucket_name: Optional S3-compatible bucket name for a user-provided test dataset.
             Default: empty string (use the per-series holdout split from training data).
         test_data_file_key: Optional S3 object key for a user-provided test CSV file.
@@ -186,6 +194,9 @@ def autogluon_timeseries_training_pipeline(
     )
 
     # Stage 2: Combined model generation + full refit.
+    # The training component logs results to MLflow incrementally (one nested child run per
+    # model) when the platform injects KFP_MLFLOW_CONFIG. Tracking is best-effort: missing
+    # config or MLflow errors are recorded on component_status only and never fail the run.
     # Resource limits differ by preset: medium_quality needs more CPU/memory.
     _training_kwargs = dict(
         target=target,
@@ -199,6 +210,7 @@ def autogluon_timeseries_training_pipeline(
         known_covariates_names=known_covariates_names,
         pipeline_name=dsl.PIPELINE_JOB_RESOURCE_NAME_PLACEHOLDER,
         run_id=dsl.PIPELINE_JOB_ID_PLACEHOLDER,
+        run_name=dsl.PIPELINE_JOB_NAME_PLACEHOLDER,
         uses_synthetic_id=data_loader_task.outputs["uses_synthetic_id"],
         sample_rows=data_loader_task.outputs["sample_rows"],
         sampling_config=data_loader_task.outputs["sample_config"],
@@ -206,7 +218,11 @@ def autogluon_timeseries_training_pipeline(
         extra_train_data_path=data_loader_task.outputs["extra_train_data_path"],
         preset=preset,
         eval_metric=eval_metric,
+        register_best_model=register_best_model,
+        model_registry_name=model_registry_name,
+        target_stage=target_stage,
     )
+
     with dsl.If(preset == "balanced"):
         training_task_bl = autogluon_timeseries_models_training(**_training_kwargs)
         training_task_bl.set_caching_options(False)

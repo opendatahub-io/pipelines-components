@@ -42,6 +42,9 @@ def autogluon_tabular_training_pipeline(
     positive_class: str = "",
     eval_metric: str = "",
     preset: str = "speed",
+    register_best_model: bool = False,
+    model_registry_name: str = "",
+    target_stage: str = "",
     test_data_bucket_name: str = "",
     test_data_file_key: str = "",
 ):
@@ -126,6 +129,9 @@ def autogluon_tabular_training_pipeline(
         positive_class: Optional label value for the positive class in binary classification. Defaults to the second unique class after sorting label values.
         eval_metric: Metric used for model ranking. Empty string (default) is resolved by the component to "r2" for regression and "accuracy" for binary and multiclass classification.
         preset: Training quality tier. "speed" (default, 4 vCPU / 16 GiB) or "balanced" (may run more than 2x longer, 8 vCPU / 32 GiB).
+        register_best_model: When True, register the best model in the MLflow Model Registry (requires model_registry_name).
+        model_registry_name: Registered-model name to use when register_best_model is True.
+        target_stage: Optional deployment-stage value set as a "target_stage" tag on the registered best-model version.
         test_data_bucket_name: Optional S3-compatible bucket name for a user-provided test dataset.
             Default: empty string (use the holdout split from training data).
         test_data_file_key: Optional S3 object key for a user-provided test CSV file.
@@ -192,6 +198,9 @@ def autogluon_tabular_training_pipeline(
     )
 
     # Stage 1 + 2: Model selection and sequential refit of top N models.
+    # The training component logs results to MLflow incrementally (one nested child run per
+    # model) when the platform injects KFP_MLFLOW_CONFIG. Tracking is best-effort: missing
+    # config or MLflow errors are recorded on component_status only and never fail the run.
     # Resource limits differ by preset: balanced needs more CPU/memory than speed.
     _training_kwargs = dict(
         label_column=label_column,
@@ -203,13 +212,18 @@ def autogluon_tabular_training_pipeline(
         workspace_path=dsl.WORKSPACE_PATH_PLACEHOLDER,
         pipeline_name=dsl.PIPELINE_JOB_RESOURCE_NAME_PLACEHOLDER,
         run_id=dsl.PIPELINE_JOB_ID_PLACEHOLDER,
+        run_name=dsl.PIPELINE_JOB_NAME_PLACEHOLDER,
         sample_row=data_loader_task.outputs["sample_row"],
         sampling_config=data_loader_task.outputs["sample_config"],
         split_config=data_loader_task.outputs["split_config"],
         extra_train_data_path=data_loader_task.outputs["extra_train_data_path"],
         preset=preset,
         eval_metric=eval_metric,
+        register_best_model=register_best_model,
+        model_registry_name=model_registry_name,
+        target_stage=target_stage,
     )
+
     with dsl.If(preset == "balanced"):
         training_task_bl = autogluon_models_training(**_training_kwargs)
         training_task_bl.set_caching_options(False)

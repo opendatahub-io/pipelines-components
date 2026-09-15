@@ -34,6 +34,11 @@ mutates predictor state. All artifacts are written under a single output artifac
 | `positive_class` | `str` | `""` | Label value for the positive class in **binary** classification (e.g. ``"1"`` or ``"yes"``). Passed to ``TabularPredictor`` when set. Empty string (default) lets AutoGluon infer the positive class when ``fit`` runs. Ignored for ``multiclass`` and ``regression``. |
 | `preset` | `str` | `speed` | Training quality tier. ``"speed"`` (default) or ``"balanced"`` (may run more than 2x longer). |
 | `eval_metric` | `str` | `""` | Metric for model ranking (e.g. ``"r2"``, ``"accuracy"``). Defaults to ``"r2"`` for regression and ``"accuracy"`` otherwise. |
+| `run_name` | `str` | `""` | Per-execution MLflow run name recorded as a tag on child runs. Falls back to ``pipeline_name`` when empty. |
+| `log_model_artifacts` | `bool` | `True` | When True, upload each model's predictor (model.pkl) and notebook to its MLflow child run. |
+| `register_best_model` | `bool` | `False` | When True, register the best model in the MLflow Model Registry (requires ``model_registry_name``). |
+| `model_registry_name` | `str` | `""` | Registered-model name to use when ``register_best_model`` is True. |
+| `target_stage` | `str` | `""` | Optional deployment-stage value set as a ``target_stage`` tag on the registered best-model version. |
 
 ## Outputs 📤
 

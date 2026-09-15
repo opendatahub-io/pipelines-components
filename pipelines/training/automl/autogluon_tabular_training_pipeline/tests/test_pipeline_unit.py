@@ -55,6 +55,9 @@ class TestAutogluonTabularTrainingPipelineUnitTests:
             "positive_class",
             "preset",
             "eval_metric",
+            "register_best_model",
+            "model_registry_name",
+            "target_stage",
             "test_data_bucket_name",
             "test_data_file_key",
         }
@@ -64,6 +67,9 @@ class TestAutogluonTabularTrainingPipelineUnitTests:
         assert inputs["top_n"].default == 3
         assert inputs["preset"].default == "speed"
         assert inputs["eval_metric"].default == ""
+        assert inputs["register_best_model"].default is False
+        assert inputs["model_registry_name"].default == ""
+        assert inputs["target_stage"].default == ""
         assert inputs["test_data_bucket_name"].default == ""
         assert inputs["test_data_file_key"].default == ""
 
@@ -197,6 +203,29 @@ class TestAutogluonTabularTrainingPipelineUnitTests:
             pipeline_name="autogluon_tabular_training_pipeline (training tiers only)",
             allow_extra=True,
         )
+
+    def test_compiled_pipeline_wires_mlflow_registry_inputs_to_training(self):
+        """Registry inputs are forwarded into the training task.
+
+        The training task now logs to MLflow; the standalone mlflow-logger step no longer exists.
+        """
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as tmp_file:
+            tmp_path = tmp_file.name
+        try:
+            compiler.Compiler().compile(
+                pipeline_func=autogluon_tabular_training_pipeline,
+                package_path=tmp_path,
+            )
+            content = Path(tmp_path).read_text(encoding="utf-8")
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
+
+        assert "automl-mlflow-logger" not in content
+        assert "exec-autogluon-models-training:" in content
+        assert "exec-autogluon-models-training-2:" in content
+        assert "componentInputParameter: register_best_model" in content
+        assert "componentInputParameter: model_registry_name" in content
+        assert "componentInputParameter: target_stage" in content
 
     def test_compiled_pipeline_data_loader_declares_task_type_and_label(self):
         """Tabular data loader component exposes task_type and label_column inputs."""

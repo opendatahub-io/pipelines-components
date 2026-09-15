@@ -46,6 +46,45 @@ class TestPublishComponentStageMap:
         assert component_stage_map_artifact.metadata["display_name"] == "Component Stage Map"
         assert component_stage_map_artifact.metadata["pipeline_id"] == PIPELINE_TABULAR
 
+    def test_mlflow_block_disabled_when_config_unset(self, component_stage_map_artifact, monkeypatch):
+        """Emit a disabled mlflow block when KFP_MLFLOW_CONFIG is unset."""
+        monkeypatch.delenv("KFP_MLFLOW_CONFIG", raising=False)
+        publish_component_stage_map.python_func(
+            pipeline_id=PIPELINE_TABULAR,
+            run_id="run-abc",
+            component_stage_map=component_stage_map_artifact,
+        )
+        document = json.loads(
+            (Path(component_stage_map_artifact.path) / "component_stage_map.json").read_text(encoding="utf-8")
+        )
+        assert document["mlflow"] == {"tracking_enabled": False}
+        assert component_stage_map_artifact.metadata["mlflow_tracking_enabled"] == "False"
+
+    def test_mlflow_block_enabled_from_env(self, component_stage_map_artifact, monkeypatch):
+        """Populate the mlflow block from KFP_MLFLOW_CONFIG when tracking is enabled."""
+        monkeypatch.setenv(
+            "KFP_MLFLOW_CONFIG",
+            json.dumps(
+                {
+                    "endpoint": "https://mlflow.example.com",
+                    "experimentId": "7",
+                    "parentRunId": "parent-run",
+                }
+            ),
+        )
+        publish_component_stage_map.python_func(
+            pipeline_id=PIPELINE_TABULAR,
+            run_id="run-abc",
+            component_stage_map=component_stage_map_artifact,
+        )
+        document = json.loads(
+            (Path(component_stage_map_artifact.path) / "component_stage_map.json").read_text(encoding="utf-8")
+        )
+        assert document["mlflow"]["tracking_enabled"] is True
+        assert document["mlflow"]["tracking_uri"] == "https://mlflow.example.com"
+        assert document["mlflow"]["run_url"] == "https://mlflow.example.com/#/experiments/7/runs/parent-run"
+        assert component_stage_map_artifact.metadata["mlflow_tracking_enabled"] == "True"
+
     def test_rejects_empty_pipeline_id(self, component_stage_map_artifact):
         """Reject blank pipeline_id."""
         with pytest.raises(ValueError, match="pipeline_id"):
