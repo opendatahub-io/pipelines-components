@@ -12,18 +12,18 @@ def grpo_eval(
 ) -> NamedTuple("GrpoEvalOutputs", [("promotion_passed", bool)]):
     """Evaluate GRPO training results from the shared pipeline workspace.
 
-    Reads the provisional ``training_results.json`` contract written by the GRPO training
-    component. The file path is supplied by the pipeline, allowing the shared PVC layout
-    to change without changing this component's public interface.
+    Reads ART's ``training_results.json`` from the caller-provided shared-PVC path. The
+    GRPO pipeline supplies ``{workspace_path}/checkpoints/training_results.json``, while
+    the complete path input keeps the component independent of the PVC mount location.
 
-    Required JSON fields are ``mean_reward``, ``full_match_rate``, ``reward_history``,
-    and ``timing_history``. The first two fields and every reward-history entry must be
-    finite numbers. ``timing_history`` must be a list; its entry schema intentionally
-    remains producer-defined while ART's final output contract is being established.
+    Required JSON fields are ``final_mean_reward``, ``reward_history``,
+    ``full_match_history``, and ``timing_history``. The final reward and every history
+    entry must be a finite number. Reward and full-match histories must have the same
+    number of iterations.
 
     Args:
-        training_results_path: Mounted path to the training component's
-            ``training_results.json`` file.
+        training_results_path: Mounted path to ART's
+            ``checkpoints/training_results.json`` file.
         output_metrics: KFP Metrics artifact receiving the GRPO scalar metrics.
 
     Returns:
@@ -61,26 +61,43 @@ def grpo_eval(
     if not isinstance(results, dict):
         raise ValueError("Training results JSON must contain a top-level object")
 
-    required_fields = ("mean_reward", "full_match_rate", "reward_history", "timing_history")
+    required_fields = (
+        "final_mean_reward",
+        "reward_history",
+        "full_match_history",
+        "timing_history",
+    )
     for field_name in required_fields:
         if field_name not in results:
             raise ValueError(f"Training results JSON missing required field: '{field_name}'")
 
-    mean_reward = require_finite_number(results["mean_reward"], "mean_reward")
-    full_match_rate = require_finite_number(results["full_match_rate"], "full_match_rate")
+    mean_reward = require_finite_number(results["final_mean_reward"], "final_mean_reward")
     reward_history = results["reward_history"]
+    full_match_history = results["full_match_history"]
     timing_history = results["timing_history"]
 
     if not isinstance(reward_history, list) or not reward_history:
         raise ValueError("'reward_history' must be a non-empty list")
+    if not isinstance(full_match_history, list) or not full_match_history:
+        raise ValueError("'full_match_history' must be a non-empty list")
+    if len(reward_history) != len(full_match_history):
+        raise ValueError("'reward_history' and 'full_match_history' must have the same length")
     if not isinstance(timing_history, list):
         raise ValueError("'timing_history' must be a list")
 
     normalized_rewards = [
         require_finite_number(reward, f"reward_history[{index}]") for index, reward in enumerate(reward_history)
     ]
+    normalized_match_rates = [
+        require_finite_number(match_rate, f"full_match_history[{index}]")
+        for index, match_rate in enumerate(full_match_history)
+    ]
+    normalized_timings = [
+        require_finite_number(timing, f"timing_history[{index}]") for index, timing in enumerate(timing_history)
+    ]
     initial_reward = normalized_rewards[0]
     final_reward = normalized_rewards[-1]
+    full_match_rate = normalized_match_rates[-1]
     reward_improvement = final_reward - initial_reward
     promotion_passed = len(normalized_rewards) > 1 and final_reward > initial_reward
 
@@ -90,6 +107,10 @@ def grpo_eval(
     output_metrics.log_metric("final_reward", final_reward)
     output_metrics.log_metric("reward_improvement", reward_improvement)
     output_metrics.log_metric("training_iterations", float(len(normalized_rewards)))
+    if normalized_timings:
+        output_metrics.log_metric("initial_iteration_time_seconds", normalized_timings[0])
+        output_metrics.log_metric("final_iteration_time_seconds", normalized_timings[-1])
+        output_metrics.log_metric("mean_iteration_time_seconds", sum(normalized_timings) / len(normalized_timings))
 
     return NamedTuple("GrpoEvalOutputs", [("promotion_passed", bool)])(
         promotion_passed=promotion_passed,
