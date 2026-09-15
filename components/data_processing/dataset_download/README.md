@@ -6,7 +6,7 @@
 
 Download and prepare datasets from multiple sources.
 
-Validates that datasets follow chat template format (messages/conversations with role/content).
+Validates dataset format based on the dataset_format parameter: - "chat": Chat template format (messages/conversations with role/content) - "tool_call": Tool-call format for GRPO training (single-turn or multi-turn traces)
 
 ## Inputs 📥
 
@@ -18,6 +18,7 @@ Validates that datasets follow chat template format (messages/conversations with
 | `pvc_mount_path` | `str` | `None` | Path where the shared PVC is mounted |
 | `train_split_ratio` | `float` | `0.9` | Train/eval split (0.9 = 90%/10%, 1.0 = no split, all for training) |
 | `subset_count` | `int` | `0` | Number of examples to use (0 = use all) |
+| `dataset_format` | `str` | `chat` | Validation format - "chat" (default) or "tool_call" |
 | `shared_log_file` | `str` | `pipeline_log.txt` | Name of the shared log file |
 
 ## Metadata 🗂️

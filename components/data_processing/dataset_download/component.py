@@ -1,13 +1,17 @@
 """Dataset Download Component.
 
 This component downloads datasets from multiple sources (HuggingFace, S3, HTTP, local/PVC),
-validates the format for chat templates, splits into train/eval, and saves to PVC as JSONL.
+validates the format, splits into train/eval, and saves to PVC as JSONL.
 
 Supported URI schemes:
 - hf://dataset_name or dataset_name - HuggingFace datasets
 - s3://bucket/path/to/dataset.jsonl - AWS S3 datasets (JSONL format)
 - http://... or https://... - HTTP/HTTPS URLs (e.g., MinIO shared links)
 - pvc://path/to/dataset.jsonl or /absolute/path - Local/PVC file paths (JSONL format)
+
+Supported dataset formats (controlled by dataset_format parameter):
+- "chat" (default): Chat template format with messages/conversations containing role/content
+- "tool_call": Tool-call format for GRPO training (single-turn or multi-turn traces)
 """
 
 from kfp import dsl
@@ -24,11 +28,14 @@ def dataset_download(
     pvc_mount_path: str,
     train_split_ratio: float = 0.9,  # 1.0 = no eval split (all data for training)
     subset_count: int = 0,
+    dataset_format: str = "chat",
     shared_log_file: str = "pipeline_log.txt",
 ):
     """Download and prepare datasets from multiple sources.
 
-    Validates that datasets follow chat template format (messages/conversations with role/content).
+    Validates dataset format based on the dataset_format parameter:
+    - "chat": Chat template format (messages/conversations with role/content)
+    - "tool_call": Tool-call format for GRPO training (single-turn or multi-turn traces)
 
     Args:
         train_dataset: Output artifact for training dataset (JSONL format)
@@ -37,6 +44,7 @@ def dataset_download(
         pvc_mount_path: Path where the shared PVC is mounted
         train_split_ratio: Train/eval split (0.9 = 90%/10%, 1.0 = no split, all for training)
         subset_count: Number of examples to use (0 = use all)
+        dataset_format: Validation format - "chat" (default) or "tool_call"
         shared_log_file: Name of the shared log file
     """
     import os
@@ -129,6 +137,77 @@ def dataset_download(
                     )
 
         log_message(f"Dataset validated: {len(dataset)} examples in chat format")
+        return True
+
+    def _has_tool_calls_in_messages(messages: list) -> bool:
+        """Check if any assistant message in the list contains tool_calls."""
+        for msg in messages:
+            if not isinstance(msg, dict) or msg.get("role") != "assistant":
+                continue
+            tool_calls = msg.get("tool_calls")
+            if isinstance(tool_calls, list) and tool_calls:
+                return True
+        return False
+
+    def validate_tool_call_format_dataset(dataset: Dataset) -> bool:
+        """Validate that dataset follows tool-call format for GRPO training.
+
+        Detects format from the first sample and validates all checked samples match:
+        - Single-turn: each sample has 'target_tool_name' and 'question'
+        - Multi-turn: each sample has 'messages' with at least one assistant tool_calls entry
+        """
+        if len(dataset) == 0:
+            raise ValueError("Dataset is empty")
+
+        num_to_check = min(100, len(dataset))
+        first = dataset[0]
+
+        # Detect format from first sample (use .get() because Arrow-backed
+        # datasets always contain all columns; missing values are None)
+        is_single_turn = bool(first.get("target_tool_name")) and bool(first.get("question"))
+        first_messages = first.get("messages", None)
+        is_multi_turn = (
+            isinstance(first_messages, list) and len(first_messages) > 0 and _has_tool_calls_in_messages(first_messages)
+        )
+
+        if not is_single_turn and not is_multi_turn:
+            raise ValueError(
+                f"Item 0 does not match any supported tool-call format. "
+                f"Expected either (1) single-turn with 'target_tool_name' and 'question' fields, "
+                f"or (2) multi-turn with 'messages' containing assistant tool_calls. "
+                f"Found keys: {list(first.keys())}"
+            )
+
+        if is_single_turn:
+            for i in range(num_to_check):
+                item = dataset[i]
+                if not item.get("target_tool_name"):
+                    raise ValueError(
+                        f"Item {i}: 'target_tool_name' is missing or empty. "
+                        f"All samples must be single-turn format (detected from first sample)."
+                    )
+                if not item.get("question"):
+                    raise ValueError(
+                        f"Item {i}: 'question' is missing or empty. "
+                        f"All samples must be single-turn format (detected from first sample)."
+                    )
+            log_message(f"Dataset validated: {len(dataset)} examples in tool-call format (single-turn)")
+        else:
+            for i in range(num_to_check):
+                item = dataset[i]
+                messages = item.get("messages", None)
+                if not isinstance(messages, list) or len(messages) == 0:
+                    raise ValueError(
+                        f"Item {i}: 'messages' must be a non-empty list. "
+                        f"All samples must be multi-turn format (detected from first sample)."
+                    )
+                if not _has_tool_calls_in_messages(messages):
+                    raise ValueError(
+                        f"Item {i}: no assistant message with 'tool_calls' found in 'messages'. "
+                        f"All samples must be multi-turn format (detected from first sample)."
+                    )
+            log_message(f"Dataset validated: {len(dataset)} examples in tool-call format (multi-turn)")
+
         return True
 
     def split_hf_id_and_config(dataset_path: str) -> tuple[str, str | None]:
@@ -338,9 +417,15 @@ def dataset_download(
             else:
                 log_message(f"Subset count ({subset_count}) >= dataset size ({original_size}), using all examples")
 
-        # Validate chat template format
-        log_message("Validating chat template format...")
-        validate_chat_format_dataset(dataset)
+        # Validate dataset format
+        if dataset_format == "chat":
+            log_message("Validating chat template format...")
+            validate_chat_format_dataset(dataset)
+        elif dataset_format == "tool_call":
+            log_message("Validating tool-call format...")
+            validate_tool_call_format_dataset(dataset)
+        else:
+            raise ValueError(f"Unsupported dataset_format: '{dataset_format}'. Must be 'chat' or 'tool_call'.")
 
         # Split dataset (or use all for training if ratio is 1.0)
         log_message(f"Splitting dataset with {len(dataset)} examples...")
