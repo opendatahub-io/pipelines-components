@@ -1,0 +1,13 @@
+name: grpo_eval
+stability: alpha
+dependencies:
+  kubeflow:
+    - name: Pipelines
+      version: '>=2.15.2'
+tags:
+  - evaluation
+  - grpo
+  - reinforcement_learning
+  - metrics
+  - finetuning
+lastVerified: 2026-09-15T00:00:00Z
