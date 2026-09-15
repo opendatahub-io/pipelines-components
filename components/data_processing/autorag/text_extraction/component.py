@@ -25,6 +25,12 @@ def text_extraction(
 
     Thin wrapper that delegates to ``ai4rag.utils.data.text_extraction.extract_text``.
 
+    OCR is always enabled. Docling only runs RapidOCR on pages it flags as needing it,
+    so born-digital documents are unaffected, and scanned or image-only documents no
+    longer extract as empty. This requires the RapidOCR models under
+    ``$DOCLING_ARTIFACTS_PATH/RapidOcr/``, which the AutoRAG image bakes in; ai4rag
+    raises ``FileNotFoundError`` when they are absent.
+
     Args:
         documents_descriptor: Input artifact containing
             documents_descriptor.json with bucket, prefix, and documents list.
@@ -87,8 +93,13 @@ def text_extraction(
             output_dir = Path(extracted_text.path)
             output_dir.mkdir(parents=True, exist_ok=True)
 
+            # ai4rag >= 0.10 takes every Docling knob through this config rather than
+            # as extract_text kwargs. The OCR model paths and ocr_lang are left at their
+            # defaults, so ai4rag resolves the RapidOCR models baked into the image under
+            # $DOCLING_ARTIFACTS_PATH/RapidOcr/ and defaults the language to ("english",).
             docling_config = DoclingExtractionConfig(
                 do_table_structure=do_table_structure,
+                do_ocr=True,
             )
 
             extract_text(
