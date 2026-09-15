@@ -167,6 +167,7 @@ def autogluon_timeseries_training_pipeline(
         known_covariates_names=known_covariates_names,
         test_data_bucket_name=test_data_bucket_name,
         test_data_file_key=test_data_file_key,
+        preset=preset,
     )
     data_loader_task.after(component_stage_map_task)
     data_loader_task.set_caching_options(False)

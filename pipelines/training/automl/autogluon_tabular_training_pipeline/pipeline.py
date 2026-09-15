@@ -173,6 +173,7 @@ def autogluon_tabular_training_pipeline(
         task_type=task_type,
         test_data_bucket_name=test_data_bucket_name,
         test_data_file_key=test_data_file_key,
+        preset=preset,
     )
     data_loader_task.after(component_stage_map_task)
     data_loader_task.set_caching_options(False)

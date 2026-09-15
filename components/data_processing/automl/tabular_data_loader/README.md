@@ -6,7 +6,7 @@
 
 Automl Data Loader component.
 
-Loads tabular (CSV) data from S3 in batches, sampling up to 100 MB of data, then splits the sampled data into test, selection-train, and extra-train sets.
+Loads tabular (CSV) data from S3 in batches, sampling up to a preset-dependent size budget (``"speed"``: 100 MB, ``"balanced"``: 1 GB), then splits the sampled data into test, selection-train, and extra-train sets.
 
 The component reads data in chunks to efficiently handle large files without loading the entire dataset into memory at once. After sampling, it performs a two-stage split:
 
@@ -41,6 +41,7 @@ Authentication uses AWS-style credentials provided via environment variables (e.
 | `selection_train_size` | `float` | `0.3` | Fraction of the train portion used for model selection (default 0.3). |
 | `test_data_bucket_name` | `str` | `""` | S3 bucket name for user-provided test dataset (default: empty string). |
 | `test_data_file_key` | `str` | `""` | S3 object key of the user-provided test CSV (default: empty string). |
+| `preset` | `str` | `speed` | Training quality tier controlling the sampling size budget. ``"speed"`` (default) samples up to 100 MB; ``"balanced"`` samples up to 1 GB. The cap for user-provided test datasets (50 MB) is unaffected by this setting. |
 
 ## Outputs 📤
 
