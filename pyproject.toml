@@ -78,6 +78,7 @@ packages = [
     "kfp_components.components.evaluation",
     "kfp_components.components.evaluation.evalhub",
     "kfp_components.components.evaluation.evalhub.kserve",
+    "kfp_components.components.evaluation.grpo_eval",
     "kfp_components.components.evaluation.lm_eval",
     "kfp_components.components.training",
     "kfp_components.components.training.automl",
