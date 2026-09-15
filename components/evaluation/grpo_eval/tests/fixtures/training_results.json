@@ -1,0 +1,6 @@
+{
+  "mean_reward": 0.67,
+  "full_match_rate": 0.75,
+  "reward_history": [0.33, 0.48, 0.67],
+  "timing_history": [12.4, 11.9, 11.5]
+}
