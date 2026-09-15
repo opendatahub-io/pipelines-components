@@ -6,16 +6,15 @@
 
 Evaluate GRPO training results from the shared pipeline workspace.
 
-Reads the provisional ``training_results.json`` contract written by the GRPO training component. The file path is supplied by the pipeline, allowing the shared PVC layout to change without changing this component's public interface.
+Reads ART's ``training_results.json`` from the caller-provided shared-PVC path. The GRPO pipeline supplies ``{workspace_path}/checkpoints/training_results.json``, while the complete path input keeps the component independent of the PVC mount location.
 
-Required JSON fields are ``mean_reward``, ``full_match_rate``, ``reward_history``, and ``timing_history``. The first two fields and every reward-history entry must be finite numbers. ``timing_history`` must be a list; its entry schema intentionally remains producer-defined while ART's final output
-contract is being established.
+Required JSON fields are ``final_mean_reward``, ``reward_history``, ``full_match_history``, and ``timing_history``. The final reward and every history entry must be a finite number. Reward and full-match histories must have the same number of iterations.
 
 ## Inputs 📥
 
 | Parameter | Type | Default | Description |
 | --------- | ---- | ------- | ----------- |
-| `training_results_path` | `str` | `None` | Mounted path to the training component's ``training_results.json`` file. |
+| `training_results_path` | `str` | `None` | Mounted path to ART's ``checkpoints/training_results.json`` file. |
 | `output_metrics` | `dsl.Output[dsl.Metrics]` | `None` | KFP Metrics artifact receiving the GRPO scalar metrics. |
 
 ## Outputs 📤

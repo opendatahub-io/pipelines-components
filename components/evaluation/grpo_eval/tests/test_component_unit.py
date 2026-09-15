@@ -70,6 +70,9 @@ def test_improving_results_log_metrics_and_pass_promotion(tmp_path: Path):
         "final_reward": 0.67,
         "reward_improvement": pytest.approx(0.34),
         "training_iterations": 3.0,
+        "initial_iteration_time_seconds": 12.4,
+        "final_iteration_time_seconds": 11.5,
+        "mean_iteration_time_seconds": pytest.approx(11.933333333333334),
     }
 
 
@@ -90,9 +93,9 @@ def test_non_improving_or_single_reward_does_not_pass_promotion(
     results_path = write_results(
         tmp_path / "training_results.json",
         {
-            "mean_reward": 0.5,
-            "full_match_rate": 0.5,
+            "final_mean_reward": 0.5,
             "reward_history": reward_history,
+            "full_match_history": [0.5] * len(reward_history),
             "timing_history": [],
         },
     )
@@ -109,48 +112,75 @@ def test_non_improving_or_single_reward_does_not_pass_promotion(
         ([], "top-level object"),
         (
             {
-                "mean_reward": True,
-                "full_match_rate": 0.5,
+                "final_mean_reward": True,
                 "reward_history": [0.2, 0.3],
+                "full_match_history": [0.3, 0.4],
                 "timing_history": [],
             },
-            "mean_reward.*finite number",
+            "final_mean_reward.*finite number",
         ),
         (
             {
-                "mean_reward": 0.5,
-                "full_match_rate": "0.5",
+                "final_mean_reward": 0.5,
                 "reward_history": [0.2, 0.3],
+                "full_match_history": [],
                 "timing_history": [],
             },
-            "full_match_rate.*finite number",
+            "full_match_history.*non-empty list",
         ),
         (
             {
-                "mean_reward": 0.5,
-                "full_match_rate": 0.5,
+                "final_mean_reward": 0.5,
                 "reward_history": [],
+                "full_match_history": [],
                 "timing_history": [],
             },
             "reward_history.*non-empty list",
         ),
         (
             {
-                "mean_reward": 0.5,
-                "full_match_rate": 0.5,
+                "final_mean_reward": 0.5,
                 "reward_history": [0.2, math.inf],
+                "full_match_history": [0.3, 0.4],
                 "timing_history": [],
             },
             "reward_history\\[1\\].*finite number",
         ),
         (
             {
-                "mean_reward": 0.5,
-                "full_match_rate": 0.5,
+                "final_mean_reward": 0.5,
                 "reward_history": [0.2, 0.3],
+                "full_match_history": [0.3, 0.4],
                 "timing_history": {},
             },
             "timing_history.*list",
+        ),
+        (
+            {
+                "final_mean_reward": 0.5,
+                "reward_history": [0.2, 0.3],
+                "full_match_history": [0.4],
+                "timing_history": [],
+            },
+            "full_match_history.*same length",
+        ),
+        (
+            {
+                "final_mean_reward": 0.5,
+                "reward_history": [0.2, 0.3],
+                "full_match_history": [0.3, math.inf],
+                "timing_history": [],
+            },
+            "full_match_history\\[1\\].*finite number",
+        ),
+        (
+            {
+                "final_mean_reward": 0.5,
+                "reward_history": [0.2, 0.3],
+                "full_match_history": [0.3, 0.4],
+                "timing_history": [math.inf],
+            },
+            "timing_history\\[0\\].*finite number",
         ),
     ],
 )
