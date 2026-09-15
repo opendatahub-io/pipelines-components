@@ -1,3 +1,4 @@
+---
 # Base image allowlist for scripts/validate_base_images/validate_base_images.py
 #
 # This file defines base images that are permitted when validating
@@ -11,6 +12,7 @@
 # - allowed_image_patterns: list of regex patterns matched against the full image
 allowed_images:
   - 'quay.io/opendatahub/odh-th06-cpu-torch291-py312:odh-3.4'
+  - 'quay.io/opendatahub/odh-th-torch-cuda-py312:odh-3.6-ea.2'
   - 'registry.access.redhat.com/ubi9/python-311:latest'
 allowed_image_patterns:
   - '^ghcr\.io/kubeflow/.*$'
