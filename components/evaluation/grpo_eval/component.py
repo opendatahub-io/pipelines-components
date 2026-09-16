@@ -5,7 +5,11 @@ from typing import NamedTuple
 from kfp import dsl
 
 
-@dsl.component(base_image="registry.access.redhat.com/ubi9/python-311:latest")
+@dsl.component(
+    base_image="quay.io/opendatahub/odh-th-torch-cpu-py312:odh-3.6-ea.2",
+    kfp_package_path="kfp==2.16.1",
+    pip_index_urls=["https://pypi.org/simple"],
+)
 def grpo_eval(
     training_results_path: str,
     output_metrics: dsl.Output[dsl.Metrics],
@@ -63,6 +67,8 @@ def grpo_eval(
         reward_range = reward_max - reward_min
         padding = reward_range * 0.05 if reward_range else max(abs(reward_min) * 0.05, 0.05)
         y_min, y_max = reward_min - padding, reward_max + padding
+        if not all(math.isfinite(value) for value in (reward_range, y_min, y_max)):
+            raise ValueError("'reward_history' range is too large to render")
 
         def x_coordinate(index: int) -> float:
             if len(rewards) == 1:

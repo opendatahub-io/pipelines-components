@@ -2,6 +2,7 @@
 
 import json
 import math
+import sys
 import tempfile
 from pathlib import Path
 
@@ -64,6 +65,23 @@ def test_component_signature():
     assert set(spec.outputs) == {"output_metrics", "output_reward_chart", "promotion_passed"}
 
 
+def test_component_uses_training_hub_cpu_image():
+    """The component uses the shared Training Hub CPU image."""
+    assert (
+        grpo_eval.component_spec.implementation.container.image
+        == "quay.io/opendatahub/odh-th-torch-cpu-py312:odh-3.6-ea.2"
+    )
+
+
+def test_component_installs_its_kfp_runtime_from_pypi():
+    """The Training Hub image does not bundle the KFP runtime."""
+    command = " ".join(grpo_eval.component_spec.implementation.container.command)
+
+    assert "kfp==2.16.1" in command
+    assert "https://pypi.org/simple" in command
+    assert "--no-deps" not in command
+
+
 def test_improving_results_log_metrics_and_pass_promotion(tmp_path: Path):
     """An improving reward history is promoted and produces expected KFP metrics."""
     fixture_path = Path(__file__).parent / "fixtures" / "training_results.json"
@@ -122,6 +140,22 @@ def test_non_improving_or_single_reward_does_not_pass_promotion(
     result, _, _ = run_component(results_path)
 
     assert result.promotion_passed is expected_promotion
+
+
+def test_extreme_reward_range_raises_value_error(tmp_path: Path):
+    """Unrenderable finite reward ranges fail before SVG coordinates are created."""
+    results_path = write_results(
+        tmp_path / "training_results.json",
+        {
+            "final_mean_reward": 0.0,
+            "reward_history": [-sys.float_info.max, sys.float_info.max],
+            "full_match_history": [0.0, 0.0],
+            "timing_history": [],
+        },
+    )
+
+    with pytest.raises(ValueError, match="range is too large to render"):
+        run_component(results_path)
 
 
 @pytest.mark.parametrize(
