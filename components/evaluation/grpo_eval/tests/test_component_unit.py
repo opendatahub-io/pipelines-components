@@ -73,6 +73,7 @@ def test_improving_results_log_metrics_and_pass_promotion(tmp_path: Path):
         "initial_iteration_time_seconds": 12.4,
         "final_iteration_time_seconds": 11.5,
         "mean_iteration_time_seconds": pytest.approx(11.933333333333334),
+        "promotion_passed": 1.0,
     }
 
 

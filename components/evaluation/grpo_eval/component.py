@@ -5,7 +5,7 @@ from typing import NamedTuple
 from kfp import dsl
 
 
-@dsl.component(base_image="python:3.11")
+@dsl.component(base_image="registry.access.redhat.com/ubi9/python-311:latest")
 def grpo_eval(
     training_results_path: str,
     output_metrics: dsl.Output[dsl.Metrics],
@@ -19,7 +19,9 @@ def grpo_eval(
     Required JSON fields are ``final_mean_reward``, ``reward_history``,
     ``full_match_history``, and ``timing_history``. The final reward and every history
     entry must be a finite number. Reward and full-match histories must have the same
-    number of iterations.
+    number of iterations. The logged ``mean_reward`` is ART's reported final aggregate
+    reward, while ``final_reward`` is the last entry in ``reward_history`` used for the
+    promotion comparison.
 
     Args:
         training_results_path: Mounted path to ART's
@@ -111,6 +113,7 @@ def grpo_eval(
         output_metrics.log_metric("initial_iteration_time_seconds", normalized_timings[0])
         output_metrics.log_metric("final_iteration_time_seconds", normalized_timings[-1])
         output_metrics.log_metric("mean_iteration_time_seconds", sum(normalized_timings) / len(normalized_timings))
+    output_metrics.log_metric("promotion_passed", float(promotion_passed))
 
     return NamedTuple("GrpoEvalOutputs", [("promotion_passed", bool)])(
         promotion_passed=promotion_passed,

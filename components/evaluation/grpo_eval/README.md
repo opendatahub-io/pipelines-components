@@ -8,7 +8,8 @@ Evaluate GRPO training results from the shared pipeline workspace.
 
 Reads ART's ``training_results.json`` from the caller-provided shared-PVC path. The GRPO pipeline supplies ``{workspace_path}/checkpoints/training_results.json``, while the complete path input keeps the component independent of the PVC mount location.
 
-Required JSON fields are ``final_mean_reward``, ``reward_history``, ``full_match_history``, and ``timing_history``. The final reward and every history entry must be a finite number. Reward and full-match histories must have the same number of iterations.
+Required JSON fields are ``final_mean_reward``, ``reward_history``, ``full_match_history``, and ``timing_history``. The final reward and every history entry must be a finite number. Reward and full-match histories must have the same number of iterations. The logged ``mean_reward`` is ART's reported
+final aggregate reward, while ``final_reward`` is the last entry in ``reward_history`` used for the promotion comparison.
 
 ## Inputs 📥
 
@@ -29,7 +30,7 @@ Required JSON fields are ``final_mean_reward``, ``reward_history``, ``full_match
 - **Stability**: alpha
 - **Dependencies**:
   - Kubeflow:
-    - Name: Pipelines, Version: >=2.15.2
+    - Name: Pipelines, Version: >=2.16.1
 - **Tags**:
   - evaluation
   - grpo
