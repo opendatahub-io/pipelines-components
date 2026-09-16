@@ -65,11 +65,10 @@ def test_component_signature():
     assert set(spec.outputs) == {"output_metrics", "output_reward_chart", "promotion_passed"}
 
 
-def test_component_uses_training_hub_cpu_image():
-    """The component uses the shared Training Hub CPU image."""
+def test_component_uses_lightweight_ubi_python_image():
+    """The component uses a lightweight CPU-only Python image."""
     assert (
-        grpo_eval.component_spec.implementation.container.image
-        == "quay.io/opendatahub/odh-th-torch-cpu-py312:odh-3.6-ea.2"
+        grpo_eval.component_spec.implementation.container.image == "registry.access.redhat.com/ubi9/python-311:latest"
     )
 
 
@@ -140,6 +139,33 @@ def test_non_improving_or_single_reward_does_not_pass_promotion(
     result, _, _ = run_component(results_path)
 
     assert result.promotion_passed is expected_promotion
+
+
+def test_empty_timing_history_omits_timing_metrics_and_keeps_rewards_distinct(tmp_path: Path):
+    """Empty timing history produces no timing metrics and preserves ART's aggregate."""
+    results_path = write_results(
+        tmp_path / "training_results.json",
+        {
+            "final_mean_reward": 0.72,
+            "reward_history": [0.33, 0.48, 0.67],
+            "full_match_history": [0.40, 0.60, 0.75],
+            "timing_history": [],
+        },
+    )
+
+    result, metrics, _ = run_component(results_path)
+
+    assert result.promotion_passed is True
+    assert metrics.logged_metrics["mean_reward"] == 0.72
+    assert metrics.logged_metrics["final_reward"] == 0.67
+    assert (
+        not {
+            "initial_iteration_time_seconds",
+            "final_iteration_time_seconds",
+            "mean_iteration_time_seconds",
+        }
+        & metrics.logged_metrics.keys()
+    )
 
 
 def test_extreme_reward_range_raises_value_error(tmp_path: Path):

@@ -6,7 +6,7 @@ from kfp import dsl
 
 
 @dsl.component(
-    base_image="quay.io/opendatahub/odh-th-torch-cpu-py312:odh-3.6-ea.2",
+    base_image="registry.access.redhat.com/ubi9/python-311:latest",
     kfp_package_path="kfp==2.16.1",
     pip_index_urls=["https://pypi.org/simple"],
 )
