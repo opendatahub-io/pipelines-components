@@ -104,12 +104,11 @@ def train_model(
 
     Environment:
         HF_TOKEN: HuggingFace token for gated models (read from environment).
-        OCI_PULL_SECRET_MODEL_DOWNLOAD: Docker config.json content for pulling OCI model images.
     """
     import os
     from typing import Dict
 
-    from data import download_oci_model, prepare_jsonl, resolve_dataset
+    from data import prepare_jsonl, resolve_dataset
     from output import extract_metrics_from_jsonl, persist_model, plot_training_loss
     from setup import configure_env, create_logger, init_k8s, parse_kv, setup_hf_token
     from training import compute_nproc, select_runtime, wait_for_training_job
@@ -142,9 +141,6 @@ def train_model(
     prepare_jsonl(ds_dir, jsonl, log)
 
     resolved = training_base_model
-
-    if isinstance(training_base_model, str) and training_base_model.startswith("oci://"):
-        resolved = download_oci_model(training_base_model, pvc_path, log)
 
     ckpt_dir = os.path.join(pvc_path, "checkpoints")
     os.makedirs(ckpt_dir, exist_ok=True)
