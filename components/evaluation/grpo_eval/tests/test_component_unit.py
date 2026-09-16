@@ -23,6 +23,14 @@ class MockMetrics:
         self.logged_metrics[name] = value
 
 
+class MockHtml:
+    """Minimal KFP HTML substitute exposing an artifact output path."""
+
+    def __init__(self, path: Path):
+        """Create an HTML artifact at the supplied output path."""
+        self.path = str(path)
+
+
 def write_results(path: Path, payload: object) -> Path:
     """Write a test training-results payload and return its path."""
     path.write_text(json.dumps(payload), encoding="utf-8")
@@ -32,11 +40,13 @@ def write_results(path: Path, payload: object) -> Path:
 def run_component(path: Path):
     """Run the component's Python function with a mock Metrics artifact."""
     metrics = MockMetrics()
+    reward_chart = MockHtml(path.with_name("reward_chart.html"))
     result = grpo_eval.python_func(
         training_results_path=str(path),
         output_metrics=metrics,
+        output_reward_chart=reward_chart,
     )
-    return result, metrics
+    return result, metrics, Path(reward_chart.path)
 
 
 def test_component_compiles():
@@ -51,7 +61,7 @@ def test_component_signature():
     spec = grpo_eval.component_spec
 
     assert set(spec.inputs) == {"training_results_path"}
-    assert set(spec.outputs) == {"output_metrics", "promotion_passed"}
+    assert set(spec.outputs) == {"output_metrics", "output_reward_chart", "promotion_passed"}
 
 
 def test_improving_results_log_metrics_and_pass_promotion(tmp_path: Path):
@@ -60,7 +70,7 @@ def test_improving_results_log_metrics_and_pass_promotion(tmp_path: Path):
     results_path = tmp_path / "training_results.json"
     results_path.write_text(fixture_path.read_text(encoding="utf-8"), encoding="utf-8")
 
-    result, metrics = run_component(results_path)
+    result, metrics, reward_chart = run_component(results_path)
 
     assert result.promotion_passed is True
     assert metrics.logged_metrics == {
@@ -75,6 +85,14 @@ def test_improving_results_log_metrics_and_pass_promotion(tmp_path: Path):
         "mean_iteration_time_seconds": pytest.approx(11.933333333333334),
         "promotion_passed": 1.0,
     }
+    chart_html = reward_chart.read_text(encoding="utf-8")
+    assert "<title>Reward curve</title>" in chart_html
+    assert "Mean reward by training iteration" in chart_html
+    assert "Iteration 1: 0.33" in chart_html
+    assert "Iteration 3: 0.67" in chart_html
+    assert 'text-anchor="middle">1</text>' in chart_html
+    assert 'text-anchor="middle">2</text>' in chart_html
+    assert 'text-anchor="middle">3</text>' in chart_html
 
 
 @pytest.mark.parametrize(
@@ -101,7 +119,7 @@ def test_non_improving_or_single_reward_does_not_pass_promotion(
         },
     )
 
-    result, _ = run_component(results_path)
+    result, _, _ = run_component(results_path)
 
     assert result.promotion_passed is expected_promotion
 
@@ -198,6 +216,7 @@ def test_invalid_results_contract_raises_value_error(
         grpo_eval.python_func(
             training_results_path=str(results_path),
             output_metrics=metrics,
+            output_reward_chart=MockHtml(tmp_path / "reward_chart.html"),
         )
 
     assert metrics.logged_metrics == {}
@@ -221,4 +240,8 @@ def test_missing_results_file_raises_file_not_found_error(tmp_path: Path):
 def test_empty_results_path_raises_value_error():
     """A blank input path is rejected before file access."""
     with pytest.raises(ValueError, match="non-empty string"):
-        grpo_eval.python_func(training_results_path="", output_metrics=MockMetrics())
+        grpo_eval.python_func(
+            training_results_path="",
+            output_metrics=MockMetrics(),
+            output_reward_chart=MockHtml(Path("reward_chart.html")),
+        )

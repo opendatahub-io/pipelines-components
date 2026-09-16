@@ -9,6 +9,7 @@ from kfp import dsl
 def grpo_eval(
     training_results_path: str,
     output_metrics: dsl.Output[dsl.Metrics],
+    output_reward_chart: dsl.Output[dsl.HTML],
 ) -> NamedTuple("GrpoEvalOutputs", [("promotion_passed", bool)]):
     """Evaluate GRPO training results from the shared pipeline workspace.
 
@@ -27,6 +28,8 @@ def grpo_eval(
         training_results_path: Mounted path to ART's
             ``checkpoints/training_results.json`` file.
         output_metrics: KFP Metrics artifact receiving the GRPO scalar metrics.
+        output_reward_chart: KFP HTML artifact containing mean reward by training
+            iteration.
 
     Returns:
         Named output ``promotion_passed``. It is true only when the final reward is
@@ -50,6 +53,68 @@ def grpo_eval(
         if not math.isfinite(number):
             raise ValueError(f"'{field_name}' must be a finite number")
         return number
+
+    def write_reward_chart(rewards: list[float], path: str) -> None:
+        """Write a self-contained SVG reward curve as a KFP HTML artifact."""
+        chart_width, chart_height, margin = 800, 400, 70
+        plot_width = chart_width - 2 * margin
+        plot_height = chart_height - 2 * margin
+        reward_min, reward_max = min(rewards), max(rewards)
+        reward_range = reward_max - reward_min
+        padding = reward_range * 0.05 if reward_range else max(abs(reward_min) * 0.05, 0.05)
+        y_min, y_max = reward_min - padding, reward_max + padding
+
+        def x_coordinate(index: int) -> float:
+            if len(rewards) == 1:
+                return margin + plot_width / 2
+            return margin + index * plot_width / (len(rewards) - 1)
+
+        def y_coordinate(reward: float) -> float:
+            return margin + (y_max - reward) * plot_height / (y_max - y_min)
+
+        y_ticks = "".join(
+            f'<line class="grid" x1="{margin}" y1="{margin + tick * plot_height / 4:.2f}" '
+            f'x2="{chart_width - margin}" y2="{margin + tick * plot_height / 4:.2f}" />'
+            f'<text x="{margin - 12}" y="{margin + tick * plot_height / 4 + 5:.2f}" '
+            f'text-anchor="end">{y_max - tick * (y_max - y_min) / 4:.6g}</text>'
+            for tick in range(5)
+        )
+        x_tick_count = min(len(rewards), 10)
+        x_tick_indices = {
+            round(tick * (len(rewards) - 1) / (x_tick_count - 1)) if x_tick_count > 1 else 0
+            for tick in range(x_tick_count)
+        }
+        x_ticks = "".join(
+            f'<line class="grid" x1="{x_coordinate(index):.2f}" y1="{margin}" '
+            f'x2="{x_coordinate(index):.2f}" y2="{chart_height - margin}" />'
+            f'<text x="{x_coordinate(index):.2f}" y="{chart_height - margin + 22}" '
+            f'text-anchor="middle">{index + 1}</text>'
+            for index in sorted(x_tick_indices)
+        )
+        points = " ".join(
+            f"{x_coordinate(index):.2f},{y_coordinate(reward):.2f}" for index, reward in enumerate(rewards)
+        )
+        circles = "".join(
+            f'<circle cx="{x_coordinate(index):.2f}" cy="{y_coordinate(reward):.2f}" r="4">'
+            f"<title>Iteration {index + 1}: {reward:.6g}</title></circle>"
+            for index, reward in enumerate(rewards)
+        )
+        html = f"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Reward curve</title>
+<style>body{{font-family:system-ui,sans-serif;margin:24px}}svg{{max-width:100%;height:auto}}.axis{{stroke:#555}}.grid{{stroke:#ddd;stroke-dasharray:4}}.curve{{fill:none;stroke:#0066cc;stroke-width:3}}circle{{fill:#0066cc}}text{{fill:#333;font-size:14px}}</style>
+</head><body><h1>Reward curve</h1><p>Mean reward by training iteration</p>
+<svg viewBox="0 0 {chart_width} {chart_height}" role="img" aria-label="Mean reward by training iteration">
+<line class="axis" x1="{margin}" y1="{chart_height - margin}"
+      x2="{chart_width - margin}" y2="{chart_height - margin}" />
+<line class="axis" x1="{margin}" y1="{margin}" x2="{margin}" y2="{chart_height - margin}" />
+{y_ticks}{x_ticks}
+<text x="{chart_width / 2}" y="{chart_height - 18}" text-anchor="middle">Iteration</text>
+<text x="20" y="{chart_height / 2}" text-anchor="middle"
+      transform="rotate(-90 20 {chart_height / 2})">Mean reward</text>
+<polyline class="curve" points="{points}" />{circles}
+</svg></body></html>"""
+        with open(path, "w", encoding="utf-8") as chart_file:
+            chart_file.write(html)
 
     if not isinstance(training_results_path, str) or not training_results_path.strip():
         raise ValueError("'training_results_path' must be a non-empty string")
@@ -103,6 +168,7 @@ def grpo_eval(
     reward_improvement = final_reward - initial_reward
     promotion_passed = len(normalized_rewards) > 1 and final_reward > initial_reward
 
+    write_reward_chart(normalized_rewards, output_reward_chart.path)
     output_metrics.log_metric("mean_reward", mean_reward)
     output_metrics.log_metric("full_match_rate", full_match_rate)
     output_metrics.log_metric("initial_reward", initial_reward)

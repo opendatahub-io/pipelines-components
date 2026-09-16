@@ -17,6 +17,7 @@ final aggregate reward, while ``final_reward`` is the last entry in ``reward_his
 | --------- | ---- | ------- | ----------- |
 | `training_results_path` | `str` | `None` | Mounted path to ART's ``checkpoints/training_results.json`` file. |
 | `output_metrics` | `dsl.Output[dsl.Metrics]` | `None` | KFP Metrics artifact receiving the GRPO scalar metrics. |
+| `output_reward_chart` | `dsl.Output[dsl.HTML]` | `None` | KFP HTML artifact containing mean reward by training iteration. |
 
 ## Outputs 📤
 
