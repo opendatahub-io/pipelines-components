@@ -6,9 +6,9 @@
 
 Load and split timeseries data from S3 for AutoGluon training.
 
-This component loads time series data from S3, samples it (up to 100 MB), applies light **cleansing** (replace ``+/-inf`` with NaN so AutoGluon can apply its own missing-value logic; require parseable timestamps and non-null ids; drop exact duplicate ``(id_column, timestamp_column)`` rows, keep
-last), then performs a two-stage **per-series temporal** split for efficient AutoGluon training: 1. Primary split (default 80/20): for each distinct ``id_column`` value, the earliest (1 - test_size) fraction of rows by ``timestamp_column`` goes to the train portion and the remainder to the test set
-(so every series with at least two rows contributes holdout data; single-row series stay in train only). 2. Secondary split (default 30/70 of each series' train rows): early segment to selection-train, later segment to extra-train.
+This component loads time series data from S3, samples it (up to 100 MB for the ``"speed"`` preset, up to 1 GB for ``"balanced"``), applies light **cleansing** (replace ``+/-inf`` with NaN so AutoGluon can apply its own missing-value logic; require parseable timestamps and non-null ids; drop exact
+duplicate ``(id_column, timestamp_column)`` rows, keep last), then performs a two-stage **per-series temporal** split for efficient AutoGluon training: 1. Primary split (default 80/20): for each distinct ``id_column`` value, the earliest (1 - test_size) fraction of rows by ``timestamp_column`` goes
+to the train portion and the remainder to the test set (so every series with at least two rows contributes holdout data; single-row series stay in train only). 2. Secondary split (default 30/70 of each series' train rows): early segment to selection-train, later segment to extra-train.
 
 The test set is written to S3 artifact, while train CSVs are written to the PVC workspace for sharing across pipeline steps.
 
@@ -31,6 +31,7 @@ After cleansing, at least **100** valid records must remain; otherwise the compo
 | `known_covariates_names` | `Optional[List[str]]` | `None` | Covariate columns known in advance downstream (default: none). Only used to fail fast when a user-provided test dataset omits one of them. |
 | `test_data_bucket_name` | `str` | `""` | S3 bucket name for user-provided test dataset (default: empty string). |
 | `test_data_file_key` | `str` | `""` | S3 object key of the user-provided test CSV (default: empty string). |
+| `preset` | `str` | `speed` | Training quality tier controlling the sampling size budget. ``"speed"`` (default) samples up to 100 MB; ``"balanced"`` samples up to 1 GB. The cap for user-provided test datasets (50 MB) is unaffected by this setting. |
 
 ## Outputs 📤
 
