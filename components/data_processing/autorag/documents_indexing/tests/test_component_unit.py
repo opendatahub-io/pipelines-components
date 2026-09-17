@@ -345,7 +345,7 @@ class TestDocumentsIndexingProcessing:
         """An empty extraction artifact aborts instead of indexing nothing.
 
         Succeeding here would leave an empty collection behind a green pipeline
-        run -- silent data loss.  See RHOAIENG-95253.
+        run -- silent data loss.
         """
         modules, mocks = _make_ai4rag_mocks()
 
@@ -378,7 +378,6 @@ class TestDocumentsIndexingProcessing:
         Text extraction preserves each document's source S3 key, so a nested
         ``input_data_keys`` prefix produces nested output.  A non-recursive listing
         silently found nothing here and reported a successful empty index
-        (RHOAIENG-95253).
         """
         modules, mocks = _make_ai4rag_mocks()
         mocks["DoclingDocument"].load_from_json.return_value = mock.MagicMock()
