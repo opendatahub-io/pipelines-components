@@ -10,14 +10,15 @@ Reads DoclingDocument JSON files from the *extracted_text* artifact, splits them
 
 The vector store backend (Milvus or PGVector) is resolved at runtime from the environment injected by the vector-database secret: ``MILVUS_*`` keys select Milvus, ``PGVECTOR_*`` keys select PGVector.
 
-Individual document failures (corrupt JSON, chunking errors) are recorded in the indexing report and skipped — they do not abort the pipeline. Systemic failures (MaaS API unreachable, vector database unreachable, embedding model errors) propagate normally.
+Individual document failures (corrupt JSON, chunking errors) are recorded in the indexing report and skipped — they do not abort the pipeline. Systemic failures (MaaS API unreachable, vector database unreachable, embedding model errors) propagate normally. Finding no documents at all raises: an
+empty collection behind a successful run is silent data loss, not a valid outcome.
 
 ## Inputs 📥
 
 | Parameter | Type | Default | Description |
 | --------- | ---- | ------- | ----------- |
 | `embedding_model_id` | `str` | `None` | Embedding model ID served by MaaS. |
-| `extracted_text` | `dsl.Input[dsl.Artifact]` | `None` | Input artifact (directory) containing DoclingDocument JSON files from text extraction. |
+| `extracted_text` | `dsl.Input[dsl.Artifact]` | `None` | Input artifact (directory) containing DoclingDocument JSON files from text extraction.  Searched recursively, since extraction preserves the nested source key of each document. |
 | `indexing_report` | `dsl.Output[dsl.Artifact]` | `None` | Output artifact containing ``indexing_report.json`` with per-document indexing status and pipeline settings. |
 | `indexing_report_html` | `dsl.Output[dsl.HTML]` | `None` | Output HTML artifact containing a styled rendering of the indexing results (summary stats, settings, per-document table). |
 | `embedded_artifact` | `dsl.EmbeddedInput[dsl.Dataset]` | `None` | Embedded HTML report template injected by KFP at runtime from ``indexing_report_template.html``. |

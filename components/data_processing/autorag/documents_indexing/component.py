@@ -39,12 +39,15 @@ def documents_indexing(
     Individual document failures (corrupt JSON, chunking errors) are
     recorded in the indexing report and skipped — they do not abort the
     pipeline.  Systemic failures (MaaS API unreachable, vector database
-    unreachable, embedding model errors) propagate normally.
+    unreachable, embedding model errors) propagate normally.  Finding no
+    documents at all raises: an empty collection behind a successful run is
+    silent data loss, not a valid outcome.
 
     Args:
         embedding_model_id: Embedding model ID served by MaaS.
         extracted_text: Input artifact (directory) containing DoclingDocument
-            JSON files from text extraction.
+            JSON files from text extraction.  Searched recursively, since
+            extraction preserves the nested source key of each document.
         indexing_report: Output artifact containing ``indexing_report.json``
             with per-document indexing status and pipeline settings.
         indexing_report_html: Output HTML artifact containing a styled rendering of
@@ -141,8 +144,11 @@ def documents_indexing(
 
     params = OpenAIEmbeddingParams(**(embedding_params or {}))
 
+    # Text extraction preserves the source S3 key, so documents discovered under a
+    # nested ``input_data_keys`` prefix land in subdirectories here.  Recurse to match
+    # ai4rag's own ``load_docling_documents`` semantics.
     base = Path(extracted_text.path)
-    paths = sorted(p for p in base.iterdir() if p.is_file() and p.suffix.lower() == ".json")
+    paths = sorted(p for p in base.rglob("*") if p.is_file() and p.suffix.lower() == ".json")
     total_documents = len(paths)
     _logger.info("Found %d documents to index", total_documents)
 
@@ -284,32 +290,20 @@ def documents_indexing(
     report_entries = []
 
     if total_documents == 0:
-        _logger.warning("No documents found in %s", extracted_text.path)
-        settings = {
-            "vector_store_binding": {
-                "provider_type": provider,
-                "collection_name": collection_name,
-            },
-            "chunking": {
-                "method": chunking_method,
-                "chunk_size": chunk_size,
-                "chunk_overlap": chunk_overlap,
-            },
-            "embedding": {
-                "model_id": embedding_model_id,
-                "embedding_params": embedding_params or {},
-            },
-        }
-        write_report(total_documents=0, total_chunks=0, entries=report_entries, settings=settings)
-        write_html(
-            total_documents=0,
-            total_chunks=0,
-            completed=0,
-            failed=0,
-            entries=report_entries,
-            settings=settings,
+        # Indexing nothing is never a legitimate success: succeeding here would leave an
+        # empty collection behind a green pipeline run.  Fail loudly, and show what the
+        # extraction artifact actually contains so the cause is obvious from the logs.
+        present = sorted(p.relative_to(base).as_posix() for p in base.rglob("*") if p.is_file())
+        if present:
+            found = f"{len(present)} non-JSON file(s) are present, e.g. {', '.join(present[:5])}"
+        else:
+            found = "the artifact is empty"
+        raise RuntimeError(
+            f"No DoclingDocument JSON files found under {extracted_text.path!r} — {found}. "
+            "Text extraction should have written one .json file per discovered document. "
+            "Check the text_extraction task logs for extraction errors, and verify that "
+            "documents_discovery found any documents for the given input_data_keys prefix."
         )
-        return
 
     if chunking_method == "hybrid":
         chunker = DoclingChunker(max_tokens=chunk_size)
@@ -348,14 +342,17 @@ def documents_indexing(
             batch_chunks = []
 
             for p in batch_paths:
+                # Report the path relative to the artifact root: basenames alone are
+                # ambiguous once documents come from nested prefixes.
+                rel = p.relative_to(base).as_posix()
                 try:
                     doc = DoclingDocument.load_from_json(p)
                     chunks = chunker.split_documents([doc])
                     batch_chunks.extend(chunks)
-                    report_entries.append({"file": p.name, "status": "completed", "chunks": len(chunks)})
+                    report_entries.append({"file": rel, "status": "completed", "chunks": len(chunks)})
                 except Exception as exc:
-                    _logger.warning("Skipping %s: %s", p.name, exc)
-                    report_entries.append({"file": p.name, "status": "failed", "error": str(exc)})
+                    _logger.warning("Skipping %s: %s", rel, exc)
+                    report_entries.append({"file": rel, "status": "failed", "error": str(exc)})
 
             if batch_chunks:
                 vector_store.add_documents(batch_chunks)
