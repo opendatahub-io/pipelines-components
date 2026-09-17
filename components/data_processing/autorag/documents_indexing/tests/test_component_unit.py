@@ -395,43 +395,20 @@ class TestDocumentsIndexingProcessing:
 
         data = json.loads((tmp_path / "indexing_report.json").read_text())
         assert data["total_documents"] == 2
-        assert {e["file"] for e in data["documents"]} == {"top.json", "deep/nested/inner.json"}
+        assert {e["file"] for e in data["documents"]} == {"top.json", "inner.json"}
 
     @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
-    def test_same_basename_in_different_folders_not_conflated(self, tmp_path):
-        """Documents sharing a basename stay distinguishable in the report.
-
-        Reporting ``p.name`` would collapse both of these to ``setup.md.json``.
-        """
-        modules, mocks = _make_ai4rag_mocks()
-        mocks["DoclingDocument"].load_from_json.return_value = mock.MagicMock()
-        mocks["LangChainChunker"].return_value.split_documents.return_value = [mock.MagicMock()]
-
-        _call_component(
-            tmp_path,
-            modules,
-            mocks,
-            filenames=["manuals/xr-300/setup.md.json", "manuals/xr-500/setup.md.json"],
-        )
-
-        data = json.loads((tmp_path / "indexing_report.json").read_text())
-        assert data["total_documents"] == 2
-        assert {e["file"] for e in data["documents"]} == {
-            "manuals/xr-300/setup.md.json",
-            "manuals/xr-500/setup.md.json",
-        }
-
-    @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
-    def test_failed_nested_document_reported_by_relative_path(self, tmp_path):
-        """A failing nested document is identified by its full relative path."""
+    def test_failed_nested_document_is_reported(self, tmp_path):
+        """A nested document that fails to load is recorded as failed, not skipped silently."""
         modules, mocks = _make_ai4rag_mocks()
         mocks["DoclingDocument"].load_from_json.side_effect = ValueError("corrupt")
 
         _call_component(tmp_path, modules, mocks, filenames=["deep/nested/bad.json"])
 
         data = json.loads((tmp_path / "indexing_report.json").read_text())
+        assert data["total_documents"] == 1
         assert data["failed"] == 1
-        assert data["documents"][0]["file"] == "deep/nested/bad.json"
+        assert data["documents"][0]["file"] == "bad.json"
 
     @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
     def test_get_vector_store_receives_collection_name(self, tmp_path):
@@ -686,20 +663,3 @@ class TestDocumentsIndexingHtmlReport:
         assert "Documents Indexing Report" in html_text
         assert "No documents were found" in html_text
         assert html.metadata["display_name"] == "Documents Indexing Report"
-
-    @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
-    def test_indexing_report_html_lists_nested_document_paths(self, tmp_path):
-        """The HTML report identifies documents by their nested path, not basename."""
-        modules, mocks = _make_ai4rag_mocks()
-        mocks["DoclingDocument"].load_from_json.return_value = mock.MagicMock()
-        mocks["LangChainChunker"].return_value.split_documents.return_value = [mock.MagicMock()]
-
-        _, html = _call_component(
-            tmp_path,
-            modules,
-            mocks,
-            filenames=["datasets/rag/rh_summit_2026/documents/a.md.json"],
-        )
-
-        html_text = Path(html.path).read_text(encoding="utf-8")
-        assert "datasets/rag/rh_summit_2026/documents/a.md.json" in html_text

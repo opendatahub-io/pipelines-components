@@ -352,17 +352,14 @@ def documents_indexing(
             batch_chunks = []
 
             for p in batch_paths:
-                # Report the path relative to the artifact root: basenames alone are
-                # ambiguous once documents come from nested prefixes.
-                rel = p.relative_to(base).as_posix()
                 try:
                     doc = DoclingDocument.load_from_json(p)
                     chunks = chunker.split_documents([doc])
                     batch_chunks.extend(chunks)
-                    report_entries.append({"file": rel, "status": "completed", "chunks": len(chunks)})
+                    report_entries.append({"file": p.name, "status": "completed", "chunks": len(chunks)})
                 except Exception as exc:
-                    _logger.warning("Skipping %s: %s", rel, exc)
-                    report_entries.append({"file": rel, "status": "failed", "error": str(exc)})
+                    _logger.warning("Skipping %s: %s", p.name, exc)
+                    report_entries.append({"file": p.name, "status": "failed", "error": str(exc)})
 
             if batch_chunks:
                 vector_store.add_documents(batch_chunks)
