@@ -1,0 +1,44 @@
+# One-time RBAC setup for the speculative_decoding_serving component.
+#
+# The pipeline-runner-dspa service account used by KFP does not have
+# permission to create OpenShift Routes by default. Apply this manifest
+# once per namespace before running any pipeline with enable_external_route=True.
+#
+# Replace <NAMESPACE> with your RHOAI project namespace, then apply:
+#
+#   NAMESPACE=my-project
+#   sed "s/<NAMESPACE>/$NAMESPACE/g" \
+#     components/deployment/speculative_decoding_serving/rbac.yaml | oc apply -f -
+#
+# This is a one-time admin step. It does not need to be repeated for
+# subsequent pipeline runs in the same namespace.
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: pipeline-runner-route-manager
+  namespace: <NAMESPACE>
+rules:
+  - apiGroups:
+      - route.openshift.io
+    resources:
+      - routes
+    verbs:
+      - get
+      - create
+      - patch
+      - update
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: pipeline-runner-route-manager
+  namespace: <NAMESPACE>
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: pipeline-runner-route-manager
+subjects:
+  - kind: ServiceAccount
+    name: pipeline-runner-dspa
+    namespace: <NAMESPACE>

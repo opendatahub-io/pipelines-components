@@ -1,0 +1,24 @@
+---
+name: speculative_decoding_serving
+description: >
+  Serve a verifier model and an Eagle3 draft model together with vLLM
+  speculative decoding through a RHOAI KServe InferenceService.
+stability: experimental
+dependencies:
+  kubeflow:
+    - name: Pipelines
+      version: ">=2.15.2"
+  external_services:
+    - name: OpenShift AI (KServe)
+      version: ">=2.10.0"
+    - name: vLLM ServingRuntime
+      version: ">=0.24.0"
+tags:
+  - deployment
+  - model_serving
+  - speculative_decoding
+  - vllm
+  - kserve
+lastVerified: 2026-09-14T00:00:00Z
+links:
+  documentation: https://github.com/kubeflow/pipelines-components
