@@ -498,13 +498,14 @@ class TestRagTemplatesOptimizationRun:
         assert (pattern_dir / "pattern.json").exists()
         assert (pattern_dir / "evaluation_results.json").exists()
 
-        # The whole list reaches the indexing blueprint, but the notebook takes the first key.
+        # The whole list reaches both the indexing blueprint and the notebook.
         pattern_json = json.loads((pattern_dir / "pattern.json").read_text(encoding="utf-8"))
         assert pattern_json["indexing"]["pipeline_spec"]["parameters"]["input_data_keys"] == ["data/docs/"]
+        assert pattern_json["indexing"]["pipeline_spec"]["pipeline_name"] == "documents-indexing-pipeline"
         indexing_notebook_call = next(
             call for call in mocks.generate_notebook_from_template.call_args_list if call.args[0] == "maas_indexing"
         )
-        assert indexing_notebook_call.kwargs["input_data_key"] == "data/docs/"
+        assert indexing_notebook_call.kwargs["input_data_keys"] == ["data/docs/"]
 
         assert rag_patterns.metadata["name"] == "rag_patterns_artifact"
         assert rag_patterns.metadata["uri"] == "gs://bucket/rag_patterns"
@@ -573,6 +574,49 @@ class TestRagTemplatesOptimizationRun:
         pattern_json = json.loads((Path(rag_patterns.path) / "pattern_a" / "pattern.json").read_text(encoding="utf-8"))
         indexing_params = pattern_json["indexing"]["pipeline_spec"]["parameters"]
         assert indexing_params["input_data_keys"] == []
+
+        indexing_notebook_call = next(
+            call for call in mocks.generate_notebook_from_template.call_args_list if call.args[0] == "maas_indexing"
+        )
+        assert indexing_notebook_call.kwargs["input_data_keys"] == []
+
+    @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
+    def test_every_input_data_key_reaches_the_indexing_notebook(self, tmp_path):
+        """The generated notebook must reingest every location, not just the first.
+
+        The notebook is the manual route to the same corpus the pipeline built,
+        so dropping locations here would silently produce a smaller index.
+        """
+        mocks = _make_ai4rag_mocks()
+        search_space_path = _write_search_space_report(tmp_path)
+        mocks.KFPEventHandler.return_value.patterns = [
+            {"payload": _pattern_payload("pattern_a"), "evaluation_results": []},
+        ]
+        rag_patterns, leaderboard_html = _artifacts(tmp_path)
+        keys = ["data/manuals/", "data/reports/"]
+
+        with mock.patch.dict("sys.modules", mocks.modules):
+            rag_templates_optimization.python_func(
+                extracted_text=str(tmp_path / "ext"),
+                test_data=str(tmp_path / "test_data.json"),
+                search_space_mps_report=search_space_path,
+                rag_patterns=rag_patterns,
+                test_data_key="key.json",
+                maas_secret_name="maas-secret",
+                vector_db_secret_name="vector-db-secret",
+                input_data_secret_name="s3-secret",
+                input_data_bucket_name="bucket",
+                leaderboard=leaderboard_html,
+                input_data_keys=keys,
+            )
+
+        pattern_json = json.loads((Path(rag_patterns.path) / "pattern_a" / "pattern.json").read_text(encoding="utf-8"))
+        assert pattern_json["indexing"]["pipeline_spec"]["parameters"]["input_data_keys"] == keys
+
+        indexing_notebook_call = next(
+            call for call in mocks.generate_notebook_from_template.call_args_list if call.args[0] == "maas_indexing"
+        )
+        assert indexing_notebook_call.kwargs["input_data_keys"] == keys
 
     @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
     def test_propagates_ai4rag_exception(self, tmp_path):

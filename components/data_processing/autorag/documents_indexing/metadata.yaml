@@ -9,7 +9,7 @@ dependencies:
     - name: RHOAI Connections API
       version: ">=1.0.0"
     - name: ai4rag
-      version: "~=0.16.0"
+      version: "~=0.17.0"
     - name: MaaS
       version: ">=1.0.0"
     - name: Milvus

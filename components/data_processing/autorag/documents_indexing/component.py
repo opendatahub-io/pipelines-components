@@ -79,10 +79,6 @@ def documents_indexing(
     from dataclasses import asdict
     from pathlib import Path
 
-    from ai4rag.utils.compat import ensure_sqlite3
-
-    ensure_sqlite3()
-
     from ai4rag.rag.chunking import DoclingChunker, LangChainChunker
     from ai4rag.rag.embedding.openai_model import OpenAIEmbeddingModel, OpenAIEmbeddingParams
     from ai4rag.rag.vector_store import get_vector_store, get_vector_store_config

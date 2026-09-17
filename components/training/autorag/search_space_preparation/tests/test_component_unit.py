@@ -27,7 +27,6 @@ def _make_ai4rag_mocks() -> SimpleNamespace:
     create_maas_client = mock.MagicMock(name="create_maas_client")
     prepare_search_space_with_maas = mock.MagicMock(name="prepare_search_space_with_maas")
     build_search_space_report = mock.MagicMock(name="build_search_space_report")
-    ensure_sqlite3 = mock.MagicMock(name="ensure_sqlite3")
 
     utils = mock.MagicMock()
     utils.create_maas_client = create_maas_client
@@ -36,16 +35,12 @@ def _make_ai4rag_mocks() -> SimpleNamespace:
     prepare_module.prepare_search_space_with_maas = prepare_search_space_with_maas
     prepare_module.build_search_space_report = build_search_space_report
 
-    compat = mock.MagicMock()
-    compat.ensure_sqlite3 = ensure_sqlite3
-
     modules = {
         "ai4rag": mock.MagicMock(),
         "ai4rag.utils.clients": utils,
         "ai4rag.search_space": mock.MagicMock(),
         "ai4rag.search_space.prepare": prepare_module,
         "ai4rag.utils": mock.MagicMock(),
-        "ai4rag.utils.compat": compat,
         "pandas": mock.MagicMock(name="pandas"),
     }
     return SimpleNamespace(
@@ -53,7 +48,6 @@ def _make_ai4rag_mocks() -> SimpleNamespace:
         create_maas_client=create_maas_client,
         prepare=prepare_search_space_with_maas,
         build=build_search_space_report,
-        ensure_sqlite3=ensure_sqlite3,
     )
 
 
@@ -101,7 +95,6 @@ class TestSearchSpacePreparationUnitTests:
                 generation_models=["gen-1"],
             )
 
-        m.ensure_sqlite3.assert_called_once()
         m.create_maas_client.assert_called_once_with(
             base_url="https://maas.example.com/v1",
             api_key="test-api-key",

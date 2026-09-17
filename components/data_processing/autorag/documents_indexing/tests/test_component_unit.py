@@ -75,7 +75,6 @@ def _make_ai4rag_mocks():
             get_vector_store=mock_get_vector_store, get_vector_store_config=mock_get_vector_store_config
         ),
         "ai4rag.utils": mock.MagicMock(),
-        "ai4rag.utils.compat": _make_module_mock(ensure_sqlite3=mock.MagicMock(name="ensure_sqlite3")),
         "ai4rag.utils.constants": _make_module_mock(ChunkingConstraints=mock_ChunkingConstraints),
         "docling_core": mock.MagicMock(),
         "docling_core.types": mock.MagicMock(),

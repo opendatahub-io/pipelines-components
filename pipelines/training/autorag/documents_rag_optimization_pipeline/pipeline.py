@@ -92,8 +92,9 @@ def documents_rag_optimization_pipeline(
         generation_models: List of foundation/generation model identifiers to use in the
             search space. Required: MaaS exposes no metadata to distinguish model types, so
             generation models can no longer be inferred and must be declared explicitly.
-        input_data_keys: Object keys (paths) of the input documents in the input data bucket.
-            Only the first entry is used by document discovery.
+        input_data_keys: Object keys (paths) of the input documents in the input data bucket,
+            1-10 of them. Every one is discovered and merged into a single corpus deduplicated
+            by object key; leave empty to use the whole bucket. More than 10 fails the run.
         optimization_metric: Quality metric used to rank RAG patterns. Supported values:
             "faithfulness", "answer_correctness", "context_correctness", "answer_relevance",
             and "overall_score" (default). "faithfulness", "answer_correctness", and

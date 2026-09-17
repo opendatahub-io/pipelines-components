@@ -10,7 +10,7 @@ dependencies:
     - name: boto3
       version: ">=1.42.34"
     - name: ai4rag
-      version: "~=0.16.0"
+      version: "~=0.17.0"
     - name: RHOAI Connections API
       version: ">=1.0.0"
     - name: MaaS
@@ -25,4 +25,4 @@ tags:
   - documents_discovery
   - data_indexing
   - autorag
-lastVerified: 2026-09-08T00:00:00Z
+lastVerified: 2026-09-15T00:00:00Z

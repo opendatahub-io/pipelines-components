@@ -7,7 +7,7 @@ dependencies:
       version: '>=2.15.2'
   external_services:
     - name: ai4rag
-      version: "~=0.16.0"
+      version: "~=0.17.0"
     - name: MaaS
       version: ">=1.0.0"
     - name: pandas

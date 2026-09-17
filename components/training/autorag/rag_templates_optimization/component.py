@@ -57,9 +57,9 @@ def rag_templates_optimization(
         component_status: Output artifact containing stage-level progress tracking.
         embedded_artifact: Embedded ``autorag.shared`` helpers injected by KFP at runtime.
         optimization_settings: Additional experiment settings.
-        input_data_keys: Paths to documents dirs within bucket. Only the first entry is
-            used for the generated indexing notebook; the full list is propagated to the
-            indexing pipeline blueprint.
+        input_data_keys: Paths to documents dirs within bucket, 1-10 of them. The full list
+            is propagated both to the generated indexing notebook and to the indexing
+            pipeline blueprint, so either route reingests the same corpus.
         preset: Pipeline quality tier. "speed" (default) uses 10 benchmark query
             threads. "balanced" uses 4 threads (reduced due to larger per-request
             context).
@@ -74,20 +74,9 @@ def rag_templates_optimization(
     import json
     import logging
     import os
-    import sys
     from pathlib import Path
 
     import pandas as pd
-
-    if getattr(sys.modules.get("sqlite3"), "__name__", None) == "pysqlite3":
-        return
-    try:
-        import pysqlite3  # type: ignore[import-untyped]
-
-        sys.modules["sqlite3"] = pysqlite3
-    except ImportError:
-        pass
-
     from ai4rag import handler
     from ai4rag.assets_generator import build_leaderboard_html, generate_notebook_from_template
     from ai4rag.core.experiment.experiment import AI4RAGExperiment
@@ -147,7 +136,7 @@ def rag_templates_optimization(
     def _generate_output_artifacts(
         patterns_raw: list[dict],
         output_dir: Path,
-        input_data_key: str,
+        input_data_keys: list[str],
         test_data_key: str,
         indexing_pipeline_params: dict | None,
     ) -> list[dict]:
@@ -164,7 +153,7 @@ def rag_templates_optimization(
                 vector_store_binding = settings["vector_store_binding"]
                 pattern_data["indexing"] = {
                     "pipeline_spec": {
-                        "pipeline_name": indexing_pipeline_params.get("pipeline_name", "documents_indexing_pipeline"),
+                        "pipeline_name": indexing_pipeline_params.get("pipeline_name", "documents-indexing-pipeline"),
                         "parameters": {
                             "maas_secret_name": indexing_pipeline_params.get("maas_secret_name"),
                             "vector_db_secret_name": indexing_pipeline_params.get("vector_db_secret_name"),
@@ -194,7 +183,7 @@ def rag_templates_optimization(
                 "maas_indexing",
                 pattern_data,
                 patt_dir / "indexing.ipynb",
-                input_data_key=input_data_key,
+                input_data_keys=input_data_keys,
             )
             generate_notebook_from_template(
                 "maas_inference",
@@ -426,7 +415,7 @@ def rag_templates_optimization(
             patterns = _generate_output_artifacts(
                 patterns_raw=event_handler.patterns,
                 output_dir=output_dir,
-                input_data_key=input_data_keys[0] if input_data_keys else "",
+                input_data_keys=input_data_keys or [],
                 test_data_key=test_data_key,
                 indexing_pipeline_params=indexing_pipeline_params,
             )

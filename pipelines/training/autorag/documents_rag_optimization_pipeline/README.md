@@ -25,7 +25,7 @@ deployment settings), executable notebooks, and evaluation results.
 | `vector_db_secret_name` | `str` | `None` | Name of the Kubernetes secret carrying the vector database configuration. The env-var prefix selects the backend: ``MILVUS_*`` keys (at least ``MILVUS_URI``) select Milvus, ``PGVECTOR_*`` keys select PGVector. |
 | `embedding_models` | `list[str]` | `None` | List of embedding model identifiers to use in the search space. Required: MaaS exposes no metadata to distinguish model types, so embedding models can no longer be inferred and must be declared explicitly. |
 | `generation_models` | `list[str]` | `None` | List of foundation/generation model identifiers to use in the search space. Required: MaaS exposes no metadata to distinguish model types, so generation models can no longer be inferred and must be declared explicitly. |
-| `input_data_keys` | `list[str]` | `[]` | Object keys (paths) of the input documents in the input data bucket. Only the first entry is used by document discovery. |
+| `input_data_keys` | `list[str]` | `[]` | Object keys (paths) of the input documents in the input data bucket, 1-10 of them. Every one is discovered and merged into a single corpus deduplicated by object key; leave empty to use the whole bucket. More than 10 fails the run. |
 | `optimization_metric` | `str` | `overall_score` | Quality metric used to rank RAG patterns. Supported values: "faithfulness", "answer_correctness", "context_correctness", "answer_relevance", and "overall_score" (default). "faithfulness", "answer_correctness", and "context_correctness" are deterministic Unitxt metrics; choosing one as the optimization metric keeps the experiment deterministic. The LLM-judge metric "answer_relevance" is always computed but only drives optimization when selected (or via "overall_score", which aggregates all metrics). |
 | `optimization_max_rag_patterns` | `int` | `8` | Maximum number of RAG patterns to generate. Passed to ai4rag (max_number_of_rag_patterns). Defaults to 8. |
 | `preset` | `str` | `speed` | Pipeline quality tier. "speed" (default) uses recursive chunking, no table structure parsing, and no contextual enrichment. "balanced" enables Docling table layout parsing, hybrid chunking, and LLM contextual enrichment. Both presets use the same resource tier. |
@@ -39,7 +39,7 @@ deployment settings), executable notebooks, and evaluation results.
   - Kubeflow:
     - Name: Pipelines, Version: 2.17.0
   - External Services:
-    - Name: ai4rag, Version: ~=0.16.0
+    - Name: ai4rag, Version: ~=0.17.0
     - Name: MaaS, Version: >=1.0.0
     - Name: RHOAI Connections API, Version: >=1.0.0
     - Name: Milvus, Version: >=2.0.0
@@ -50,7 +50,7 @@ deployment settings), executable notebooks, and evaluation results.
   - pipeline
   - autorag
   - rag-optimization
-- **Last Verified**: 2026-09-08 00:00:00+00:00
+- **Last Verified**: 2026-09-15 00:00:00+00:00
 - **Owners**:
   - No Parent Owners: Yes
   - Approvers:

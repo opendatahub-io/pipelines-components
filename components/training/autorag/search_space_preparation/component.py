@@ -49,10 +49,6 @@ def search_space_preparation(
     import os
     from pathlib import Path
 
-    from ai4rag.utils.compat import ensure_sqlite3
-
-    ensure_sqlite3()
-
     import pandas as pd
     from ai4rag.search_space.prepare import build_search_space_report, prepare_search_space_with_maas
     from ai4rag.utils.clients import create_maas_client

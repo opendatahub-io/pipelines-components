@@ -49,8 +49,9 @@ def documents_indexing_pipeline(
         input_data_secret_name: Name of the secret with S3 credentials for input data
             ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_S3_ENDPOINT", "AWS_DEFAULT_REGION").
         input_data_bucket_name: Name of the S3 bucket containing input data.
-        input_data_keys: Paths to folders with input documents within bucket. Only the
-            first entry is used by document discovery.
+        input_data_keys: Paths to folders with input documents within bucket, 1-10 of them.
+            Every one is discovered and merged into a single corpus deduplicated by object key;
+            leave empty to use the whole bucket. More than 10 fails the run.
         collection_name: Vector store collection to reuse (aligned with
             ``pattern.json`` ``settings.vector_store_binding.collection_name``).
             Omit to create a new collection.
