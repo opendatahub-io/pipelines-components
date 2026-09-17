@@ -6,7 +6,7 @@
 
 Automl Data Loader component.
 
-Loads tabular (CSV) data from S3 in batches, sampling up to 100 MB of data, then splits the sampled data into test, selection-train, and extra-train sets.
+Loads tabular (CSV) data from S3 in batches, sampling up to a preset-dependent size budget (``"speed"``: 100 MB, ``"balanced"``: 1 GB), then splits the sampled data into test, selection-train, and extra-train sets.
 
 The component reads data in chunks to efficiently handle large files without loading the entire dataset into memory at once. After sampling, it performs a two-stage split:
 
@@ -41,6 +41,7 @@ Authentication uses AWS-style credentials provided via environment variables (e.
 | `selection_train_size` | `float` | `0.3` | Fraction of the train portion used for model selection (default 0.3). |
 | `test_data_bucket_name` | `str` | `""` | S3 bucket name for user-provided test dataset (default: empty string). |
 | `test_data_file_key` | `str` | `""` | S3 object key of the user-provided test CSV (default: empty string). |
+| `preset` | `str` | `speed` | Training quality tier controlling the sampling size budget. ``"speed"`` (default) samples up to 100 MB; ``"balanced"`` samples up to 1 GB. The cap for user-provided test datasets (50 MB) is unaffected by this setting. |
 
 ## Outputs 📤
 
@@ -112,7 +113,7 @@ def example_pipeline(
 
 Available values for the `sampling_method` parameter are:
 
-- `"first_n_rows"`: Reads the first N rows from the file up to the component's memory limit (default 100 MB).
+- `"first_n_rows"`: Reads the first N rows from the file up to the component's preset-dependent memory limit (``"speed"``: 100 MB, ``"balanced"``: 1 GB).
 - `"stratified"`: Samples the dataset in a way that preserves the distribution of the `label_column`. Only available if `label_column` is specified and task type is classification.
 - `"random"`: Randomly samples rows from the dataset up to the size limit.
 
@@ -235,7 +236,7 @@ Match stage ids to the tabular pipeline entry in ``component_stage_map.json`` fr
 ## Supported formats and limits 📋
 
 - **Format**: CSV only.
-- **Size limit**: Up to 100 MB of data in memory (sampled if larger).
+- **Size limit**: Preset-dependent size budget in memory (sampled if larger) — ``"speed"``: 100 MB, ``"balanced"``: 1 GB.
 - **Streaming**: Data is read in batches (10k rows per chunk) to handle large files.
 
 ## Logging 📝

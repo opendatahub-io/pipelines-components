@@ -27,6 +27,7 @@ Refit outputs for all selected models are written under one ``models_artifact``,
 | `models_artifact` | `dsl.Output[dsl.Model]` | `None` | Combined output artifact containing all refitted models. |
 | `extra_train_data_path` | `str` | `None` | Path to extra train split for full refit. |
 | `html_artifact` | `dsl.Output[dsl.HTML]` | `None` | Output HTML artifact containing the ranked leaderboard page. |
+| `experiment_notebook` | `dsl.Output[dsl.Artifact]` | `None` | Output artifact containing the run-level experiment launcher notebook. |
 | `component_status` | `dsl.Output[dsl.Artifact]` | `None` | Output artifact containing stage-level progress tracking for this component. |
 | `uses_synthetic_id` | `bool` | `False` | True if the loader injected a synthetic ID column for two-column datasets. |
 | `sample_rows` | `str` | `[]` | Sample rows JSON string used in generated notebook placeholders. |
@@ -36,6 +37,11 @@ Refit outputs for all selected models are written under one ``models_artifact``,
 | `known_covariates_names` | `Optional[List[str]]` | `None` | Optional list of known covariate column names. |
 | `preset` | `str` | `speed` | Training quality tier. ``"speed"`` (default) or ``"balanced"`` (may run more than 2x longer). |
 | `eval_metric` | `str` | `mean_absolute_scaled_error` | Metric for model ranking (e.g. ``"mean_absolute_scaled_error"``, ``"weighted_quantile_loss"``). Defaults to ``"mean_absolute_scaled_error"``. Legacy uppercase acronyms (e.g. ``"MASE"``) are accepted and normalized to snake_case. |
+| `test_data_bucket_name` | `str` | `""` | Optional S3 bucket for user-provided external test data. |
+| `test_data_file_key` | `str` | `""` | Optional S3 object key for user-provided external test data. |
+| `train_data_secret_name` | `str` | `""` | Kubernetes secret name for S3 credentials used by the pipeline. |
+| `train_data_bucket_name` | `str` | `""` | S3 bucket containing the training dataset. |
+| `train_data_file_key` | `str` | `""` | S3 object key for the training dataset. |
 
 ## Outputs 📤
 

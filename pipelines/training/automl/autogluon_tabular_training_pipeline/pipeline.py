@@ -69,7 +69,8 @@ def autogluon_tabular_training_pipeline(
 
     1. **Data Loading & Splitting**: Loads tabular (CSV) data from an S3-compatible
        object storage bucket using AWS credentials configured via Kubernetes secrets.
-       The component samples the data (up to 1GB), then performs a two-stage split:
+       The component samples the data (up to 100 MiB for the "speed" preset, up to 1 GiB
+       for "balanced"), then performs a two-stage split:
        *Primary split** (default 80/20): separates a *test set* (20%, written to an
          S3 artifact) from the *train portion* (80%).
          **Secondary split** (default 30/70 of the train portion): produces
@@ -173,6 +174,7 @@ def autogluon_tabular_training_pipeline(
         task_type=task_type,
         test_data_bucket_name=test_data_bucket_name,
         test_data_file_key=test_data_file_key,
+        preset=preset,
     )
     data_loader_task.after(component_stage_map_task)
     data_loader_task.set_caching_options(False)
@@ -204,11 +206,16 @@ def autogluon_tabular_training_pipeline(
         pipeline_name=dsl.PIPELINE_JOB_RESOURCE_NAME_PLACEHOLDER,
         run_id=dsl.PIPELINE_JOB_ID_PLACEHOLDER,
         sample_row=data_loader_task.outputs["sample_row"],
+        train_data_secret_name=train_data_secret_name,
+        train_data_bucket_name=train_data_bucket_name,
+        train_data_file_key=train_data_file_key,
         sampling_config=data_loader_task.outputs["sample_config"],
         split_config=data_loader_task.outputs["split_config"],
         extra_train_data_path=data_loader_task.outputs["extra_train_data_path"],
         preset=preset,
         eval_metric=eval_metric,
+        test_data_bucket_name=test_data_bucket_name,
+        test_data_file_key=test_data_file_key,
     )
     with dsl.If(preset == "balanced"):
         training_task_bl = autogluon_models_training(**_training_kwargs)

@@ -21,9 +21,9 @@ Pipeline stages:
 
 0. **Component stage map**: Publishes the static component-to-stage-to-step map as a KFP artifact for dashboards before data loading.
 
-1. **Data loading & splitting** (``timeseries_data_loader``): Loads CSV from S3 (up to 100 MB), replaces ``+/-inf`` with NaN (missing targets stay for AutoGluon), requires parseable timestamps and non-null ids (or injects ``__synthetic_item_id`` for two-column datasets when ``id_column=""``),
-deduplicates ``(id_column, timestamp_column)``, then applies a two-stage **per-series temporal** split on ``id_column`` / ``timestamp_column``: default **80/20** train vs test per series, then **30/70** of each series' train rows into ``models_selection_train_dataset.csv`` and
-``extra_train_dataset.csv`` under ``{workspace_path}/datasets/``. The test split is written to the ``sampled_test_dataset`` artifact.
+1. **Data loading & splitting** (``timeseries_data_loader``): Loads CSV from S3 (up to 100 MiB for the "speed" preset, up to 1 GiB for "balanced"), replaces ``+/-inf`` with NaN (missing targets stay for AutoGluon), requires parseable timestamps and non-null ids (or injects ``__synthetic_item_id``
+for two-column datasets when ``id_column=""``), deduplicates ``(id_column, timestamp_column)``, then applies a two-stage **per-series temporal** split on ``id_column`` / ``timestamp_column``: default **80/20** train vs test per series, then **30/70** of each series' train rows into
+``models_selection_train_dataset.csv`` and ``extra_train_dataset.csv`` under ``{workspace_path}/datasets/``. The test split is written to the ``sampled_test_dataset`` artifact.
 
 2. **Model generation + full refit** (``autogluon_timeseries_models_training``): Trains multiple AutoGluon TimeSeries models on the selection split, picks top ``top_n``, and refits each selected model on the full train portion (**selection + extra** splits). The component writes all refitted models
 to a single combined ``models_artifact``.

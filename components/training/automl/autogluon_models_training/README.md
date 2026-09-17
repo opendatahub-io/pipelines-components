@@ -27,6 +27,7 @@ mutates predictor state. All artifacts are written under a single output artifac
 | `sample_row` | `str` | `None` | JSON array of row dicts for the notebook example input; label column is stripped. |
 | `models_artifact` | `dsl.Output[dsl.Model]` | `None` | Output Model artifact containing all refitted model subdirectories. |
 | `html_artifact` | `dsl.Output[dsl.HTML]` | `None` | Output HTML artifact containing the ranked leaderboard page. |
+| `experiment_notebook` | `dsl.Output[dsl.Artifact]` | `None` | Output artifact containing the run-level experiment launcher notebook. |
 | `component_status` | `dsl.Output[dsl.Artifact]` | `None` | Output artifact containing stage-level progress tracking for this component. |
 | `sampling_config` | `Optional[dict]` | `None` | Data sampling config stored in artifact metadata. |
 | `split_config` | `Optional[dict]` | `None` | Data split config stored in artifact metadata. |
@@ -34,6 +35,11 @@ mutates predictor state. All artifacts are written under a single output artifac
 | `positive_class` | `str` | `""` | Label value for the positive class in **binary** classification (e.g. ``"1"`` or ``"yes"``). Passed to ``TabularPredictor`` when set. Empty string (default) lets AutoGluon infer the positive class when ``fit`` runs. Ignored for ``multiclass`` and ``regression``. |
 | `preset` | `str` | `speed` | Training quality tier. ``"speed"`` (default) or ``"balanced"`` (may run more than 2x longer). |
 | `eval_metric` | `str` | `""` | Metric for model ranking (e.g. ``"r2"``, ``"accuracy"``). Defaults to ``"r2"`` for regression and ``"accuracy"`` otherwise. |
+| `test_data_bucket_name` | `str` | `""` | Optional S3 bucket for user-provided external test data. |
+| `test_data_file_key` | `str` | `""` | Optional S3 object key for user-provided external test data. |
+| `train_data_secret_name` | `str` | `""` | Kubernetes secret name for S3 credentials used by the pipeline. |
+| `train_data_bucket_name` | `str` | `""` | S3 bucket containing the training dataset. |
+| `train_data_file_key` | `str` | `""` | S3 object key for the training dataset. |
 
 ## Outputs 📤
 

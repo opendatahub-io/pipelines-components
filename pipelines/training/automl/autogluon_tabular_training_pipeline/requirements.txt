@@ -947,6 +947,7 @@ torch==2.13.0 \
     --hash=sha256:97ce14be01501f66257b84875af54124a510869d742163c2cb66e7fdc3bd2bd5 \
     --hash=sha256:cfc35cf3b57b501b890a838bcdc7b7324195e047e92488f1faf9a8c8cbd402a7
     # via
+    #   -r requirements.in
     #   accelerate
     #   autogluon-tabular
     #   autogluon-timeseries
