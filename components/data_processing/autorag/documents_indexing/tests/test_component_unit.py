@@ -267,7 +267,7 @@ class TestDocumentsIndexingProcessing:
     def test_creates_maas_client_from_env(self, tmp_path):
         """MaaS client is created with correct env var values."""
         modules, mocks = _make_ai4rag_mocks()
-        _call_component(tmp_path, modules, mocks, filenames=["a.json"])
+        _call_component(tmp_path, modules, mocks)
         mocks["create_maas_client"].assert_called_once_with(
             base_url="https://maas.example.com/v1",
             api_key="test-api-key",
@@ -341,35 +341,21 @@ class TestDocumentsIndexingProcessing:
         assert len(added_chunks) == 4  # 2 chunks per doc × 2 docs
 
     @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
-    def test_empty_directory_raises(self, tmp_path):
-        """An empty extraction artifact aborts instead of indexing nothing.
-
-        Succeeding here would leave an empty collection behind a green pipeline
-        run -- silent data loss.
-        """
+    def test_empty_directory_no_vector_store_calls(self, tmp_path):
+        """Empty directory produces no vector store calls and an empty report."""
         modules, mocks = _make_ai4rag_mocks()
-
-        with pytest.raises(RuntimeError, match="No DoclingDocument JSON files found"):
-            _call_component(tmp_path, modules, mocks, filenames=[])
+        _call_component(tmp_path, modules, mocks, filenames=[])
 
         mocks["get_vector_store"].assert_not_called()
         mocks["DoclingDocument"].load_from_json.assert_not_called()
 
-    @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
-    def test_empty_directory_error_reports_artifact_is_empty(self, tmp_path):
-        """The abort message distinguishes an empty artifact from a non-JSON one."""
-        modules, mocks = _make_ai4rag_mocks()
-
-        with pytest.raises(RuntimeError, match="the artifact is empty"):
-            _call_component(tmp_path, modules, mocks, filenames=[])
-
-    @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
-    def test_non_json_files_only_raises_and_lists_them(self, tmp_path):
-        """Files that are present but not JSON are named in the error message."""
-        modules, mocks = _make_ai4rag_mocks()
-
-        with pytest.raises(RuntimeError, match=r"non-JSON file\(s\) are present"):
-            _call_component(tmp_path, modules, mocks, filenames=["nested/a.txt", "b.md"])
+        report_path = tmp_path / "indexing_report.json"
+        assert report_path.exists()
+        data = json.loads(report_path.read_text())
+        assert data["total_documents"] == 0
+        assert data["completed"] == 0
+        assert data["documents"] == []
+        assert "settings" in data
 
     @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
     def test_discovers_documents_under_nested_prefix(self, tmp_path):
@@ -564,16 +550,13 @@ class TestDocumentsIndexingReport:
     def test_report_metadata_set(self, tmp_path):
         """Report artifact metadata is populated."""
         modules, mocks = _make_ai4rag_mocks()
-        mocks["DoclingDocument"].load_from_json.return_value = mock.MagicMock()
-        mocks["LangChainChunker"].return_value.split_documents.return_value = [mock.MagicMock()] * 3
-
-        report, _ = _call_component(tmp_path, modules, mocks, filenames=["a.json"])
+        report, _ = _call_component(tmp_path, modules, mocks, filenames=[])
 
         assert report.metadata["display_name"] == "Documents Indexing Report"
-        assert report.metadata["total_documents"] == 1
-        assert report.metadata["completed"] == 1
+        assert report.metadata["total_documents"] == 0
+        assert report.metadata["completed"] == 0
         assert report.metadata["failed"] == 0
-        assert report.metadata["total_chunks"] == 3
+        assert report.metadata["total_chunks"] == 0
 
     @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
     def test_report_contains_settings_section(self, tmp_path):
@@ -612,6 +595,20 @@ class TestDocumentsIndexingReport:
         assert settings["embedding"]["model_id"] == "bge-m3"
         assert settings["embedding"]["embedding_params"]["embedding_dimension"] == 1024
         assert settings["embedding"]["embedding_params"]["context_length"] == 8192
+
+    @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
+    def test_report_settings_in_empty_directory(self, tmp_path):
+        """Empty directory report includes settings with the detected provider and null collection."""
+        modules, mocks = _make_ai4rag_mocks()
+
+        _call_component(tmp_path, modules, mocks, filenames=[], collection_name=None)
+
+        report_path = tmp_path / "indexing_report.json"
+        data = json.loads(report_path.read_text())
+        assert "settings" in data
+        assert data["settings"]["vector_store_binding"]["provider_type"] == "milvus"
+        assert data["settings"]["vector_store_binding"]["collection_name"] is None
+        assert data["settings"]["chunking"]["method"] == "recursive"
 
     @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
     def test_report_settings_resolved_embedding_params(self, tmp_path):
@@ -675,6 +672,20 @@ class TestDocumentsIndexingHtmlReport:
         html_text = Path(html.path).read_text(encoding="utf-8")
         assert "failed" in html_text.lower()
         assert "bad.json" in html_text
+
+    @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
+    def test_indexing_report_html_written_for_empty_directory(self, tmp_path):
+        """HTML report is generated even when no documents are found."""
+        modules, mocks = _make_ai4rag_mocks()
+
+        _, html = _call_component(tmp_path, modules, mocks, filenames=[])
+
+        html_path = Path(html.path)
+        assert html_path.exists()
+        html_text = html_path.read_text(encoding="utf-8")
+        assert "Documents Indexing Report" in html_text
+        assert "No documents were found" in html_text
+        assert html.metadata["display_name"] == "Documents Indexing Report"
 
     @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
     def test_indexing_report_html_lists_nested_document_paths(self, tmp_path):

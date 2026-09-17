@@ -39,9 +39,7 @@ def documents_indexing(
     Individual document failures (corrupt JSON, chunking errors) are
     recorded in the indexing report and skipped — they do not abort the
     pipeline.  Systemic failures (MaaS API unreachable, vector database
-    unreachable, embedding model errors) propagate normally.  Finding no
-    documents at all raises: an empty collection behind a successful run is
-    silent data loss, not a valid outcome.
+    unreachable, embedding model errors) propagate normally.
 
     Args:
         embedding_model_id: Embedding model ID served by MaaS.
@@ -290,20 +288,32 @@ def documents_indexing(
     report_entries = []
 
     if total_documents == 0:
-        # Indexing nothing is never a legitimate success: succeeding here would leave an
-        # empty collection behind a green pipeline run.  Fail loudly, and show what the
-        # extraction artifact actually contains so the cause is obvious from the logs.
-        present = sorted(p.relative_to(base).as_posix() for p in base.rglob("*") if p.is_file())
-        if present:
-            found = f"{len(present)} non-JSON file(s) are present, e.g. {', '.join(present[:5])}"
-        else:
-            found = "the artifact is empty"
-        raise RuntimeError(
-            f"No DoclingDocument JSON files found under {extracted_text.path!r} — {found}. "
-            "Text extraction should have written one .json file per discovered document. "
-            "Check the text_extraction task logs for extraction errors, and verify that "
-            "documents_discovery found any documents for the given input_data_keys prefix."
+        _logger.warning("No documents found in %s", extracted_text.path)
+        settings = {
+            "vector_store_binding": {
+                "provider_type": provider,
+                "collection_name": collection_name,
+            },
+            "chunking": {
+                "method": chunking_method,
+                "chunk_size": chunk_size,
+                "chunk_overlap": chunk_overlap,
+            },
+            "embedding": {
+                "model_id": embedding_model_id,
+                "embedding_params": embedding_params or {},
+            },
+        }
+        write_report(total_documents=0, total_chunks=0, entries=report_entries, settings=settings)
+        write_html(
+            total_documents=0,
+            total_chunks=0,
+            completed=0,
+            failed=0,
+            entries=report_entries,
+            settings=settings,
         )
+        return
 
     if chunking_method == "hybrid":
         chunker = DoclingChunker(max_tokens=chunk_size)

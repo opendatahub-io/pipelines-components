@@ -10,8 +10,7 @@ Reads DoclingDocument JSON files from the *extracted_text* artifact, splits them
 
 The vector store backend (Milvus or PGVector) is resolved at runtime from the environment injected by the vector-database secret: ``MILVUS_*`` keys select Milvus, ``PGVECTOR_*`` keys select PGVector.
 
-Individual document failures (corrupt JSON, chunking errors) are recorded in the indexing report and skipped — they do not abort the pipeline. Systemic failures (MaaS API unreachable, vector database unreachable, embedding model errors) propagate normally. Finding no documents at all raises: an
-empty collection behind a successful run is silent data loss, not a valid outcome.
+Individual document failures (corrupt JSON, chunking errors) are recorded in the indexing report and skipped — they do not abort the pipeline. Systemic failures (MaaS API unreachable, vector database unreachable, embedding model errors) propagate normally.
 
 ## Inputs 📥
 
