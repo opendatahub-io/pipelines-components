@@ -15,6 +15,11 @@ This pipeline implements an efficient two-stage training approach for AutoGluon 
 Training datasets are stored on a PVC workspace (not S3 artifacts) so that all pipeline steps sharing the workspace can access them without extra downloads. Only the test dataset is written to an S3 artifact (for use by the leaderboard evaluation component). The workspace is provisioned via
 ``PipelineConfig.workspace``.
 
+**MLflow logging:**
+
+Results are logged to MLflow only when the platform injects ``KFP_MLFLOW_CONFIG`` into the step (configured on the Data Science Pipelines / KFP pipeline server, not via a pipeline parameter). To disable MLflow logging, run the pipeline on a server without MLflow configured, or have the cluster admin
+remove the MLflow configuration from the pipeline server; the training step then skips all tracking and runs unchanged. Artifact uploads can additionally be turned off per run with ``log_model_artifacts=False``.
+
 **Pipeline Stages:**
 
 0. **Component stage map**: Publishes the static component-to-stage-to-step map as a KFP artifact for dashboards before any data I/O.
@@ -59,6 +64,7 @@ The pipeline leverages AutoGluon's unique ensembling strategy that combines mult
 | `positive_class` | `str` | `""` | Optional label value for the positive class in binary classification. Defaults to the second unique class after sorting label values. |
 | `eval_metric` | `str` | `""` | Metric used for model ranking. Empty string (default) is resolved by the component to "r2" for regression and "accuracy" for binary and multiclass classification. |
 | `preset` | `str` | `speed` | Training quality tier. "speed" (default, 4 vCPU / 16 GiB) or "balanced" (may run more than 2x longer, 8 vCPU / 32 GiB). |
+| `log_model_artifacts` | `bool` | `True` | When True (default), upload each model's predictor and inference notebook to its MLflow child run. Set False to skip potentially large predictor uploads (metrics and tags are still logged). |
 | `test_data_bucket_name` | `str` | `""` | Optional S3-compatible bucket name for a user-provided test dataset. Default: empty string (use the holdout split from training data). |
 | `test_data_file_key` | `str` | `""` | Optional S3 object key for a user-provided test CSV file. Default: empty string (use the holdout split from training data). |
 

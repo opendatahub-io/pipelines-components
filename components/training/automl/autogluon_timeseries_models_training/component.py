@@ -31,6 +31,8 @@ def autogluon_timeseries_models_training(
     known_covariates_names: Optional[List[str]] = None,
     preset: str = "speed",
     eval_metric: str = "mean_absolute_scaled_error",
+    run_name: str = "",
+    log_model_artifacts: bool = True,
     test_data_bucket_name: str = "",
     test_data_file_key: str = "",
     train_data_secret_name: str = "",
@@ -83,8 +85,20 @@ def autogluon_timeseries_models_training(
         eval_metric: Metric for model ranking (e.g. ``"mean_absolute_scaled_error"``,
             ``"weighted_quantile_loss"``). Defaults to ``"mean_absolute_scaled_error"``.
             Legacy uppercase acronyms (e.g. ``"MASE"``) are accepted and normalized to snake_case.
+        run_name: Per-execution MLflow run name recorded as a tag on child runs. Falls
+            back to ``pipeline_name`` when empty.
+        log_model_artifacts: When True, upload each model's predictor and notebook to its
+            MLflow child run.
         test_data_bucket_name: Optional S3 bucket for user-provided external test data.
         test_data_file_key: Optional S3 object key for user-provided external test data.
+
+    MLflow logging:
+        When the platform injects ``KFP_MLFLOW_CONFIG``, results are logged to MLflow
+        incrementally: the parent run is opened before the refit loop and each refitted
+        model becomes a nested child run as it finishes, with parent aggregates plus
+        best-model registration finalized at the end. ``TimeSeriesPredictor`` has no
+        callback API, so there is no live per-candidate streaming during ``fit()``. All
+        MLflow work is best-effort and never fails training.
 
     Returns:
         NamedTuple: top_models list, predictor_path, eval_metric, model_config.
@@ -92,6 +106,9 @@ def autogluon_timeseries_models_training(
     import json
     import logging
     import math
+    import shutil
+    import tempfile
+    import time
     from pathlib import Path
 
     import pandas as pd
@@ -223,6 +240,10 @@ def autogluon_timeseries_models_training(
             prediction_length,
         )
         status.record("model_selection", "started")
+        # Accumulates only the model-fitting call durations (selection fit + refit loop) for the
+        # parent metric, excluding leaderboard, evaluation, notebook and logging overhead.
+        total_fit_time_seconds = 0.0
+        fit_start_time = time.perf_counter()
         try:
             predictor.fit(
                 train_data=train_ts,
@@ -234,6 +255,7 @@ def autogluon_timeseries_models_training(
         except Exception as e:
             logger.error(f"Training failed: {str(e)}")
             raise ValueError(f"TimeSeriesPredictor training failed: {str(e)}") from e
+        total_fit_time_seconds += time.perf_counter() - fit_start_time
 
         try:
             leaderboard = predictor.leaderboard(test_ts)
@@ -387,282 +409,411 @@ def autogluon_timeseries_models_training(
 
         ts_inference_block = _build_timeseries_inference_block()
 
-        for model_name in top_models:
-            try:
-                model_name_full = f"{model_name}_FULL"
-                output_path = Path(models_artifact.path) / model_name_full
-                output_path.mkdir(parents=True, exist_ok=True)
-                predictor_output = output_path / "predictor"
+        # The notebook rendered into models_artifact embeds real historical sample rows, so
+        # it must never reach the MLflow tracking server. Build a sanitized predict sample
+        # (typed placeholders instead of real values) for a separate MLflow-only notebook.
+        # Reuses the already-sanitized inference-block payload; returns None (no notebook
+        # uploaded) if the inference block could not be built (fail safe).
+        def _sanitized_predict_sample():
+            if not ts_inference_block:
+                return None
+            payload = ts_inference_block.get("sample_payload", {})
+            instances = payload.get("instances")
+            if not instances:
+                return None
+            return {
+                "id_column": id_column,
+                "timestamp_column": timestamp_column,
+                "known_covariates_names": known_covariates_names or [],
+                "history": [instances[0]],
+                "known_covariates": payload.get("known_covariates"),
+            }
 
-                model_type = predictor._trainer.get_model_attribute(model_name, "type")
-                is_ensemble = issubclass(model_type, AbstractTimeSeriesEnsembleModel)
-                hyperparams_option = "ensemble_hyperparameters" if is_ensemble else "hyperparameters"
-                additional_fit_params = {hyperparams_option: {model_name: model_hyperparams[model_name]}}
+        sanitized_predict_sample = _sanitized_predict_sample()
+        mlflow_notebook_dir = Path(tempfile.mkdtemp(prefix="mlflow-sanitized-nb-"))
 
-                predictor_refit = TimeSeriesPredictor(
-                    prediction_length=prediction_length,
-                    target=target,
-                    eval_metric=eval_metric,
-                    path=predictor_output,
-                    verbosity=2,
-                    known_covariates_names=known_covariates_names,
-                )
-                # fit() automatically saves the predictor to path specified in constructor
-                predictor_refit.fit(
-                    train_data=full_train_ts_df,
-                    **additional_fit_params,
-                    time_limit=time_limit,
-                    excluded_model_types=["Chronos", "Chronos2", "Toto"],
-                )
-                metrics = predictor_refit.evaluate(test_ts, metrics=list(AVAILABLE_METRICS.keys()))
-                # Keep raw AutoGluon evaluate() signs for metrics.json (higher-is-better / negated errors)
-                # so Phase C leaderboard sorting (ascending=False) stays correct.
-                # back_testing.json normalizes separately.
-                # Remap uppercase acronym keys (e.g. "MASE") to snake_case (e.g. "mean_absolute_scaled_error").
-                metrics_dict = {}
-                for k, v in metrics.items():
-                    if hasattr(v, "item"):
-                        v = float(v)
-                    if isinstance(v, (int, float)) and math.isfinite(v):
-                        normalized_key = _acronym_to_snake.get(k)
-                        if normalized_key is None:
-                            if k not in AVAILABLE_METRICS:
-                                logger.warning("Unrecognized metric key %r from evaluate(); storing as-is.", k)
-                            normalized_key = k
-                        metrics_dict[normalized_key] = v
-
-                if eval_metric not in metrics_dict:
-                    raise ValueError(
-                        f"Eval metric '{eval_metric}' was NaN/Inf for model '{model_name_full}' "
-                        "and was dropped from metrics. Cannot produce a valid leaderboard entry."
-                    )
-
-                # Save additional metadata about the selected model
-                predictor_metadata = {
-                    "model_name": model_name_full,
-                    "base_model": model_name,
-                    "prediction_length": prediction_length,
-                    "eval_metric": eval_metric,
-                    "target": target,
-                    "id_column": id_column,
-                    "timestamp_column": timestamp_column,
-                    "known_covariates_names": known_covariates_names or [],
-                    "uses_synthetic_id": uses_synthetic_id,
-                }
-                predictor_output.mkdir(parents=True, exist_ok=True)
-                with (predictor_output / "predictor_metadata.json").open("w", encoding="utf-8") as f:
-                    json.dump(predictor_metadata, f, indent=2)
-
-                metrics_path = output_path / "metrics"
-                metrics_path.mkdir(parents=True, exist_ok=True)
-                with (metrics_path / "metrics.json").open("w", encoding="utf-8") as f:
-                    json.dump(metrics_dict, f, indent=2)
-
-                back_testing_available = False
-                try:
-                    back_testing_payload = build_back_testing_json(
-                        predictor_refit,
-                        model_name=model_name,
-                        model_name_full=model_name_full,
-                        train_data=full_train_ts_df,
-                        eval_metric=eval_metric,
-                        target=target,
-                        id_column=id_column,
-                        timestamp_column=timestamp_column,
-                        prediction_length=prediction_length,
-                        metrics=list(AVAILABLE_METRICS.keys()),
-                    )
-                    with (metrics_path / "back_testing.json").open("w", encoding="utf-8") as f:
-                        json.dump(back_testing_payload, f, indent=2)
-                    back_testing_available = True
-                except Exception as backtest_exc:
-                    logger.warning(
-                        "Could not generate back_testing.json for model %r: %s. Skipping backtest artifact.",
-                        model_name_full,
-                        backtest_exc,
-                    )
-
-                notebook_file = "timeseries_notebook.ipynb"
-                with (shared_automl_dir() / "notebook_templates" / notebook_file).open("r", encoding="utf-8") as f:
-                    notebook = json.load(f)
-                predict_sample = build_predict_sample_artifact(
-                    predictor_refit,
-                    sample_row_list,
-                    id_column,
-                    timestamp_column,
-                    known_covariates_names,
-                )
-                replacements = {
+        def _render_sanitized_notebook(model_name_full: str):
+            if sanitized_predict_sample is None:
+                return None
+            with (shared_automl_dir() / "notebook_templates" / "timeseries_notebook.ipynb").open(
+                "r", encoding="utf-8"
+            ) as f:
+                sanitized_notebook = json.load(f)
+            sanitized_notebook = replace_placeholder_in_notebook(
+                sanitized_notebook,
+                {
                     "<REPLACE_RUN_ID>": run_id,
                     "<REPLACE_PIPELINE_NAME>": pipeline_name_trimmed,
                     "<REPLACE_MODEL_NAME>": model_name_full,
-                    "<REPLACE_PREDICT_SAMPLE>": str(predict_sample),
+                    "<REPLACE_PREDICT_SAMPLE>": str(sanitized_predict_sample),
                     "<REPLACE_BACKTEST_PLOT_HELPERS>": notebook_backtest_charts_source(),
                     "<REPLACE_TIMESERIES_SAMPLE_HELPERS>": notebook_timeseries_sample_helpers_source(),
-                }
-                notebook = replace_placeholder_in_notebook(notebook, replacements)
-
-                notebook_path = output_path / "notebooks"
-                notebook_path.mkdir(parents=True, exist_ok=True)
-                with (notebook_path / "automl_predictor_notebook.ipynb").open("w", encoding="utf-8") as f:
-                    json.dump(notebook, f)
-
-                model_location = {
-                    "model_directory": model_name_full,
-                    "predictor": str(Path(model_name_full) / "predictor"),
-                    "notebook": str(Path(model_name_full) / "notebooks" / "automl_predictor_notebook.ipynb"),
-                    "metrics": str(Path(model_name_full) / "metrics"),
-                }
-                # Only include back_testing path if file was successfully written
-                if back_testing_available:
-                    model_location["back_testing"] = str(Path(model_name_full) / "metrics" / "back_testing.json")
-
-                model_metadata = {
-                    "name": model_name_full,
-                    "location": model_location,
-                    "metrics": {
-                        "test_data": metrics_dict,
-                    },
-                }
-                if ts_inference_block is not None:
-                    model_metadata["inference"] = ts_inference_block
-                with (output_path / "model.json").open("w", encoding="utf-8") as f:
-                    json.dump(model_metadata, f, indent=2)
-
-                # Only append to successful models lists after all operations succeed
-                model_names_full.append(model_name_full)
-                models_metadata.append(model_metadata)
-
-            except Exception as e:
-                logger.error("Refit failed for model '%s': %s", model_name, e)
-                failed_models.append(model_name)
-
-        # Report partial failures
-        if failed_models:
-            logger.warning("The following models failed refit: %s", failed_models)
-
-        # Ensure at least one model succeeded
-        if not model_names_full:
-            raise RuntimeError("All models failed refit. No artifacts written.")
-
-        status.record(
-            "refit_and_evaluate",
-            "completed",
-            metrics={"model_count": len(model_names_full), "eval_metric": eval_metric},
-        )
-
-        # Phase C: leaderboard generation - uses models_metadata already built in the refit loop
-        status.record("build_leaderboard", "started")
-
-        import importlib.resources
-
-        from kfp_components.components.training.automl.shared.leaderboard_utils import (
-            _build_leaderboard_html,
-            _build_leaderboard_table,
-            _format_metric_value,
-        )
-
-        eval_results_by_model = {m["name"]: m["metrics"]["test_data"] for m in models_metadata}
-        base_uri = models_artifact.uri.rstrip("/")
-        leaderboard_rows = []
-        for model_name_full in model_names_full:
-            model_uri = f"{base_uri}/{model_name_full}"
-            leaderboard_rows.append(
-                {
-                    "model": model_name_full,
-                    **eval_results_by_model[model_name_full],
-                    "notebook": f"{model_uri}/notebooks/automl_predictor_notebook.ipynb",
-                    "predictor": f"{model_uri}/predictor",
-                }
+                },
             )
+            sanitized_notebook_path = mlflow_notebook_dir / f"{model_name_full}.ipynb"
+            with sanitized_notebook_path.open("w", encoding="utf-8") as f:
+                json.dump(sanitized_notebook, f)
+            return sanitized_notebook_path
 
-        # AutoGluon negates error metrics (e.g. mean_absolute_scaled_error -> negative)
-        # so descending = best model first.
-        # Sort on raw (unrounded) values so close scores cannot flip rank after rounding.
-        if not leaderboard_rows:
-            raise RuntimeError("Leaderboard rows are empty; no models available for ranking.")
-        leaderboard_df = pd.DataFrame(leaderboard_rows)
-        if eval_metric in leaderboard_rows[0]:
-            leaderboard_df = leaderboard_df.sort_values(by=eval_metric, ascending=False, na_position="last")
-        else:
-            logger.warning(
-                "eval_metric '%s' not found in row keys %s; preserving refit order.",
-                eval_metric,
-                list(leaderboard_rows[0].keys()),
-            )
-        n = len(leaderboard_df)
-        best_model_name = str(leaderboard_df.iloc[0]["model"])
-        leaderboard_df.index = pd.RangeIndex(start=1, stop=n + 1, name="rank")
-        _metric_cols = [c for c in leaderboard_df.columns if c not in ("model", "notebook", "predictor")]
-        leaderboard_df[_metric_cols] = leaderboard_df[_metric_cols].map(_format_metric_value)
-        html_table = _build_leaderboard_table(leaderboard_df)
+        # Open the MLflow parent run around the refit loop so each model is logged as a
+        # nested child run the moment it finishes (incremental updates). TimeSeriesPredictor
+        # has no callback API, so there is no live per-candidate streaming during fit().
+        # Best-effort: a disabled logger is a no-op. Entered via ExitStack to avoid
+        # re-indenting the loop; closed just before status recording below.
+        from contextlib import ExitStack
 
-        _template_ref = (
-            importlib.resources.files("kfp_components.components.training.automl.shared")
-            / "leaderboard_html_template.html"
-        )
-        with importlib.resources.as_file(_template_ref) as template_path:
-            html_content = _build_leaderboard_html(
-                template_path=template_path,
-                table_html=html_table,
-                eval_metric=eval_metric,
-                best_model_name=best_model_name,
-                num_models=n,
-            )
-        with open(html_artifact.path, "w", encoding="utf-8") as f:
-            f.write(html_content)
-
-        html_artifact.metadata["data"] = leaderboard_df.to_json(orient="records")
-        html_artifact.metadata["display_name"] = "automl_leaderboard"
-        status.record(
-            "build_leaderboard",
-            "completed",
-            metrics={"best_model": best_model_name, "model_count": n},
+        from kfp_components.components.training.automl.shared.mlflow_tracking import (
+            experiment_run_logger,
         )
 
-        from kfp_components.components.training.automl.shared.experiment_notebook_utils import (
-            TimeseriesExperimentNotebookConfig,
-            timeseries_experiment_notebook_replacements,
-            write_experiment_notebook,
-        )
+        # Fall back to the pipeline name when no per-run name was provided, so the parent
+        # MLflow run (and its experiment, on the create path) is named instead of anonymous.
+        effective_run_name = run_name or pipeline_name
 
+        mlflow_stack = ExitStack()
         try:
-            experiment_notebook_config = TimeseriesExperimentNotebookConfig(
-                train_data_secret_name=train_data_secret_name,
-                train_data_bucket_name=train_data_bucket_name,
-                train_data_file_key=train_data_file_key,
-                test_data_bucket_name=test_data_bucket_name,
-                test_data_file_key=test_data_file_key,
-                target=target,
-                id_column=id_column,
-                timestamp_column=timestamp_column,
-                known_covariates_names=known_covariates_names,
-                prediction_length=prediction_length,
-                top_n=top_n,
-                eval_metric=eval_metric,
+            run_logger = mlflow_stack.enter_context(
+                experiment_run_logger(
+                    task_type="time_series",
+                    eval_metric=eval_metric,
+                    log_model_artifacts=log_model_artifacts,
+                    run_name=effective_run_name,
+                )
+            )
+            # Non-secret dataset identity for the parent run; credentials stay in the K8s secret.
+            dataset_uri = f"s3://{train_data_bucket_name}/{train_data_file_key}" if train_data_bucket_name else ""
+            run_logger.log_header(
+                pipeline_name=pipeline_name,
+                kfp_run_id=run_id,
+                kfp_run_name=effective_run_name,
                 preset=preset,
+                top_n=top_n,
+                data_config={"sampling_config": sampling_config, "split_config": split_config},
+                dataset_uri=dataset_uri,
             )
-            write_experiment_notebook(
-                output_dir=Path(experiment_notebook.path),
-                kind="timeseries",
-                include_user_test_data=experiment_notebook_config.include_user_test_data,
-                replacements=timeseries_experiment_notebook_replacements(experiment_notebook_config),
-            )
-            experiment_notebook.metadata["display_name"] = "automl_experiment_notebook"
-        except Exception as notebook_exc:
-            logger.warning("Could not generate experiment notebook: %s", notebook_exc)
 
-        models_artifact.metadata["model_names"] = json.dumps(model_names_full)
-        context = {
-            "data_config": {
-                "sampling_config": sampling_config,
-                "split_config": split_config,
-            },
-            "model_config": model_config,
-            "best_model_name": best_model_name,
-            "models": models_metadata,
-        }
-        models_artifact.metadata["context"] = context
+            for model_name in top_models:
+                try:
+                    model_name_full = f"{model_name}_FULL"
+                    output_path = Path(models_artifact.path) / model_name_full
+                    output_path.mkdir(parents=True, exist_ok=True)
+                    predictor_output = output_path / "predictor"
+
+                    model_type = predictor._trainer.get_model_attribute(model_name, "type")
+                    is_ensemble = issubclass(model_type, AbstractTimeSeriesEnsembleModel)
+                    hyperparams_option = "ensemble_hyperparameters" if is_ensemble else "hyperparameters"
+                    additional_fit_params = {hyperparams_option: {model_name: model_hyperparams[model_name]}}
+
+                    predictor_refit = TimeSeriesPredictor(
+                        prediction_length=prediction_length,
+                        target=target,
+                        eval_metric=eval_metric,
+                        path=predictor_output,
+                        verbosity=2,
+                        known_covariates_names=known_covariates_names,
+                    )
+                    # fit() automatically saves the predictor to path specified in constructor
+                    refit_start_time = time.perf_counter()
+                    predictor_refit.fit(
+                        train_data=full_train_ts_df,
+                        **additional_fit_params,
+                        time_limit=time_limit,
+                        excluded_model_types=["Chronos", "Chronos2", "Toto"],
+                    )
+                    total_fit_time_seconds += time.perf_counter() - refit_start_time
+                    metrics = predictor_refit.evaluate(test_ts, metrics=list(AVAILABLE_METRICS.keys()))
+                    # Keep raw AutoGluon evaluate() signs for metrics.json (higher-is-better / negated errors)
+                    # so Phase C leaderboard sorting (ascending=False) stays correct.
+                    # back_testing.json normalizes separately.
+                    # Remap uppercase acronym keys (e.g. "MASE") to snake_case (e.g. "mean_absolute_scaled_error").
+                    metrics_dict = {}
+                    for k, v in metrics.items():
+                        if hasattr(v, "item"):
+                            v = float(v)
+                        if isinstance(v, (int, float)) and math.isfinite(v):
+                            normalized_key = _acronym_to_snake.get(k)
+                            if normalized_key is None:
+                                if k not in AVAILABLE_METRICS:
+                                    logger.warning("Unrecognized metric key %r from evaluate(); storing as-is.", k)
+                                normalized_key = k
+                            metrics_dict[normalized_key] = v
+
+                    if eval_metric not in metrics_dict:
+                        raise ValueError(
+                            f"Eval metric '{eval_metric}' was NaN/Inf for model '{model_name_full}' "
+                            "and was dropped from metrics. Cannot produce a valid leaderboard entry."
+                        )
+
+                    # Save additional metadata about the selected model
+                    predictor_metadata = {
+                        "model_name": model_name_full,
+                        "base_model": model_name,
+                        "prediction_length": prediction_length,
+                        "eval_metric": eval_metric,
+                        "target": target,
+                        "id_column": id_column,
+                        "timestamp_column": timestamp_column,
+                        "known_covariates_names": known_covariates_names or [],
+                        "uses_synthetic_id": uses_synthetic_id,
+                    }
+                    predictor_output.mkdir(parents=True, exist_ok=True)
+                    with (predictor_output / "predictor_metadata.json").open("w", encoding="utf-8") as f:
+                        json.dump(predictor_metadata, f, indent=2)
+
+                    metrics_path = output_path / "metrics"
+                    metrics_path.mkdir(parents=True, exist_ok=True)
+                    with (metrics_path / "metrics.json").open("w", encoding="utf-8") as f:
+                        json.dump(metrics_dict, f, indent=2)
+
+                    back_testing_available = False
+                    try:
+                        back_testing_payload = build_back_testing_json(
+                            predictor_refit,
+                            model_name=model_name,
+                            model_name_full=model_name_full,
+                            train_data=full_train_ts_df,
+                            eval_metric=eval_metric,
+                            target=target,
+                            id_column=id_column,
+                            timestamp_column=timestamp_column,
+                            prediction_length=prediction_length,
+                            metrics=list(AVAILABLE_METRICS.keys()),
+                        )
+                        with (metrics_path / "back_testing.json").open("w", encoding="utf-8") as f:
+                            json.dump(back_testing_payload, f, indent=2)
+                        back_testing_available = True
+                    except Exception as backtest_exc:
+                        logger.warning(
+                            "Could not generate back_testing.json for model %r: %s. Skipping backtest artifact.",
+                            model_name_full,
+                            backtest_exc,
+                        )
+
+                    notebook_file = "timeseries_notebook.ipynb"
+                    with (shared_automl_dir() / "notebook_templates" / notebook_file).open("r", encoding="utf-8") as f:
+                        notebook = json.load(f)
+                    predict_sample = build_predict_sample_artifact(
+                        predictor_refit,
+                        sample_row_list,
+                        id_column,
+                        timestamp_column,
+                        known_covariates_names,
+                    )
+                    replacements = {
+                        "<REPLACE_RUN_ID>": run_id,
+                        "<REPLACE_PIPELINE_NAME>": pipeline_name_trimmed,
+                        "<REPLACE_MODEL_NAME>": model_name_full,
+                        "<REPLACE_PREDICT_SAMPLE>": str(predict_sample),
+                        "<REPLACE_BACKTEST_PLOT_HELPERS>": notebook_backtest_charts_source(),
+                        "<REPLACE_TIMESERIES_SAMPLE_HELPERS>": notebook_timeseries_sample_helpers_source(),
+                    }
+                    notebook = replace_placeholder_in_notebook(notebook, replacements)
+
+                    notebook_path = output_path / "notebooks"
+                    notebook_path.mkdir(parents=True, exist_ok=True)
+                    with (notebook_path / "automl_predictor_notebook.ipynb").open("w", encoding="utf-8") as f:
+                        json.dump(notebook, f)
+
+                    model_location = {
+                        "model_directory": model_name_full,
+                        "predictor": str(Path(model_name_full) / "predictor"),
+                        "notebook": str(Path(model_name_full) / "notebooks" / "automl_predictor_notebook.ipynb"),
+                        "metrics": str(Path(model_name_full) / "metrics"),
+                    }
+                    # Only include back_testing path if file was successfully written
+                    if back_testing_available:
+                        model_location["back_testing"] = str(Path(model_name_full) / "metrics" / "back_testing.json")
+
+                    model_metadata = {
+                        "name": model_name_full,
+                        "location": model_location,
+                        "metrics": {
+                            "test_data": metrics_dict,
+                        },
+                    }
+                    if ts_inference_block is not None:
+                        model_metadata["inference"] = ts_inference_block
+                    with (output_path / "model.json").open("w", encoding="utf-8") as f:
+                        json.dump(model_metadata, f, indent=2)
+
+                    # Only append to successful models lists after all operations succeed
+                    model_names_full.append(model_name_full)
+                    models_metadata.append(model_metadata)
+
+                    # Log this model to MLflow as a nested child run as soon as it is finalized,
+                    # so the experiment updates live. Best-effort: never fails the refit loop.
+                    run_logger.log_model(
+                        model_name=model_name_full,
+                        model_dir=output_path,
+                        model_uri=f"{models_artifact.uri.rstrip('/')}/{model_name_full}",
+                        metrics={"test_data": metrics_dict},
+                        notebook_path=_render_sanitized_notebook(model_name_full) if run_logger.enabled else None,
+                    )
+
+                except Exception as e:
+                    logger.error("Refit failed for model '%s': %s", model_name, e)
+                    failed_models.append(model_name)
+
+            shutil.rmtree(mlflow_notebook_dir, ignore_errors=True)
+
+            # Report partial failures
+            if failed_models:
+                logger.warning("The following models failed refit: %s", failed_models)
+
+            # Ensure at least one model succeeded
+            if not model_names_full:
+                raise RuntimeError("All models failed refit. No artifacts written.")
+
+            status.record(
+                "refit_and_evaluate",
+                "completed",
+                metrics={"model_count": len(model_names_full), "eval_metric": eval_metric},
+            )
+
+            # Phase C: leaderboard generation - uses models_metadata already built in the refit loop
+            status.record("build_leaderboard", "started")
+
+            import importlib.resources
+
+            from kfp_components.components.training.automl.shared.leaderboard_utils import (
+                _build_leaderboard_html,
+                _build_leaderboard_table,
+                _format_metric_value,
+            )
+
+            eval_results_by_model = {m["name"]: m["metrics"]["test_data"] for m in models_metadata}
+            base_uri = models_artifact.uri.rstrip("/")
+            leaderboard_rows = []
+            for model_name_full in model_names_full:
+                model_uri = f"{base_uri}/{model_name_full}"
+                leaderboard_rows.append(
+                    {
+                        "model": model_name_full,
+                        **eval_results_by_model[model_name_full],
+                        "notebook": f"{model_uri}/notebooks/automl_predictor_notebook.ipynb",
+                        "predictor": f"{model_uri}/predictor",
+                    }
+                )
+
+            # AutoGluon negates error metrics (e.g. mean_absolute_scaled_error -> negative)
+            # so descending = best model first.
+            # Sort on raw (unrounded) values so close scores cannot flip rank after rounding.
+            if not leaderboard_rows:
+                raise RuntimeError("Leaderboard rows are empty; no models available for ranking.")
+            leaderboard_df = pd.DataFrame(leaderboard_rows)
+            if eval_metric in leaderboard_rows[0]:
+                leaderboard_df = leaderboard_df.sort_values(by=eval_metric, ascending=False, na_position="last")
+            else:
+                logger.warning(
+                    "eval_metric '%s' not found in row keys %s; preserving refit order.",
+                    eval_metric,
+                    list(leaderboard_rows[0].keys()),
+                )
+            n = len(leaderboard_df)
+            best_model_name = str(leaderboard_df.iloc[0]["model"])
+            leaderboard_df.index = pd.RangeIndex(start=1, stop=n + 1, name="rank")
+            _metric_cols = [c for c in leaderboard_df.columns if c not in ("model", "notebook", "predictor")]
+            leaderboard_df[_metric_cols] = leaderboard_df[_metric_cols].map(_format_metric_value)
+            html_table = _build_leaderboard_table(leaderboard_df)
+
+            _template_ref = (
+                importlib.resources.files("kfp_components.components.training.automl.shared")
+                / "leaderboard_html_template.html"
+            )
+            with importlib.resources.as_file(_template_ref) as template_path:
+                html_content = _build_leaderboard_html(
+                    template_path=template_path,
+                    table_html=html_table,
+                    eval_metric=eval_metric,
+                    best_model_name=best_model_name,
+                    num_models=n,
+                )
+            with open(html_artifact.path, "w", encoding="utf-8") as f:
+                f.write(html_content)
+
+            html_artifact.metadata["data"] = leaderboard_df.to_json(orient="records")
+            html_artifact.metadata["display_name"] = "automl_leaderboard"
+            status.record(
+                "build_leaderboard",
+                "completed",
+                metrics={"best_model": best_model_name, "model_count": n},
+            )
+
+            # Generate the run-level experiment launcher notebook. Best-effort.
+            from kfp_components.components.training.automl.shared.experiment_notebook_utils import (
+                TimeseriesExperimentNotebookConfig,
+                timeseries_experiment_notebook_replacements,
+                write_experiment_notebook,
+            )
+
+            try:
+                experiment_notebook_config = TimeseriesExperimentNotebookConfig(
+                    train_data_secret_name=train_data_secret_name,
+                    train_data_bucket_name=train_data_bucket_name,
+                    train_data_file_key=train_data_file_key,
+                    test_data_bucket_name=test_data_bucket_name,
+                    test_data_file_key=test_data_file_key,
+                    target=target,
+                    id_column=id_column,
+                    timestamp_column=timestamp_column,
+                    known_covariates_names=known_covariates_names,
+                    prediction_length=prediction_length,
+                    top_n=top_n,
+                    eval_metric=eval_metric,
+                    preset=preset,
+                )
+                write_experiment_notebook(
+                    output_dir=Path(experiment_notebook.path),
+                    kind="timeseries",
+                    include_user_test_data=experiment_notebook_config.include_user_test_data,
+                    replacements=timeseries_experiment_notebook_replacements(experiment_notebook_config),
+                )
+                experiment_notebook.metadata["display_name"] = "automl_experiment_notebook"
+            except Exception as notebook_exc:
+                logger.warning("Could not generate experiment notebook: %s", notebook_exc)
+
+            # Log parent aggregates + leaderboard, then close the MLflow parent run.
+            # Best-effort: never fails the training step.
+            status.record("log_mlflow_results", "started")
+            run_logger.finalize(
+                html_artifact_path=html_artifact.path,
+                model_names=model_names_full,
+                total_fit_time_seconds=total_fit_time_seconds,
+            )
+            logged_to_mlflow, mlflow_tracking_info = run_logger.result()
+            mlflow_stack.close()
+            if logged_to_mlflow:
+                for key, value in mlflow_tracking_info.items():
+                    component_status.metadata[key] = value
+                status.record(
+                    "log_mlflow_results",
+                    "completed",
+                    message={"level": "info", "text": "Logged run results to MLflow."},
+                )
+            else:
+                # No MLflow config injected (KFP_MLFLOW_CONFIG absent): tracking is disabled.
+                # The stage still completes so the component reports done; the message records
+                # that nothing was logged.
+                status.record(
+                    "log_mlflow_results",
+                    "completed",
+                    message={"level": "info", "text": "MLflow tracking disabled; no results logged."},
+                )
+
+            models_artifact.metadata["model_names"] = json.dumps(model_names_full)
+            models_artifact.metadata["context"] = {
+                "data_config": {
+                    "sampling_config": sampling_config,
+                    "split_config": split_config,
+                },
+                "model_config": model_config,
+                "best_model_name": best_model_name,
+                "models": models_metadata,
+            }
+        finally:
+            # Always end the MLflow parent run, even if training or artifact
+            # processing raised, so it never leaks in RUNNING state (idempotent).
+            mlflow_stack.close()
 
         outputs = NamedTuple(
             "outputs",

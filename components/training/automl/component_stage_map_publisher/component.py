@@ -55,12 +55,48 @@ def publish_component_stage_map(
         )
     """
     import json
+    import os
     from datetime import UTC, datetime
     from pathlib import Path
 
     from kfp_components.components.training.automl.shared.run_status import (
         load_pipeline_run_status_manifest,
     )
+
+    def _build_mlflow_stage_map_block() -> dict:
+        """Build the ``mlflow`` block from the platform-injected ``KFP_MLFLOW_CONFIG`` blob.
+
+        Inlined so the publisher does not depend on ``shared/mlflow_tracking.py`` being
+        installed in the runtime image (mirrors ``build_mlflow_stage_map_block`` there).
+        """
+        raw = os.getenv("KFP_MLFLOW_CONFIG", "").strip()
+        if not raw:
+            return {"tracking_enabled": False}
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            return {"tracking_enabled": False}
+        if not isinstance(data, dict):
+            return {"tracking_enabled": False}
+
+        tracking_uri = str(data.get("endpoint", "")).strip()
+        if not tracking_uri:
+            return {"tracking_enabled": False}
+
+        block: dict = {"tracking_enabled": True, "tracking_uri": tracking_uri}
+        experiment_id = str(data.get("experimentId", "")).strip()
+        if experiment_id:
+            block["experiment_id"] = experiment_id
+        parent_run_id = str(data.get("parentRunId", "")).strip()
+        if parent_run_id:
+            block["run_id"] = parent_run_id
+        workspace = str(data.get("workspace", "")).strip() if data.get("workspacesEnabled") else ""
+        if workspace:
+            block["workspace"] = workspace
+        if experiment_id and parent_run_id:
+            base = tracking_uri.rstrip("/")
+            block["run_url"] = f"{base}/#/experiments/{experiment_id}/runs/{parent_run_id}"
+        return block
 
     if not isinstance(pipeline_id, str) or not pipeline_id.strip():
         raise ValueError("pipeline_id must be a non-empty string")
@@ -78,6 +114,7 @@ def publish_component_stage_map(
 
     stage_map["kfp_run_id"] = run_id
     stage_map["published_at"] = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    stage_map["mlflow"] = _build_mlflow_stage_map_block()
 
     output_path = Path(component_stage_map.path)
     output_path.mkdir(parents=True, exist_ok=True)
@@ -89,6 +126,8 @@ def publish_component_stage_map(
     component_stage_map.metadata["display_name"] = "Component Stage Map"
     component_stage_map.metadata["pipeline_id"] = pipeline_id
     component_stage_map.metadata["component_count"] = len(stage_map.get("components", []))
+    mlflow_block = stage_map["mlflow"]
+    component_stage_map.metadata["mlflow_tracking_enabled"] = str(mlflow_block.get("tracking_enabled", False))
 
     component_count = len(stage_map.get("components", []))
     stage_count = sum(len(c.get("stages", [])) for c in stage_map.get("components", []))
@@ -96,3 +135,4 @@ def publish_component_stage_map(
     print(f"  - Components: {component_count}")
     print(f"  - Total stages: {stage_count}")
     print(f"  - Published to: {output_file}")
+    print(f"  - MLflow tracking enabled: {mlflow_block.get('tracking_enabled', False)}")

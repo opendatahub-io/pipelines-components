@@ -46,6 +46,7 @@ def autogluon_timeseries_training_pipeline(
     top_n: int = 3,
     eval_metric: str = "mean_absolute_scaled_error",
     preset: str = "speed",
+    log_model_artifacts: bool = True,
     test_data_bucket_name: str = "",
     test_data_file_key: str = "",
 ):
@@ -68,6 +69,15 @@ def autogluon_timeseries_training_pipeline(
     steps can read shared paths without re-downloading. The per-series test split is also exposed as a
     dataset artifact. S3 credentials for the initial load are supplied via the Kubernetes secret
     ``train_data_secret_name``.
+
+    MLflow logging:
+
+    Results are logged to MLflow only when the platform injects ``KFP_MLFLOW_CONFIG`` into the
+    step (configured on the Data Science Pipelines / KFP pipeline server, not via a pipeline
+    parameter). To disable MLflow logging, run the pipeline on a server without MLflow
+    configured, or have the cluster admin remove the MLflow configuration from the pipeline
+    server; the training step then skips all tracking and runs unchanged. Artifact uploads can
+    additionally be turned off per run with ``log_model_artifacts=False``.
 
     Pipeline stages:
 
@@ -118,6 +128,9 @@ def autogluon_timeseries_training_pipeline(
             ``"mean_absolute_scaled_error"``.
         preset: Training quality tier. ``"speed"`` (default, 4 vCPU / 16 GiB) or
             ``"balanced"`` (may run more than 2x longer, 8 vCPU / 32 GiB).
+        log_model_artifacts: When True (default), upload each model's predictor and inference
+            notebook to its MLflow child run. Set False to skip potentially large predictor
+            uploads (metrics and tags are still logged).
         test_data_bucket_name: Optional S3-compatible bucket name for a user-provided test dataset.
             Default: empty string (use the per-series holdout split from training data).
         test_data_file_key: Optional S3 object key for a user-provided test CSV file.
@@ -188,6 +201,9 @@ def autogluon_timeseries_training_pipeline(
     )
 
     # Stage 2: Combined model generation + full refit.
+    # The training component logs results to MLflow incrementally (one nested child run per
+    # model) when the platform injects KFP_MLFLOW_CONFIG. Tracking is best-effort: missing
+    # config or MLflow errors are recorded on component_status only and never fail the run.
     # Resource limits differ by preset: medium_quality needs more CPU/memory.
     _training_kwargs = dict(
         target=target,
@@ -201,6 +217,7 @@ def autogluon_timeseries_training_pipeline(
         known_covariates_names=known_covariates_names,
         pipeline_name=dsl.PIPELINE_JOB_RESOURCE_NAME_PLACEHOLDER,
         run_id=dsl.PIPELINE_JOB_ID_PLACEHOLDER,
+        run_name=dsl.PIPELINE_JOB_NAME_PLACEHOLDER,
         train_data_secret_name=train_data_secret_name,
         train_data_bucket_name=train_data_bucket_name,
         train_data_file_key=train_data_file_key,
@@ -211,9 +228,11 @@ def autogluon_timeseries_training_pipeline(
         extra_train_data_path=data_loader_task.outputs["extra_train_data_path"],
         preset=preset,
         eval_metric=eval_metric,
+        log_model_artifacts=log_model_artifacts,
         test_data_bucket_name=test_data_bucket_name,
         test_data_file_key=test_data_file_key,
     )
+
     with dsl.If(preset == "balanced"):
         training_task_bl = autogluon_timeseries_models_training(**_training_kwargs)
         training_task_bl.set_caching_options(False)

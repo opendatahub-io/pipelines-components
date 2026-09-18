@@ -37,6 +37,8 @@ Refit outputs for all selected models are written under one ``models_artifact``,
 | `known_covariates_names` | `Optional[List[str]]` | `None` | Optional list of known covariate column names. |
 | `preset` | `str` | `speed` | Training quality tier. ``"speed"`` (default) or ``"balanced"`` (may run more than 2x longer). |
 | `eval_metric` | `str` | `mean_absolute_scaled_error` | Metric for model ranking (e.g. ``"mean_absolute_scaled_error"``, ``"weighted_quantile_loss"``). Defaults to ``"mean_absolute_scaled_error"``. Legacy uppercase acronyms (e.g. ``"MASE"``) are accepted and normalized to snake_case. |
+| `run_name` | `str` | `""` | Per-execution MLflow run name recorded as a tag on child runs. Falls back to ``pipeline_name`` when empty. |
+| `log_model_artifacts` | `bool` | `True` | When True, upload each model's predictor and notebook to its MLflow child run. |
 | `test_data_bucket_name` | `str` | `""` | Optional S3 bucket for user-provided external test data. |
 | `test_data_file_key` | `str` | `""` | Optional S3 object key for user-provided external test data. |
 | `train_data_secret_name` | `str` | `""` | Kubernetes secret name for S3 credentials used by the pipeline. |

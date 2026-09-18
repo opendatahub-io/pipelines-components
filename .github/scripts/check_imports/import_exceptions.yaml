@@ -15,6 +15,12 @@ files:
     - pandas
     - numpy
     - component
+  # mlflow_callbacks defines an AutoGluon callback subclass at module scope so the
+  # class is picklable (AutoGluon deep-copies/pickles fit() kwargs into a subprocess),
+  # which requires importing the AbstractCallback base at import time. The import is
+  # wrapped in try/except and falls back to object where AutoGluon is absent.
+  "components/**/shared/mlflow_callbacks.py":
+    - autogluon
   "pipelines/**/tests/*":
     - tests
   # Allow pipelines to import the repo package at module scope
