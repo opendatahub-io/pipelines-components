@@ -36,7 +36,11 @@ def isolated_sys_modules():
                 _m.__path__ = []
             if sub == "autogluon.tabular.configs.hyperparameter_configs":
                 _m.get_hyperparameter_config = mock.MagicMock(
-                    return_value={"RF": [{"max_depth": None}], "XT": [{"max_depth": None}]}
+                    return_value={
+                        "GBM": [{"learning_rate": 0.05}, {"learning_rate": 0.1}],
+                        "RF": [{"max_depth": None}],
+                        "XT": [{"max_depth": None}],
+                    }
                 )
             if sub == "autogluon.core.metrics":
                 _m.METRICS = {
@@ -339,7 +343,7 @@ class TestAutogluonModelsTrainingUnitTests:
         assert fit_call[1]["refit_full"] is False
         assert fit_call[1]["set_best_to_refit_full"] is False
         assert fit_call[1]["save_bag_folds"] is True
-        assert "hyperparameters" not in fit_call[1]
+        assert all(config["num_threads"] == 4 for config in fit_call[1]["hyperparameters"]["GBM"])
         assert fit_call[1]["excluded_model_types"] == ["CAT"]
 
         # read_csv: train, test, extra
@@ -493,7 +497,7 @@ class TestAutogluonModelsTrainingUnitTests:
         assert fit_call[1]["refit_full"] is False
         assert fit_call[1]["set_best_to_refit_full"] is False
         assert fit_call[1]["save_bag_folds"] is True
-        assert "hyperparameters" not in fit_call[1]
+        assert all(config["num_threads"] == 4 for config in fit_call[1]["hyperparameters"]["GBM"])
         assert fit_call[1]["excluded_model_types"] == ["CAT"]
 
         context = mock_models_artifact.metadata["context"]
@@ -547,6 +551,7 @@ class TestAutogluonModelsTrainingUnitTests:
         fit_call = mock_predictor_class.return_value.fit.call_args
         assert fit_call[1]["presets"] == "high_quality"
         assert fit_call[1]["time_limit"] == 90 * 60
+        assert all(config["num_threads"] == 8 for config in fit_call[1]["hyperparameters"]["GBM"])
         assert fit_call[1]["excluded_model_types"] == ["CAT"]
 
         context = mock_models_artifact.metadata["context"]
