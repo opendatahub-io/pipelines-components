@@ -375,19 +375,23 @@ class TestRagTemplatesOptimizationValidation:
 
 
 class TestRagTemplatesOptimizationMetricResolution:
-    """Metric-name resolution: ambiguous names, unsupported names, and defaults."""
+    """Metric resolution enforces the evaluator policy for each preset."""
 
     @pytest.mark.parametrize(
-        ("metric_name", "expected_evaluator"),
+        ("preset", "metric_id", "expected_evaluator"),
         [
-            ("faithfulness", "ragas"),  # scored by unitxt and RAGAS -> RAGAS wins ties
-            ("answer_correctness", "unitxt"),  # unitxt-only
-            ("context_precision", "ragas"),  # RAGAS-only
-            (None, "custom"),  # no metric requested -> default overall_score
+            ("speed", "unitxt:faithfulness", "unitxt"),
+            ("speed", "faithfulness", "unitxt"),
+            ("speed", "custom:overall_score", "custom"),
+            ("balanced", "unitxt:faithfulness", "unitxt"),
+            ("balanced", "ragas:faithfulness", "ragas"),
+            ("balanced", "faithfulness", "ragas"),
+            ("balanced", "ragas:context_precision", "ragas"),
+            ("balanced", "custom:overall_score", "custom"),
         ],
     )
     @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
-    def test_resolves_to_expected_evaluator(self, tmp_path, metric_name, expected_evaluator):
+    def test_resolves_to_expected_evaluator(self, tmp_path, preset, metric_id, expected_evaluator):
         """The resolved RAGMetric is the one this component actually optimizes for."""
         mocks = _make_ai4rag_mocks()
         search_space_path = _write_search_space_report(tmp_path)
@@ -405,11 +409,17 @@ class TestRagTemplatesOptimizationMetricResolution:
                 input_data_secret_name="s3-secret",
                 input_data_bucket_name="bucket",
                 leaderboard=leaderboard_html,
-                optimization_settings={"metric": metric_name} if metric_name else None,
+                optimization_settings={"metric": metric_id} if metric_id else None,
+                preset=preset,
             )
 
         resolved_metric = mocks.AI4RAGExperiment.call_args.kwargs["optimization_metric"]
         assert resolved_metric.evaluator == expected_evaluator
+        mocks.UnitxtEvaluator.assert_called_once_with()
+        if preset == "speed":
+            mocks.RagasEvaluator.assert_not_called()
+        else:
+            mocks.RagasEvaluator.assert_called_once()
 
         # The evaluator must travel with the name, or the leaderboard can't tell apart
         # metrics that collide across evaluators (e.g. unitxt vs RAGAS "faithfulness")
@@ -419,15 +429,16 @@ class TestRagTemplatesOptimizationMetricResolution:
         assert leaderboard_kwargs["optimization_metric_evaluator"] == resolved_metric.evaluator
 
     @pytest.mark.parametrize(
-        ("metric_name", "match"),
+        ("preset", "metric_id", "match"),
         [
-            ("nonexistent_metric", "is not supported"),
-            ("answer_relevance", "only produced by evaluator"),  # judge-only; this component never runs judge
+            ("speed", "ragas:context_precision", "is unavailable for this preset"),
+            ("balanced", "answer_relevance", "is unavailable for this preset"),
+            ("speed", "nonexistent_metric", "is not supported"),
         ],
     )
     @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
-    def test_raises_for_unsupported_metric(self, tmp_path, metric_name, match):
-        """Unknown names and names scored only by inactive evaluators are rejected."""
+    def test_rejects_invalid_metric_for_preset(self, tmp_path, preset, metric_id, match):
+        """Unknown, ambiguous, and preset-disabled metrics are rejected."""
         mocks = _make_ai4rag_mocks()
         rag_patterns, leaderboard_html = _artifacts(tmp_path)
 
@@ -444,7 +455,8 @@ class TestRagTemplatesOptimizationMetricResolution:
                     input_data_secret_name="s3-secret",
                     input_data_bucket_name="bucket",
                     leaderboard=leaderboard_html,
-                    optimization_settings={"metric": metric_name},
+                    optimization_settings={"metric": metric_id},
+                    preset=preset,
                 )
 
 
@@ -452,8 +464,8 @@ class TestRagTemplatesOptimizationRun:
     """End-to-end orchestration: evaluator wiring, artifact generation, leaderboard."""
 
     @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
-    def test_full_run_wires_evaluators_and_writes_patterns(self, tmp_path):
-        """A successful run always builds both evaluators and persists pattern artifacts."""
+    def test_full_run_speed_wires_unitxt_and_writes_patterns(self, tmp_path):
+        """The speed preset runs Unitxt only and persists pattern artifacts."""
         mocks = _make_ai4rag_mocks()
         mocks.get_vector_store_config.return_value = mock.MagicMock(name="vector_store_config")
         search_space_path = _write_search_space_report(tmp_path)
@@ -486,11 +498,10 @@ class TestRagTemplatesOptimizationRun:
         )
         mocks.get_vector_store_config.assert_called_once_with("milvus")
 
-        # Evaluators are always both unitxt and RAGAS; no per-run configurability.
         mocks.UnitxtEvaluator.assert_called_once_with()
-        mocks.RagasEvaluator.assert_called_once()
+        mocks.RagasEvaluator.assert_not_called()
         exp_kwargs = mocks.AI4RAGExperiment.call_args.kwargs
-        assert exp_kwargs["evaluators"] == [mocks.UnitxtEvaluator.return_value, mocks.RagasEvaluator.return_value]
+        assert exp_kwargs["evaluators"] == [mocks.UnitxtEvaluator.return_value]
         assert exp_kwargs["optimization_metric"].name == "overall_score"
         mocks.AI4RAGExperiment.return_value.search.assert_called_once()
 

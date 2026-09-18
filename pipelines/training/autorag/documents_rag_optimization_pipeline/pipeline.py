@@ -94,13 +94,12 @@ def documents_rag_optimization_pipeline(
             generation models can no longer be inferred and must be declared explicitly.
         input_data_keys: Object keys (paths) of the input documents in the input data bucket.
             Only the first entry is used by document discovery.
-        optimization_metric: Quality metric used to rank RAG patterns. Supported values:
-            "faithfulness", "answer_correctness", "context_correctness", "answer_relevance",
-            and "overall_score" (default). "faithfulness", "answer_correctness", and
-            "context_correctness" are deterministic Unitxt metrics; choosing one as the
-            optimization metric keeps the experiment deterministic. The LLM-judge metric
-            "answer_relevance" is always computed but only drives optimization when selected
-            (or via "overall_score", which aggregates all metrics).
+        optimization_metric: Quality metric used to rank RAG patterns. Use an
+            evaluator-qualified value such as ``"unitxt:faithfulness"``,
+            ``"ragas:context_precision"``, or ``"custom:overall_score"`` (default).
+            The ``speed`` preset supports Unitxt and custom metrics; ``balanced`` also
+            supports RAGAS metrics. ``custom:overall_score`` aggregates Unitxt outputs
+            for ``speed`` and Unitxt plus RAGAS outputs for ``balanced``.
         optimization_max_rag_patterns: Maximum number of RAG patterns to generate. Passed to ai4rag
             (max_number_of_rag_patterns). Defaults to 8.
         preset: Pipeline quality tier. "speed" (default) uses recursive chunking,

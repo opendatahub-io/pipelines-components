@@ -99,39 +99,41 @@ def rag_templates_optimization(
 
     DEFAULT_METRIC = Metrics.OVERALL_SCORE.name
 
-    # This component always runs both evaluators; "custom" (overall_score) is
-    # aggregated from their scores, so it's available too without running on
-    # its own. Metrics scored only by other evaluators (e.g. the LLM-as-judge
-    # metric) are therefore never selectable as an optimization target here.
-    ACTIVE_EVALUATORS = frozenset({"ragas", "unitxt", "custom"})
-
     DEFAULT_MAX_RAG_PATTERNS = 8
     MIN_MAX_RAG_PATTERNS_RANGE = (4, 20)
 
     VALID_PRESETS = {"speed", "balanced"}
+    # custom:overall_score aggregates the outputs of the evaluators enabled for the preset.
+    PRESET_EVALUATORS = {
+        "speed": frozenset({"unitxt", "custom"}),
+        "balanced": frozenset({"unitxt", "ragas", "custom"}),
+    }
+    LEGACY_METRIC_PREFERENCES = {"faithfulness": "ragas"}
     PRESET_INFERENCE_MAX_THREADS = {"speed": 10, "balanced": 4}
 
     def _build_evaluators(
         foundation_models: list[OpenAIFoundationModel],
         embedding_models: list[OpenAIEmbeddingModel],
+        active_evaluators: frozenset[str],
     ) -> list[BaseEvaluator]:
-        """Build the fixed evaluator pair used for every experiment.
+        """Build the evaluators enabled by the selected preset.
 
         Args:
             foundation_models: Foundation models from the search space; the
                 first is used as the RAGAS generation model.
             embedding_models: Embedding models from the search space; the
                 first is used by RAGAS.
+            active_evaluators: Evaluators enabled by the selected preset.
 
         Returns:
-            ``[UnitxtEvaluator(), RagasEvaluator(...)]``.
+            Unitxt, plus RAGAS when it is enabled by the selected preset.
         """
-        ragas_model = foundation_models[0]
-        _logger.info("RAGAS evaluator enabled with model: %s", ragas_model.model_id)
-        return [
-            UnitxtEvaluator(),
-            RagasEvaluator(model=ragas_model, embedding_model=embedding_models[0]),
-        ]
+        evaluators = [UnitxtEvaluator()]
+        if "ragas" in active_evaluators:
+            ragas_model = foundation_models[0]
+            _logger.info("RAGAS evaluator enabled with model: %s", ragas_model.model_id)
+            evaluators.append(RagasEvaluator(model=ragas_model, embedding_model=embedding_models[0]))
+        return evaluators
 
     def _generate_output_artifacts(
         patterns_raw: list[dict],
@@ -241,45 +243,55 @@ def rag_templates_optimization(
 
         return optimization_settings
 
-    def _get_optimization_metric(metric_name: str | None) -> RAGMetric:
-        """Resolve a metric name to the ``RAGMetric`` this component will optimize for.
-
-        Some metric names are ambiguous across evaluators (e.g. ``"faithfulness"``
-        is scored by both unitxt and RAGAS). Since both evaluators are always
-        active here (see :data:`ACTIVE_EVALUATORS`), such names resolve to
-        more than one candidate; RAGAS wins ties because it provides the more
-        discriminative score for optimization.
+    def _get_optimization_metric(metric_id: str | None, *, active_evaluators: frozenset[str]) -> RAGMetric:
+        """Resolve a preset-supported ``evaluator:metric`` ID to a ``RAGMetric``.
 
         Args:
-            metric_name: Metric requested via ``optimization_settings.metric``.
-                Falls back to :data:`DEFAULT_METRIC` when falsy.
+            metric_id: Metric requested via ``optimization_settings.metric``.
+                Qualified IDs (for example, ``"unitxt:faithfulness"``) avoid
+                ambiguity between evaluator metric names. Unqualified IDs use
+                the established RAGAS preference for ``"faithfulness"`` when
+                RAGAS is enabled, and otherwise require one enabled metric.
+            active_evaluators: Evaluators enabled by the selected preset.
 
         Returns:
-            The resolved metric, preferring the RAGAS variant on ties.
+            The resolved metric.
 
         Raises:
-            ValueError: If ``metric_name`` doesn't match any metric known to
-                ``Metrics``, or matches metrics only from evaluators this
-                component doesn't run (e.g. the LLM-as-judge metric).
+            ValueError: If the metric is unknown, unsupported by the selected
+                preset, or ambiguous without an evaluator prefix.
         """
-        metric_name = metric_name or DEFAULT_METRIC
-
-        candidates = [m for m in Metrics if m.name == metric_name]
+        if metric_id is not None and not isinstance(metric_id, str):
+            raise TypeError("optimization_settings.metric must be a string.")
+        metric_id = metric_id or DEFAULT_METRIC
+        evaluator, separator, metric_name = metric_id.partition(":")
+        if not separator:
+            metric_name = evaluator
+        candidates = [m for m in Metrics if m.name == metric_name and (not separator or m.evaluator == evaluator)]
         if not candidates:
             raise ValueError(
-                f"Optimization metric {metric_name!r} is not supported. "
-                f"Select one of {sorted({m.name for m in Metrics})}."
+                f"Optimization metric {metric_id!r} is not supported. "
+                f"Select one of {sorted(f'{m.evaluator}:{m.name}' for m in Metrics)}."
             )
 
-        available = [m for m in candidates if m.evaluator in ACTIVE_EVALUATORS]
+        available = [m for m in candidates if m.evaluator in active_evaluators]
         if not available:
             raise ValueError(
-                f"Optimization metric {metric_name!r} is only produced by evaluator(s) "
-                f"{sorted({m.evaluator for m in candidates})}, but this component only "
-                f"runs {sorted(ACTIVE_EVALUATORS - {'custom'})}."
+                f"Optimization metric {metric_id!r} is unavailable for this preset. "
+                f"It requires evaluator(s) {sorted({m.evaluator for m in candidates})}, "
+                f"but this preset enables {sorted(active_evaluators)}."
+            )
+        if len(available) > 1:
+            preferred_evaluator = LEGACY_METRIC_PREFERENCES.get(metric_name)
+            preferred_metric = next((m for m in available if m.evaluator == preferred_evaluator), None)
+            if preferred_metric is not None:
+                return preferred_metric
+            raise ValueError(
+                f"Optimization metric {metric_id!r} is ambiguous. Select one of "
+                f"{sorted(f'{m.evaluator}:{m.name}' for m in available)}."
             )
 
-        return next((m for m in available if m.evaluator == "ragas"), available[0])
+        return available[0]
 
     # -------------------------------------------------------------------------
     # Component logic starts here
@@ -288,6 +300,7 @@ def rag_templates_optimization(
     if preset not in VALID_PRESETS:
         raise ValueError(f"preset must be one of {VALID_PRESETS}; got {preset!r}.")
 
+    active_evaluators = PRESET_EVALUATORS[preset]
     inference_max_threads = PRESET_INFERENCE_MAX_THREADS[preset]
     logging.info("Preset %r: inference_max_threads=%d", preset, inference_max_threads)
 
@@ -354,7 +367,7 @@ def rag_templates_optimization(
                 raise ValueError("test_data_key must point to a JSON file.")
 
             settings = _validate_optimization_settings(optimization_settings)
-            optimization_metric = _get_optimization_metric(settings.get("metric"))
+            optimization_metric = _get_optimization_metric(settings.get("metric"), active_evaluators=active_evaluators)
 
             documents = load_docling_documents(extracted_text)
             benchmark_data = pd.read_json(Path(test_data))
@@ -383,6 +396,7 @@ def rag_templates_optimization(
             evaluators = _build_evaluators(
                 foundation_models=foundation_models,
                 embedding_models=embedding_models,
+                active_evaluators=active_evaluators,
             )
 
             # --- Configure experiment ---
