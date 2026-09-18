@@ -20,10 +20,22 @@ def text_extraction(
     error_tolerance: Optional[float] = None,
     max_extraction_workers: Optional[int] = None,
     preset: str = "speed",
+    ocr_lang: Optional[str] = None,
 ):
     """Text Extraction component.
 
     Thin wrapper that delegates to ``ai4rag.utils.data.text_extraction.extract_text``.
+
+    OCR is always enabled. Docling runs RapidOCR only on pages it flags as needing it,
+    so pages carrying a text layer are read directly and scanned or image-only pages are
+    OCR'd.
+
+    The four RapidOCR model paths are pinned explicitly from ``$DOCLING_ARTIFACTS_PATH``
+    rather than left to Docling. Docling resolves an unpinned language to PP-OCRv6 and
+    looks for flat filenames directly under ``RapidOcr/``, but the AutoRAG image ships the
+    PP-OCRv4 bundle in its nested ``RapidOcr/onnx/PP-OCRv4/...`` layout, so leaving the
+    paths unset fails with ``FileNotFoundError`` at conversion time. Pinning them makes
+    Docling skip resolution and use the models that are actually present.
 
     Args:
         documents_descriptor: Input artifact containing
@@ -40,6 +52,13 @@ def text_extraction(
             extraction. Defaults to 4. Set to None to use all available CPU cores.
         preset: Pipeline quality tier. "speed" (default) disables Docling table
             structure parsing. "balanced" enables TableFormer table reconstruction.
+        ocr_lang: Language of the document text, used only to pick the RapidOCR model
+            bundle. Accepts a language name or ISO 639-1 code. Chinese ("chinese", "zh",
+            "ch") selects the Chinese bundle; everything else, including None (the
+            default), selects the English bundle, which covers all Latin-script
+            languages. In the optimization pipeline this is filled from the language
+            AutoRAG detects; for the indexing pipeline pass ``pattern.json``
+            ``settings.generation.language.code``.
     """
     import importlib.util
     import json
@@ -59,6 +78,47 @@ def text_extraction(
 
     do_table_structure = PRESET_DO_TABLE_STRUCTURE[preset]
     logging.info("Preset %r: do_table_structure=%s", preset, do_table_structure)
+
+    # Paths are relative to $DOCLING_ARTIFACTS_PATH/RapidOcr/ and mirror the on-disk
+    # layout of the RHAI OGX modelcar baked into the AutoRAG image. The classifier is
+    # script-agnostic, so both bundles share it.
+    RAPIDOCR_BUNDLES = {
+        "english": {
+            "ocr_det_model_path": "onnx/PP-OCRv4/det/en_PP-OCRv3_det_mobile.onnx",
+            "ocr_cls_model_path": "onnx/PP-OCRv4/cls/ch_ppocr_mobile_v2.0_cls_mobile.onnx",
+            "ocr_rec_model_path": "onnx/PP-OCRv4/rec/en_PP-OCRv4_rec_mobile.onnx",
+            "ocr_rec_keys_path": "paddle/PP-OCRv4/rec/en_PP-OCRv4_rec_mobile/en_dict.txt",
+        },
+        "chinese": {
+            "ocr_det_model_path": "onnx/PP-OCRv4/det/ch_PP-OCRv4_det_mobile.onnx",
+            "ocr_cls_model_path": "onnx/PP-OCRv4/cls/ch_ppocr_mobile_v2.0_cls_mobile.onnx",
+            "ocr_rec_model_path": "onnx/PP-OCRv4/rec/ch_PP-OCRv4_rec_mobile.onnx",
+            "ocr_rec_keys_path": "paddle/PP-OCRv4/rec/ch_PP-OCRv4_rec_mobile/ppocr_keys_v1.txt",
+        },
+    }
+    CHINESE_ALIASES = {"chinese", "ch", "zh", "zho", "chi", "zh-cn", "zh-tw"}
+
+    # Only Chinese has a dedicated bundle; every other language, detected or not, is
+    # served by the English models, which cover all Latin scripts. Anything unrecognised
+    # therefore degrades to English rather than failing the run.
+    bundle_name = "chinese" if (ocr_lang or "").strip().lower() in CHINESE_ALIASES else "english"
+    logging.info("OCR language %r resolved to the %s RapidOCR bundle", ocr_lang, bundle_name)
+
+    ocr_model_paths = {}
+    docling_artifacts_path = os.environ.get("DOCLING_ARTIFACTS_PATH")
+    if docling_artifacts_path:
+        ocr_root = Path(docling_artifacts_path) / "RapidOcr"
+        resolved = {key: ocr_root / rel for key, rel in RAPIDOCR_BUNDLES[bundle_name].items()}
+        missing = sorted(str(path) for path in resolved.values() if not path.is_file())
+        if missing:
+            raise FileNotFoundError(
+                f"RapidOCR {bundle_name} models are missing under {ocr_root}:\n  - " + "\n  - ".join(missing)
+            )
+        ocr_model_paths = {key: str(path) for key, path in resolved.items()}
+    else:
+        # No baked-in artifacts (e.g. a dev image): let ai4rag and Docling resolve and
+        # download the models themselves.
+        logging.warning("DOCLING_ARTIFACTS_PATH is unset; RapidOCR models will be resolved at runtime.")
 
     if component_status is None:
         from kfp_components.components.training.autorag.shared.component_status import (  # pyright: ignore[reportMissingImports]
@@ -89,6 +149,9 @@ def text_extraction(
 
             docling_config = DoclingExtractionConfig(
                 do_table_structure=do_table_structure,
+                do_ocr=True,
+                ocr_lang=bundle_name,
+                **ocr_model_paths,
             )
 
             extract_text(
