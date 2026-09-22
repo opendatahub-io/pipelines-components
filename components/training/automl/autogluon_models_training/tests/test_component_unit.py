@@ -503,7 +503,7 @@ class TestAutogluonModelsTrainingUnitTests:
     @mock.patch("pandas.read_csv")
     @mock.patch("autogluon.tabular.TabularPredictor")
     def test_balanced_preset_fit_args(self, mock_predictor_class, mock_read_csv, tmp_path):
-        """Balanced preset uses 90-minute time limit and high_quality AutoGluon preset."""
+        """Balanced preset uses 180-minute time limit and high_quality AutoGluon preset."""
         mock_predictor = mock.MagicMock()
         mock_predictor_clone = mock.MagicMock()
         mock_predictor_class.return_value.fit.return_value = mock_predictor
@@ -546,12 +546,12 @@ class TestAutogluonModelsTrainingUnitTests:
 
         fit_call = mock_predictor_class.return_value.fit.call_args
         assert fit_call[1]["presets"] == "high_quality"
-        assert fit_call[1]["time_limit"] == 90 * 60
+        assert fit_call[1]["time_limit"] == 180 * 60
         assert fit_call[1]["excluded_model_types"] == ["CAT"]
 
         context = mock_models_artifact.metadata["context"]
         assert context["model_config"]["preset"] == "balanced"
-        assert context["model_config"]["time_limit"] == 90 * 60
+        assert context["model_config"]["time_limit"] == 180 * 60
 
     @mock.patch("pandas.read_csv")
     @mock.patch("autogluon.tabular.TabularPredictor")

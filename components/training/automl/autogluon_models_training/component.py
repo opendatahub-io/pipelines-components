@@ -76,8 +76,8 @@ def autogluon_models_training(
             (e.g. ``"1"`` or ``"yes"``). Passed to ``TabularPredictor`` when set.
             Empty string (default) lets AutoGluon infer the positive class when ``fit`` runs.
             Ignored for ``multiclass`` and ``regression``.
-        preset: Training quality tier. ``"speed"`` (default) or ``"balanced"``
-            (may run more than 2x longer).
+        preset: Training quality tier. ``"speed"`` (45-minute selection budget, default)
+            or ``"balanced"`` (180-minute selection budget).
         eval_metric: Metric for model ranking (e.g. ``"r2"``, ``"accuracy"``). Defaults
             to ``"r2"`` for regression and ``"accuracy"`` otherwise.
         test_data_bucket_name: Optional S3 bucket for user-provided external test data.
@@ -112,7 +112,7 @@ def autogluon_models_training(
 
     VALID_TASK_TYPES = {"binary", "multiclass", "regression"}
     VALID_PRESETS = {"speed", "balanced"}
-    PRESET_TIME_LIMITS = {"speed": 45 * 60, "balanced": 90 * 60}
+    PRESET_TIME_LIMITS = {"speed": 45 * 60, "balanced": 180 * 60}
     PRESET_AG_NAMES = {"speed": "good_quality", "balanced": "high_quality"}
     TOP_N_MAX = 10
 

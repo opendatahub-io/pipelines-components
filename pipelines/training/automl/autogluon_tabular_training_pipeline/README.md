@@ -58,7 +58,7 @@ The pipeline leverages AutoGluon's unique ensembling strategy that combines mult
 | `top_n` | `int` | `3` | Number of top models to select and refit (default: 3); positive integer from range [1, 10]. |
 | `positive_class` | `str` | `""` | Optional label value for the positive class in binary classification. Defaults to the second unique class after sorting label values. |
 | `eval_metric` | `str` | `""` | Metric used for model ranking. Empty string (default) is resolved by the component to "r2" for regression and "accuracy" for binary and multiclass classification. |
-| `preset` | `str` | `speed` | Training quality tier. "speed" (default, 4 vCPU / 16 GiB) or "balanced" (may run more than 2x longer, 8 vCPU / 32 GiB). |
+| `preset` | `str` | `speed` | Training quality tier. "speed" (45-minute selection budget, default, 4 vCPU / 16 GiB) or "balanced" (180-minute selection budget, 8 vCPU / 32 GiB). |
 | `test_data_bucket_name` | `str` | `""` | Optional S3-compatible bucket name for a user-provided test dataset. Default: empty string (use the holdout split from training data). |
 | `test_data_file_key` | `str` | `""` | Optional S3 object key for a user-provided test CSV file. Default: empty string (use the holdout split from training data). |
 
