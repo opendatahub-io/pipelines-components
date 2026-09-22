@@ -44,7 +44,8 @@ def text_extraction(
             so the prefix is not passed on separately.
         extracted_text: Output artifact directory where DoclingDocument JSON files
             will be written.
-        component_status: Output artifact containing stage-level progress tracking.
+        component_status: Output artifact containing stage-level progress tracking,
+            extraction outcomes, and configured-engine candidate counts.
         embedded_artifact: Embedded ``autorag.shared`` helpers injected by KFP at runtime.
         error_tolerance: Fraction of documents (0.0-1.0) allowed to fail without
             raising an error. None (the default) means zero tolerance.
@@ -72,6 +73,8 @@ def text_extraction(
 
     VALID_PRESETS = {"speed", "balanced"}
     PRESET_DO_TABLE_STRUCTURE = {"speed": False, "balanced": True}
+    LAYOUT_OCR_EXTENSIONS = {".pdf", ".jpg", ".jpeg", ".png", ".tif", ".tiff"}
+    ASR_EXTENSIONS = {".wav", ".mp3", ".m4a", ".aac", ".ogg", ".flac"}
 
     if preset not in VALID_PRESETS:
         raise ValueError(f"preset must be one of {VALID_PRESETS}; got {preset!r}.")
@@ -143,6 +146,18 @@ def text_extraction(
             descriptor_path = Path(documents_descriptor.path) / "documents_descriptor.json"
             with open(descriptor_path, "r", encoding="utf-8") as f:
                 descriptor = json.load(f)
+            documents = descriptor["documents"]
+            suffixes = [Path(document["key"]).suffix.lower() for document in documents]
+            candidate_metrics = {
+                "layout_candidate_documents": sum(suffix in LAYOUT_OCR_EXTENSIONS for suffix in suffixes),
+                "layout_model": "Docling Layout Heron",
+                "ocr_candidate_documents": sum(suffix in LAYOUT_OCR_EXTENSIONS for suffix in suffixes),
+                "ocr_engine": "RapidOCR",
+                "ocr_language": bundle_name,
+                "asr_candidate_documents": sum(suffix in ASR_EXTENSIONS for suffix in suffixes),
+                "asr_model": "Whisper Tiny",
+            }
+            status.record("extract_documents", "running", metrics=candidate_metrics)
 
             output_dir = Path(extracted_text.path)
             output_dir.mkdir(parents=True, exist_ok=True)
@@ -154,8 +169,8 @@ def text_extraction(
                 **ocr_model_paths,
             )
 
-            extract_text(
-                documents=descriptor["documents"],
+            extraction_result = extract_text(
+                documents=documents,
                 bucket=descriptor["bucket"],
                 output_dir=output_dir,
                 s3_endpoint=os.environ.get("AWS_S3_ENDPOINT"),
@@ -166,6 +181,15 @@ def text_extraction(
                 max_extraction_workers=max_extraction_workers,
                 docling_artifacts_path=os.environ.get("DOCLING_ARTIFACTS_PATH"),
                 docling_config=docling_config,
+            )
+            status.record(
+                "extract_documents",
+                "completed",
+                metrics={
+                    "documents_total": extraction_result.total_documents,
+                    "documents_processed": extraction_result.processed_count,
+                    "documents_failed": extraction_result.error_count,
+                },
             )
 
 
