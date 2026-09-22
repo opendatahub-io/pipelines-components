@@ -231,6 +231,40 @@ class TestTextExtractionUnitTests:
             "documents_failed": 1,
         }
 
+    @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
+    def test_failed_extraction_preserves_candidate_metrics(self, tmp_path):
+        """Failure status retains inputs known before ai4rag begins extraction."""
+        modules, mock_extract, _ = _make_ai4rag_mocks()
+        mock_extract.side_effect = RuntimeError("Text extraction failed")
+        descriptor_artifact = _write_descriptor(
+            tmp_path,
+            {
+                "bucket": "b",
+                "documents": [{"key": "report.pdf"}, {"key": "recording.mp3"}],
+            },
+        )
+        output_artifact = SimpleNamespace(path=str(tmp_path / "output"))
+        component_status = SimpleNamespace(path=str(tmp_path / "status"), metadata={})
+        embedded_artifact = SimpleNamespace(path=str(_AUTORAG_SHARED))
+
+        with mock.patch.dict("sys.modules", modules):
+            with pytest.raises(RuntimeError, match="Text extraction failed"):
+                text_extraction.python_func(
+                    documents_descriptor=descriptor_artifact,
+                    extracted_text=output_artifact,
+                    component_status=component_status,
+                    embedded_artifact=embedded_artifact,
+                )
+
+        status = json.loads((tmp_path / "status" / "component_status.json").read_text(encoding="utf-8"))
+        stage = status["stages"][0]
+        assert stage["status"]["state"] == "failed"
+        assert stage["metrics"]["documents_total"] == 2
+        assert stage["metrics"]["layout_candidate_documents"] == 1
+        assert stage["metrics"]["asr_candidate_documents"] == 1
+        assert "documents_processed" not in stage["metrics"]
+        assert "documents_failed" not in stage["metrics"]
+
     def test_passes_docling_artifacts_path(self, tmp_path):
         """DOCLING_ARTIFACTS_PATH env var is forwarded to extract_text."""
         modules, mock_extract, _ = _make_ai4rag_mocks()

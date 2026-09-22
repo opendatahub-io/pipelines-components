@@ -149,6 +149,7 @@ def text_extraction(
             documents = descriptor["documents"]
             suffixes = [Path(document["key"]).suffix.lower() for document in documents]
             candidate_metrics = {
+                "documents_total": len(documents),
                 "layout_candidate_documents": sum(suffix in LAYOUT_OCR_EXTENSIONS for suffix in suffixes),
                 "layout_model": "Docling Layout Heron",
                 "ocr_candidate_documents": sum(suffix in LAYOUT_OCR_EXTENSIONS for suffix in suffixes),
