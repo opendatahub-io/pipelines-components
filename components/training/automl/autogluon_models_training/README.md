@@ -33,7 +33,7 @@ mutates predictor state. All artifacts are written under a single output artifac
 | `split_config` | `Optional[dict]` | `None` | Data split config stored in artifact metadata. |
 | `extra_train_data_path` | `str` | `""` | Optional path to extra training CSV passed to ``refit_full``. |
 | `positive_class` | `str` | `""` | Label value for the positive class in **binary** classification (e.g. ``"1"`` or ``"yes"``). Passed to ``TabularPredictor`` when set. Empty string (default) lets AutoGluon infer the positive class when ``fit`` runs. Ignored for ``multiclass`` and ``regression``. |
-| `preset` | `str` | `speed` | Training quality tier. ``"speed"`` (default) or ``"balanced"`` (may run more than 2x longer). |
+| `preset` | `str` | `speed` | Training quality tier. ``"speed"`` (default), ``"balanced"``, or ``"large_tabular"``. The large-tabular profile uses a narrower, sequential model portfolio and a six-hour time budget for larger sampled datasets. |
 | `eval_metric` | `str` | `""` | Metric for model ranking (e.g. ``"r2"``, ``"accuracy"``). Defaults to ``"r2"`` for regression and ``"accuracy"`` otherwise. |
 | `test_data_bucket_name` | `str` | `""` | Optional S3 bucket for user-provided external test data. |
 | `test_data_file_key` | `str` | `""` | Optional S3 object key for user-provided external test data. |

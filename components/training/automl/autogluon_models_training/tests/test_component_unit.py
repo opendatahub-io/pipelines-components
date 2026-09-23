@@ -560,6 +560,63 @@ class TestAutogluonModelsTrainingUnitTests:
 
     @mock.patch("pandas.read_csv")
     @mock.patch("autogluon.tabular.TabularPredictor")
+    def test_large_tabular_preset_fit_args(self, mock_predictor_class, mock_read_csv, tmp_path):
+        """Large-tabular uses a sequential, unbagged LightGBM-only fit profile."""
+        mock_predictor = mock.MagicMock()
+        mock_predictor_clone = mock.MagicMock()
+        mock_predictor_class.return_value.fit.return_value = mock_predictor
+        mock_predictor.clone.return_value = mock_predictor_clone
+        mock_predictor.problem_type = "regression"
+        mock_predictor.label = "target"
+        mock_predictor.eval_metric = "r2"
+        _mock_leaderboard_top_models(mock_predictor, ["LightGBM"])
+        mock_predictor_clone.evaluate_predictions.return_value = {"r2": 0.9}
+        mock_predictor_clone.feature_importance.return_value = mock.MagicMock(to_dict=lambda: {"f": 0.1})
+        mock_predictor_clone.predict.return_value = mock.MagicMock()
+
+        mock_train_df, mock_test_df = _mock_csv_frame(), _mock_csv_frame()
+        mock_read_csv.side_effect = [mock_train_df, mock_test_df]
+
+        workspace_path = str(tmp_path / "ws")
+        Path(workspace_path).mkdir()
+        models_output_dir = str(tmp_path / "out")
+        Path(models_output_dir).mkdir()
+        mock_models_artifact = mock.MagicMock()
+        mock_models_artifact.path = models_output_dir
+        mock_models_artifact.metadata = {}
+
+        autogluon_models_training.python_func(
+            label_column="target",
+            task_type="regression",
+            top_n=1,
+            train_data_path="/tmp/train.csv",
+            test_data=mock.MagicMock(path="/tmp/test.csv"),
+            workspace_path=workspace_path,
+            pipeline_name=PIPELINE_NAME,
+            run_id=RUN_ID,
+            sample_row=SAMPLE_ROW,
+            models_artifact=mock_models_artifact,
+            html_artifact=_make_html_artifact(tmp_path),
+            preset="large_tabular",
+            experiment_notebook=_make_experiment_notebook_artifact(tmp_path),
+            component_status=_make_component_status_artifact(tmp_path),
+        )
+
+        fit_call = mock_predictor_class.return_value.fit.call_args
+        assert fit_call[1]["presets"] == "medium_quality"
+        assert fit_call[1]["time_limit"] == 360 * 60
+        assert fit_call[1]["hyperparameters"] == {"GBM": {"num_threads": 16}}
+        assert fit_call[1]["excluded_model_types"] == ["CAT", "KNN", "RF", "XT"]
+        assert fit_call[1]["num_bag_folds"] == 0
+        assert fit_call[1]["num_stack_levels"] == 0
+        assert fit_call[1]["fit_strategy"] == "sequential"
+
+        context = mock_models_artifact.metadata["context"]
+        assert context["model_config"]["preset"] == "large_tabular"
+        assert context["model_config"]["time_limit"] == 360 * 60
+
+    @mock.patch("pandas.read_csv")
+    @mock.patch("autogluon.tabular.TabularPredictor")
     def test_without_extra_train_data(self, mock_predictor_class, mock_read_csv, tmp_path):
         """Empty extra_train_data_path passes train_data_extra=None to refit_full."""
         mock_predictor = mock.MagicMock()

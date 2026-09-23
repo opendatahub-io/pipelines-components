@@ -33,7 +33,7 @@ def automl_data_loader(  # noqa: D417
     """AutoML Data Loader component.
 
     Loads tabular (CSV) data from S3 in batches, sampling up to a preset-dependent
-    size budget (``"speed"``: 100 MB, ``"balanced"``: 1 GB), then splits the sampled
+    size budget (``"speed"``: 100 MB, ``"balanced"``: 1 GB, ``"large_tabular"``: 10 GB), then splits the sampled
     data into test, selection-train, and extra-train sets.
 
     The component reads data in chunks to efficiently handle large files without
@@ -81,8 +81,9 @@ def automl_data_loader(  # noqa: D417
         test_data_bucket_name: S3 bucket name for user-provided test dataset (default: empty string).
         test_data_file_key: S3 object key of the user-provided test CSV (default: empty string).
         preset: Training quality tier controlling the sampling size budget. ``"speed"``
-            (default) samples up to 100 MB; ``"balanced"`` samples up to 1 GB. The cap for
-            user-provided test datasets (50 MB) is unaffected by this setting.
+            (default) samples up to 100 MB; ``"balanced"`` samples up to 1 GB; and
+            ``"large_tabular"`` samples up to 10 GB. The cap for user-provided test datasets
+            (50 MB) is unaffected by this setting.
 
     Raises:
         ValueError: If sampling_method, task_type, or preset is invalid, if required parameters are missing,
@@ -135,12 +136,13 @@ def automl_data_loader(  # noqa: D417
         except Exception as e:  # noqa: BLE001 - stats logging must never break the run
             logger.debug("Could not compute dataset stats for %s: %s", name, e)
 
-    VALID_PRESETS = {"speed", "balanced"}
+    VALID_PRESETS = {"speed", "balanced", "large_tabular"}
     # Sampling budget per quality tier: "speed" stays small for fast runs,
     # "balanced" allows the full supported dataset size.
     PRESET_MAX_SIZE_BYTES = {
         "speed": 100 * 1024 * 1024,  # 100 MB
         "balanced": 1024 * 1024 * 1024,  # 1 GB
+        "large_tabular": 10 * 1024 * 1024 * 1024,  # 10 GB
     }
     TEST_DATA_MAX_SIZE_BYTES = 50 * 1024 * 1024  # 50 MB — smaller cap for user-provided holdout sets
     MIN_VALID_RECORDS_AFTER_CLEANSING = 100
@@ -152,6 +154,7 @@ def automl_data_loader(  # noqa: D417
     if preset not in VALID_PRESETS:
         raise ValueError(f"preset must be one of {sorted(VALID_PRESETS)}; got {preset!r}.")
     MAX_SIZE_BYTES = PRESET_MAX_SIZE_BYTES[preset]
+    sampling_stats = {"source_rows_scanned": 0, "sample_cap_reached": False}
 
     # Input validation
     for param, value in (
@@ -254,9 +257,11 @@ def automl_data_loader(  # noqa: D417
 
             try:
                 for chunk_df in pd.read_csv(text_stream, chunksize=chunk_size):
+                    sampling_stats["source_rows_scanned"] += len(chunk_df)
                     chunk_memory = chunk_df.memory_usage(deep=True).sum()
 
                     if accumulated_size + chunk_memory > max_size_bytes:
+                        sampling_stats["sample_cap_reached"] = True
                         _mark_truncated()
                         remaining_bytes = max_size_bytes - accumulated_size
                         if remaining_bytes <= 0:
@@ -274,6 +279,7 @@ def automl_data_loader(  # noqa: D417
                     accumulated_size += chunk_memory
 
                     if accumulated_size >= max_size_bytes:
+                        sampling_stats["sample_cap_reached"] = True
                         _mark_truncated()
                         break
             except Exception as e:
@@ -290,6 +296,7 @@ def automl_data_loader(  # noqa: D417
 
             try:
                 for chunk_df in pd.read_csv(text_stream, chunksize=chunk_size):
+                    sampling_stats["source_rows_scanned"] += len(chunk_df)
                     if label_column not in chunk_df.columns:
                         raise ValueError(
                             f"Target column '{label_column}' not found in the dataset. "
@@ -309,6 +316,7 @@ def automl_data_loader(  # noqa: D417
                     if combined_memory <= max_size_bytes:
                         subsampled_data = combined_data
                     else:
+                        sampling_stats["sample_cap_reached"] = True
                         sampling_frac = max_size_bytes / combined_memory
                         subsampled_data = (
                             combined_data.groupby(label_column, group_keys=False)
@@ -331,6 +339,7 @@ def automl_data_loader(  # noqa: D417
 
             try:
                 for chunk_df in pd.read_csv(text_stream, chunksize=chunk_size):
+                    sampling_stats["source_rows_scanned"] += len(chunk_df)
                     data = (
                         pd.concat([subsampled_data, chunk_df], ignore_index=True)
                         if subsampled_data is not None
@@ -341,6 +350,7 @@ def automl_data_loader(  # noqa: D417
                     if combined_memory <= max_size_bytes:
                         subsampled_data = data
                     else:
+                        sampling_stats["sample_cap_reached"] = True
                         sampling_frac = max_size_bytes / combined_memory
                         subsampled_data = data.sample(
                             frac=sampling_frac, random_state=DEFAULT_RANDOM_STATE
@@ -469,10 +479,21 @@ def automl_data_loader(  # noqa: D417
             sampling_method,
         )
         _log_dataset_stats("loaded (after cleansing)", sampled_dataframe)
+        sampled_in_memory_bytes = int(sampled_dataframe.memory_usage(deep=True).sum())
         status.record(
             "prepare_data",
             "completed",
-            metrics={"rows": n_samples, "duplicates_dropped": n_dup_dropped, "labels_dropped": n_dropped},
+            metrics={
+                "rows": n_samples,
+                "source_rows_scanned": sampling_stats["source_rows_scanned"],
+                "sampled_rows": n_samples,
+                "sampled_in_memory_bytes": sampled_in_memory_bytes,
+                "sample_cap_bytes": MAX_SIZE_BYTES,
+                "sample_cap_reached": sampling_stats["sample_cap_reached"],
+                "sampling_method": sampling_method,
+                "duplicates_dropped": n_dup_dropped,
+                "labels_dropped": n_dropped,
+            },
         )
 
         status.record("split_and_export", "started")
@@ -639,6 +660,11 @@ def automl_data_loader(  # noqa: D417
             "test_size": split_config_out["test_size"],
             "selection_train_size": selection_train_size,
             "stratify": stratify_effective,
+            "selection_train_rows": len(X_y_sel),
+            "extra_train_rows": len(X_y_extra),
+            "test_rows": len(test_sample_df),
+            "selection_train_disk_bytes": Path(models_selection_train_data_path).stat().st_size,
+            "extra_train_disk_bytes": Path(extra_train_data_path).stat().st_size,
         }
         if has_user_test_data:
             split_export_metrics["user_test_source"] = test_data_source

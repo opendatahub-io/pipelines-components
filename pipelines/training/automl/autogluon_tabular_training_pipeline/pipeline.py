@@ -21,7 +21,7 @@ PIPELINE_NAME = "autogluon-tabular-training-pipeline"
     ),
     pipeline_config=dsl.PipelineConfig(
         workspace=dsl.WorkspaceConfig(
-            size="12Gi",  # TODO: change to recommended size
+            size="32Gi",
             kubernetes=dsl.KubernetesWorkspaceConfig(
                 pvcSpecPatch={
                     # use default storage class from the cluster
@@ -70,7 +70,7 @@ def autogluon_tabular_training_pipeline(
     1. **Data Loading & Splitting**: Loads tabular (CSV) data from an S3-compatible
        object storage bucket using AWS credentials configured via Kubernetes secrets.
        The component samples the data (up to 100 MiB for the "speed" preset, up to 1 GiB
-       for "balanced"), then performs a two-stage split:
+       for "balanced", and up to 10 GiB for "large_tabular"), then performs a two-stage split:
        *Primary split** (default 80/20): separates a *test set* (20%, written to an
          S3 artifact) from the *train portion* (80%).
          **Secondary split** (default 30/70 of the train portion): produces
@@ -126,7 +126,8 @@ def autogluon_tabular_training_pipeline(
         top_n: Number of top models to select and refit (default: 3); positive integer from range [1, 10].
         positive_class: Optional label value for the positive class in binary classification. Defaults to the second unique class after sorting label values.
         eval_metric: Metric used for model ranking. Empty string (default) is resolved by the component to "r2" for regression and "accuracy" for binary and multiclass classification.
-        preset: Training quality tier. "speed" (default, 4 vCPU / 16 GiB) or "balanced" (may run more than 2x longer, 8 vCPU / 32 GiB).
+        preset: Training quality tier. "speed" (default, 4 vCPU / 16 GiB), "balanced"
+            (8 vCPU / 32 GiB), or "large_tabular" (16 vCPU / 64 GiB; 10 GiB sample cap).
         test_data_bucket_name: Optional S3-compatible bucket name for a user-provided test dataset.
             Default: empty string (use the holdout split from training data).
         test_data_file_key: Optional S3 object key for a user-provided test CSV file.
@@ -194,7 +195,8 @@ def autogluon_tabular_training_pipeline(
     )
 
     # Stage 1 + 2: Model selection and sequential refit of top N models.
-    # Resource limits differ by preset: balanced needs more CPU/memory than speed.
+    # Resource limits differ by preset. The large-tabular profile is intended for a
+    # benchmark-validated 10 GiB sample and narrower AutoGluon model portfolio.
     _training_kwargs = dict(
         label_column=label_column,
         task_type=task_type,
@@ -223,6 +225,11 @@ def autogluon_tabular_training_pipeline(
         training_task_bl.set_cpu_request("8").set_memory_request("32Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(
             MAX_MEMORY
         )
+
+    with dsl.Elif(preset == "large_tabular"):
+        training_task_lt = autogluon_models_training(**_training_kwargs)
+        training_task_lt.set_caching_options(False)
+        training_task_lt.set_cpu_request("16").set_memory_request("64Gi").set_cpu_limit("32").set_memory_limit("128Gi")
 
     with dsl.Else():
         training_task_sp = autogluon_models_training(**_training_kwargs)

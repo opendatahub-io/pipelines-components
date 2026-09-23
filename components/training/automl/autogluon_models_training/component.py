@@ -76,8 +76,9 @@ def autogluon_models_training(
             (e.g. ``"1"`` or ``"yes"``). Passed to ``TabularPredictor`` when set.
             Empty string (default) lets AutoGluon infer the positive class when ``fit`` runs.
             Ignored for ``multiclass`` and ``regression``.
-        preset: Training quality tier. ``"speed"`` (default) or ``"balanced"``
-            (may run more than 2x longer).
+        preset: Training quality tier. ``"speed"`` (default), ``"balanced"``, or
+            ``"large_tabular"``. The large-tabular profile uses a narrower, sequential
+            model portfolio and a six-hour time budget for larger sampled datasets.
         eval_metric: Metric for model ranking (e.g. ``"r2"``, ``"accuracy"``). Defaults
             to ``"r2"`` for regression and ``"accuracy"`` otherwise.
         test_data_bucket_name: Optional S3 bucket for user-provided external test data.
@@ -113,12 +114,26 @@ def autogluon_models_training(
     from autogluon.tabular.configs.hyperparameter_configs import get_hyperparameter_config
 
     VALID_TASK_TYPES = {"binary", "multiclass", "regression"}
-    VALID_PRESETS = {"speed", "balanced"}
-    PRESET_TIME_LIMITS = {"speed": 45 * 60, "balanced": 90 * 60}
-    PRESET_AG_NAMES = {"speed": "good_quality", "balanced": "high_quality"}
+    VALID_PRESETS = {"speed", "balanced", "large_tabular"}
+    PRESET_TIME_LIMITS = {"speed": 45 * 60, "balanced": 90 * 60, "large_tabular": 360 * 60}
+    PRESET_AG_NAMES = {"speed": "good_quality", "balanced": "high_quality", "large_tabular": "medium_quality"}
     # AutoGluon's underlying portfolios let us override only LightGBM without dropping other estimators.
-    PRESET_HYPERPARAMETERS = {"speed": "light", "balanced": "zeroshot"}
-    PRESET_LGBM_THREADS = {"speed": 4, "balanced": 8}
+    PRESET_HYPERPARAMETERS = {
+        "speed": "light",
+        "balanced": "zeroshot",
+        "large_tabular": {"GBM": {}},
+    }
+    PRESET_LGBM_THREADS = {"speed": 4, "balanced": 8, "large_tabular": 16}
+    PRESET_EXCLUDED_MODEL_TYPES = {
+        "speed": ["CAT"],
+        "balanced": ["CAT"],
+        "large_tabular": ["CAT", "KNN", "RF", "XT"],
+    }
+    PRESET_FIT_KWARGS = {
+        "speed": {},
+        "balanced": {},
+        "large_tabular": {"num_bag_folds": 0, "num_stack_levels": 0, "fit_strategy": "sequential"},
+    }
     TOP_N_MAX = 10
 
     # Input parameters validation
@@ -245,10 +260,25 @@ def autogluon_models_training(
                 "classes ['abc', 'def'] -> positive_class='def')."
             )
 
-        status.record("model_selection", "started")
+        status.record(
+            "model_selection",
+            "started",
+            metrics={
+                "selection_train_rows": len(train_data_df),
+                "selection_train_features": len(train_data_df.columns) - 1,
+                "test_rows": len(test_data_df),
+                "extra_refit_rows": len(extra_train_df) if extra_train_df is not None else 0,
+                "preset": preset,
+            },
+        )
         time_limit = PRESET_TIME_LIMITS[preset]
         lgbm_num_threads = PRESET_LGBM_THREADS[preset]
-        hyperparameters = deepcopy(get_hyperparameter_config(PRESET_HYPERPARAMETERS[preset]))
+        hyperparameter_config = PRESET_HYPERPARAMETERS[preset]
+        hyperparameters = deepcopy(
+            get_hyperparameter_config(hyperparameter_config)
+            if isinstance(hyperparameter_config, str)
+            else hyperparameter_config
+        )
         gbm_configs = hyperparameters.get("GBM", [])
         if isinstance(gbm_configs, dict):
             gbm_configs = [gbm_configs]
@@ -256,19 +286,22 @@ def autogluon_models_training(
             if isinstance(config, dict):
                 config["num_threads"] = lgbm_num_threads
         logger.info("Limiting LightGBM to %d threads.", lgbm_num_threads)
-        predictor = TabularPredictor(**predictor_init_kwargs).fit(
-            train_data=train_data_df,
-            presets=PRESET_AG_NAMES[preset],
-            hyperparameters=hyperparameters,
+        fit_kwargs = {
+            "train_data": train_data_df,
+            "presets": PRESET_AG_NAMES[preset],
+            "hyperparameters": hyperparameters,
             # Pipeline handles refit explicitly via refit_full(); disable AutoGluon's built-in refit
             # to prevent double-refit and incorrect model selection.
-            refit_full=False,
-            set_best_to_refit_full=False,
+            "refit_full": False,
+            "set_best_to_refit_full": False,
             # Required so refit_full() can access bag fold models after fit().
-            save_bag_folds=True,
-            time_limit=time_limit,
-            # exclude CatBoost models
-            excluded_model_types=["CAT"],
+            "save_bag_folds": True,
+            "time_limit": time_limit,
+            "excluded_model_types": PRESET_EXCLUDED_MODEL_TYPES[preset],
+        }
+        fit_kwargs.update(PRESET_FIT_KWARGS[preset])
+        predictor = TabularPredictor(**predictor_init_kwargs).fit(
+            **fit_kwargs,
         )
 
         # Select top N models
@@ -278,7 +311,12 @@ def autogluon_models_training(
         status.record(
             "model_selection",
             "completed",
-            metrics={"top_n": top_n, "selected_models": top_models},
+            metrics={
+                "top_n": top_n,
+                "selected_models": top_models,
+                "model_portfolio": sorted(hyperparameters),
+                "time_limit": time_limit,
+            },
         )
 
         model_config = {
