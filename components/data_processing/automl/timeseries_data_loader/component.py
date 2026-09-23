@@ -77,8 +77,8 @@ def timeseries_data_loader(
         test_data_file_key: S3 object key of the user-provided test CSV (default: empty string).
         preset: Training quality tier controlling the sampling size budget. ``"speed"``
             (default) samples up to 100 MB; ``"balanced"`` samples up to 1 GB; and
-            ``"heavy"`` samples up to 10 GB. The cap for user-provided test datasets
-            (50 MB) is unaffected by this setting.
+            ``"heavy"`` samples up to 10 GB. User-provided test datasets are capped
+            at 50 MB, 100 MB, and 1 GB respectively.
 
     Raises:
         ValueError: If a required parameter is empty or invalid, if only one of the
@@ -144,7 +144,11 @@ def timeseries_data_loader(
         "balanced": 1024 * 1024 * 1024,  # 1 GB
         "heavy": 10 * 1024 * 1024 * 1024,  # 10 GB
     }
-    TEST_DATA_MAX_SIZE_BYTES = 50 * 1024 * 1024  # 50 MB — smaller cap for user-provided holdout sets
+    PRESET_TEST_DATA_MAX_SIZE_BYTES = {
+        "speed": 50 * 1024 * 1024,  # 50 MiB
+        "balanced": 100 * 1024 * 1024,  # 100 MiB
+        "heavy": 1024 * 1024 * 1024,  # 1 GiB
+    }
     MIN_VALID_RECORDS_AFTER_CLEANSING = 100
     PANDAS_CHUNK_SIZE = 10000  # Rows per batch for streaming read
     DEFAULT_TEST_SIZE = 0.2
@@ -152,6 +156,7 @@ def timeseries_data_loader(
     if preset not in VALID_PRESETS:
         raise ValueError(f"preset must be one of {sorted(VALID_PRESETS)}; got {preset!r}.")
     MAX_SIZE_BYTES = PRESET_MAX_SIZE_BYTES[preset]
+    TEST_DATA_MAX_SIZE_BYTES = PRESET_TEST_DATA_MAX_SIZE_BYTES[preset]
 
     SYNTHETIC_ITEM_ID_COLUMN = "__synthetic_item_id"
     SYNTHETIC_ITEM_ID_VALUE = "item_0"

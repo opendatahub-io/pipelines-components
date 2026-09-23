@@ -1199,7 +1199,7 @@ class TestUserProvidedTestData:
 
     @mock.patch.dict(os.environ, mocked_env_variables, clear=True)
     def test_user_provided_test_data_truncation_warns_and_is_recorded(self, tmp_path, caplog):
-        """A test dataset over the 50 MB load limit is truncated with a WARNING and a status flag.
+        """A test dataset over the speed preset's 50 MiB limit is truncated with a WARNING and a status flag.
 
         BYTES_PER_ROW is inflated only on the second S3 call (test data fetch) so the
         training data loads normally (default 100 bytes/row, no sampling truncation).
@@ -1214,7 +1214,7 @@ class TestUserProvidedTestData:
             call_count += 1
             if call_count == 1:
                 return {"Body": io.BytesIO(train_csv.encode("utf-8"))}
-            # 20 MB per row: exceeds the 50 MB test-data cap after two rows, so the reader
+            # 20 MB per row: exceeds the 50 MiB test-data cap after two rows, so the reader
             # stops early and reports the truncation. Two rows, not one, so the surviving
             # series still clears the prediction_length horizon check.
             MockedDataFrame.BYTES_PER_ROW = 20_000_000
