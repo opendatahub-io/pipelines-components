@@ -32,7 +32,8 @@ Reads the static JSON template from the package (``run_status_templates/pipeline
 - **Tags**:
   - automl
   - run-status
-- **Last Verified**: 2026-05-28 00:00:00+00:00
+  - mlflow
+- **Last Verified**: 2026-08-26 00:00:00+00:00
 - **Owners**:
   - Approvers:
     - LukaszCmielowski

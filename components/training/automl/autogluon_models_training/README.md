@@ -35,6 +35,8 @@ mutates predictor state. All artifacts are written under a single output artifac
 | `positive_class` | `str` | `""` | Label value for the positive class in **binary** classification (e.g. ``"1"`` or ``"yes"``). Passed to ``TabularPredictor`` when set. Empty string (default) lets AutoGluon infer the positive class when ``fit`` runs. Ignored for ``multiclass`` and ``regression``. |
 | `preset` | `str` | `speed` | Training quality tier. ``"speed"`` (45-minute selection budget, default) or ``"balanced"`` (180-minute selection budget). |
 | `eval_metric` | `str` | `""` | Metric for model ranking (e.g. ``"r2"``, ``"accuracy"``). Defaults to ``"r2"`` for regression and ``"accuracy"`` otherwise. |
+| `run_name` | `str` | `""` | Per-execution MLflow run name recorded as a tag on child runs. Falls back to ``pipeline_name`` when empty. |
+| `log_model_artifacts` | `bool` | `True` | When True, upload each model's predictor (model.pkl) and notebook to its MLflow child run. |
 | `test_data_bucket_name` | `str` | `""` | Optional S3 bucket for user-provided external test data. |
 | `test_data_file_key` | `str` | `""` | Optional S3 object key for user-provided external test data. |
 | `train_data_secret_name` | `str` | `""` | Kubernetes secret name for S3 credentials used by the pipeline. |

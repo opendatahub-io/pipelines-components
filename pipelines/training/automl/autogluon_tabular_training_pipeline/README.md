@@ -15,6 +15,11 @@ This pipeline implements an efficient two-stage training approach for AutoGluon 
 Training datasets are stored on a PVC workspace (not S3 artifacts) so that all pipeline steps sharing the workspace can access them without extra downloads. Only the test dataset is written to an S3 artifact (for use by the leaderboard evaluation component). The workspace is provisioned via
 ``PipelineConfig.workspace``.
 
+**MLflow logging:**
+
+Results are logged to MLflow only when the platform injects ``KFP_MLFLOW_CONFIG`` into the step (configured on the Data Science Pipelines / KFP pipeline server, not via a pipeline parameter). To disable MLflow logging, run the pipeline on a server without MLflow configured, or have the cluster admin
+remove the MLflow configuration from the pipeline server; the training step then skips all tracking and runs unchanged. Artifact uploads can additionally be turned off per run with ``log_model_artifacts=False``.
+
 **Pipeline Stages:**
 
 0. **Component stage map**: Publishes the static component-to-stage-to-step map as a KFP artifact for dashboards before any data I/O.

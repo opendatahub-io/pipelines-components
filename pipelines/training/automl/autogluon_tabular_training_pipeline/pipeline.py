@@ -42,6 +42,7 @@ def autogluon_tabular_training_pipeline(
     positive_class: str = "",
     eval_metric: str = "",
     preset: str = "speed",
+    log_model_artifacts: bool = True,
     test_data_bucket_name: str = "",
     test_data_file_key: str = "",
 ):
@@ -61,6 +62,15 @@ def autogluon_tabular_training_pipeline(
     pipeline steps sharing the workspace can access them without extra downloads. Only
     the test dataset is written to an S3 artifact (for use by the leaderboard evaluation
     component). The workspace is provisioned via ``PipelineConfig.workspace``.
+
+    **MLflow logging:**
+
+    Results are logged to MLflow only when the platform injects ``KFP_MLFLOW_CONFIG`` into the
+    step (configured on the Data Science Pipelines / KFP pipeline server, not via a pipeline
+    parameter). To disable MLflow logging, run the pipeline on a server without MLflow
+    configured, or have the cluster admin remove the MLflow configuration from the pipeline
+    server; the training step then skips all tracking and runs unchanged. Artifact uploads can
+    additionally be turned off per run with ``log_model_artifacts=False``.
 
     **Pipeline Stages:**
 
@@ -194,6 +204,9 @@ def autogluon_tabular_training_pipeline(
     )
 
     # Stage 1 + 2: Model selection and sequential refit of top N models.
+    # The training component logs results to MLflow incrementally (one nested child run per
+    # model) when the platform injects KFP_MLFLOW_CONFIG. Tracking is best-effort: missing
+    # config or MLflow errors are recorded on component_status only and never fail the run.
     # Resource limits differ by preset: balanced needs more CPU/memory than speed.
     _training_kwargs = dict(
         label_column=label_column,
@@ -205,6 +218,7 @@ def autogluon_tabular_training_pipeline(
         workspace_path=dsl.WORKSPACE_PATH_PLACEHOLDER,
         pipeline_name=dsl.PIPELINE_JOB_RESOURCE_NAME_PLACEHOLDER,
         run_id=dsl.PIPELINE_JOB_ID_PLACEHOLDER,
+        run_name=dsl.PIPELINE_JOB_NAME_PLACEHOLDER,
         sample_row=data_loader_task.outputs["sample_row"],
         train_data_secret_name=train_data_secret_name,
         train_data_bucket_name=train_data_bucket_name,
@@ -214,9 +228,11 @@ def autogluon_tabular_training_pipeline(
         extra_train_data_path=data_loader_task.outputs["extra_train_data_path"],
         preset=preset,
         eval_metric=eval_metric,
+        log_model_artifacts=log_model_artifacts,
         test_data_bucket_name=test_data_bucket_name,
         test_data_file_key=test_data_file_key,
     )
+
     with dsl.If(preset == "balanced"):
         training_task_bl = autogluon_models_training(**_training_kwargs)
         training_task_bl.set_caching_options(False)

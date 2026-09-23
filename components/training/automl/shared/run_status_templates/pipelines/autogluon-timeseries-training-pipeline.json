@@ -37,6 +37,10 @@
         {
           "id": "build_leaderboard",
           "description": "Aggregate model metrics, rank models, and render leaderboard HTML."
+        },
+        {
+          "id": "log_mlflow_results",
+          "description": "Resume the KFP parent MLflow run and create nested child runs per model when tracking is enabled."
         }
       ]
     }

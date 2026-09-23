@@ -1101,8 +1101,9 @@ class TestAutogluonModelsTrainingUnitTests:
         # Must be inside workspace (PVC), not inside models_artifact path (S3)
         assert clone_path == expected_work_path
         assert not str(clone_path).startswith(models_output_dir)
-        # Work dir cleaned up after all models are saved
-        mock_rmtree.assert_called_once_with(expected_work_path, ignore_errors=True)
+        # Work dir cleaned up after all models are saved (the sanitized-notebook temp dir
+        # is also removed, so there may be more than one rmtree call).
+        mock_rmtree.assert_any_call(expected_work_path, ignore_errors=True)
 
     @mock.patch("pandas.read_csv")
     @mock.patch("autogluon.tabular.TabularPredictor")
@@ -2174,4 +2175,74 @@ class TestComponentStatusOutput:
         data = load_component_status(status_artifact.path)
         assert data["component_id"] == "autogluon_models_training"
         assert data["stages"]
-        assert data["stages"][-1]["status"]["state"] == "completed"
+        stages_by_id = {stage["id"]: stage["status"] for stage in data["stages"]}
+        # All stages complete; the MLflow stage still runs but reports tracking disabled.
+        assert all(status["state"] == "completed" for status in stages_by_id.values())
+        mlflow_status = stages_by_id["log_mlflow_results"]
+        assert mlflow_status["state"] == "completed"
+        assert "disabled" in mlflow_status["message"]["text"].lower()
+
+    @mock.patch("pandas.read_csv")
+    @mock.patch("autogluon.tabular.TabularPredictor")
+    def test_broken_mlflow_is_reported_as_warning_not_success(
+        self, mock_predictor_class, mock_read_csv, tmp_path, monkeypatch
+    ):
+        """MLflow configured but unreachable: the stage warns instead of claiming success."""
+        from kfp_components.components.training.automl.shared.component_status import load_component_status
+
+        monkeypatch.setenv(
+            "KFP_MLFLOW_CONFIG",
+            json.dumps(
+                {
+                    "endpoint": "https://mlflow.example.com",
+                    "experimentId": "1",
+                    "parentRunId": "parent-run",
+                    "authType": "",
+                    "timeout": "30s",
+                }
+            ),
+        )
+        # Every MLflow call fails, so nothing is ever persisted.
+        broken_mlflow = mock.MagicMock()
+        broken_mlflow.start_run.side_effect = RuntimeError("tracking server unreachable")
+
+        mock_predictor = mock.MagicMock()
+        mock_predictor_clone = mock.MagicMock()
+        mock_predictor_class.return_value.fit.return_value = mock_predictor
+        mock_predictor.clone.return_value = mock_predictor_clone
+        mock_predictor.problem_type = "regression"
+        mock_predictor.label = "target"
+        mock_predictor.eval_metric = "r2"
+        _mock_leaderboard_top_models(mock_predictor, ["LightGBM_BAG_L1"])
+        mock_predictor_clone.evaluate_predictions.return_value = {"r2": 0.9}
+        mock_predictor_clone.feature_importance.return_value = mock.MagicMock(to_dict=lambda: {"feature1": 0.1})
+        mock_predictor_clone.predict.return_value = mock.MagicMock()
+
+        mock_read_csv.side_effect = [_mock_csv_frame(), _mock_csv_frame(), _mock_csv_frame()]
+
+        workspace_path = str(tmp_path / "ws")
+        Path(workspace_path).mkdir()
+        models_output_dir = str(tmp_path / "out")
+        Path(models_output_dir).mkdir()
+        mock_models_artifact = mock.MagicMock()
+        mock_models_artifact.path = models_output_dir
+        mock_models_artifact.metadata = {}
+
+        status_artifact = _make_component_status_artifact(tmp_path)
+        Path(status_artifact.path).mkdir(parents=True, exist_ok=True)
+
+        call_kwargs = _base_call_kwargs(
+            workspace_path, mock_models_artifact, mock.MagicMock(path="/tmp/test.csv"), tmp_path
+        )
+        call_kwargs["component_status"] = status_artifact
+        with mock.patch.dict(sys.modules, {"mlflow": broken_mlflow}):
+            autogluon_models_training.python_func(**call_kwargs)
+
+        data = load_component_status(status_artifact.path)
+        stages_by_id = {stage["id"]: stage["status"] for stage in data["stages"]}
+        mlflow_status = stages_by_id["log_mlflow_results"]
+        # Training itself succeeded, so the stage completes -- but the message must not
+        # claim the results were logged.
+        assert mlflow_status["state"] == "completed"
+        assert mlflow_status["message"]["level"] == "warning"
+        assert "no results were logged" in mlflow_status["message"]["text"]

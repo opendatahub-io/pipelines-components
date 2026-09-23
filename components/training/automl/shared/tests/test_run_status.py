@@ -63,6 +63,9 @@ def test_tabular_pipeline_manifest_covers_all_components():
         catalog = load_component_stage_catalog(component, pipeline_id=PIPELINE_TABULAR_TRAINING)
         assert catalog["id"] == component
         assert len(catalog["stages"]) >= 1
+    # The training component now owns MLflow logging (the standalone logger step was removed).
+    training_catalog = load_component_stage_catalog(COMPONENT_MODELS_TRAINING, pipeline_id=PIPELINE_TABULAR_TRAINING)
+    assert "log_mlflow_results" in {stage["id"] for stage in training_catalog["stages"]}
 
 
 def test_timeseries_pipeline_manifest_covers_all_components():
@@ -74,6 +77,11 @@ def test_timeseries_pipeline_manifest_covers_all_components():
         COMPONENT_TIMESERIES_DATA_LOADER,
         COMPONENT_TIMESERIES_MODELS_TRAINING,
     ]
+    # The training component now owns MLflow logging (the standalone logger step was removed).
+    training_catalog = load_component_stage_catalog(
+        COMPONENT_TIMESERIES_MODELS_TRAINING, pipeline_id=PIPELINE_TIMESERIES_TRAINING
+    )
+    assert "log_mlflow_results" in {stage["id"] for stage in training_catalog["stages"]}
 
 
 def test_timeseries_model_selection_steps_match_tabular():
