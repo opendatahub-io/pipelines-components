@@ -96,6 +96,8 @@ class _MockSSLError(Exception):
 @contextmanager
 def _mock_boto3_module(get_object_return=None, get_object_side_effect=None):
     """Inject a fake boto3 module so the component does not require boto3 to be installed."""
+    import types
+
     mock_boto3 = mock.MagicMock()
     mock_s3 = mock.MagicMock()
     if get_object_side_effect is not None:
@@ -110,10 +112,24 @@ def _mock_boto3_module(get_object_return=None, get_object_side_effect=None):
     mock_botocore_exceptions.SSLError = _MockSSLError
     mock_botocore.exceptions = mock_botocore_exceptions
 
+    mock_boto3_s3 = types.ModuleType("boto3.s3")
+    mock_boto3_transfer = types.ModuleType("boto3.s3.transfer")
+
+    class TransferConfig:
+        """Minimal transfer config accepting the production keyword arguments."""
+
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    mock_boto3_transfer.TransferConfig = TransferConfig
+    mock_boto3_s3.transfer = mock_boto3_transfer
+
     with mock.patch.dict(
         sys.modules,
         {
             "boto3": mock_boto3,
+            "boto3.s3": mock_boto3_s3,
+            "boto3.s3.transfer": mock_boto3_transfer,
             "botocore": mock_botocore,
             "botocore.exceptions": mock_botocore_exceptions,
         },
@@ -279,6 +295,54 @@ class TestAutomlDataLoaderUnitTests:
         # Verify split outputs exist
         assert (tmp_path / "datasets" / "models_selection_train_dataset.csv").exists()
         assert (tmp_path / "datasets" / "extra_train_dataset.csv").exists()
+
+    @mock.patch.dict("os.environ", mocked_env_variables)
+    def test_random_sampling_uses_multipart_local_download_for_small_source(self, tmp_path):
+        """Representative sampling uses the local multipart path only for bounded sources."""
+        csv_content = _pad_tabular_csv("feature,target\n1,0\n2,1\n")
+        payload = csv_content.encode("utf-8")
+        sampled_test = _make_test_artifact(tmp_path)
+
+        with _mock_boto3_and_pandas() as mock_s3:
+            mock_s3.head_object.return_value = {"ContentLength": len(payload)}
+            mock_s3.download_file.side_effect = lambda bucket, key, destination, Config: Path(destination).write_bytes(
+                payload
+            )
+
+            result = automl_data_loader.python_func(
+                file_key="data/train.csv",
+                bucket_name="bucket",
+                workspace_path=str(tmp_path),
+                label_column="target",
+                sampled_test_dataset=sampled_test,
+                sampling_method="random",
+            )
+
+        assert result.sample_config["n_samples"] >= MIN_VALID_RECORDS
+        mock_s3.download_file.assert_called_once()
+        mock_s3.get_object.assert_not_called()
+
+    @mock.patch.dict("os.environ", mocked_env_variables)
+    def test_random_sampling_streams_source_above_local_download_budget(self, tmp_path):
+        """Large sources avoid a full node-local copy and keep progressive streaming sampling."""
+        csv_content = "feature,target\n1,0\n2,1\n"
+        sampled_test = _make_test_artifact(tmp_path)
+
+        with _mock_boto3_and_pandas(get_object_return={"Body": _csv_body(csv_content)}) as mock_s3:
+            mock_s3.head_object.return_value = {"ContentLength": 3 * 1024 * 1024 * 1024}
+
+            result = automl_data_loader.python_func(
+                file_key="data/large.csv",
+                bucket_name="bucket",
+                workspace_path=str(tmp_path),
+                label_column="target",
+                sampled_test_dataset=sampled_test,
+                sampling_method="random",
+            )
+
+        assert result.sample_config["n_samples"] >= MIN_VALID_RECORDS
+        mock_s3.download_file.assert_not_called()
+        mock_s3.get_object.assert_called_once_with(Bucket="bucket", Key="data/large.csv")
 
     @mock.patch.dict("os.environ", mocked_env_variables)
     def test_component_explicit_first_n_rows(self, tmp_path):

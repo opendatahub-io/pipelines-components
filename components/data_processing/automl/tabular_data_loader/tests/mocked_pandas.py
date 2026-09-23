@@ -10,6 +10,7 @@ import json
 import math
 import random
 from collections import Counter
+from pathlib import Path
 
 
 class MockedDataFrame:
@@ -332,6 +333,8 @@ def _read_csv_chunks(text_stream, chunksize):
     """Parse CSV from text_stream and yield MockedDataFrame chunks."""
     if hasattr(text_stream, "read"):
         content = text_stream.read()
+    elif isinstance(text_stream, (str, Path)) and Path(text_stream).is_file():
+        content = Path(text_stream).read_text(encoding="utf-8")
     else:
         content = text_stream
     if isinstance(content, bytes):
