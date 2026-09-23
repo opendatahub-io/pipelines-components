@@ -31,9 +31,7 @@ class TestAutogluonTimeseriesPipelineResourceRequirements:
         speed_keys = [name for name in actual if name.endswith("-3") and "models-training" in name]
         large_keys = [name for name in actual if name.endswith("-2") and "models-training" in name]
         balanced_keys = [
-            name
-            for name in actual
-            if "models-training" in name and not name.endswith("-2") and not name.endswith("-3")
+            name for name in actual if "models-training" in name and not name.endswith("-2") and not name.endswith("-3")
         ]
         assert len(speed_keys) == 1
         assert len(large_keys) == 1
