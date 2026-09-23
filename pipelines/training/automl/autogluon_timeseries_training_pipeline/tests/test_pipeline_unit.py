@@ -146,8 +146,8 @@ class TestAutogluonTimeseriesTrainingPipelineUnitTests:
         assert "componentInputParameter: preset" in content
         assert "condition-branches-1" in content
 
-    def test_compiled_pipeline_declares_speed_and_balanced_resource_tiers(self):
-        """Speed and balanced preset branches request different training CPU/memory."""
+    def test_compiled_pipeline_declares_all_training_resource_tiers(self):
+        """Speed, balanced, and large timeseries branches request distinct resources."""
         from kfp_components.utils.pipeline_task_resources import (
             assert_executor_resources,
             compile_executor_resources,
@@ -164,6 +164,9 @@ class TestAutogluonTimeseriesTrainingPipelineUnitTests:
                 ],
                 "autogluon-timeseries-models-training-2": AUTOML_TIMESERIES_EXECUTOR_RESOURCES[
                     "autogluon-timeseries-models-training-2"
+                ],
+                "autogluon-timeseries-models-training-3": AUTOML_TIMESERIES_EXECUTOR_RESOURCES[
+                    "autogluon-timeseries-models-training-3"
                 ],
             },
             pipeline_name="autogluon_timeseries_training_pipeline (training tiers only)",

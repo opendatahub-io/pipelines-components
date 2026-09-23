@@ -33,7 +33,7 @@ def automl_data_loader(  # noqa: D417
     """AutoML Data Loader component.
 
     Loads tabular (CSV) data from S3 in batches, sampling up to a preset-dependent
-    size budget (``"speed"``: 100 MB, ``"balanced"``: 1 GB, ``"large_tabular"``: 10 GB), then splits the sampled
+    size budget (``"speed"``: 100 MB, ``"balanced"``: 1 GB, ``"heavy"``: 10 GB), then splits the sampled
     data into test, selection-train, and extra-train sets.
 
     The component reads data in chunks to efficiently handle large files without
@@ -82,7 +82,7 @@ def automl_data_loader(  # noqa: D417
         test_data_file_key: S3 object key of the user-provided test CSV (default: empty string).
         preset: Training quality tier controlling the sampling size budget. ``"speed"``
             (default) samples up to 100 MB; ``"balanced"`` samples up to 1 GB; and
-            ``"large_tabular"`` samples up to 10 GB. The cap for user-provided test datasets
+            ``"heavy"`` samples up to 10 GB. The cap for user-provided test datasets
             (50 MB) is unaffected by this setting.
 
     Raises:
@@ -136,13 +136,13 @@ def automl_data_loader(  # noqa: D417
         except Exception as e:  # noqa: BLE001 - stats logging must never break the run
             logger.debug("Could not compute dataset stats for %s: %s", name, e)
 
-    VALID_PRESETS = {"speed", "balanced", "large_tabular"}
+    VALID_PRESETS = {"speed", "balanced", "heavy"}
     # Sampling budget per quality tier: "speed" stays small for fast runs,
     # "balanced" allows the full supported dataset size.
     PRESET_MAX_SIZE_BYTES = {
         "speed": 100 * 1024 * 1024,  # 100 MB
         "balanced": 1024 * 1024 * 1024,  # 1 GB
-        "large_tabular": 10 * 1024 * 1024 * 1024,  # 10 GB
+        "heavy": 10 * 1024 * 1024 * 1024,  # 10 GB
     }
     TEST_DATA_MAX_SIZE_BYTES = 50 * 1024 * 1024  # 50 MB — smaller cap for user-provided holdout sets
     MIN_VALID_RECORDS_AFTER_CLEANSING = 100

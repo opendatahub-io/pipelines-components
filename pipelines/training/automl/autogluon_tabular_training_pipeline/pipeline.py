@@ -70,7 +70,7 @@ def autogluon_tabular_training_pipeline(
     1. **Data Loading & Splitting**: Loads tabular (CSV) data from an S3-compatible
        object storage bucket using AWS credentials configured via Kubernetes secrets.
        The component samples the data (up to 100 MiB for the "speed" preset, up to 1 GiB
-       for "balanced", and up to 10 GiB for "large_tabular"), then performs a two-stage split:
+       for "balanced", and up to 10 GiB for "heavy"), then performs a two-stage split:
        *Primary split** (default 80/20): separates a *test set* (20%, written to an
          S3 artifact) from the *train portion* (80%).
          **Secondary split** (default 30/70 of the train portion): produces
@@ -127,7 +127,7 @@ def autogluon_tabular_training_pipeline(
         positive_class: Optional label value for the positive class in binary classification. Defaults to the second unique class after sorting label values.
         eval_metric: Metric used for model ranking. Empty string (default) is resolved by the component to "r2" for regression and "accuracy" for binary and multiclass classification.
         preset: Training quality tier. "speed" (default, 4 vCPU / 16 GiB), "balanced"
-            (8 vCPU / 32 GiB), or "large_tabular" (16 vCPU / 64 GiB; 10 GiB sample cap).
+            (8 vCPU / 32 GiB), or "heavy" (16 vCPU / 64 GiB; 10 GiB sample cap).
         test_data_bucket_name: Optional S3-compatible bucket name for a user-provided test dataset.
             Default: empty string (use the holdout split from training data).
         test_data_file_key: Optional S3 object key for a user-provided test CSV file.
@@ -226,7 +226,7 @@ def autogluon_tabular_training_pipeline(
             MAX_MEMORY
         )
 
-    with dsl.Elif(preset == "large_tabular"):
+    with dsl.Elif(preset == "heavy"):
         training_task_lt = autogluon_models_training(**_training_kwargs)
         training_task_lt.set_caching_options(False)
         training_task_lt.set_cpu_request("16").set_memory_request("64Gi").set_cpu_limit("32").set_memory_limit("128Gi")

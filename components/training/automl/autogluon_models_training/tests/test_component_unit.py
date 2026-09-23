@@ -560,7 +560,7 @@ class TestAutogluonModelsTrainingUnitTests:
 
     @mock.patch("pandas.read_csv")
     @mock.patch("autogluon.tabular.TabularPredictor")
-    def test_large_tabular_preset_fit_args(self, mock_predictor_class, mock_read_csv, tmp_path):
+    def test_heavy_preset_fit_args(self, mock_predictor_class, mock_read_csv, tmp_path):
         """Large-tabular uses a sequential, unbagged LightGBM-only fit profile."""
         mock_predictor = mock.MagicMock()
         mock_predictor_clone = mock.MagicMock()
@@ -597,7 +597,7 @@ class TestAutogluonModelsTrainingUnitTests:
             sample_row=SAMPLE_ROW,
             models_artifact=mock_models_artifact,
             html_artifact=_make_html_artifact(tmp_path),
-            preset="large_tabular",
+            preset="heavy",
             experiment_notebook=_make_experiment_notebook_artifact(tmp_path),
             component_status=_make_component_status_artifact(tmp_path),
         )
@@ -612,7 +612,7 @@ class TestAutogluonModelsTrainingUnitTests:
         assert fit_call[1]["fit_strategy"] == "sequential"
 
         context = mock_models_artifact.metadata["context"]
-        assert context["model_config"]["preset"] == "large_tabular"
+        assert context["model_config"]["preset"] == "heavy"
         assert context["model_config"]["time_limit"] == 360 * 60
 
     @mock.patch("pandas.read_csv")

@@ -25,7 +25,7 @@ PIPELINE_NAME = "autogluon-timeseries-training-pipeline"
     ),
     pipeline_config=dsl.PipelineConfig(
         workspace=dsl.WorkspaceConfig(
-            size="12Gi",  # TODO: change to recommended size
+            size="32Gi",
             kubernetes=dsl.KubernetesWorkspaceConfig(
                 pvcSpecPatch={
                     "accessModes": ["ReadWriteOnce"],
@@ -75,7 +75,8 @@ def autogluon_timeseries_training_pipeline(
        artifact for dashboards before data loading.
 
     1. **Data loading & splitting** (``timeseries_data_loader``): Loads CSV from S3 (up to 100 MiB
-       for the "speed" preset, up to 1 GiB for "balanced"), replaces ``+/-inf`` with NaN (missing
+       for the "speed" preset, up to 1 GiB for "balanced", and up to 10 GiB for
+       "heavy"), replaces ``+/-inf`` with NaN (missing
        targets stay for AutoGluon), requires parseable timestamps
        and non-null ids (or injects ``__synthetic_item_id`` for two-column datasets when ``id_column=""``),
        deduplicates ``(id_column, timestamp_column)``, then applies a two-stage
@@ -116,8 +117,9 @@ def autogluon_timeseries_training_pipeline(
         eval_metric: Metric for model ranking in snake_case (e.g. ``"mean_absolute_scaled_error"``,
             ``"weighted_quantile_loss"``) or legacy uppercase acronym form. Defaults to
             ``"mean_absolute_scaled_error"``.
-        preset: Training quality tier. ``"speed"`` (default, 4 vCPU / 16 GiB) or
-            ``"balanced"`` (may run more than 2x longer, 8 vCPU / 32 GiB).
+        preset: Training quality tier. ``"speed"`` (default, 4 vCPU / 16 GiB),
+            ``"balanced"`` (8 vCPU / 32 GiB), or ``"heavy"`` (16 vCPU /
+            64 GiB request, 32 vCPU / 128 GiB limit, up to six hours).
         test_data_bucket_name: Optional S3-compatible bucket name for a user-provided test dataset.
             Default: empty string (use the per-series holdout split from training data).
         test_data_file_key: Optional S3 object key for a user-provided test CSV file.
@@ -188,7 +190,7 @@ def autogluon_timeseries_training_pipeline(
     )
 
     # Stage 2: Combined model generation + full refit.
-    # Resource limits differ by preset: medium_quality needs more CPU/memory.
+    # Resource requests and limits differ by preset.
     _training_kwargs = dict(
         target=target,
         id_column=data_loader_task.outputs["effective_id_column"],
@@ -219,6 +221,13 @@ def autogluon_timeseries_training_pipeline(
         training_task_bl.set_caching_options(False)
         training_task_bl.set_cpu_request("8").set_memory_request("32Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(
             MAX_MEMORY
+        )
+
+    with dsl.Elif(preset == "heavy"):
+        training_task_lg = autogluon_timeseries_models_training(**_training_kwargs)
+        training_task_lg.set_caching_options(False)
+        training_task_lg.set_cpu_request("16").set_memory_request("64Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(
+            "128Gi"
         )
 
     with dsl.Else():

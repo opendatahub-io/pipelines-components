@@ -77,7 +77,7 @@ def autogluon_models_training(
             Empty string (default) lets AutoGluon infer the positive class when ``fit`` runs.
             Ignored for ``multiclass`` and ``regression``.
         preset: Training quality tier. ``"speed"`` (default), ``"balanced"``, or
-            ``"large_tabular"``. The large-tabular profile uses a narrower, sequential
+            ``"heavy"``. The heavy profile uses a narrower, sequential
             model portfolio and a six-hour time budget for larger sampled datasets.
         eval_metric: Metric for model ranking (e.g. ``"r2"``, ``"accuracy"``). Defaults
             to ``"r2"`` for regression and ``"accuracy"`` otherwise.
@@ -114,25 +114,25 @@ def autogluon_models_training(
     from autogluon.tabular.configs.hyperparameter_configs import get_hyperparameter_config
 
     VALID_TASK_TYPES = {"binary", "multiclass", "regression"}
-    VALID_PRESETS = {"speed", "balanced", "large_tabular"}
-    PRESET_TIME_LIMITS = {"speed": 45 * 60, "balanced": 90 * 60, "large_tabular": 360 * 60}
-    PRESET_AG_NAMES = {"speed": "good_quality", "balanced": "high_quality", "large_tabular": "medium_quality"}
+    VALID_PRESETS = {"speed", "balanced", "heavy"}
+    PRESET_TIME_LIMITS = {"speed": 45 * 60, "balanced": 90 * 60, "heavy": 360 * 60}
+    PRESET_AG_NAMES = {"speed": "good_quality", "balanced": "high_quality", "heavy": "medium_quality"}
     # AutoGluon's underlying portfolios let us override only LightGBM without dropping other estimators.
     PRESET_HYPERPARAMETERS = {
         "speed": "light",
         "balanced": "zeroshot",
-        "large_tabular": {"GBM": {}},
+        "heavy": {"GBM": {}},
     }
-    PRESET_LGBM_THREADS = {"speed": 4, "balanced": 8, "large_tabular": 16}
+    PRESET_LGBM_THREADS = {"speed": 4, "balanced": 8, "heavy": 16}
     PRESET_EXCLUDED_MODEL_TYPES = {
         "speed": ["CAT"],
         "balanced": ["CAT"],
-        "large_tabular": ["CAT", "KNN", "RF", "XT"],
+        "heavy": ["CAT", "KNN", "RF", "XT"],
     }
     PRESET_FIT_KWARGS = {
         "speed": {},
         "balanced": {},
-        "large_tabular": {"num_bag_folds": 0, "num_stack_levels": 0, "fit_strategy": "sequential"},
+        "heavy": {"num_bag_folds": 0, "num_stack_levels": 0, "fit_strategy": "sequential"},
     }
     TOP_N_MAX = 10
 
