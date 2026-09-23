@@ -32,7 +32,7 @@ After cleansing, at least **100** valid records must remain; otherwise the compo
 | `known_covariates_names` | `Optional[List[str]]` | `None` | Covariate columns known in advance downstream (default: none). Only used to fail fast when a user-provided test dataset omits one of them. |
 | `test_data_bucket_name` | `str` | `""` | S3 bucket name for user-provided test dataset (default: empty string). |
 | `test_data_file_key` | `str` | `""` | S3 object key of the user-provided test CSV (default: empty string). |
-| `preset` | `str` | `speed` | Training quality tier controlling the sampling size budget. ``"speed"`` (default) samples up to 100 MB; ``"balanced"`` samples up to 1 GB; and ``"heavy"`` samples up to 10 GB. The cap for user-provided test datasets (50 MB) is unaffected by this setting. |
+| `preset` | `str` | `speed` | Training quality tier controlling the sampling size budget. ``"speed"`` (default) samples up to 100 MB; ``"balanced"`` samples up to 1 GB; and ``"heavy"`` samples up to 10 GB. User-provided test datasets are capped at 50 MB, 100 MB, and 1 GB respectively. |
 
 ## Outputs 📤
 
