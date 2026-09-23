@@ -12,6 +12,7 @@ from ..pipeline import autogluon_tabular_training_pipeline
 from .pipeline_resource_expectations import (
     AUTOML_TABULAR_EXECUTOR_RESOURCES,
     TRAINING_BALANCED_RESOURCES,
+    TRAINING_LARGE_TABULAR_RESOURCES,
     TRAINING_SPEED_RESOURCES,
 )
 
@@ -57,15 +58,17 @@ class TestAutogluonTabularPipelineResourceRequirements:
             pipeline_name="autogluon_tabular_training_pipeline",
         )
 
-    def test_default_speed_preset_uses_lower_training_tier(self):
-        """Default speed preset branch requests less CPU/memory than balanced."""
+    def test_preset_branches_declare_ordered_training_tiers(self):
+        """Speed, balanced, and large-tabular branches declare the intended resources."""
         actual = compile_executor_resources(autogluon_tabular_training_pipeline)
-        speed_keys = [name for name in actual if name.endswith("-2") and "models-training" in name]
-        balanced_keys = [name for name in actual if "models-training" in name and not name.endswith("-2")]
-        assert len(speed_keys) == 1
-        assert len(balanced_keys) == 1
-        speed = actual[speed_keys[0]]
-        balanced = actual[balanced_keys[0]]
-        assert speed == TRAINING_SPEED_RESOURCES
-        assert balanced == TRAINING_BALANCED_RESOURCES
-        assert float(speed.cpu_request) < float(balanced.cpu_request)
+        training_resources = [resources for name, resources in actual.items() if "models-training" in name]
+        assert len(training_resources) == 3
+        assert TRAINING_SPEED_RESOURCES in training_resources
+        assert TRAINING_BALANCED_RESOURCES in training_resources
+        assert TRAINING_LARGE_TABULAR_RESOURCES in training_resources
+        speed = TRAINING_SPEED_RESOURCES
+        balanced = TRAINING_BALANCED_RESOURCES
+        large_tabular = TRAINING_LARGE_TABULAR_RESOURCES
+        assert float(speed.cpu_request) < float(balanced.cpu_request) < float(large_tabular.cpu_request)
+        assert int(speed.memory_request.removesuffix("Gi")) < int(balanced.memory_request.removesuffix("Gi"))
+        assert int(balanced.memory_request.removesuffix("Gi")) < int(large_tabular.memory_request.removesuffix("Gi"))

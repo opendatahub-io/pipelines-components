@@ -42,6 +42,19 @@ class TestAutogluonTabularTrainingPipelineUnitTests:
         finally:
             Path(tmp_path).unlink(missing_ok=True)
 
+    def test_pipeline_declares_32_gib_shared_workspace(self):
+        """All preset branches share the 32 GiB PVC required by large_tabular."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as tmp_file:
+            tmp_path = tmp_file.name
+        try:
+            compiler.Compiler().compile(
+                pipeline_func=autogluon_tabular_training_pipeline,
+                package_path=tmp_path,
+            )
+            assert "size: 32Gi" in Path(tmp_path).read_text(encoding="utf-8")
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
+
     def test_pipeline_signature(self):
         """Test that the pipeline has the expected parameters."""
         # KFP pipelines expose parameters via component_spec.inputs, not inspect.signature
@@ -178,8 +191,8 @@ class TestAutogluonTabularTrainingPipelineUnitTests:
         assert "componentInputParameter: preset" in content
         assert "condition-branches-1" in content
 
-    def test_compiled_pipeline_declares_speed_and_balanced_resource_tiers(self):
-        """Speed and balanced preset branches request different training CPU/memory."""
+    def test_compiled_pipeline_declares_all_preset_resource_tiers(self):
+        """Speed, balanced, and large-tabular preset branches request distinct resources."""
         from kfp_components.utils.pipeline_task_resources import (
             assert_executor_resources,
             compile_executor_resources,
@@ -193,6 +206,7 @@ class TestAutogluonTabularTrainingPipelineUnitTests:
             {
                 "autogluon-models-training": AUTOML_TABULAR_EXECUTOR_RESOURCES["autogluon-models-training"],
                 "autogluon-models-training-2": AUTOML_TABULAR_EXECUTOR_RESOURCES["autogluon-models-training-2"],
+                "autogluon-models-training-3": AUTOML_TABULAR_EXECUTOR_RESOURCES["autogluon-models-training-3"],
             },
             pipeline_name="autogluon_tabular_training_pipeline (training tiers only)",
             allow_extra=True,

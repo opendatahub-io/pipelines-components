@@ -901,3 +901,4 @@ if __name__ == "__main__":
         automl_data_loader,
         package_path=__file__.replace(".py", "_component.yaml"),
     )
+

@@ -1012,3 +1012,4 @@ if __name__ == "__main__":
         autogluon_models_training,
         package_path=__file__.replace(".py", "_component.yaml"),
     )
+

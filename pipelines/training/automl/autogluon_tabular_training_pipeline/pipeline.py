@@ -256,3 +256,4 @@ if __name__ == "__main__":
         autogluon_tabular_training_pipeline,
         package_path=__file__.replace(".py", ".yaml"),
     )
+

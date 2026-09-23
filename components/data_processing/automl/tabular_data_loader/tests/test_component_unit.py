@@ -247,7 +247,15 @@ class TestComponentStatusArtifact:
         split_stage = next(stage for stage in payload["stages"] if stage["id"] == "split_and_export")
         assert split_stage["status"]["state"] == "completed"
         assert split_stage["metrics"]["test_size"] == 0.2
-        assert "test_rows" not in split_stage.get("metrics", {})
+        assert split_stage["metrics"]["test_rows"] > 0
+        assert split_stage["metrics"]["selection_train_rows"] > 0
+        assert split_stage["metrics"]["extra_train_rows"] > 0
+        assert split_stage["metrics"]["selection_train_disk_bytes"] > 0
+        assert split_stage["metrics"]["extra_train_disk_bytes"] > 0
+        prepare_stage = next(stage for stage in payload["stages"] if stage["id"] == "prepare_data")
+        assert prepare_stage["metrics"]["source_rows_scanned"] >= prepare_stage["metrics"]["sampled_rows"]
+        assert prepare_stage["metrics"]["sampled_in_memory_bytes"] > 0
+        assert prepare_stage["metrics"]["sample_cap_bytes"] == 100 * 1024 * 1024
 
     @mock.patch.dict("os.environ", mocked_env_variables)
     def test_sets_component_status_display_name(self, tmp_path):
@@ -271,6 +279,30 @@ class TestComponentStatusArtifact:
 
         assert (Path(component_status.path) / "component_status.json").is_file()
         assert component_status.metadata["display_name"] == "Data Loader Status"
+
+    @mock.patch.dict("os.environ", mocked_env_variables)
+    def test_large_tabular_records_ten_gib_sample_cap(self, tmp_path):
+        """Large-tabular status exposes its platform-managed 10 GiB sample cap."""
+        body_stream = _csv_body("a,b,c\n1,2,3\n4,5,6\n")
+        sampled_test = _make_test_artifact(tmp_path)
+        component_status = mock.MagicMock()
+        component_status.path = str(tmp_path / "component_status_out")
+        component_status.metadata = {}
+
+        with _mock_boto3_and_pandas(get_object_return={"Body": body_stream}):
+            automl_data_loader.python_func(
+                file_key="data/file.csv",
+                bucket_name="my-bucket",
+                workspace_path=str(tmp_path),
+                label_column="c",
+                sampled_test_dataset=sampled_test,
+                component_status=component_status,
+                preset="large_tabular",
+            )
+
+        payload = json.loads((Path(component_status.path) / "component_status.json").read_text())
+        prepare_stage = next(stage for stage in payload["stages"] if stage["id"] == "prepare_data")
+        assert prepare_stage["metrics"]["sample_cap_bytes"] == 10 * 1024 * 1024 * 1024
 
 
 class TestAutomlDataLoaderUnitTests:
