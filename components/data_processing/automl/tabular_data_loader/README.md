@@ -4,7 +4,7 @@
 
 ## Overview 🧾
 
-Automl Data Loader component.
+AutoML Data Loader component.
 
 Loads tabular (CSV) data from S3 in batches, sampling up to a preset-dependent size budget (``"speed"``: 100 MB, ``"balanced"``: 1 GB), then splits the sampled data into test, selection-train, and extra-train sets.
 

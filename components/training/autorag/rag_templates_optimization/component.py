@@ -74,20 +74,9 @@ def rag_templates_optimization(
     import json
     import logging
     import os
-    import sys
     from pathlib import Path
 
     import pandas as pd
-
-    if getattr(sys.modules.get("sqlite3"), "__name__", None) == "pysqlite3":
-        return
-    try:
-        import pysqlite3  # type: ignore[import-untyped]
-
-        sys.modules["sqlite3"] = pysqlite3
-    except ImportError:
-        pass
-
     from ai4rag import handler
     from ai4rag.assets_generator import build_leaderboard_html, generate_notebook_from_template
     from ai4rag.core.experiment.experiment import AI4RAGExperiment

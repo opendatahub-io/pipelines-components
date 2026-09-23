@@ -75,7 +75,6 @@ def _make_ai4rag_mocks():
             get_vector_store=mock_get_vector_store, get_vector_store_config=mock_get_vector_store_config
         ),
         "ai4rag.utils": mock.MagicMock(),
-        "ai4rag.utils.compat": _make_module_mock(ensure_sqlite3=mock.MagicMock(name="ensure_sqlite3")),
         "ai4rag.utils.constants": _make_module_mock(ChunkingConstraints=mock_ChunkingConstraints),
         "docling_core": mock.MagicMock(),
         "docling_core.types": mock.MagicMock(),
@@ -98,11 +97,17 @@ def _make_ai4rag_mocks():
 
 
 def _make_extracted_text(tmp_path, filenames=None):
-    """Create a mock extracted_text artifact with optional JSON files."""
+    """Create a mock extracted_text artifact with optional JSON files.
+
+    Names may contain ``/`` to place a file under a nested prefix, mirroring how
+    text extraction preserves the source S3 key of each document.
+    """
     extracted_dir = tmp_path / "extracted"
     extracted_dir.mkdir()
     for name in filenames or []:
-        (extracted_dir / name).write_text("{}")
+        target = extracted_dir / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("{}")
     artifact = mock.MagicMock()
     artifact.path = str(extracted_dir)
     return artifact
@@ -350,6 +355,59 @@ class TestDocumentsIndexingProcessing:
         assert data["completed"] == 0
         assert data["documents"] == []
         assert "settings" in data
+
+    @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
+    def test_discovers_documents_under_nested_prefix(self, tmp_path):
+        """Documents written under a nested prefix are indexed, not skipped.
+
+        Text extraction preserves each document's source S3 key, so a nested
+        ``input_data_keys`` prefix produces nested output.  A non-recursive listing
+        silently found nothing here and reported a successful empty index
+        """
+        modules, mocks = _make_ai4rag_mocks()
+        mocks["DoclingDocument"].load_from_json.return_value = mock.MagicMock()
+        mocks["LangChainChunker"].return_value.split_documents.return_value = [mock.MagicMock()]
+
+        _call_component(
+            tmp_path,
+            modules,
+            mocks,
+            filenames=[
+                "datasets/rag/rh_summit_2026/documents/a.md.json",
+                "datasets/rag/rh_summit_2026/documents/b.md.json",
+            ],
+        )
+
+        data = json.loads((tmp_path / "indexing_report.json").read_text())
+        assert data["total_documents"] == 2
+        assert data["completed"] == 2
+        assert mocks["DoclingDocument"].load_from_json.call_count == 2
+
+    @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
+    def test_indexes_nested_and_top_level_documents_together(self, tmp_path):
+        """Recursion picks up nested documents without dropping top-level ones."""
+        modules, mocks = _make_ai4rag_mocks()
+        mocks["DoclingDocument"].load_from_json.return_value = mock.MagicMock()
+        mocks["LangChainChunker"].return_value.split_documents.return_value = [mock.MagicMock()]
+
+        _call_component(tmp_path, modules, mocks, filenames=["top.json", "deep/nested/inner.json"])
+
+        data = json.loads((tmp_path / "indexing_report.json").read_text())
+        assert data["total_documents"] == 2
+        assert {e["file"] for e in data["documents"]} == {"top.json", "inner.json"}
+
+    @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
+    def test_failed_nested_document_is_reported(self, tmp_path):
+        """A nested document that fails to load is recorded as failed, not skipped silently."""
+        modules, mocks = _make_ai4rag_mocks()
+        mocks["DoclingDocument"].load_from_json.side_effect = ValueError("corrupt")
+
+        _call_component(tmp_path, modules, mocks, filenames=["deep/nested/bad.json"])
+
+        data = json.loads((tmp_path / "indexing_report.json").read_text())
+        assert data["total_documents"] == 1
+        assert data["failed"] == 1
+        assert data["documents"][0]["file"] == "bad.json"
 
     @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
     def test_get_vector_store_receives_collection_name(self, tmp_path):

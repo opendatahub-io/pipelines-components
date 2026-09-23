@@ -24,6 +24,7 @@ Discovers documents from object storage, extracts text, and indexes chunks into 
 | `chunk_size` | `int` | `1024` | Maximum chunk size in tokens (128--2048). |
 | `chunk_overlap` | `int` | `0` | Token overlap between consecutive chunks (recursive method only). |
 | `batch_size` | `int` | `20` | Number of documents per batch. Defaults to ``20``; ``0`` processes all documents in a single batch. |
+| `ocr_lang` | `Optional[str]` | `None` | Language used to pick the RapidOCR model bundle. Pass ``pattern.json`` ``settings.generation.language.code`` from the optimization run so indexing OCRs the corpus the same way the experiment did. Note that AutoRAG derives that code from the benchmark questions, not from the documents themselves, so override it when the corpus is in a different language. Chinese selects the Chinese bundle; omitting it selects the English bundle, which covers all Latin-script languages. |
 
 ## Metadata 🗂️
 
@@ -46,7 +47,7 @@ Discovers documents from object storage, extracts text, and indexes chunks into 
   - documents_discovery
   - data_indexing
   - autorag
-- **Last Verified**: 2026-09-08 00:00:00+00:00
+- **Last Verified**: 2026-09-15 00:00:00+00:00
 - **Owners**:
   - No Parent Owners: Yes
   - Approvers:

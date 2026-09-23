@@ -5,8 +5,8 @@ accelerate==1.15.0 \
     # via
     #   docling-ibm-models
     #   docling-slim
-ai4rag==0.16.0 \
-    --hash=sha256:943da7a6060cbd922a87e8154693feba08503da8087f8752f92012fae8ebcd96
+ai4rag==0.17.0 \
+    --hash=sha256:f904e1b07fc54d6ebf4ae3cb500fcec4b3fd4fcff863daa244dd94aa83c8284c
     # via -r requirements.in
 aiohappyeyeballs==2.7.1 \
     --hash=sha256:c1207ce1e31a8cb2fe0a3dc94cecd44dd3ba65e16a5cb7bc79f62d6b8074bc78
@@ -39,7 +39,6 @@ anyio==4.15.1 \
     #   httpx2
     #   langsmith
     #   openai
-    #   watchfiles
 appdirs==1.4.4 \
     --hash=sha256:327273c050d312034ec3a627df574eff85a49ac8069890a7434ca0d414e2bb30
     # via ragas
@@ -62,12 +61,6 @@ av==13.1.0 \
     --hash=sha256:f4c93c7a83e13bd6778541b8e2d1d5e8e9cb9c34de2a1eb52d94a2f9592f63d2 \
     --hash=sha256:f9600e44735d2aee906076db4543cc96be1e38e45066136f2f8904bdd9adb8ba
     # via whisper-s2t-reborn
-bcrypt==5.0.0 \
-    --hash=sha256:0f4190da1810679994e8d9e04b3361d1131a36ebfa2a69ba6772e1195733cabc \
-    --hash=sha256:2ef57281bbc3824e32d59d70df87e8b3a1e03aa25648afbab2e3696aee848e7e \
-    --hash=sha256:844246c9f23eec72247693144ce6a8c6f12b3ae4115924b6d6931f079a54ddfc \
-    --hash=sha256:bc785a7bc8f187e74d2d49d8e83414e81e737ca7089be886861daf16688819c0
-    # via chromadb
 beautifulsoup4==4.15.0 \
     --hash=sha256:093525ef67b60a99bc418b266eb9af9f096b422f73ccd397d5b7df8ef020a670
     # via docling-slim
@@ -79,9 +72,6 @@ botocore==1.43.93 \
     # via
     #   boto3
     #   s3transfer
-build==1.6.1 \
-    --hash=sha256:217d42c46c0928fdda7e2208d55e7f9b418990e34acdf30dbb6b3e8b33094475
-    # via chromadb
 cachetools==7.1.8 \
     --hash=sha256:dd3641f359976a4d86a27978459311e52cbe3f1d66cb6e11bdbb9f8e8d9bf160
     # via pymilvus
@@ -104,12 +94,6 @@ cffi==2.1.1 \
 charset-normalizer==3.5.1 \
     --hash=sha256:aeac1eeb950a89b952cf6a9e60411e92a706e116c76ba6182a1834daf9ae2f32
     # via requests
-chromadb==1.5.9 \
-    --hash=sha256:4031de3a3e34391ecdedd6216fcb1871474b91cdacb0c3e02ecac52c7f98bfe4 \
-    --hash=sha256:70c3d5a1c9512fe25ffb2fc502ad330bdc8d20c95eb733990053bb20b48b831d \
-    --hash=sha256:c6dfae399445c3b9f78ffcd390f4be521895ab5b66a895c4cd2350a7ae2c8bb6 \
-    --hash=sha256:dbd86438b660620d5665b1c8c01184d155f5897e0344c1657066e895835a1670
-    # via ai4rag
 click==8.5.0 \
     --hash=sha256:87dddcbfce6b3967d8bd284f76304e1c6c9e491552a0eafa332d2613d52306b5
     # via
@@ -118,7 +102,6 @@ click==8.5.0 \
     #   instructor
     #   kfp
     #   python-oxmsg
-    #   uvicorn
 click-option-group==0.5.7 \
     --hash=sha256:b48288d7abe1ab1f28dcea6e84597743e09b8a43345c1f30e04e772bbfaad24a
     # via kfp
@@ -208,6 +191,12 @@ et-xmlfile==2.0.0 \
 evaluate==0.4.6 \
     --hash=sha256:0a3b314e8fc8a7f0da7202f3178c8433096150a39b1c3629d0305cb993330161
     # via unitxt
+faiss-cpu==1.12.0 \
+    --hash=sha256:2f192b955f81d5bebbeaea9a6836eb81b4bac7333d4bc2c85563dfab8e781374 \
+    --hash=sha256:40565416844817ab3c8df042c79788c524420cf9497a5f3532451fa71d9b04c0 \
+    --hash=sha256:7cfb9b2e184b83460216c9b34ddf5ee5b152358fb2d8c8ab1f67b0d4f65a33ae \
+    --hash=sha256:e36bb86618f313a36ca44f865527fb7ab629b80d6594cd69201dfc1bdd469245
+    # via milvus-lite
 faker==40.38.0 \
     --hash=sha256:ac4a401dcb5f4a272a8a9cad9e5ab3b3928c4c23b796bf8493f6de144390a2cb
     # via polyfactory
@@ -220,9 +209,6 @@ filelock==3.32.6 \
 filetype==1.2.0 \
     --hash=sha256:f9967f322d3dea1ce261f66de88e32ffad755239b13dc3b093c240330b4c4e91
     # via docling-slim
-flatbuffers==25.12.19 \
-    --hash=sha256:60915b8477a6e28d44166a597c72b14042f4fd986818f2206bfe7760d6a648d1
-    # via onnxruntime
 frozenlist==1.8.0 \
     --hash=sha256:25cc97274d43add7842ecf7279a64f4567dc362f250e6074971fbfbf6f251005 \
     --hash=sha256:28cd1e39bf5a8cbe5fe4d7279a97ca15ab3aa0f90e792aa4986ab56c042d011e \
@@ -267,9 +253,7 @@ google-resumable-media==2.10.2 \
     # via google-cloud-storage
 googleapis-common-protos==1.75.3 \
     --hash=sha256:03ee98a59092216cd75fd259fa9cd7ddb46db1c654e0416a9e70c5ff8dcb3516
-    # via
-    #   google-api-core
-    #   opentelemetry-exporter-otlp-proto-grpc
+    # via google-api-core
 greenlet==3.5.5 \
     --hash=sha256:4e7f310eb32e72849ce2cc0c08b754d6eb754f530966806f83b8d10913d3acba \
     --hash=sha256:9fe5056e5f518dc1ea197f7d59caacd500c9a182b9597634ac23065ab10fc1a8 \
@@ -282,15 +266,13 @@ grpcio==1.83.1 \
     --hash=sha256:da3e2b839670cd04c546d53c1cae25a4459cf1dfb368a8b30715d4fce9f5232f \
     --hash=sha256:ec29dcbe0acef9ebdc9d5d7f0fc576bb279b3a2be35db4e654e6bebe87c15745
     # via
-    #   chromadb
-    #   opentelemetry-exporter-otlp-proto-grpc
+    #   milvus-lite
     #   pymilvus
 h11==0.16.0 \
     --hash=sha256:e44ad99adcda4c6141fdf245e22a6b506959df7fcb89d1f8f08e675e60eaf782
     # via
     #   httpcore
     #   httpcore2
-    #   uvicorn
 hf-xet==1.6.0 \
     --hash=sha256:0e632a986cc3f4eb3ee7ad9279208ed55dd47eca88f2c460e236bbf394b23824 \
     --hash=sha256:5bf394154b3885c1306b8736cfe138c6d33fe3f7374925a4ec251ea3a4ffa123 \
@@ -303,16 +285,9 @@ httpcore==1.0.9 \
 httpcore2==2.12.0 \
     --hash=sha256:a47cbbda3de83b13a4965031aba9b7d1d4cb4db5fa2df71d3b906548cc667bcb
     # via httpx2
-httptools==0.8.0 \
-    --hash=sha256:36065a8403a2d462ac86d47fe6ca1de18c5b3bbbbca2a1e898e1804a77111e1d \
-    --hash=sha256:3665ed73a1cae3ba2024cb991405e225a9b08095695ff92bc9064a6c49477c53 \
-    --hash=sha256:78e1feca4e73791f6a874d7c2e3f8da8df83fa8466a84d5c28204b3f1eafeddc \
-    --hash=sha256:bb825e3282b17b93e9a53f7a550e5b7f48fb27a2a451813c7f95f9b3a32d598f
-    # via uvicorn
 httpx==0.28.1 \
     --hash=sha256:efca1a86438747d4ba695232764a5b3b0d134ddcd64e09abe946dc4295319547
     # via
-    #   chromadb
     #   datasets
     #   docling-slim
     #   huggingface-hub
@@ -345,9 +320,6 @@ idna==3.19 \
     #   instructor
     #   requests
     #   yarl
-importlib-resources==7.1.0 \
-    --hash=sha256:2c9431783da12760195137b969395c56ee958fcbf192644f4f5dd6154680aece
-    # via chromadb
 instructor==1.17.0 \
     --hash=sha256:9fc9b5d672bdbcc671cc34ea8e4bdac559e135527e9a7308e6190dc85de5da82
     # via ragas
@@ -386,9 +358,7 @@ jsonref==1.1.0 \
     # via docling-core
 jsonschema==4.26.0 \
     --hash=sha256:362ef10db9ed85b707ede08e25f8336016df3f9a758568760439350bf20e6ed0
-    # via
-    #   chromadb
-    #   docling-core
+    # via docling-core
 jsonschema-specifications==2025.9.1 \
     --hash=sha256:15b04b8b340156cde62f352b33a1605a9eae565708e6fc475f90d3a53dd8f6e4
     # via jsonschema
@@ -403,9 +373,7 @@ kfp-server-api==2.17.0 \
     # via kfp
 kubernetes==36.0.3 \
     --hash=sha256:5abef75f6749b0a1d75b0a886a490d2502ed1754ed8e95e4dd99082161571656
-    # via
-    #   chromadb
-    #   kfp
+    # via kfp
 langchain==1.4.0 \
     --hash=sha256:cd5a3428f60628fbb1cca655f8419f016888c51069abb1dfc4aa721917a0f90c
     # via ragas
@@ -503,12 +471,9 @@ marshmallow==3.26.2 \
 mdurl==0.1.2 \
     --hash=sha256:945211ddc5b51917b928c63b22e99d808b9083a266432d01033305123ff6716b
     # via markdown-it-py
-mmh3==5.3.0 \
-    --hash=sha256:37914e38a46d754968025fc1708751122991c695e811843114cac45fabc4e4f7 \
-    --hash=sha256:7dfc29746ca9879f8009cd3e3e1eada6d87be9828faa74343db80d430fec780d \
-    --hash=sha256:a45f4d0f95e78f861f5c001612fc8d6ab837da2d8bb4f874d11d88699db36651 \
-    --hash=sha256:f9f222ba84fa918cab578857795eadc7b847d0d7f636d72882ae00bb4b913a94
-    # via chromadb
+milvus-lite==3.2.1 \
+    --hash=sha256:cceb20d628bc814bbf5df99e94ea8f175da16015e85ef3ac1e9a592616ac7660
+    # via pymilvus
 more-itertools==11.1.0 \
     --hash=sha256:93d4f508f17c2c9ebc06bf1d51dfa4e28e18d1e1de0208ae3b2d13a9b36df1c4
     # via openai-whisper
@@ -559,15 +524,15 @@ numpy==2.5.3 \
     --hash=sha256:f1bc5ed81669c0cfbadd178ef509f47d489ca9cf36255e9cfc9678aaa6c2532e
     # via
     #   accelerate
-    #   chromadb
     #   ctranslate2
     #   datasets
     #   docling-ibm-models
     #   docling-slim
     #   evaluate
+    #   faiss-cpu
     #   langchain-community
+    #   milvus-lite
     #   numba
-    #   onnxruntime
     #   openai-whisper
     #   opencv-python
     #   pandas
@@ -594,12 +559,6 @@ olefile==0.47 \
 omegaconf==2.3.1 \
     --hash=sha256:e662f1c0660e1b9185dd8f400ba244384e1e1f6a7372d88f4d95466c101770c5
     # via rapidocr
-onnxruntime==1.25.0 \
-    --hash=sha256:6f9a0e367872b164b96bde07ab0411c564e729858e894d14a108cd22b350519d \
-    --hash=sha256:b07e318ac11a6aed1e96004c7870351d390484e3e19d83fd85b78b18a42faebb \
-    --hash=sha256:cef48b2d4263ae900ad3daa70d2262ca4c058658f5564db7d9cfd7f5f908cbc4 \
-    --hash=sha256:eeee14eaff8ff09d7ef95f8d65f54775ae0da28889cffab73af4e0ca49c61ecd
-    # via chromadb
 openai==2.53.0 \
     --hash=sha256:57cc1b518ad2a65147b61957095d139195eebf5031c1d8696808d2f00eb6db57
     # via
@@ -621,38 +580,13 @@ openpyxl==3.1.5 \
     # via docling-slim
 opentelemetry-api==1.44.0 \
     --hash=sha256:b1e0c91a2b18caba1bef91686bfa26bf8157d04c06bd36dc4c782093fe9a70f2
-    # via
-    #   chromadb
-    #   google-api-core
-    #   opentelemetry-exporter-otlp-proto-grpc
-    #   opentelemetry-sdk
-    #   opentelemetry-semantic-conventions
-opentelemetry-exporter-otlp-proto-common==1.44.0 \
-    --hash=sha256:5316ede2e57cb879a359799308950e9354feac93783f85c4be32528832e58d68
-    # via opentelemetry-exporter-otlp-proto-grpc
-opentelemetry-exporter-otlp-proto-grpc==1.44.0 \
-    --hash=sha256:76da4855ce7411dc4c3f83f05716a3a86a480a2578697b88d9d58187a44831cb
-    # via chromadb
-opentelemetry-proto==1.44.0 \
-    --hash=sha256:4793d7dadde34e2bbad93b696323c56b1e4c23c01e9fb112ce2e3e5c47518acb
-    # via
-    #   opentelemetry-exporter-otlp-proto-common
-    #   opentelemetry-exporter-otlp-proto-grpc
-opentelemetry-sdk==1.44.0 \
-    --hash=sha256:1b7068c20840ea93e14b9986b97ae9d71bf8002c9fe08cb6998f7932097c6954
-    # via
-    #   chromadb
-    #   opentelemetry-exporter-otlp-proto-grpc
-opentelemetry-semantic-conventions==0.65b0 \
-    --hash=sha256:c86476a49cb604effbb77baa7340f231023a5008ee4e45a3872ef620ceb613ca
-    # via opentelemetry-sdk
+    # via google-api-core
 orjson==3.12.0 \
     --hash=sha256:332fc40ae168238c62d53afe1eaa4ad1f12b3bd899badc1bc3dd8784189be456 \
     --hash=sha256:5e3fa948c7c3491415536c3ffd25fb3e5236c380fc7fe0481852ac3c616b11e5 \
     --hash=sha256:e2b13f16135750c60f60aea6bb54d08d0d83a6377dd3525f438f34dcc19ab0f8 \
     --hash=sha256:eb4cc147e3beb362adbde47a23939748aa0b0976026b61871b847ae1f8fd99e5
     # via
-    #   chromadb
     #   langgraph-sdk
     #   langsmith
     #   pymilvus
@@ -662,21 +596,17 @@ ormsgpack==1.12.2 \
     --hash=sha256:b0fb4c3239623b2eeb691584590d0f89bd339745ebb1a9288577a734eb0569a5 \
     --hash=sha256:f900b37b43a5afd1faf521f1a816aeaf614defa4b57708343cdc629812194f90
     # via langgraph-checkpoint
-overrides==7.7.0 \
-    --hash=sha256:aedc295bac52541c96fae768347a1ae8eeb2fe0ecac7b0056933af0fbccc46ac
-    # via chromadb
 packaging==26.3 \
     --hash=sha256:deb834ee2fe51e528b40cca13dd998c438ba0f0ba890d86c7ef1918afe4a9dbb
     # via
     #   accelerate
-    #   build
     #   datasets
     #   evaluate
+    #   faiss-cpu
     #   huggingface-hub
     #   langchain-core
     #   langsmith
     #   marshmallow
-    #   onnxruntime
     #   transformers
 pandas==2.2.3 \
     --hash=sha256:374b8b38ada3d578f3bb18bd88fc1b139a64fb1028a12adcd1a8b23ce455e826 \
@@ -743,8 +673,6 @@ protobuf==6.33.6 \
     #   googleapis-common-protos
     #   kfp
     #   kfp-pipeline-spec
-    #   onnxruntime
-    #   opentelemetry-proto
     #   proto-plus
     #   pymilvus
 psutil==7.2.2 \
@@ -758,19 +686,15 @@ pyarrow==25.0.1 \
     --hash=sha256:324db3b2561ff28f3750efc3863e71cd4202cd551338d6c36dc56a0d1eafb8a6 \
     --hash=sha256:6a6c38bf51061c238a5bfbc59f463b65706cd5b2fe108bd7949733160c1f743b \
     --hash=sha256:739d2106efc22d19a018ce73c1a1f55197b148117e9948f689f173e8ef712b51
-    # via datasets
+    # via
+    #   datasets
+    #   milvus-lite
 pyasn1==0.6.4 \
     --hash=sha256:a1c6555370d74ccf3ca076e09c2b77a823bd9f19943cbf1527cc83cf2205b12f
     # via pyasn1-modules
 pyasn1-modules==0.4.2 \
     --hash=sha256:6ee3464546d8f7daf5ca504390d3c525806ed7fcc972998866f7fd07b3d8cf2b
     # via google-auth
-pybase64==1.5.0 \
-    --hash=sha256:0fb40054e7081e062adf3df8c7b62fe7e9bc727471e68d243afb846c0912cdb9 \
-    --hash=sha256:53387be066c085f8c64ca64f8701eef5a2eb758091e1b098cdf37c70f0540109 \
-    --hash=sha256:67854d07d3c4954fda7f63c3f24685dbfa5a5cd928ceed3bca3249ad2e19d0f9 \
-    --hash=sha256:83d20047bc7b042356c42e671edf09c54106641e4ef832e6d1a6e71e41e50001
-    # via chromadb
 pyclipper==1.4.0 \
     --hash=sha256:700b78669e1ea6c581a9051d328a50353b79f55c90c2e56e721546d0c65e91d9 \
     --hash=sha256:8bbd429ffc8b32a082515aa6b72d76fb8b4baadbe7f9f4aa398afacb84afe178 \
@@ -784,7 +708,6 @@ pydantic==2.11.10 \
     --hash=sha256:9ca3e716bd9f81f3b4b56890f93d5b1dd904a9625a80eac4d29d767c2218a808
     # via
     #   ai4rag
-    #   chromadb
     #   docling-core
     #   docling-ibm-models
     #   docling-parse
@@ -809,7 +732,6 @@ pydantic-core==2.33.2 \
 pydantic-settings==2.15.0 \
     --hash=sha256:334d50bea670f9c7e0786ccc0f9cc3e7e3f552daa80b19a24c70acb6903f1615
     # via
-    #   chromadb
     #   docling-core
     #   docling-slim
     #   langchain-community
@@ -830,18 +752,6 @@ pymilvus==3.0.1 \
 pypdfium2==5.13.0 \
     --hash=sha256:1c7c05130540fbff4b31bc0a93a575d09ded766d049e3ce16ca0651d781dd7a3
     # via docling-slim
-pypika==0.51.1 \
-    --hash=sha256:e0f5842f9abb93f6de3f63ef7a54c7ed0857ca1f1232abf6fd1fc42ba8dbe9d5
-    # via chromadb
-pyproject-hooks==1.2.0 \
-    --hash=sha256:1148bfc91b57e4cf76952a6f7f96021e093aa7c9bef539b7d48efb7c7a4e7e13
-    # via build
-pysqlite3==0.6.0 \
-    --hash=sha256:3f7b5107f479dcddd75ffa22ef8f3bd06460026a5a00b49a6a5ceed2b51cfe71 \
-    --hash=sha256:44e7ee7fc442ff743ba416c0e958aa1f4c389427543de853e16168ad5728d556 \
-    --hash=sha256:4967d5e51e9c4a7d238cf933821d5d8cad2740199b0df08b89ad7bc55057da61 \
-    --hash=sha256:4e3cb61f0785062bd7f8e5ec38af14943d5b3d81e09fc5c04163fd94e4e35355
-    # via -r requirements.in
 python-dateutil==2.9.0.post0 \
     --hash=sha256:e3d7c7c7054ebe488f9bb1e1f14a22955c9c5e4b1ac4f0cefefa25c2e3a30f4c
     # via
@@ -858,7 +768,6 @@ python-dotenv==1.2.3 \
     #   docling-slim
     #   pydantic-settings
     #   pymilvus
-    #   uvicorn
 python-oxmsg==0.0.2 \
     --hash=sha256:d5f759fe475db73c4f97cafb776a5c8ac1aa6a5580a8873658e7810ecc46a95b
     # via docling-slim
@@ -878,7 +787,6 @@ pyyaml==6.0.3 \
     --hash=sha256:eb3fc043c3b2844d501c7cc7a115e904c0f2c0ff4401ed0b9856aea4eb22dafc
     # via
     #   accelerate
-    #   chromadb
     #   ctranslate2
     #   datasets
     #   docling-core
@@ -891,7 +799,6 @@ pyyaml==6.0.3 \
     #   omegaconf
     #   rapidocr
     #   transformers
-    #   uvicorn
 ragas==0.4.3 \
     --hash=sha256:0c766f7cae2e88cb1ea99f7b30a6f754618dc7e49bd04311738702fb23856d05
     # via ai4rag
@@ -943,7 +850,6 @@ requests-toolbelt==1.0.0 \
 rich==14.3.4 \
     --hash=sha256:8689e335c608f877fa5aaeab19d5972f202d61226beffa684616a0d6bfb2d226
     # via
-    #   chromadb
     #   docling-slim
     #   instructor
     #   ragas
@@ -1048,7 +954,6 @@ tabulate==0.10.0 \
 tenacity==9.1.4 \
     --hash=sha256:d3c296fa4c831ba6a65c62bad73f635a9637772d43ff29394123514b59f6d118
     # via
-    #   chromadb
     #   instructor
     #   langchain-community
     #   langchain-core
@@ -1070,7 +975,6 @@ tokenizers==0.23.2 \
     --hash=sha256:49995ba234c17989952f8188c0a4c900ce86972007e5a7971364db987697549f \
     --hash=sha256:af755f4d27c64a60c6f4130ec8f4dc99fce2c0379a5ededa05659831c5fdf5a1
     # via
-    #   chromadb
     #   transformers
     #   whisper-s2t-reborn
 torch==2.13.0 \
@@ -1097,7 +1001,6 @@ torchvision==0.28.0 \
 tqdm==4.70.1 \
     --hash=sha256:e98614838d87955e536e6a196aa911515a33e798d9f5c3de546394a2edd9d575
     # via
-    #   chromadb
     #   datasets
     #   docling-ibm-models
     #   docling-slim
@@ -1162,7 +1065,6 @@ truststore==0.10.4 \
 typer==0.26.8 \
     --hash=sha256:650f1cf53e0606090476f219780a8444800af874c846fcb60390a371eb26e39a
     # via
-    #   chromadb
     #   doclang
     #   docling-core
     #   docling-slim
@@ -1176,7 +1078,6 @@ typing-extensions==4.16.0 \
     #   aiosignal
     #   anyio
     #   beautifulsoup4
-    #   chromadb
     #   docling-core
     #   grpcio
     #   httpx2
@@ -1187,9 +1088,6 @@ typing-extensions==4.16.0 \
     #   odfdo
     #   openai
     #   opentelemetry-api
-    #   opentelemetry-exporter-otlp-proto-grpc
-    #   opentelemetry-sdk
-    #   opentelemetry-semantic-conventions
     #   polyfactory
     #   pydantic
     #   pydantic-core
@@ -1233,21 +1131,6 @@ uuid-utils==0.17.1 \
     # via
     #   langchain-core
     #   langsmith
-uvicorn==0.52.4 \
-    --hash=sha256:3f2b50559a9d83e2f39eed6c0b176f979b709329b2634fb67e14d81017f4aa8f
-    # via chromadb
-uvloop==0.22.1 \
-    --hash=sha256:17f5277384c9475159977d7efc71f9e0ff327587a317168f99c1d696094b0491 \
-    --hash=sha256:f36805aa99704ad523b74da67e3a7a25d12aaf5cd0f4d7ccacb0afff5f6468c3 \
-    --hash=sha256:fbce902a6c38e78c850e5a09e6e6a6c6bda10d3c1c4bb51e0aa59f2bf20ca63c \
-    --hash=sha256:ff664476cfc8f4ca526d36630271bb13b2c2da11829dbdc42a78557ccaf1459a
-    # via uvicorn
-watchfiles==1.2.0 \
-    --hash=sha256:40167c27c90bffc569fb25b8895ae152e30c55e820c89576e5c3152c76de6549 \
-    --hash=sha256:9c7572faa6900c32f22733aff613bd2f99dd4fc65c155cda4ce70922aed6bb98 \
-    --hash=sha256:c2277a6412d76965762282271331fe6e200aac83da25797db3fdb996e76e5345 \
-    --hash=sha256:cabaad1ec1bc9fc395789224f1b73b2bbd3fc269f3a66b0cb344a84e7451d9bd
-    # via uvicorn
 websocket-client==1.9.2 \
     --hash=sha256:bf4a341cd66e86006c933b1ee02950b82e7203243952d23e89bd07b1d9076038
     # via kubernetes
@@ -1260,7 +1143,6 @@ websockets==16.1.1 \
     #   docling-slim
     #   langgraph-sdk
     #   langsmith
-    #   uvicorn
 whisper-s2t-reborn==1.7.1 \
     --hash=sha256:42db576725c2dbbc9aecc5eff932f7688f99890d0cd4f4da44fb4e2ecf569205
     # via docling-slim

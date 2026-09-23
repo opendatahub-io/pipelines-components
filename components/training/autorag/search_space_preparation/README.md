@@ -8,6 +8,8 @@ Search space preparation and validation for AutoRAG experiments.
 
 Resolves and validates the requested MaaS models, builds the AutoRAG search space, and writes it as a JSON report. This step runs *before* text extraction so that unresponsive or misconfigured models fail the experiment fast, before any heavy document processing is performed.
 
+It also surfaces the language AutoRAG detects from the benchmark questions, so text extraction can pick the matching OCR model bundle.
+
 ## Inputs 📥
 
 | Parameter | Type | Default | Description |
@@ -19,6 +21,12 @@ Resolves and validates the requested MaaS models, builds the AutoRAG search spac
 | `embedded_artifact` | `dsl.EmbeddedInput[dsl.Dataset]` | `None` | Embedded ``autorag.shared`` helpers injected by KFP at runtime. |
 | `component_status` | `dsl.Output[dsl.Artifact]` | `None` | Output artifact containing stage-level progress tracking. |
 | `preset` | `str` | `speed` | Pipeline quality tier. "speed" (default) uses recursive chunking without contextual enrichment. "balanced" uses hybrid chunking with LLM contextual enrichment in the search space. |
+
+## Outputs 📤
+
+| Name | Type | Description |
+| ---- | ---- | ----------- |
+| Output | `NamedTuple('SearchSpacePreparationOutputs', [('detected_ocr_lang', str)])` | ISO 639-1 code of the language AutoRAG detected from the benchmark questions, or an empty string when detection did not run or failed. Intended as the ``ocr_lang`` input of text extraction. |
 
 ## Usage Examples 🧪
 

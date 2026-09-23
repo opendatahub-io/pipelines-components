@@ -82,6 +82,23 @@ class TestDocumentsRagOptimizationPipelineUnit:
         finally:
             Path(tmp_path).unlink(missing_ok=True)
 
+    def test_text_extraction_consumes_the_detected_ocr_language(self):
+        """The OCR bundle follows the language AutoRAG detected from the benchmark questions."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as tmp:
+            tmp_path = tmp.name
+        try:
+            compiler.Compiler().compile(
+                pipeline_func=documents_rag_optimization_pipeline,
+                package_path=tmp_path,
+            )
+            spec = load_pipeline_spec_document(Path(tmp_path))
+            te_task = spec["root"]["dag"]["tasks"]["text-extraction"]
+            ocr_lang = te_task["inputs"]["parameters"]["ocr_lang"]["taskOutputParameter"]
+            assert ocr_lang["producerTask"] == "search-space-preparation"
+            assert ocr_lang["outputParameterKey"] == "detected_ocr_lang"
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
+
     def test_optimization_consumes_models_pre_selector_report(self):
         """Optimization must receive the (possibly reduced) report from models_pre_selector."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as tmp:

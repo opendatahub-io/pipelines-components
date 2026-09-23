@@ -99,6 +99,7 @@ def autogluon_models_training(
     import math
     import shutil
     from concurrent.futures import ThreadPoolExecutor
+    from copy import deepcopy
     from pathlib import Path
     from typing import (
         Any,
@@ -109,11 +110,15 @@ def autogluon_models_training(
     import pandas as pd
     from autogluon.core.metrics import METRICS
     from autogluon.tabular import TabularPredictor
+    from autogluon.tabular.configs.hyperparameter_configs import get_hyperparameter_config
 
     VALID_TASK_TYPES = {"binary", "multiclass", "regression"}
     VALID_PRESETS = {"speed", "balanced"}
     PRESET_TIME_LIMITS = {"speed": 45 * 60, "balanced": 180 * 60}
     PRESET_AG_NAMES = {"speed": "good_quality", "balanced": "high_quality"}
+    # AutoGluon's underlying portfolios let us override only LightGBM without dropping other estimators.
+    PRESET_HYPERPARAMETERS = {"speed": "light", "balanced": "zeroshot"}
+    PRESET_LGBM_THREADS = {"speed": 4, "balanced": 8}
     TOP_N_MAX = 10
 
     # Input parameters validation
@@ -242,9 +247,19 @@ def autogluon_models_training(
 
         status.record("model_selection", "started")
         time_limit = PRESET_TIME_LIMITS[preset]
+        lgbm_num_threads = PRESET_LGBM_THREADS[preset]
+        hyperparameters = deepcopy(get_hyperparameter_config(PRESET_HYPERPARAMETERS[preset]))
+        gbm_configs = hyperparameters.get("GBM", [])
+        if isinstance(gbm_configs, dict):
+            gbm_configs = [gbm_configs]
+        for config in gbm_configs:
+            if isinstance(config, dict):
+                config["num_threads"] = lgbm_num_threads
+        logger.info("Limiting LightGBM to %d threads.", lgbm_num_threads)
         predictor = TabularPredictor(**predictor_init_kwargs).fit(
             train_data=train_data_df,
             presets=PRESET_AG_NAMES[preset],
+            hyperparameters=hyperparameters,
             # Pipeline handles refit explicitly via refit_full(); disable AutoGluon's built-in refit
             # to prevent double-refit and incorrect model selection.
             refit_full=False,

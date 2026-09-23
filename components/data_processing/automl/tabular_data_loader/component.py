@@ -30,7 +30,7 @@ def automl_data_loader(  # noqa: D417
     models_selection_train_data_path=str,
     extra_train_data_path=str,
 ):
-    """Automl Data Loader component.
+    """AutoML Data Loader component.
 
     Loads tabular (CSV) data from S3 in batches, sampling up to a preset-dependent
     size budget (``"speed"``: 100 MB, ``"balanced"``: 1 GB), then splits the sampled

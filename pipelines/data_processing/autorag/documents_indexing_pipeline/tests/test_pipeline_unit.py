@@ -40,6 +40,7 @@ class TestDocumentsIndexingPipelineUnit:
             "chunk_size",
             "chunk_overlap",
             "collection_name",
+            "ocr_lang",
         ):
             assert name in inputs
 
@@ -97,6 +98,21 @@ class TestDocumentsIndexingPipelineUnit:
         assert "componentInputParameter: embedding_model_id" in content
         assert "componentInputParameter: collection_name" in content
         assert "comp-documents-indexing:" in content
+
+    def test_compiled_pipeline_wires_ocr_lang_to_text_extraction(self):
+        """ocr_lang reaches extraction so indexing OCRs the corpus the way the experiment did."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as tmp:
+            tmp_path = tmp.name
+        try:
+            compiler.Compiler().compile(
+                pipeline_func=documents_indexing_pipeline,
+                package_path=tmp_path,
+            )
+            spec = load_pipeline_spec_document(Path(tmp_path))
+            te_inputs = spec["root"]["dag"]["tasks"]["text-extraction"]["inputs"]["parameters"]
+            assert te_inputs["ocr_lang"]["componentInputParameter"] == "ocr_lang"
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
 
     def test_compiled_pipeline_wires_s3_maas_and_vector_db_secrets(self):
         """S3 secrets attach to discovery/extraction; MaaS + vector-DB secrets attach to indexing."""

@@ -59,10 +59,6 @@ def models_pre_selector(
     import os
     from pathlib import Path
 
-    from ai4rag.utils.compat import ensure_sqlite3
-
-    ensure_sqlite3()
-
     from ai4rag.core.experiment.mps import ModelsPreSelector
     from ai4rag.search_space.prepare import SearchSpaceReport
 

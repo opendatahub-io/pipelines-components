@@ -42,8 +42,6 @@ def _make_ai4rag_mocks() -> SimpleNamespace:
         name="serialize_model",
         side_effect=lambda m: {"model_id": m.model_id},
     )
-    ensure_sqlite3 = mock.MagicMock(name="ensure_sqlite3")
-
     mps_module = mock.MagicMock()
     mps_module.ModelsPreSelector = models_pre_selector_cls
 
@@ -62,9 +60,6 @@ def _make_ai4rag_mocks() -> SimpleNamespace:
     benchmark_module = mock.MagicMock()
     benchmark_module.BenchmarkData = benchmark_data_cls
 
-    compat = mock.MagicMock()
-    compat.ensure_sqlite3 = ensure_sqlite3
-
     modules = {
         "ai4rag": mock.MagicMock(),
         "ai4rag.core": mock.MagicMock(),
@@ -76,7 +71,6 @@ def _make_ai4rag_mocks() -> SimpleNamespace:
         "ai4rag.utils": mock.MagicMock(),
         "ai4rag.utils.clients": utils_module,
         "ai4rag.utils.docling_io": docling_module,
-        "ai4rag.utils.compat": compat,
         "pandas": mock.MagicMock(name="pandas"),
     }
     return SimpleNamespace(
@@ -88,7 +82,6 @@ def _make_ai4rag_mocks() -> SimpleNamespace:
         get_foundation_models=get_foundation_models,
         get_embedding_models=get_embedding_models,
         serialize_model=serialize_model,
-        ensure_sqlite3=ensure_sqlite3,
     )
 
 
@@ -161,7 +154,6 @@ class TestModelsPreSelectorBehaviour:
                 search_space_mps_report=report_out,
             )
 
-        mocks.ensure_sqlite3.assert_called_once()
         mocks.create_maas_client.assert_not_called()
         mocks.get_foundation_models.assert_not_called()
         mocks.ModelsPreSelector.assert_not_called()

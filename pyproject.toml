@@ -94,6 +94,7 @@ packages = [
     "kfp_components.components.training.autorag.shared",
     "kfp_components.components.training.finetuning",
     "kfp_components.components.training.finetuning.lora",
+    "kfp_components.components.training.finetuning.lora_grpo",
     "kfp_components.components.training.finetuning.osft",
     "kfp_components.components.training.finetuning.sft",
     "kfp_components.components.training.finetuning.shared",
