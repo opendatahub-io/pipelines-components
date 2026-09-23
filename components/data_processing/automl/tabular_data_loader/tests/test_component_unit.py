@@ -210,14 +210,16 @@ class TestComponentStatusArtifact:
     def test_writes_component_status_json(self, tmp_path, monkeypatch):
         """Test that component_status.json is written to the output artifact."""
         monkeypatch.delenv("MLFLOW_TRACKING_URI", raising=False)
-        csv_content = "a,b,c\n1,2,3\n4,5,6\n"
-        body_stream = _csv_body(csv_content)
+        csv_content = _pad_tabular_csv("a,b,c\n1,2,3\n4,5,6\n")
+        body_stream = _csv_body(csv_content, pad=False)
         sampled_test = _make_test_artifact(tmp_path)
         component_status = mock.MagicMock()
         component_status.path = str(tmp_path / "component_status_out")
         component_status.metadata = {}
 
-        with _mock_boto3_and_pandas(get_object_return={"Body": body_stream}):
+        with _mock_boto3_and_pandas(
+            get_object_return={"Body": body_stream, "ContentLength": len(csv_content.encode("utf-8"))}
+        ):
             automl_data_loader.python_func(
                 file_key="data/file.csv",
                 bucket_name="my-bucket",
@@ -234,6 +236,13 @@ class TestComponentStatusArtifact:
         assert payload["component_id"] == "automl_data_loader"
         stage_ids = [stage["id"] for stage in payload["stages"]]
         assert stage_ids == ["prepare_data", "split_and_export"]
+        prepare_stage = next(stage for stage in payload["stages"] if stage["id"] == "prepare_data")
+        prepare_metrics = prepare_stage["metrics"]
+        assert prepare_metrics["source_bytes"] == len(csv_content.encode("utf-8"))
+        assert prepare_metrics["batches_read"] == 1
+        assert prepare_metrics["source_rows_read"] >= prepare_metrics["rows_before_cleansing"]
+        assert prepare_metrics["sampling_compactions"] >= 1
+        assert prepare_metrics["rows_before_cleansing"] >= prepare_metrics["rows"]
         split_stage = next(stage for stage in payload["stages"] if stage["id"] == "split_and_export")
         assert split_stage["status"]["state"] == "completed"
         assert split_stage["metrics"]["test_size"] == 0.2

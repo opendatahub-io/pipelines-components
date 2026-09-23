@@ -255,6 +255,7 @@ def automl_data_loader(  # noqa: D417
             """
             chunk_list = []
             accumulated_size = 0
+            sampling_metrics = {"batches_read": 0, "source_rows_read": 0, "sampling_compactions": 0}
 
             def _mark_truncated():
                 if truncation_report is not None:
@@ -262,6 +263,8 @@ def automl_data_loader(  # noqa: D417
 
             try:
                 for chunk_df in pd.read_csv(text_stream, chunksize=chunk_size):
+                    sampling_metrics["batches_read"] += 1
+                    sampling_metrics["source_rows_read"] += len(chunk_df)
                     chunk_memory = chunk_df.memory_usage(deep=True).sum()
 
                     if accumulated_size + chunk_memory > max_size_bytes:
@@ -290,19 +293,21 @@ def automl_data_loader(  # noqa: D417
                 logger.warning("Partial CSV read, keeping the %s chunk(s) read so far: %s", len(chunk_list), e)
                 _mark_truncated()
 
-            return pd.concat(chunk_list, ignore_index=True) if chunk_list else pd.DataFrame()
+            return pd.concat(chunk_list, ignore_index=True) if chunk_list else pd.DataFrame(), sampling_metrics
 
         def _sample_stratified(csv_source, chunk_size, max_size_bytes, label_column):
             """Merge batches and subsample proportionally by target column to stay under the size limit."""
             subsampled_data = None
             pending_chunks = []
             pending_memory = 0
+            sampling_metrics = {"batches_read": 0, "source_rows_read": 0, "sampling_compactions": 0}
 
             def compact_pending():
                 """Merge pending chunks once, rather than copying the sample per chunk."""
                 nonlocal subsampled_data, pending_chunks, pending_memory
                 if not pending_chunks:
                     return
+                sampling_metrics["sampling_compactions"] += 1
                 frames = ([subsampled_data] if subsampled_data is not None else []) + pending_chunks
                 combined_data = pd.concat(frames, ignore_index=True)
                 pending_chunks = []
@@ -320,6 +325,8 @@ def automl_data_loader(  # noqa: D417
 
             try:
                 for chunk_df in pd.read_csv(csv_source, chunksize=chunk_size):
+                    sampling_metrics["batches_read"] += 1
+                    sampling_metrics["source_rows_read"] += len(chunk_df)
                     if label_column not in chunk_df.columns:
                         raise ValueError(
                             f"Target column '{label_column}' not found in the dataset. "
@@ -344,20 +351,25 @@ def automl_data_loader(  # noqa: D417
                     raise ValueError(f"Error reading CSV from S3: {str(e)}") from e
 
             if subsampled_data is None:
-                return pd.DataFrame()
-            return subsampled_data.sample(frac=1, random_state=DEFAULT_RANDOM_STATE).reset_index(drop=True)
+                return pd.DataFrame(), sampling_metrics
+            return (
+                subsampled_data.sample(frac=1, random_state=DEFAULT_RANDOM_STATE).reset_index(drop=True),
+                sampling_metrics,
+            )
 
         def _sample_random(csv_source, chunk_size, max_size_bytes):
             """Iterate all batches, merge with accumulated data, randomly subsample when over the limit."""
             subsampled_data = None
             pending_chunks = []
             pending_memory = 0
+            sampling_metrics = {"batches_read": 0, "source_rows_read": 0, "sampling_compactions": 0}
 
             def compact_pending():
                 """Merge pending chunks once, rather than copying the sample per chunk."""
                 nonlocal subsampled_data, pending_chunks, pending_memory
                 if not pending_chunks:
                     return
+                sampling_metrics["sampling_compactions"] += 1
                 frames = ([subsampled_data] if subsampled_data is not None else []) + pending_chunks
                 data = pd.concat(frames, ignore_index=True)
                 pending_chunks = []
@@ -373,6 +385,8 @@ def automl_data_loader(  # noqa: D417
 
             try:
                 for chunk_df in pd.read_csv(csv_source, chunksize=chunk_size):
+                    sampling_metrics["batches_read"] += 1
+                    sampling_metrics["source_rows_read"] += len(chunk_df)
                     pending_chunks.append(chunk_df)
                     pending_memory += chunk_df.memory_usage(deep=True).sum()
                     if pending_memory >= max_size_bytes or len(pending_chunks) >= SAMPLE_COMPACTION_CHUNKS:
@@ -380,14 +394,14 @@ def automl_data_loader(  # noqa: D417
 
                 compact_pending()
 
-                return subsampled_data if subsampled_data is not None else pd.DataFrame()
+                return subsampled_data if subsampled_data is not None else pd.DataFrame(), sampling_metrics
 
             except Exception as e:
                 # Preserve rows parsed after the last compaction when recovery is allowed.
                 compact_pending()
                 if subsampled_data is None or subsampled_data.empty:
                     raise ValueError(f"Error reading CSV from S3: {str(e)}") from e
-                return subsampled_data
+                return subsampled_data, sampling_metrics
 
         def load_data_in_batches(
             s3_client,
@@ -467,16 +481,18 @@ def automl_data_loader(  # noqa: D417
                         else:
                             try:
                                 if sampling_method == "stratified":
-                                    return (
-                                        _sample_stratified(
-                                            local_path,
-                                            PANDAS_CHUNK_SIZE,
-                                            max_size_bytes,
-                                            label_column,
-                                        ),
-                                        io_metrics,
+                                    data, sampling_metrics = _sample_stratified(
+                                        local_path,
+                                        PANDAS_CHUNK_SIZE,
+                                        max_size_bytes,
+                                        label_column,
                                     )
-                                return _sample_random(local_path, PANDAS_CHUNK_SIZE, max_size_bytes), io_metrics
+                                else:
+                                    data, sampling_metrics = _sample_random(
+                                        local_path, PANDAS_CHUNK_SIZE, max_size_bytes
+                                    )
+                                io_metrics.update(sampling_metrics)
+                                return data, io_metrics
                             finally:
                                 try:
                                     os.unlink(local_path)
@@ -499,28 +515,35 @@ def automl_data_loader(  # noqa: D417
                 )
                 no_verify_client = get_s3_client(verify=False)
                 response = no_verify_client.get_object(Bucket=bucket_name, Key=file_key)
+            if "source_bytes" not in io_metrics:
+                source_bytes = response.get("ContentLength")
+                if isinstance(source_bytes, int) and source_bytes >= 0:
+                    io_metrics["source_bytes"] = source_bytes
             if sampling_method == "stratified":
-                data = _sample_stratified(
+                data, sampling_metrics = _sample_stratified(
                     io.TextIOWrapper(response["Body"], encoding="utf-8"),
                     PANDAS_CHUNK_SIZE,
                     max_size_bytes,
                     label_column,
                 )
+                io_metrics.update(sampling_metrics)
                 io_metrics["download_and_parse_seconds"] = round(time.monotonic() - transfer_started, 3)
                 return data, io_metrics
             if sampling_method == "random":
-                data = _sample_random(
+                data, sampling_metrics = _sample_random(
                     io.TextIOWrapper(response["Body"], encoding="utf-8"), PANDAS_CHUNK_SIZE, max_size_bytes
                 )
+                io_metrics.update(sampling_metrics)
                 io_metrics["download_and_parse_seconds"] = round(time.monotonic() - transfer_started, 3)
                 return data, io_metrics
-            data = _sample_first_n_rows(
+            data, sampling_metrics = _sample_first_n_rows(
                 io.TextIOWrapper(response["Body"], encoding="utf-8"),
                 PANDAS_CHUNK_SIZE,
                 max_size_bytes,
                 truncation_report=truncation_report,
                 fail_on_partial_read=fail_on_partial_read,
             )
+            io_metrics.update(sampling_metrics)
             io_metrics["download_and_parse_seconds"] = round(time.monotonic() - transfer_started, 3)
             return data, io_metrics
 
@@ -540,6 +563,7 @@ def automl_data_loader(  # noqa: D417
             label_column=label_column,
         )
         load_metrics["load_and_sample_seconds"] = round(time.monotonic() - load_started, 3)
+        load_metrics["rows_before_cleansing"] = len(sampled_dataframe)
 
         cleansing_started = time.monotonic()
         if label_column not in sampled_dataframe.columns:
