@@ -35,7 +35,7 @@ Refit outputs for all selected models are written under one ``models_artifact``,
 | `split_config` | `Optional[dict]` | `None` | Optional split config stored in artifact metadata. |
 | `prediction_length` | `int` | `1` | Forecast horizon (number of timesteps). |
 | `known_covariates_names` | `Optional[List[str]]` | `None` | Optional list of known covariate column names. |
-| `preset` | `str` | `speed` | Training quality tier. ``"speed"`` (default) or ``"balanced"`` (may run more than 2x longer). |
+| `preset` | `str` | `speed` | Training quality tier. ``"speed"`` (default), ``"balanced"``, or ``"heavy"`` (up to six hours). |
 | `eval_metric` | `str` | `mean_absolute_scaled_error` | Metric for model ranking (e.g. ``"mean_absolute_scaled_error"``, ``"weighted_quantile_loss"``). Defaults to ``"mean_absolute_scaled_error"``. Legacy uppercase acronyms (e.g. ``"MASE"``) are accepted and normalized to snake_case. |
 | `run_name` | `str` | `""` | Per-execution MLflow run name recorded as a tag on child runs. Falls back to ``pipeline_name`` when empty. |
 | `test_data_bucket_name` | `str` | `""` | Optional S3 bucket for user-provided external test data. |

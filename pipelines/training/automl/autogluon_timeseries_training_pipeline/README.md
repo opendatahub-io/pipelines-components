@@ -142,3 +142,4 @@ Pipeline outputs are written to the artifact store (S3-compatible storage config
 
 - **autogluon-timeseries-models-training**: Writes the HTML leaderboard (`html_artifact`) and a combined models artifact containing all `<ModelName>_FULL/` subdirectories (predictor, metrics, notebook, and `model.json` per model).
 - **timeseries-data-loader**: Stores the test dataset S3 artifact used for evaluation; the training splits live on the PVC workspace instead.
+

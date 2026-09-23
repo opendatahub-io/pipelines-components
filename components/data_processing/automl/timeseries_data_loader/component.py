@@ -36,7 +36,8 @@ def timeseries_data_loader(
     """Load and split timeseries data from S3 for AutoGluon training.
 
     This component loads time series data from S3, samples it (up to 100 MB for the
-    ``"speed"`` preset, up to 1 GB for ``"balanced"``),
+    ``"speed"`` preset, up to 1 GB for ``"balanced"``, and up to 10 GB for
+    ``"heavy"``),
     applies light **cleansing** (replace ``+/-inf`` with NaN so AutoGluon can apply its
     own missing-value logic; require parseable timestamps and non-null ids; drop
     exact duplicate ``(id_column, timestamp_column)`` rows, keep last), then performs a two-stage
@@ -75,8 +76,9 @@ def timeseries_data_loader(
         test_data_bucket_name: S3 bucket name for user-provided test dataset (default: empty string).
         test_data_file_key: S3 object key of the user-provided test CSV (default: empty string).
         preset: Training quality tier controlling the sampling size budget. ``"speed"``
-            (default) samples up to 100 MB; ``"balanced"`` samples up to 1 GB. The cap for
-            user-provided test datasets (50 MB) is unaffected by this setting.
+            (default) samples up to 100 MB; ``"balanced"`` samples up to 1 GB; and
+            ``"heavy"`` samples up to 10 GB. The cap for user-provided test datasets
+            (50 MB) is unaffected by this setting.
 
     Raises:
         ValueError: If a required parameter is empty or invalid, if only one of the
@@ -133,12 +135,14 @@ def timeseries_data_loader(
         validate_test_data_params,
     )
 
-    VALID_PRESETS = {"speed", "balanced"}
+    VALID_PRESETS = {"speed", "balanced", "heavy"}
     # Sampling budget per quality tier: "speed" stays small for fast runs,
-    # "balanced" allows the full supported dataset size.
+    # "balanced" allows the default supported dataset size, while
+    # "heavy" is sized for the higher-memory training profile.
     PRESET_MAX_SIZE_BYTES = {
         "speed": 100 * 1024 * 1024,  # 100 MB
         "balanced": 1024 * 1024 * 1024,  # 1 GB
+        "heavy": 10 * 1024 * 1024 * 1024,  # 10 GB
     }
     TEST_DATA_MAX_SIZE_BYTES = 50 * 1024 * 1024  # 50 MB — smaller cap for user-provided holdout sets
     MIN_VALID_RECORDS_AFTER_CLEANSING = 100
@@ -421,7 +425,14 @@ def timeseries_data_loader(
             "running",
             metrics={"source": f"s3://{bucket_name}/{file_key}"},
         )
-        df = load_timeseries_data_truncate(bucket_name, file_key, MAX_SIZE_BYTES, PANDAS_CHUNK_SIZE)
+        sampling_report = {}
+        df = load_timeseries_data_truncate(
+            bucket_name,
+            file_key,
+            MAX_SIZE_BYTES,
+            PANDAS_CHUNK_SIZE,
+            truncation_report=sampling_report,
+        )
 
         # Reject collision with reserved synthetic-ID column (CWE-20)
         # Check if any user-specified column uses the reserved name before we try to inject it.
@@ -489,7 +500,19 @@ def timeseries_data_loader(
                 "Provide a larger dataset or fix invalid timestamps, null ids, and duplicate keys."
             )
 
-        status.record("prepare_data", "completed", metrics={"rows": n_valid})
+        status.record(
+            "prepare_data",
+            "completed",
+            metrics={
+                "rows": n_valid,
+                "sampled_rows": n_valid,
+                "sampled_in_memory_bytes": int(df.memory_usage(deep=True).sum()),
+                "sample_cap_bytes": MAX_SIZE_BYTES,
+                "sample_cap_reached": bool(sampling_report.get("truncated")),
+                "sampling_method": "first_n_rows",
+                "preset": preset,
+            },
+        )
         status.record("split_and_export", "started")
 
         if not sampled_test_dataset.uri or not sampled_test_dataset.uri.endswith(".parquet"):
@@ -716,6 +739,11 @@ def timeseries_data_loader(
         split_export_metrics = {
             "test_size": split_config_out["test_size"],
             "selection_train_size": selection_train_size,
+            "selection_train_rows": len(selection_train_df),
+            "extra_train_rows": len(extra_train_df),
+            "test_rows": len(test_data_for_sample),
+            "selection_train_disk_bytes": selection_path.stat().st_size,
+            "extra_train_disk_bytes": extra_path.stat().st_size,
         }
         if has_user_test_data:
             split_export_metrics["user_test_source"] = test_data_source

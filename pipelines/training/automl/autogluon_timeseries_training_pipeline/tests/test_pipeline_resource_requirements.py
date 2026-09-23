@@ -9,6 +9,7 @@ from ..pipeline import autogluon_timeseries_training_pipeline
 from .pipeline_resource_expectations import (
     AUTOML_TIMESERIES_EXECUTOR_RESOURCES,
     TRAINING_BALANCED_RESOURCES,
+    TRAINING_HEAVY_RESOURCES,
     TRAINING_SPEED_RESOURCES,
 )
 
@@ -25,14 +26,25 @@ class TestAutogluonTimeseriesPipelineResourceRequirements:
         )
 
     def test_default_speed_preset_uses_lower_training_tier(self):
-        """Default speed preset branch requests less CPU/memory than balanced."""
+        """Training branches increase resources from speed through heavy."""
         actual = compile_executor_resources(autogluon_timeseries_training_pipeline)
-        speed_keys = [name for name in actual if name.endswith("-2") and "models-training" in name]
-        balanced_keys = [name for name in actual if "models-training" in name and not name.endswith("-2")]
+        speed_keys = [name for name in actual if name.endswith("-3") and "models-training" in name]
+        large_keys = [name for name in actual if name.endswith("-2") and "models-training" in name]
+        balanced_keys = [
+            name
+            for name in actual
+            if "models-training" in name and not name.endswith("-2") and not name.endswith("-3")
+        ]
         assert len(speed_keys) == 1
+        assert len(large_keys) == 1
         assert len(balanced_keys) == 1
         speed = actual[speed_keys[0]]
+        large = actual[large_keys[0]]
         balanced = actual[balanced_keys[0]]
         assert speed == TRAINING_SPEED_RESOURCES
         assert balanced == TRAINING_BALANCED_RESOURCES
+        assert large == TRAINING_HEAVY_RESOURCES
         assert float(speed.cpu_request) < float(balanced.cpu_request)
+        assert float(balanced.cpu_request) < float(large.cpu_request)
+        assert "64Gi" == large.memory_request
+        assert "128Gi" == large.memory_limit

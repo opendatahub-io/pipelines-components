@@ -281,7 +281,7 @@ class TestComponentStatusArtifact:
         assert component_status.metadata["display_name"] == "Data Loader Status"
 
     @mock.patch.dict("os.environ", mocked_env_variables)
-    def test_large_tabular_records_ten_gib_sample_cap(self, tmp_path):
+    def test_heavy_records_ten_gib_sample_cap(self, tmp_path):
         """Large-tabular status exposes its platform-managed 10 GiB sample cap."""
         body_stream = _csv_body("a,b,c\n1,2,3\n4,5,6\n")
         sampled_test = _make_test_artifact(tmp_path)
@@ -297,7 +297,7 @@ class TestComponentStatusArtifact:
                 label_column="c",
                 sampled_test_dataset=sampled_test,
                 component_status=component_status,
-                preset="large_tabular",
+                preset="heavy",
             )
 
         payload = json.loads((Path(component_status.path) / "component_status.json").read_text())

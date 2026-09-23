@@ -148,7 +148,7 @@ def _two_column_timeseries_csv(n_rows=MIN_VALID_RECORDS):
     return "\n".join(lines) + "\n"
 
 
-def _run_loader(tmp_path, csv_body, selection_train_size=0.3, id_column="item_id"):
+def _run_loader(tmp_path, csv_body, selection_train_size=0.3, id_column="item_id", preset="speed"):
     """Execute ``python_func`` with mocked S3/pandas; return paths and ``sample_config``."""
     sampled_test = _make_test_artifact(tmp_path)
     with _mock_boto3_and_pandas(get_object_return={"Body": io.BytesIO(csv_body.encode("utf-8"))}):
@@ -161,6 +161,7 @@ def _run_loader(tmp_path, csv_body, selection_train_size=0.3, id_column="item_id
             timestamp_column="timestamp",
             sampled_test_dataset=sampled_test,
             selection_train_size=selection_train_size,
+            preset=preset,
         )
     return result, sampled_test
 
@@ -233,6 +234,15 @@ class TestTimeseriesDataLoaderUnitTests:
         assert result.sample_config["total_rows_loaded"] == MIN_VALID_RECORDS
         assert result.split_config["test_size"] == 0.2
         assert result.split_config["selection_train_size"] == 0.3
+
+    @mock.patch.dict(os.environ, mocked_env_variables, clear=True)
+    def test_heavy_preset_loads_valid_data(self, tmp_path):
+        """Heavy accepts the 10 GiB sampling-profile preset."""
+        result, sampled_test = _run_loader(tmp_path, _timeseries_csv(), preset="heavy")
+
+        assert result.sample_config["sampling_method"] == "first_n_rows"
+        assert Path(result.models_selection_train_data_path).exists()
+        assert Path(sampled_test.path).exists()
 
     @mock.patch.dict(os.environ, mocked_env_variables, clear=True)
     def test_per_series_split_each_id_gets_holdout(self, tmp_path):

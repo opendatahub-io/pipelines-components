@@ -2255,3 +2255,4 @@ class TestComponentStatusOutput:
         assert mlflow_status["message"]["level"] == "warning"
         assert "no results were logged" in mlflow_status["message"]["text"]
 
+

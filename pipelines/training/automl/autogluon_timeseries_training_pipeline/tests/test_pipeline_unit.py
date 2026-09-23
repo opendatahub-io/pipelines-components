@@ -227,3 +227,4 @@ class TestAutogluonTimeseriesTrainingPipelineUnitTests:
         train_secret_block = content.split("envVar: AWS_ACCESS_KEY_ID", 1)[1]
         assert "optional: true" in train_secret_block[:500]
         assert "componentInputParameter: train_data_secret_name" in train_secret_block[:500]
+

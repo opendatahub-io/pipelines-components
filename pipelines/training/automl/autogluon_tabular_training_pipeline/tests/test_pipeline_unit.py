@@ -43,7 +43,7 @@ class TestAutogluonTabularTrainingPipelineUnitTests:
             Path(tmp_path).unlink(missing_ok=True)
 
     def test_pipeline_declares_32_gib_shared_workspace(self):
-        """All preset branches share the 32 GiB PVC required by large_tabular."""
+        """All preset branches share the 32 GiB PVC required by heavy."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as tmp_file:
             tmp_path = tmp_file.name
         try:
