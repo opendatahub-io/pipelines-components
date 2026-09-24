@@ -8,6 +8,7 @@ import csv
 import io
 import json
 import sys
+import types
 from contextlib import contextmanager
 from pathlib import Path
 from unittest import mock
@@ -96,8 +97,6 @@ class _MockSSLError(Exception):
 @contextmanager
 def _mock_boto3_module(get_object_return=None, get_object_side_effect=None):
     """Inject a fake boto3 module so the component does not require boto3 to be installed."""
-    import types
-
     mock_boto3 = mock.MagicMock()
     mock_s3 = mock.MagicMock()
     if get_object_side_effect is not None:
@@ -855,6 +854,58 @@ class TestAutomlDataLoaderUnitTests:
 
             assert result.sample_config["n_samples"] == 15000
         assert (tmp_path / "datasets" / "models_selection_train_dataset.csv").exists()
+
+    @mock.patch.dict("os.environ", mocked_env_variables)
+    def test_random_sampling_compacts_before_pending_data_reaches_sample_cap(self, tmp_path):
+        """Pending batches are compacted before they accumulate to the retained-sample budget."""
+        header = "feature,target\n"
+        rows = "\n".join(f"{i},{i % 10}" for i in range(20000))
+        component_status = mock.MagicMock()
+        component_status.path = str(tmp_path / "component_status")
+        component_status.metadata = {}
+        sampled_test = _make_test_artifact(tmp_path)
+        original_bytes_per_row = MockedDataFrame.BYTES_PER_ROW
+
+        try:
+            # Each 10k-row batch is ~70 MB: below the 100 MB speed-sample cap,
+            # but above the 10% pending-data threshold.
+            MockedDataFrame.BYTES_PER_ROW = 7_000
+            with _mock_boto3_and_pandas(get_object_return={"Body": _csv_body(header + rows, pad=False)}):
+                automl_data_loader.python_func(
+                    file_key="data/large.csv",
+                    bucket_name="bucket",
+                    workspace_path=str(tmp_path),
+                    label_column="target",
+                    sampled_test_dataset=sampled_test,
+                    component_status=component_status,
+                    sampling_method="random",
+                )
+        finally:
+            MockedDataFrame.BYTES_PER_ROW = original_bytes_per_row
+
+        status = json.loads((tmp_path / "component_status" / "component_status.json").read_text())
+        prepare_metrics = next(stage for stage in status["stages"] if stage["id"] == "prepare_data")["metrics"]
+        assert prepare_metrics["batches_read"] == 2
+        assert prepare_metrics["sampling_compactions"] == 2
+
+    @mock.patch.dict("os.environ", mocked_env_variables)
+    def test_memory_error_is_not_treated_as_a_recoverable_partial_read(self, tmp_path):
+        """Memory exhaustion must fail the component instead of returning a partial training sample."""
+        mocked_pandas = make_mocked_pandas_module()
+        mocked_pandas.read_csv = mock.MagicMock(side_effect=MemoryError("out of memory"))
+        sampled_test = _make_test_artifact(tmp_path)
+
+        with _mock_boto3_module(get_object_return={"Body": _csv_body("feature,target\n1,0\n", pad=False)}):
+            with mock.patch.dict(sys.modules, {"pandas": mocked_pandas}):
+                with pytest.raises(MemoryError, match="out of memory"):
+                    automl_data_loader.python_func(
+                        file_key="data/train.csv",
+                        bucket_name="bucket",
+                        workspace_path=str(tmp_path),
+                        label_column="target",
+                        sampled_test_dataset=sampled_test,
+                        sampling_method="random",
+                    )
 
 
 class TestUserProvidedTestData:

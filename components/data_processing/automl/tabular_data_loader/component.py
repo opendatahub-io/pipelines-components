@@ -100,6 +100,7 @@ def automl_data_loader(  # noqa: D417
     import os
     import tempfile
     import time
+    from typing import Any
 
     import boto3
     import pandas as pd
@@ -149,6 +150,9 @@ def automl_data_loader(  # noqa: D417
     MIN_VALID_RECORDS_AFTER_CLEANSING = 100
     PANDAS_CHUNK_SIZE = 10000  # Rows per batch for streaming read
     SAMPLE_COMPACTION_CHUNKS = 10
+    # Keep pending input well below the retained sample budget: compaction creates
+    # temporary copies of both while concatenating and downsampling.
+    SAMPLE_COMPACTION_MAX_PENDING_FRACTION = 0.1
     # The multipart fast path stages only moderately sized source objects on node-local
     # storage. Larger or unknown-size objects retain the streaming path so the sample
     # cap is not mistaken for a source-file disk reservation.
@@ -287,6 +291,8 @@ def automl_data_loader(  # noqa: D417
                     if accumulated_size >= max_size_bytes:
                         _mark_truncated()
                         break
+            except MemoryError:
+                raise
             except Exception as e:
                 if not chunk_list or fail_on_partial_read:
                     raise ValueError(f"Error reading CSV from S3: {str(e)}") from e
@@ -338,11 +344,16 @@ def automl_data_loader(  # noqa: D417
 
                     pending_chunks.append(chunk_df)
                     pending_memory += chunk_df.memory_usage(deep=True).sum()
-                    if pending_memory >= max_size_bytes or len(pending_chunks) >= SAMPLE_COMPACTION_CHUNKS:
+                    if (
+                        pending_memory >= max_size_bytes * SAMPLE_COMPACTION_MAX_PENDING_FRACTION
+                        or len(pending_chunks) >= SAMPLE_COMPACTION_CHUNKS
+                    ):
                         compact_pending()
 
                 compact_pending()
 
+            except MemoryError:
+                raise
             except Exception as e:
                 logger.debug("Error reading CSV and stratified sampling: %s", e, exc_info=True)
                 # Preserve rows parsed after the last compaction when recovery is allowed.
@@ -389,19 +400,144 @@ def automl_data_loader(  # noqa: D417
                     sampling_metrics["source_rows_read"] += len(chunk_df)
                     pending_chunks.append(chunk_df)
                     pending_memory += chunk_df.memory_usage(deep=True).sum()
-                    if pending_memory >= max_size_bytes or len(pending_chunks) >= SAMPLE_COMPACTION_CHUNKS:
+                    if (
+                        pending_memory >= max_size_bytes * SAMPLE_COMPACTION_MAX_PENDING_FRACTION
+                        or len(pending_chunks) >= SAMPLE_COMPACTION_CHUNKS
+                    ):
                         compact_pending()
 
                 compact_pending()
 
                 return subsampled_data if subsampled_data is not None else pd.DataFrame(), sampling_metrics
 
+            except MemoryError:
+                raise
             except Exception as e:
                 # Preserve rows parsed after the last compaction when recovery is allowed.
                 compact_pending()
                 if subsampled_data is None or subsampled_data.empty:
                     raise ValueError(f"Error reading CSV from S3: {str(e)}") from e
                 return subsampled_data, sampling_metrics
+
+        def _sample_csv_source(
+            csv_source,
+            max_size_bytes,
+            sampling_method,
+            label_column,
+            truncation_report=None,
+            fail_on_partial_read=False,
+        ):
+            """Sample one CSV source with the configured strategy."""
+            if sampling_method == "stratified":
+                return _sample_stratified(csv_source, PANDAS_CHUNK_SIZE, max_size_bytes, label_column)
+            if sampling_method == "random":
+                return _sample_random(csv_source, PANDAS_CHUNK_SIZE, max_size_bytes)
+            return _sample_first_n_rows(
+                csv_source,
+                PANDAS_CHUNK_SIZE,
+                max_size_bytes,
+                truncation_report=truncation_report,
+                fail_on_partial_read=fail_on_partial_read,
+            )
+
+        def _try_load_local_representative_sample(
+            s3_client,
+            bucket_name,
+            file_key,
+            max_size_bytes,
+            sampling_method,
+            label_column,
+            fallback_report=None,
+        ) -> tuple[Any, dict[str, Any]] | None:
+            """Download and sample a bounded source locally, or return None to stream it."""
+            local_path = None
+            try:
+                from boto3.s3.transfer import TransferConfig
+
+                descriptor, local_path = tempfile.mkstemp(prefix="automl-source-", suffix=".csv")
+                os.close(descriptor)
+                transfer_started = time.monotonic()
+                s3_client.download_file(
+                    bucket_name,
+                    file_key,
+                    local_path,
+                    Config=TransferConfig(
+                        multipart_threshold=8 * 1024 * 1024,
+                        multipart_chunksize=16 * 1024 * 1024,
+                        max_concurrency=10,
+                        use_threads=True,
+                    ),
+                )
+            except Exception as exc:  # noqa: BLE001 - retain streaming compatibility
+                logger.warning("Multipart S3 download unavailable; falling back to streaming read: %s", exc)
+                if local_path:
+                    try:
+                        os.unlink(local_path)
+                    except FileNotFoundError:
+                        pass
+                if fallback_report is not None:
+                    fallback_report["multipart_fallback"] = type(exc).__name__
+                return None
+
+            try:
+                data, sampling_metrics = _sample_csv_source(
+                    local_path,
+                    max_size_bytes,
+                    sampling_method,
+                    label_column,
+                )
+                return data, {
+                    "s3_transfer_mode": "multipart_local",
+                    "download_seconds": round(time.monotonic() - transfer_started, 3),
+                    **sampling_metrics,
+                }
+            finally:
+                try:
+                    os.unlink(local_path)
+                except FileNotFoundError:
+                    pass
+
+        def _load_streamed_sample(
+            s3_client,
+            bucket_name,
+            file_key,
+            max_size_bytes,
+            sampling_method,
+            label_column,
+            io_metrics,
+            truncation_report=None,
+            fail_on_partial_read=False,
+        ) -> tuple[Any, dict[str, Any]]:
+            """Stream one S3 object through the selected batch sampler."""
+            from botocore.exceptions import SSLError
+
+            transfer_started = time.monotonic()
+            try:
+                response = s3_client.get_object(Bucket=bucket_name, Key=file_key)
+            except SSLError:
+                logger.warning(
+                    "SSL error when downloading s3://%s/%s, retrying with verify=False",
+                    bucket_name,
+                    file_key,
+                )
+                response = get_s3_client(verify=False).get_object(Bucket=bucket_name, Key=file_key)
+
+            if "source_bytes" not in io_metrics:
+                source_bytes = response.get("ContentLength")
+                if isinstance(source_bytes, int) and source_bytes >= 0:
+                    io_metrics["source_bytes"] = source_bytes
+
+            data, sampling_metrics = _sample_csv_source(
+                io.TextIOWrapper(response["Body"], encoding="utf-8"),
+                max_size_bytes,
+                sampling_method,
+                label_column,
+                truncation_report=truncation_report,
+                fail_on_partial_read=fail_on_partial_read,
+            )
+            io_metrics.update(sampling_metrics)
+            io_metrics["download_and_parse_seconds"] = round(time.monotonic() - transfer_started, 3)
+            return data, io_metrics
 
         def load_data_in_batches(
             s3_client,
@@ -412,7 +548,7 @@ def automl_data_loader(  # noqa: D417
             label_column,
             truncation_report=None,
             fail_on_partial_read: bool = False,
-        ):
+        ) -> tuple[Any, dict[str, Any]]:
             """Load CSV from S3 in batches and return a sampled dataframe using the chosen strategy.
 
             ``truncation_report`` is only honoured by the ``first_n_rows`` strategy; the
@@ -421,8 +557,6 @@ def automl_data_loader(  # noqa: D417
             ``fail_on_partial_read`` makes a mid-stream read error fatal instead of returning
             a partial dataframe.
             """
-            from botocore.exceptions import SSLError
-
             if sampling_method == "stratified" and label_column is None:
                 raise ValueError("label_column must be provided when sampling_method='stratified'")
 
@@ -451,101 +585,31 @@ def automl_data_loader(  # noqa: D417
                         )
                         io_metrics["multipart_skipped"] = "source_too_large"
                     else:
-                        local_path = None
-                        try:
-                            from boto3.s3.transfer import TransferConfig
+                        local_result = _try_load_local_representative_sample(
+                            s3_client,
+                            bucket_name,
+                            file_key,
+                            max_size_bytes,
+                            sampling_method,
+                            label_column,
+                            fallback_report=io_metrics,
+                        )
+                        if local_result is not None:
+                            data, local_metrics = local_result
+                            io_metrics.update(local_metrics)
+                            return data, io_metrics
 
-                            descriptor, local_path = tempfile.mkstemp(prefix="automl-source-", suffix=".csv")
-                            os.close(descriptor)
-                            transfer_started = time.monotonic()
-                            s3_client.download_file(
-                                bucket_name,
-                                file_key,
-                                local_path,
-                                Config=TransferConfig(
-                                    multipart_threshold=8 * 1024 * 1024,
-                                    multipart_chunksize=16 * 1024 * 1024,
-                                    max_concurrency=10,
-                                    use_threads=True,
-                                ),
-                            )
-                            io_metrics.update(
-                                {
-                                    "s3_transfer_mode": "multipart_local",
-                                    "download_seconds": round(time.monotonic() - transfer_started, 3),
-                                }
-                            )
-                        except Exception as exc:  # noqa: BLE001 - retain streaming compatibility
-                            logger.warning("Multipart S3 download unavailable; falling back to streaming read: %s", exc)
-                            io_metrics["multipart_fallback"] = type(exc).__name__
-                        else:
-                            try:
-                                if sampling_method == "stratified":
-                                    data, sampling_metrics = _sample_stratified(
-                                        local_path,
-                                        PANDAS_CHUNK_SIZE,
-                                        max_size_bytes,
-                                        label_column,
-                                    )
-                                else:
-                                    data, sampling_metrics = _sample_random(
-                                        local_path, PANDAS_CHUNK_SIZE, max_size_bytes
-                                    )
-                                io_metrics.update(sampling_metrics)
-                                return data, io_metrics
-                            finally:
-                                try:
-                                    os.unlink(local_path)
-                                except FileNotFoundError:
-                                    pass
-                        if local_path:
-                            try:
-                                os.unlink(local_path)
-                            except FileNotFoundError:
-                                pass
-
-            transfer_started = time.monotonic()
-            try:
-                response = s3_client.get_object(Bucket=bucket_name, Key=file_key)
-            except SSLError:
-                logger.warning(
-                    "SSL error when downloading s3://%s/%s, retrying with verify=False",
-                    bucket_name,
-                    file_key,
-                )
-                no_verify_client = get_s3_client(verify=False)
-                response = no_verify_client.get_object(Bucket=bucket_name, Key=file_key)
-            if "source_bytes" not in io_metrics:
-                source_bytes = response.get("ContentLength")
-                if isinstance(source_bytes, int) and source_bytes >= 0:
-                    io_metrics["source_bytes"] = source_bytes
-            if sampling_method == "stratified":
-                data, sampling_metrics = _sample_stratified(
-                    io.TextIOWrapper(response["Body"], encoding="utf-8"),
-                    PANDAS_CHUNK_SIZE,
-                    max_size_bytes,
-                    label_column,
-                )
-                io_metrics.update(sampling_metrics)
-                io_metrics["download_and_parse_seconds"] = round(time.monotonic() - transfer_started, 3)
-                return data, io_metrics
-            if sampling_method == "random":
-                data, sampling_metrics = _sample_random(
-                    io.TextIOWrapper(response["Body"], encoding="utf-8"), PANDAS_CHUNK_SIZE, max_size_bytes
-                )
-                io_metrics.update(sampling_metrics)
-                io_metrics["download_and_parse_seconds"] = round(time.monotonic() - transfer_started, 3)
-                return data, io_metrics
-            data, sampling_metrics = _sample_first_n_rows(
-                io.TextIOWrapper(response["Body"], encoding="utf-8"),
-                PANDAS_CHUNK_SIZE,
+            return _load_streamed_sample(
+                s3_client,
+                bucket_name,
+                file_key,
                 max_size_bytes,
+                sampling_method,
+                label_column,
+                io_metrics,
                 truncation_report=truncation_report,
                 fail_on_partial_read=fail_on_partial_read,
             )
-            io_metrics.update(sampling_metrics)
-            io_metrics["download_and_parse_seconds"] = round(time.monotonic() - transfer_started, 3)
-            return data, io_metrics
 
         status.record(
             "prepare_data",
