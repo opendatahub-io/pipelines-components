@@ -131,7 +131,15 @@ def autogluon_timeseries_models_training(
         component_status.metadata["display_name"] = "Timeseries Models Training Status"
         TOP_N_MAX = 7
         VALID_PRESETS = {"speed", "balanced", "heavy"}
+<<<<<<< HEAD
         PRESET_AG_NAMES = {"speed": "fast_training", "balanced": "medium_quality", "heavy": "medium_quality"}
+=======
+        PRESET_AG_NAMES = {
+            "speed": "fast_training",
+            "balanced": "medium_quality",
+            "heavy": "medium_quality",
+        }
+>>>>>>> 73bf08f4237343668d8b4d38a0cca5b33971786a
         PRESET_TIME_LIMITS = {"speed": 10 * 60, "balanced": 60 * 60, "heavy": 360 * 60}
 
         # Normalize eval_metric to snake_case; accept legacy uppercase acronyms (e.g. "MASE") for back-compat.
@@ -237,11 +245,25 @@ def autogluon_timeseries_models_training(
             time_limit,
             prediction_length,
         )
+<<<<<<< HEAD
         status.record("model_selection", "started")
         # Accumulates only the model-fitting call durations (selection fit + refit loop) for the
         # parent metric, excluding leaderboard, evaluation, notebook and logging overhead.
         total_fit_time_seconds = 0.0
         fit_start_time = time.perf_counter()
+=======
+        status.record(
+            "model_selection",
+            "started",
+            metrics={
+                "preset": preset,
+                "time_limit_seconds": time_limit,
+                "selection_train_rows": len(train_df),
+                "test_rows": len(test_df),
+                "feature_count": len(train_df.columns),
+            },
+        )
+>>>>>>> 73bf08f4237343668d8b4d38a0cca5b33971786a
         try:
             predictor.fit(
                 train_data=train_ts,
@@ -270,7 +292,12 @@ def autogluon_timeseries_models_training(
         status.record(
             "model_selection",
             "completed",
-            metrics={"top_n": top_n, "selected_models": top_models},
+            metrics={
+                "top_n": top_n,
+                "selected_models": top_models,
+                "num_models_trained": len(leaderboard),
+                "autogluon_preset": PRESET_AG_NAMES[preset],
+            },
         )
         logger.info(
             "Timeseries selection done: top_%s=%s best_score_test=%s",

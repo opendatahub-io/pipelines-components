@@ -25,8 +25,13 @@ remove the MLflow configuration from the pipeline server; the training step then
 0. **Component stage map**: Publishes the static component-to-stage-to-step map as a KFP artifact for dashboards before any data I/O.
 
 1. **Data Loading & Splitting**: Loads tabular (CSV) data from an S3-compatible object storage bucket using AWS credentials configured via Kubernetes secrets. The component samples the data (up to 100 MiB for the "speed" preset, up to 1 GiB for "balanced", and up to 10 GiB for "heavy"), then
+<<<<<<< HEAD
 performs a two-stage split: *Primary split** (default 80/20): separates a *test set* (20%, written to an S3 artifact) from the *train portion* (80%). **Secondary split** (default 30/70 of the train portion): produces ``models_selection_train_dataset.parquet`` (30%, used for model selection) and
 ``extra_train_dataset.parquet`` (70%, passed to ``refit_full`` as extra data). Both train Parquet files are written to the PVC workspace under ``{workspace_path}/datasets/``. For classification tasks the splits are stratified by the label column.
+=======
+performs a two-stage split: *Primary split** (default 80/20): separates a *test set* (20%, written to an S3 artifact) from the *train portion* (80%). **Secondary split** (default 30/70 of the train portion): produces ``models_selection_train_dataset.csv`` (30%, used for model selection) and
+``extra_train_dataset.csv`` (70%, passed to ``refit_full`` as extra data). Both train CSVs are written to the PVC workspace under ``{workspace_path}/datasets/``. For classification tasks the splits are stratified by the label column.
+>>>>>>> 73bf08f4237343668d8b4d38a0cca5b33971786a
 
 2. **Model Training & Refitting**: Trains multiple AutoGluon models on the *selection train* data using stacking (1 level) and bagging (4 folds). All models are evaluated on the test set and ranked by performance. The top N models are selected and refitted sequentially on the full training data via
 ``refit_full``. Each refitted model is saved with a ``_FULL`` suffix and optimized for deployment. All model artifacts are stored under a single output artifact, avoiding a ``ParallelFor`` loop in the pipeline.
@@ -63,7 +68,11 @@ The pipeline leverages AutoGluon's unique ensembling strategy that combines mult
 | `top_n` | `int` | `3` | Number of top models to select and refit (default: 3); positive integer from range [1, 10]. |
 | `positive_class` | `str` | `""` | Optional label value for the positive class in binary classification. Defaults to the second unique class after sorting label values. |
 | `eval_metric` | `str` | `""` | Metric used for model ranking. Empty string (default) is resolved by the component to "r2" for regression and "accuracy" for binary and multiclass classification. |
+<<<<<<< HEAD
 | `preset` | `str` | `speed` | Training quality tier. "speed" (45-minute selection budget, default, 4 vCPU / 16 GiB), "balanced" (180-minute selection budget, 8 vCPU / 32 GiB), or "heavy" (six-hour selection budget, 16 vCPU / 64 GiB). |
+=======
+| `preset` | `str` | `speed` | Training quality tier. "speed" (default, 4 vCPU / 16 GiB), "balanced" (8 vCPU / 32 GiB), or "heavy" (16 vCPU / 64 GiB; 10 GiB sample cap). |
+>>>>>>> 73bf08f4237343668d8b4d38a0cca5b33971786a
 | `test_data_bucket_name` | `str` | `""` | Optional S3-compatible bucket name for a user-provided test dataset. Default: empty string (use the holdout split from training data). |
 | `test_data_file_key` | `str` | `""` | Optional S3 object key for a user-provided test CSV file. Default: empty string (use the holdout split from training data). |
 

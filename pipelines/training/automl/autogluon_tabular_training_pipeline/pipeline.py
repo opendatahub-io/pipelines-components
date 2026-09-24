@@ -136,7 +136,12 @@ def autogluon_tabular_training_pipeline(
         top_n: Number of top models to select and refit (default: 3); positive integer from range [1, 10].
         positive_class: Optional label value for the positive class in binary classification. Defaults to the second unique class after sorting label values.
         eval_metric: Metric used for model ranking. Empty string (default) is resolved by the component to "r2" for regression and "accuracy" for binary and multiclass classification.
+<<<<<<< HEAD
         preset: Training quality tier. "speed" (45-minute selection budget, default, 4 vCPU / 16 GiB), "balanced" (180-minute selection budget, 8 vCPU / 32 GiB), or "heavy" (six-hour selection budget, 16 vCPU / 64 GiB).
+=======
+        preset: Training quality tier. "speed" (default, 4 vCPU / 16 GiB), "balanced"
+            (8 vCPU / 32 GiB), or "heavy" (16 vCPU / 64 GiB; 10 GiB sample cap).
+>>>>>>> 73bf08f4237343668d8b4d38a0cca5b33971786a
         test_data_bucket_name: Optional S3-compatible bucket name for a user-provided test dataset.
             Default: empty string (use the holdout split from training data).
         test_data_file_key: Optional S3 object key for a user-provided test CSV file.
@@ -206,10 +211,15 @@ def autogluon_tabular_training_pipeline(
     )
 
     # Stage 1 + 2: Model selection and sequential refit of top N models.
+<<<<<<< HEAD
     # The training component logs results to MLflow incrementally (one nested child run per
     # model) when the platform injects KFP_MLFLOW_CONFIG. Tracking is best-effort: missing
     # config or MLflow errors are recorded on component_status only and never fail the run.
     # Resource limits differ by preset: balanced needs more CPU/memory than speed.
+=======
+    # Resource limits differ by preset. The large-tabular profile is intended for a
+    # benchmark-validated 10 GiB sample and narrower AutoGluon model portfolio.
+>>>>>>> 73bf08f4237343668d8b4d38a0cca5b33971786a
     _training_kwargs = dict(
         label_column=label_column,
         task_type=task_type,
@@ -242,11 +252,17 @@ def autogluon_tabular_training_pipeline(
         )
 
     with dsl.Elif(preset == "heavy"):
+<<<<<<< HEAD
         training_task_heavy = autogluon_models_training(**_training_kwargs)
         training_task_heavy.set_caching_options(False)
         training_task_heavy.set_cpu_request("16").set_memory_request("64Gi").set_cpu_limit("32").set_memory_limit(
             "128Gi"
         )
+=======
+        training_task_lt = autogluon_models_training(**_training_kwargs)
+        training_task_lt.set_caching_options(False)
+        training_task_lt.set_cpu_request("16").set_memory_request("64Gi").set_cpu_limit("32").set_memory_limit("128Gi")
+>>>>>>> 73bf08f4237343668d8b4d38a0cca5b33971786a
 
     with dsl.Else():
         training_task_sp = autogluon_models_training(**_training_kwargs)

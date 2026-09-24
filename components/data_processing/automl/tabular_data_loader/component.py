@@ -84,8 +84,13 @@ def automl_data_loader(  # noqa: D417
         test_data_file_key: S3 object key of the user-provided test CSV (default: empty string).
         preset: Training quality tier controlling the sampling size budget. ``"speed"``
             (default) samples up to 100 MB; ``"balanced"`` samples up to 1 GB; and
+<<<<<<< HEAD
             ``"heavy"`` samples up to 10 GB. User-provided test datasets are capped at
             50 MB, 100 MB, and 1 GB respectively.
+=======
+            ``"heavy"`` samples up to 10 GB. User-provided test datasets are capped
+            at 50 MB, 100 MB, and 1 GB respectively.
+>>>>>>> 73bf08f4237343668d8b4d38a0cca5b33971786a
 
     Raises:
         ValueError: If sampling_method, task_type, or preset is invalid, if required parameters are missing,
@@ -174,6 +179,10 @@ def automl_data_loader(  # noqa: D417
         raise ValueError(f"preset must be one of {sorted(VALID_PRESETS)}; got {preset!r}.")
     MAX_SIZE_BYTES = PRESET_MAX_SIZE_BYTES[preset]
     TEST_DATA_MAX_SIZE_BYTES = PRESET_TEST_DATA_MAX_SIZE_BYTES[preset]
+<<<<<<< HEAD
+=======
+    sampling_stats = {"source_rows_scanned": 0, "sample_cap_reached": False}
+>>>>>>> 73bf08f4237343668d8b4d38a0cca5b33971786a
 
     # Input validation
     for param, value in (
@@ -277,11 +286,16 @@ def automl_data_loader(  # noqa: D417
 
             try:
                 for chunk_df in pd.read_csv(text_stream, chunksize=chunk_size):
+<<<<<<< HEAD
                     sampling_metrics["batches_read"] += 1
                     sampling_metrics["source_rows_read"] += len(chunk_df)
+=======
+                    sampling_stats["source_rows_scanned"] += len(chunk_df)
+>>>>>>> 73bf08f4237343668d8b4d38a0cca5b33971786a
                     chunk_memory = chunk_df.memory_usage(deep=True).sum()
 
                     if accumulated_size + chunk_memory > max_size_bytes:
+                        sampling_stats["sample_cap_reached"] = True
                         _mark_truncated()
                         remaining_bytes = max_size_bytes - accumulated_size
                         if remaining_bytes <= 0:
@@ -299,6 +313,7 @@ def automl_data_loader(  # noqa: D417
                     accumulated_size += chunk_memory
 
                     if accumulated_size >= max_size_bytes:
+                        sampling_stats["sample_cap_reached"] = True
                         _mark_truncated()
                         break
             except MemoryError:
@@ -340,9 +355,14 @@ def automl_data_loader(  # noqa: D417
                 )
 
             try:
+<<<<<<< HEAD
                 for chunk_df in pd.read_csv(csv_source, chunksize=chunk_size):
                     sampling_metrics["batches_read"] += 1
                     sampling_metrics["source_rows_read"] += len(chunk_df)
+=======
+                for chunk_df in pd.read_csv(text_stream, chunksize=chunk_size):
+                    sampling_stats["source_rows_scanned"] += len(chunk_df)
+>>>>>>> 73bf08f4237343668d8b4d38a0cca5b33971786a
                     if label_column not in chunk_df.columns:
                         raise ValueError(
                             f"Target column '{label_column}' not found in the dataset. "
@@ -360,7 +380,20 @@ def automl_data_loader(  # noqa: D417
                     ):
                         compact_pending()
 
+<<<<<<< HEAD
                 compact_pending()
+=======
+                    if combined_memory <= max_size_bytes:
+                        subsampled_data = combined_data
+                    else:
+                        sampling_stats["sample_cap_reached"] = True
+                        sampling_frac = max_size_bytes / combined_memory
+                        subsampled_data = (
+                            combined_data.groupby(label_column, group_keys=False)
+                            .apply(lambda x: x.sample(frac=sampling_frac, random_state=DEFAULT_RANDOM_STATE))
+                            .reset_index(drop=True)
+                        )
+>>>>>>> 73bf08f4237343668d8b4d38a0cca5b33971786a
 
             except MemoryError:
                 raise
@@ -405,6 +438,7 @@ def automl_data_loader(  # noqa: D417
                 )
 
             try:
+<<<<<<< HEAD
                 for chunk_df in pd.read_csv(csv_source, chunksize=chunk_size):
                     sampling_metrics["batches_read"] += 1
                     sampling_metrics["source_rows_read"] += len(chunk_df)
@@ -417,6 +451,25 @@ def automl_data_loader(  # noqa: D417
                         compact_pending()
 
                 compact_pending()
+=======
+                for chunk_df in pd.read_csv(text_stream, chunksize=chunk_size):
+                    sampling_stats["source_rows_scanned"] += len(chunk_df)
+                    data = (
+                        pd.concat([subsampled_data, chunk_df], ignore_index=True)
+                        if subsampled_data is not None
+                        else chunk_df
+                    )
+                    combined_memory = data.memory_usage(deep=True).sum()
+
+                    if combined_memory <= max_size_bytes:
+                        subsampled_data = data
+                    else:
+                        sampling_stats["sample_cap_reached"] = True
+                        sampling_frac = max_size_bytes / combined_memory
+                        subsampled_data = data.sample(
+                            frac=sampling_frac, random_state=DEFAULT_RANDOM_STATE
+                        ).reset_index(drop=True)
+>>>>>>> 73bf08f4237343668d8b4d38a0cca5b33971786a
 
                 return subsampled_data if subsampled_data is not None else pd.DataFrame(), sampling_metrics
 
@@ -702,6 +755,7 @@ def automl_data_loader(  # noqa: D417
             "completed",
             metrics={
                 "rows": n_samples,
+<<<<<<< HEAD
                 "duplicates_dropped": n_dup_dropped,
                 "labels_dropped": n_dropped,
                 "source_rows_scanned": load_metrics.get("source_rows_read", 0),
@@ -710,6 +764,16 @@ def automl_data_loader(  # noqa: D417
                 "sample_cap_bytes": MAX_SIZE_BYTES,
                 "cleansing_seconds": round(time.monotonic() - cleansing_started, 3),
                 **load_metrics,
+=======
+                "source_rows_scanned": sampling_stats["source_rows_scanned"],
+                "sampled_rows": n_samples,
+                "sampled_in_memory_bytes": sampled_in_memory_bytes,
+                "sample_cap_bytes": MAX_SIZE_BYTES,
+                "sample_cap_reached": sampling_stats["sample_cap_reached"],
+                "sampling_method": sampling_method,
+                "duplicates_dropped": n_dup_dropped,
+                "labels_dropped": n_dropped,
+>>>>>>> 73bf08f4237343668d8b4d38a0cca5b33971786a
             },
         )
 
@@ -886,7 +950,10 @@ def automl_data_loader(  # noqa: D417
             "test_rows": len(test_sample_df),
             "selection_train_disk_bytes": Path(models_selection_train_data_path).stat().st_size,
             "extra_train_disk_bytes": Path(extra_train_data_path).stat().st_size,
+<<<<<<< HEAD
             "split_and_export_seconds": round(time.monotonic() - split_export_started, 3),
+=======
+>>>>>>> 73bf08f4237343668d8b4d38a0cca5b33971786a
         }
         if has_user_test_data:
             split_export_metrics["user_test_source"] = test_data_source
