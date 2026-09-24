@@ -33,7 +33,7 @@ mutates predictor state. All artifacts are written under a single output artifac
 | `split_config` | `Optional[dict]` | `None` | Data split config stored in artifact metadata. |
 | `extra_train_data_path` | `str` | `""` | Optional path to extra training Parquet file passed to ``refit_full``. |
 | `positive_class` | `str` | `""` | Label value for the positive class in **binary** classification (e.g. ``"1"`` or ``"yes"``). Passed to ``TabularPredictor`` when set. Empty string (default) lets AutoGluon infer the positive class when ``fit`` runs. Ignored for ``multiclass`` and ``regression``. |
-| `preset` | `str` | `speed` | Training quality tier. ``"speed"`` (45-minute selection budget, default) or ``"balanced"`` (180-minute selection budget). |
+| `preset` | `str` | `speed` | Training quality tier. ``"speed"`` (45-minute selection budget, default), ``"balanced"`` (180-minute selection budget), or ``"heavy"`` (six-hour selection budget with a sequential GBM-focused portfolio). |
 | `eval_metric` | `str` | `""` | Metric for model ranking (e.g. ``"r2"``, ``"accuracy"``). Defaults to ``"r2"`` for regression and ``"accuracy"`` otherwise. |
 | `run_name` | `str` | `""` | Per-execution MLflow run name recorded as a tag on child runs. Falls back to ``pipeline_name`` when empty. |
 | `test_data_bucket_name` | `str` | `""` | Optional S3 bucket for user-provided external test data. |

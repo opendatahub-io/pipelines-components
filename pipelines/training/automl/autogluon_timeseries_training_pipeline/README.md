@@ -26,9 +26,9 @@ Pipeline stages:
 
 0. **Component stage map**: Publishes the static component-to-stage-to-step map as a KFP artifact for dashboards before data loading.
 
-1. **Data loading & splitting** (``timeseries_data_loader``): Loads CSV from S3 (up to 100 MiB for the "speed" preset, up to 1 GiB for "balanced"), replaces ``+/-inf`` with NaN (missing targets stay for AutoGluon), requires parseable timestamps and non-null ids (or injects ``__synthetic_item_id``
-for two-column datasets when ``id_column=""``), deduplicates ``(id_column, timestamp_column)``, then applies a two-stage **per-series temporal** split on ``id_column`` / ``timestamp_column``: default **80/20** train vs test per series, then **30/70** of each series' train rows into
-``models_selection_train_dataset.parquet`` and ``extra_train_dataset.parquet`` under ``{workspace_path}/datasets/``. The test split is written to the ``sampled_test_dataset`` artifact.
+1. **Data loading & splitting** (``timeseries_data_loader``): Loads CSV from S3 (up to 100 MiB for the "speed" preset, up to 1 GiB for "balanced", and up to 10 GiB for "heavy"), replaces ``+/-inf`` with NaN (missing targets stay for AutoGluon), requires parseable timestamps and non-null ids (or
+injects ``__synthetic_item_id`` for two-column datasets when ``id_column=""``), deduplicates ``(id_column, timestamp_column)``, then applies a two-stage **per-series temporal** split on ``id_column`` / ``timestamp_column``: default **80/20** train vs test per series, then **30/70** of each series'
+train rows into ``models_selection_train_dataset.parquet`` and ``extra_train_dataset.parquet`` under ``{workspace_path}/datasets/``. The test split is written to the ``sampled_test_dataset`` artifact.
 
 2. **Model generation + full refit** (``autogluon_timeseries_models_training``): Trains multiple AutoGluon TimeSeries models on the selection split, picks top ``top_n``, and refits each selected model on the full train portion (**selection + extra** splits). The component writes all refitted models
 to a single combined ``models_artifact``.
@@ -47,7 +47,7 @@ to a single combined ``models_artifact``.
 | `prediction_length` | `int` | `1` | Number of time steps to forecast (horizon length). Positive integer (default: 1). |
 | `top_n` | `int` | `3` | Number of top models to select for the leaderboard and output (default: 3). |
 | `eval_metric` | `str` | `mean_absolute_scaled_error` | Metric for model ranking in snake_case (e.g. ``"mean_absolute_scaled_error"``, ``"weighted_quantile_loss"``) or legacy uppercase acronym form. Defaults to ``"mean_absolute_scaled_error"``. |
-| `preset` | `str` | `speed` | Training quality tier. ``"speed"`` (default, 4 vCPU / 16 GiB) or ``"balanced"`` (may run more than 2x longer, 8 vCPU / 32 GiB). |
+| `preset` | `str` | `speed` | Training quality tier. ``"speed"`` (default, 4 vCPU / 16 GiB), ``"balanced"`` (8 vCPU / 32 GiB), or ``"heavy"`` (six-hour budget, 16 vCPU / 64 GiB). |
 | `test_data_bucket_name` | `str` | `""` | Optional S3-compatible bucket name for a user-provided test dataset. Default: empty string (use the per-series holdout split from training data). |
 | `test_data_file_key` | `str` | `""` | Optional S3 object key for a user-provided test CSV file. Default: empty string (use the per-series holdout split from training data). |
 

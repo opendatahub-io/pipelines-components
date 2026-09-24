@@ -79,8 +79,8 @@ def autogluon_timeseries_models_training(
         split_config: Optional split config stored in artifact metadata.
         prediction_length: Forecast horizon (number of timesteps).
         known_covariates_names: Optional list of known covariate column names.
-        preset: Training quality tier. ``"speed"`` (default) or ``"balanced"``
-            (may run more than 2x longer).
+        preset: Training quality tier. ``"speed"`` (default), ``"balanced"``, or
+            ``"heavy"`` (up to six hours).
         eval_metric: Metric for model ranking (e.g. ``"mean_absolute_scaled_error"``,
             ``"weighted_quantile_loss"``). Defaults to ``"mean_absolute_scaled_error"``.
             Legacy uppercase acronyms (e.g. ``"MASE"``) are accepted and normalized to snake_case.
@@ -130,9 +130,9 @@ def autogluon_timeseries_models_training(
         status.set_metadata(display_name="Timeseries Models Training Status")
         component_status.metadata["display_name"] = "Timeseries Models Training Status"
         TOP_N_MAX = 7
-        VALID_PRESETS = {"speed", "balanced"}
-        PRESET_AG_NAMES = {"speed": "fast_training", "balanced": "medium_quality"}
-        PRESET_TIME_LIMITS = {"speed": 10 * 60, "balanced": 60 * 60}
+        VALID_PRESETS = {"speed", "balanced", "heavy"}
+        PRESET_AG_NAMES = {"speed": "fast_training", "balanced": "medium_quality", "heavy": "medium_quality"}
+        PRESET_TIME_LIMITS = {"speed": 10 * 60, "balanced": 60 * 60, "heavy": 360 * 60}
 
         # Normalize eval_metric to snake_case; accept legacy uppercase acronyms (e.g. "MASE") for back-compat.
         _acronym_to_snake = {acronym: snake for snake, acronym in METRIC_ALIASES.items()}
@@ -851,4 +851,3 @@ if __name__ == "__main__":
         autogluon_timeseries_models_training,
         package_path=__file__.replace(".py", "_component.yaml"),
     )
-
