@@ -468,6 +468,7 @@ def automl_data_loader(  # noqa: D417
                         use_threads=True,
                     ),
                 )
+                download_seconds = round(time.monotonic() - transfer_started, 3)
             except Exception as exc:  # noqa: BLE001 - retain streaming compatibility
                 logger.warning("Multipart S3 download unavailable; falling back to streaming read: %s", exc)
                 if local_path:
@@ -488,7 +489,7 @@ def automl_data_loader(  # noqa: D417
                 )
                 return data, {
                     "s3_transfer_mode": "multipart_local",
-                    "download_seconds": round(time.monotonic() - transfer_started, 3),
+                    "download_seconds": download_seconds,
                     **sampling_metrics,
                 }
             finally:
