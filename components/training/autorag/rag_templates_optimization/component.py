@@ -102,7 +102,7 @@ def rag_templates_optimization(
     DEFAULT_MAX_RAG_PATTERNS = 8
     MIN_MAX_RAG_PATTERNS_RANGE = (4, 20)
 
-    VALID_PRESETS = {"speed", "balanced"}
+    VALID_PRESETS = {"speed", "balanced", "gpu_accelerated"}
     # custom:overall_score aggregates the outputs of the evaluators enabled for the preset.
     PRESET_EVALUATORS = {
         "speed": frozenset({"unitxt", "custom"}),
@@ -163,6 +163,8 @@ def rag_templates_optimization(
                             "input_data_bucket_name": indexing_pipeline_params.get("input_data_bucket_name"),
                             "input_data_keys": indexing_pipeline_params.get("input_data_keys"),
                             "batch_size": indexing_pipeline_params.get("batch_size"),
+                            # Independent of this pipeline's optimization preset.
+                            "preset": indexing_pipeline_params.get("preset", "balanced"),
                             "provider_type": vector_store_binding["provider_type"],
                             "collection_name": vector_store_binding["collection_name"],
                             "embedding_model_id": settings["embedding"]["model_id"],
@@ -300,8 +302,9 @@ def rag_templates_optimization(
     if preset not in VALID_PRESETS:
         raise ValueError(f"preset must be one of {VALID_PRESETS}; got {preset!r}.")
 
-    active_evaluators = PRESET_EVALUATORS[preset]
-    inference_max_threads = PRESET_INFERENCE_MAX_THREADS[preset]
+    quality_preset = "balanced" if preset == "gpu_accelerated" else preset
+    active_evaluators = PRESET_EVALUATORS[quality_preset]
+    inference_max_threads = PRESET_INFERENCE_MAX_THREADS[quality_preset]
     logging.info("Preset %r: inference_max_threads=%d", preset, inference_max_threads)
 
     if component_status is None:
@@ -346,9 +349,8 @@ def rag_templates_optimization(
             output_dir = Path(rag_patterns.path)
             output_dir.mkdir(parents=True, exist_ok=True)
 
-            # Deployment blueprint stamped into every pattern.json so the indexing
-            # pipeline can be reproduced. provider_type/collection_name are added
-            # by ai4rag from each pattern's vector_store_binding.
+            # Deployment blueprint stamped into every pattern.json to reproduce the
+            # indexing run; provider_type/collection_name come from vector_store_binding.
             indexing_pipeline_params = {
                 "pipeline_name": "documents-indexing-pipeline",
                 "maas_secret_name": maas_secret_name,
@@ -357,6 +359,8 @@ def rag_templates_optimization(
                 "input_data_bucket_name": input_data_bucket_name,
                 "input_data_keys": input_data_keys or [],
                 "batch_size": 20,
+                # Fixed default, independent of this pipeline's optimization preset.
+                "preset": "balanced",
             }
 
             if (

@@ -4,7 +4,10 @@ from kfp import dsl
 from kfp.kubernetes import use_secret_as_env
 from kfp_components.components.data_processing.autorag.documents_discovery.component import documents_discovery
 from kfp_components.components.data_processing.autorag.documents_indexing.component import documents_indexing
-from kfp_components.components.data_processing.autorag.text_extraction.component import text_extraction
+from kfp_components.utils.autorag_extraction import (
+    gpu_aware_text_extraction,
+    normalize_extraction_preset,
+)
 
 MAX_CPUS = "32"
 MAX_MEMORY = "64Gi"
@@ -33,6 +36,7 @@ def documents_indexing_pipeline(
     chunk_overlap: int = 0,
     batch_size: int = 20,
     ocr_lang: Optional[str] = None,
+    preset: Optional[str] = None,
 ):
     """Build a production vector index from documents for AutoRAG.
 
@@ -68,6 +72,10 @@ def documents_indexing_pipeline(
             so override it when the corpus is in a different language. Chinese selects
             the Chinese bundle; omitting it selects the English bundle, which covers all
             Latin-script languages.
+        preset: Unified extraction preset. ``speed`` (CPU, no table parsing) and
+            ``balanced`` (CPU, table parsing) select the quality tier;
+            ``gpu_accelerated`` runs the ``balanced`` tier on one NVIDIA GPU.
+            Omitted, ``null``, or empty values are normalized to ``speed``.
     """
     documents_discovery_task = documents_discovery(
         input_data_bucket_name=input_data_bucket_name,
@@ -75,30 +83,6 @@ def documents_indexing_pipeline(
     )
     documents_discovery_task.set_caching_options(False)
     documents_discovery_task.set_cpu_request("2").set_memory_request("8Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(
-        MAX_MEMORY
-    )
-
-    text_extraction_task = text_extraction(
-        documents_descriptor=documents_discovery_task.outputs["discovered_documents"],
-        ocr_lang=ocr_lang,
-    )
-    text_extraction_task.set_caching_options(False)
-    text_extraction_task.set_cpu_request("2").set_memory_request("8Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(
-        MAX_MEMORY
-    )
-
-    documents_indexing_task = documents_indexing(
-        embedding_params=embedding_params,
-        embedding_model_id=embedding_model_id,
-        extracted_text=text_extraction_task.outputs["extracted_text"],
-        chunking_method=chunking_method,
-        chunk_size=chunk_size,
-        chunk_overlap=chunk_overlap,
-        batch_size=batch_size,
-        collection_name=collection_name,
-    )
-    documents_indexing_task.set_caching_options(False)
-    documents_indexing_task.set_cpu_request("2").set_memory_request("8Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(
         MAX_MEMORY
     )
 
@@ -115,7 +99,35 @@ def documents_indexing_pipeline(
         )
 
     set_input_data_secrets(documents_discovery_task, input_data_secret_name)
-    set_input_data_secrets(text_extraction_task, input_data_secret_name)
+
+    normalized_preset_task = normalize_extraction_preset(preset=preset)
+
+    def configure_extraction(task):
+        task.set_caching_options(False)
+        task.set_cpu_request("2").set_memory_request("8Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(MAX_MEMORY)
+        set_input_data_secrets(task, input_data_secret_name)
+
+    extracted_text = gpu_aware_text_extraction(
+        documents_descriptor=documents_discovery_task.outputs["discovered_documents"],
+        normalized_preset=normalized_preset_task.output,
+        configure=configure_extraction,
+        ocr_lang=ocr_lang,
+    )
+
+    documents_indexing_task = documents_indexing(
+        embedding_params=embedding_params,
+        embedding_model_id=embedding_model_id,
+        extracted_text=extracted_text,
+        chunking_method=chunking_method,
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
+        batch_size=batch_size,
+        collection_name=collection_name,
+    )
+    documents_indexing_task.set_caching_options(False)
+    documents_indexing_task.set_cpu_request("2").set_memory_request("8Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(
+        MAX_MEMORY
+    )
 
     # MaaS inference credentials.
     use_secret_as_env(

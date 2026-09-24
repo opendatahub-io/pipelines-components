@@ -23,7 +23,7 @@ The four RapidOCR model paths are pinned explicitly from ``$DOCLING_ARTIFACTS_PA
 | `embedded_artifact` | `dsl.EmbeddedInput[dsl.Dataset]` | `None` | Embedded ``autorag.shared`` helpers injected by KFP at runtime. |
 | `error_tolerance` | `Optional[float]` | `None` | Fraction of documents (0.0-1.0) allowed to fail without raising an error. None (the default) means zero tolerance. |
 | `max_extraction_workers` | `Optional[int]` | `None` | Number of parallel worker processes used for text extraction. Defaults to 4. Set to None to use all available CPU cores. |
-| `preset` | `str` | `speed` | Pipeline quality tier. "speed" (default) disables Docling table structure parsing. "balanced" enables TableFormer table reconstruction. |
+| `preset` | `str` | `speed` | Extraction preset shared by the optimization and indexing pipelines. "speed" (default) disables Docling table structure parsing on CPU. "balanced" enables TableFormer table reconstruction on CPU. "gpu_accelerated" runs the "balanced" quality tier but requires a CUDA-capable GPU for Docling extraction. |
 | `ocr_lang` | `Optional[str]` | `None` | Language of the document text, used only to pick the RapidOCR model bundle. Accepts a language name or ISO 639-1 code. Chinese ("chinese", "zh", "ch") selects the Chinese bundle; everything else, including None (the default), selects the English bundle, which covers all Latin-script languages. In the optimization pipeline this is filled from the language AutoRAG detects; for the indexing pipeline pass ``pattern.json`` ``settings.generation.language.code``. |
 
 ## Usage Examples 🧪

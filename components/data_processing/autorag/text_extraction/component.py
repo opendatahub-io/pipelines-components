@@ -51,8 +51,11 @@ def text_extraction(
             raising an error. None (the default) means zero tolerance.
         max_extraction_workers: Number of parallel worker processes used for text
             extraction. Defaults to 4. Set to None to use all available CPU cores.
-        preset: Pipeline quality tier. "speed" (default) disables Docling table
-            structure parsing. "balanced" enables TableFormer table reconstruction.
+        preset: Extraction preset shared by the optimization and indexing
+            pipelines. "speed" (default) disables Docling table structure parsing
+            on CPU. "balanced" enables TableFormer table reconstruction on CPU.
+            "gpu_accelerated" runs the "balanced" quality tier but requires a
+            CUDA-capable GPU for Docling extraction.
         ocr_lang: Language of the document text, used only to pick the RapidOCR model
             bundle. Accepts a language name or ISO 639-1 code. Chinese ("chinese", "zh",
             "ch") selects the Chinese bundle; everything else, including None (the
@@ -71,13 +74,30 @@ def text_extraction(
 
     logging.basicConfig(level=logging.INFO)
 
-    VALID_PRESETS = {"speed", "balanced"}
-    PRESET_DO_TABLE_STRUCTURE = {"speed": False, "balanced": True}
+    VALID_PRESETS = {"speed", "balanced", "gpu_accelerated"}
+    PRESET_DO_TABLE_STRUCTURE = {"speed": False, "balanced": True, "gpu_accelerated": True}
     LAYOUT_OCR_EXTENSIONS = {".pdf", ".jpg", ".jpeg", ".png", ".tif", ".tiff"}
     ASR_EXTENSIONS = {".wav", ".mp3", ".m4a", ".aac", ".ogg", ".flac"}
 
     if preset not in VALID_PRESETS:
         raise ValueError(f"preset must be one of {VALID_PRESETS}; got {preset!r}.")
+
+    if preset == "gpu_accelerated":
+        try:
+            import torch
+        except ImportError as exc:
+            raise RuntimeError(
+                "GPU extraction requires a CUDA-enabled PyTorch/Docling runtime, but PyTorch is not installed."
+            ) from exc
+        if not torch.cuda.is_available():
+            raise RuntimeError(
+                "GPU extraction was requested, but CUDA is unavailable. Ensure the task requests an NVIDIA GPU "
+                "and uses a CUDA-enabled AutoRAG image."
+            )
+        logging.info("GPU extraction enabled: using CUDA device %s", torch.cuda.get_device_name(0))
+        # Pin Docling to CUDA before extract_text spawns its workers so an inherited
+        # DOCLING_DEVICE=cpu cannot force conversion back onto the CPU.
+        os.environ["DOCLING_DEVICE"] = "cuda"
 
     do_table_structure = PRESET_DO_TABLE_STRUCTURE[preset]
     logging.info("Preset %r: do_table_structure=%s", preset, do_table_structure)

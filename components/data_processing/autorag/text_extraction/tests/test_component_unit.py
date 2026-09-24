@@ -566,3 +566,29 @@ class TestTextExtractionUnitTests:
         kwargs = mock_docling_config_cls.call_args.kwargs
         assert kwargs["do_ocr"] is True
         assert kwargs["do_table_structure"] is (preset_value == "balanced")
+
+    @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
+    def test_gpu_extraction_requires_cuda(self, tmp_path):
+        """GPU mode fails clearly instead of silently falling back to CPU."""
+        modules, mock_extract, _ = _make_ai4rag_mocks()
+        torch = mock.MagicMock()
+        torch.cuda.is_available.return_value = False
+        modules["torch"] = torch
+
+        descriptor_dir = tmp_path / "descriptor"
+        descriptor_dir.mkdir()
+        (descriptor_dir / "documents_descriptor.json").write_text(
+            json.dumps({"bucket": "b", "documents": []}), encoding="utf-8"
+        )
+        descriptor_artifact = mock.MagicMock(path=str(descriptor_dir))
+        output_artifact = mock.MagicMock(path=str(tmp_path / "output"))
+
+        with mock.patch.dict("sys.modules", modules):
+            with pytest.raises(RuntimeError, match="CUDA is unavailable"):
+                text_extraction.python_func(
+                    documents_descriptor=descriptor_artifact,
+                    extracted_text=output_artifact,
+                    preset="gpu_accelerated",
+                )
+
+        mock_extract.assert_not_called()
