@@ -7,7 +7,7 @@ dependencies:
       version: '>=2.15.2'
   external_services:
     - name: ai4rag
-      version: "~=0.16.0"
+      version: "~=0.18.0"
     - name: MaaS
       version: ">=1.0.0"
     - name: Milvus
@@ -19,4 +19,4 @@ tags:
   - autorag
   - optimization
   - rag-patterns
-lastVerified: 2026-09-08T00:00:00Z
+lastVerified: 2026-09-15T00:00:00Z

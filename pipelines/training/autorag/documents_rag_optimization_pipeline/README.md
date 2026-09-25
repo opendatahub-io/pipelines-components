@@ -22,10 +22,10 @@ deployment settings), executable notebooks, and evaluation results.
 | `input_data_secret_name` | `str` | `None` | Name of the Kubernetes secret holding S3-compatible credentials for input document data access. The following environment variables are required: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_S3_ENDPOINT. AWS_DEFAULT_REGION is optional. |
 | `input_data_bucket_name` | `str` | `None` | S3 (or compatible) bucket name for the input documents. |
 | `maas_secret_name` | `str` | `None` | Name of the Kubernetes secret for the MaaS inference connection. The secret must define: MAAS_BASE_URL, MAAS_API_KEY. |
-| `vector_db_secret_name` | `str` | `None` | Name of the Kubernetes secret carrying the vector database configuration. The env-var prefix selects the backend: ``MILVUS_*`` keys (at least ``MILVUS_URI``) select Milvus, ``PGVECTOR_*`` keys select PGVector. |
+| `db_secret_name` | `str` | `None` | Name of the Kubernetes secret carrying the database configuration. The env-var prefix selects the backend: ``MILVUS_*`` keys (at least ``MILVUS_URI``) select Milvus, ``PGVECTOR_*`` keys select PGVector. |
 | `embedding_models` | `list[str]` | `None` | List of embedding model identifiers to use in the search space. Required: MaaS exposes no metadata to distinguish model types, so embedding models can no longer be inferred and must be declared explicitly. |
 | `generation_models` | `list[str]` | `None` | List of foundation/generation model identifiers to use in the search space. Required: MaaS exposes no metadata to distinguish model types, so generation models can no longer be inferred and must be declared explicitly. |
-| `input_data_keys` | `list[str]` | `[]` | Object keys (paths) of the input documents in the input data bucket. Only the first entry is used by document discovery. |
+| `input_data_keys` | `list[str]` | `[]` | Up to ten object-key prefixes for input documents in the input data bucket. Every location is discovered and merged into one deduplicated corpus. |
 | `optimization_metric` | `str` | `overall_score` | Quality metric used to rank RAG patterns. Use an evaluator-qualified value such as ``"unitxt:faithfulness"``, ``"ragas:context_precision"``, or ``"custom:overall_score"`` (default). The ``speed`` preset supports Unitxt and custom metrics; ``balanced`` also supports RAGAS metrics. ``custom:overall_score`` aggregates Unitxt outputs for ``speed`` and Unitxt plus RAGAS outputs for ``balanced``. |
 | `optimization_max_rag_patterns` | `int` | `8` | Maximum number of RAG patterns to generate. Passed to ai4rag (max_number_of_rag_patterns). Defaults to 8. |
 | `preset` | `str` | `speed` | Pipeline quality tier. "speed" (default) uses recursive chunking, no table structure parsing, and no contextual enrichment. "balanced" enables Docling table layout parsing, hybrid chunking, and LLM contextual enrichment. Both presets use the same resource tier. |
@@ -39,7 +39,7 @@ deployment settings), executable notebooks, and evaluation results.
   - Kubeflow:
     - Name: Pipelines, Version: 2.17.0
   - External Services:
-    - Name: ai4rag, Version: ~=0.17.0
+    - Name: ai4rag, Version: ~=0.18.0
     - Name: MaaS, Version: >=1.0.0
     - Name: RHOAI Connections API, Version: >=1.0.0
     - Name: Milvus, Version: >=2.0.0

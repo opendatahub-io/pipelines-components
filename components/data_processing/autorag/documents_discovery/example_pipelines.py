@@ -15,7 +15,8 @@ def example_pipeline(
 
     Args:
         input_data_bucket_name: S3 bucket containing input documents.
-        input_data_keys: Path prefixes within the bucket; only the first one is used.
+        input_data_keys: Up to ten path prefixes within the bucket; all are merged
+            into one deduplicated corpus.
         sampling_enabled: Whether to enable sampling.
         sampling_max_size: Maximum sample size in GB.
     """

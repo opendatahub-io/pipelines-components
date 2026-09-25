@@ -33,7 +33,7 @@ class TestDocumentsIndexingPipelineUnit:
         inputs = getattr(documents_indexing_pipeline, "_component_inputs", set())
         for name in (
             "maas_secret_name",
-            "vector_db_secret_name",
+            "db_secret_name",
             "embedding_model_id",
             "input_data_secret_name",
             "input_data_bucket_name",

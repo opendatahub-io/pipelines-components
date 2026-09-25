@@ -19,7 +19,7 @@ def rag_templates_optimization(
     rag_patterns: dsl.Output[dsl.Artifact],
     test_data_key: str,
     maas_secret_name: str,
-    vector_db_secret_name: str,
+    db_secret_name: str,
     input_data_secret_name: str,
     input_data_bucket_name: str,
     leaderboard: dsl.Output[dsl.HTML],
@@ -46,7 +46,7 @@ def rag_templates_optimization(
         maas_secret_name: Name of the K8s secret with MaaS inference credentials
             ("MAAS_BASE_URL", "MAAS_API_KEY"). Propagated into each generated
             ``pattern.json`` indexing spec for downstream deployment.
-        vector_db_secret_name: Name of the K8s secret holding the vector database
+        db_secret_name: Name of the K8s secret holding the database
             configuration. Its keys select the backend: ``MILVUS_*`` keys use
             Milvus, ``PGVECTOR_*`` keys use PGVector. Propagated into each
             generated ``pattern.json`` indexing spec.
@@ -60,16 +60,16 @@ def rag_templates_optimization(
         component_status: Output artifact containing stage-level progress tracking.
         embedded_artifact: Embedded ``autorag.shared`` helpers injected by KFP at runtime.
         optimization_settings: Additional experiment settings.
-        input_data_keys: Paths to documents dirs within bucket. Only the first entry is
-            used for the generated indexing notebook; the full list is propagated to the
-            indexing pipeline blueprint.
+        input_data_keys: Paths to documents dirs within bucket, 1-10 of them. The full list
+            is propagated both to the generated indexing notebook and to the indexing
+            pipeline blueprint, so either route reingests the same corpus.
         preset: Pipeline quality tier. "speed" (default) uses 10 benchmark query
             threads. "balanced" uses 4 threads (reduced due to larger per-request
             context).
 
     Environment variables (required):
         MAAS_BASE_URL, MAAS_API_KEY for inference. Plus the vector database
-        configuration injected from ``vector_db_secret_name``: ``MILVUS_*`` keys
+        configuration injected from ``db_secret_name``: ``MILVUS_*`` keys
         (at least ``MILVUS_URI``) select Milvus, ``PGVECTOR_*`` keys select
         PGVector.
     """
@@ -142,7 +142,7 @@ def rag_templates_optimization(
     def _generate_output_artifacts(
         patterns_raw: list[dict],
         output_dir: Path,
-        input_data_key: str,
+        input_data_keys: list[str],
         test_data_key: str,
         indexing_pipeline_params: dict | None,
     ) -> list[dict]:
@@ -156,19 +156,19 @@ def rag_templates_optimization(
             pattern_data = pattern.get("payload")
             if indexing_pipeline_params:
                 settings = pattern_data["settings"]
-                vector_store_binding = settings["vector_store_binding"]
+                store_binding = settings["store_binding"]
                 pattern_data["indexing"] = {
                     "pipeline_spec": {
-                        "pipeline_name": indexing_pipeline_params.get("pipeline_name", "documents_indexing_pipeline"),
+                        "pipeline_name": indexing_pipeline_params.get("pipeline_name", "documents-indexing-pipeline"),
                         "parameters": {
                             "maas_secret_name": indexing_pipeline_params.get("maas_secret_name"),
-                            "vector_db_secret_name": indexing_pipeline_params.get("vector_db_secret_name"),
+                            "db_secret_name": indexing_pipeline_params.get("db_secret_name"),
                             "input_data_secret_name": indexing_pipeline_params.get("input_data_secret_name"),
                             "input_data_bucket_name": indexing_pipeline_params.get("input_data_bucket_name"),
                             "input_data_keys": indexing_pipeline_params.get("input_data_keys"),
                             "batch_size": indexing_pipeline_params.get("batch_size"),
-                            "provider_type": vector_store_binding["provider_type"],
-                            "collection_name": vector_store_binding["collection_name"],
+                            "provider_type": store_binding["provider_type"],
+                            "collection_name": store_binding["collection_name"],
                             "embedding_model_id": settings["embedding"]["model_id"],
                             "embedding_params": settings["embedding"]["embedding_params"],
                             "chunking_method": settings["chunking"]["method"],
@@ -189,7 +189,8 @@ def rag_templates_optimization(
                 "maas_indexing",
                 pattern_data,
                 patt_dir / "indexing.ipynb",
-                input_data_key=input_data_key,
+                input_data_keys=input_data_keys,
+                test_data_key=test_data_key,
             )
             generate_notebook_from_template(
                 "maas_inference",
@@ -342,7 +343,7 @@ def rag_templates_optimization(
             else:
                 raise ValueError(
                     "No vector database configuration found. Expected MILVUS_* or PGVECTOR_* "
-                    "environment variables injected from vector_db_secret_name."
+                    "environment variables injected from db_secret_name."
                 )
             vector_store_config = get_vector_store_config(provider)
             logging.info("Detected %s database provider from secret.", provider)
@@ -352,11 +353,11 @@ def rag_templates_optimization(
 
             # Deployment blueprint stamped into every pattern.json so the indexing
             # pipeline can be reproduced. provider_type/collection_name are added
-            # by ai4rag from each pattern's vector_store_binding.
+            # by ai4rag from each pattern's store_binding.
             indexing_pipeline_params = {
                 "pipeline_name": "documents-indexing-pipeline",
                 "maas_secret_name": maas_secret_name,
-                "vector_db_secret_name": vector_db_secret_name,
+                "db_secret_name": db_secret_name,
                 "input_data_secret_name": input_data_secret_name,
                 "input_data_bucket_name": input_data_bucket_name,
                 "input_data_keys": input_data_keys or [],
@@ -433,7 +434,7 @@ def rag_templates_optimization(
             patterns = _generate_output_artifacts(
                 patterns_raw=event_handler.patterns,
                 output_dir=output_dir,
-                input_data_key=input_data_keys[0] if input_data_keys else "",
+                input_data_keys=input_data_keys or [],
                 test_data_key=test_data_key,
                 indexing_pipeline_params=indexing_pipeline_params,
             )

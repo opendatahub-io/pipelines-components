@@ -39,7 +39,7 @@ class TestDocumentsRagOptimizationPipelineUnit:
         assert "input_data_bucket_name" in inputs
         assert "input_data_keys" in inputs
         assert "maas_secret_name" in inputs
-        assert "vector_db_secret_name" in inputs
+        assert "db_secret_name" in inputs
         assert "ogx_secret_name" not in inputs
         assert "vector_io_provider_id" not in inputs
         assert "preset" in inputs
