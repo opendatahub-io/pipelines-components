@@ -264,6 +264,30 @@ _DEFAULT_EXPERIMENT_NOTEBOOK_ARTIFACT = _make_experiment_notebook_artifact(Path(
 class TestAutogluonModelsTrainingUnitTests:
     """Unit tests for the autogluon_models_training component."""
 
+    @pytest.mark.parametrize(
+        "template_name",
+        ["classification_notebook.ipynb", "regression_notebook.ipynb", "timeseries_notebook.ipynb"],
+    )
+    def test_notebook_template_documents_custom_pip_index(self, template_name):
+        """Templates must direct AutoGluon installation to one trusted package index."""
+        notebook = json.loads((_NOTEBOOK_TEMPLATES_DIR / template_name).read_text(encoding="utf-8"))
+        install_cells = [
+            cell
+            for cell in notebook["cells"]
+            if cell["cell_type"] == "code" and "%pip install autogluon" in "".join(cell["source"])
+        ]
+
+        assert len(install_cells) == 1
+        assert "PIP_EXTRA_INDEX_URL" not in "".join(install_cells[0]["source"])
+        assert any(
+            cell["cell_type"] == "markdown"
+            and "Custom package index" in "".join(cell["source"])
+            and "PIP_INDEX_URL" in "".join(cell["source"])
+            and "only if your environment does not already provide it" in "".join(cell["source"])
+            and "PIP_EXTRA_INDEX_URL" not in "".join(cell["source"])
+            for cell in notebook["cells"]
+        )
+
     def test_regression_notebook_template_excludes_curves(self):
         """Regression template must not reference curves.json (classification-only artifact)."""
         text = (_NOTEBOOK_TEMPLATES_DIR / "regression_notebook.ipynb").read_text(encoding="utf-8")
