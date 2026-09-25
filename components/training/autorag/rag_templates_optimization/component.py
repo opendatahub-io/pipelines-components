@@ -19,7 +19,7 @@ def rag_templates_optimization(
     rag_patterns: dsl.Output[dsl.Artifact],
     test_data_key: str,
     maas_secret_name: str,
-    vector_db_secret_name: str,
+    db_secret_name: str,
     input_data_secret_name: str,
     input_data_bucket_name: str,
     leaderboard: dsl.Output[dsl.HTML],
@@ -45,7 +45,7 @@ def rag_templates_optimization(
         maas_secret_name: Name of the K8s secret with MaaS inference credentials
             ("MAAS_BASE_URL", "MAAS_API_KEY"). Propagated into each generated
             ``pattern.json`` indexing spec for downstream deployment.
-        vector_db_secret_name: Name of the K8s secret holding the vector database
+        db_secret_name: Name of the K8s secret holding the database
             configuration. Its keys select the backend: ``MILVUS_*`` keys use
             Milvus, ``PGVECTOR_*`` keys use PGVector. Propagated into each
             generated ``pattern.json`` indexing spec.
@@ -66,7 +66,7 @@ def rag_templates_optimization(
 
     Environment variables (required):
         MAAS_BASE_URL, MAAS_API_KEY for inference. Plus the vector database
-        configuration injected from ``vector_db_secret_name``: ``MILVUS_*`` keys
+        configuration injected from ``db_secret_name``: ``MILVUS_*`` keys
         (at least ``MILVUS_URI``) select Milvus, ``PGVECTOR_*`` keys select
         PGVector.
     """
@@ -152,19 +152,19 @@ def rag_templates_optimization(
             pattern_data = pattern.get("payload")
             if indexing_pipeline_params:
                 settings = pattern_data["settings"]
-                vector_store_binding = settings["vector_store_binding"]
+                store_binding = settings["store_binding"]
                 pattern_data["indexing"] = {
                     "pipeline_spec": {
                         "pipeline_name": indexing_pipeline_params.get("pipeline_name", "documents_indexing_pipeline"),
                         "parameters": {
                             "maas_secret_name": indexing_pipeline_params.get("maas_secret_name"),
-                            "vector_db_secret_name": indexing_pipeline_params.get("vector_db_secret_name"),
+                            "db_secret_name": indexing_pipeline_params.get("db_secret_name"),
                             "input_data_secret_name": indexing_pipeline_params.get("input_data_secret_name"),
                             "input_data_bucket_name": indexing_pipeline_params.get("input_data_bucket_name"),
                             "input_data_keys": indexing_pipeline_params.get("input_data_keys"),
                             "batch_size": indexing_pipeline_params.get("batch_size"),
-                            "provider_type": vector_store_binding["provider_type"],
-                            "collection_name": vector_store_binding["collection_name"],
+                            "provider_type": store_binding["provider_type"],
+                            "collection_name": store_binding["collection_name"],
                             "embedding_model_id": settings["embedding"]["model_id"],
                             "embedding_params": settings["embedding"]["embedding_params"],
                             "chunking_method": settings["chunking"]["method"],
@@ -338,7 +338,7 @@ def rag_templates_optimization(
             else:
                 raise ValueError(
                     "No vector database configuration found. Expected MILVUS_* or PGVECTOR_* "
-                    "environment variables injected from vector_db_secret_name."
+                    "environment variables injected from db_secret_name."
                 )
             vector_store_config = get_vector_store_config(provider)
             logging.info("Detected %s database provider from secret.", provider)
@@ -348,11 +348,11 @@ def rag_templates_optimization(
 
             # Deployment blueprint stamped into every pattern.json so the indexing
             # pipeline can be reproduced. provider_type/collection_name are added
-            # by ai4rag from each pattern's vector_store_binding.
+            # by ai4rag from each pattern's store_binding.
             indexing_pipeline_params = {
                 "pipeline_name": "documents-indexing-pipeline",
                 "maas_secret_name": maas_secret_name,
-                "vector_db_secret_name": vector_db_secret_name,
+                "db_secret_name": db_secret_name,
                 "input_data_secret_name": input_data_secret_name,
                 "input_data_bucket_name": input_data_bucket_name,
                 "input_data_keys": input_data_keys or [],

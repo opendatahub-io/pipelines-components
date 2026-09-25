@@ -64,7 +64,7 @@ def documents_indexing(
             Controls peak memory usage, not API payload sizes. Defaults to
             ``20``; ``0`` processes all documents in a single batch.
         collection_name: Vector store collection to reuse (matches
-            ``pattern.json`` ``settings.vector_store_binding.collection_name``).
+            ``pattern.json`` ``settings.store_binding.collection_name``).
             Omit to create a new collection.
 
     Environment variables (required):
@@ -208,7 +208,7 @@ def documents_indexing(
             )
 
         # --- Build settings grid fragment ---
-        vsb = settings.get("vector_store_binding", {})
+        vsb = settings.get("store_binding", {})
         chk = settings.get("chunking", {})
         emb = settings.get("embedding", {})
         emb_params = emb.get("embedding_params", {})
@@ -286,7 +286,7 @@ def documents_indexing(
     if total_documents == 0:
         _logger.warning("No documents found in %s", extracted_text.path)
         settings = {
-            "vector_store_binding": {
+            "store_binding": {
                 "provider_type": provider,
                 "collection_name": collection_name,
             },
@@ -328,7 +328,7 @@ def documents_indexing(
         collection_name=collection_name,
     ) as vector_store:
         settings = {
-            "vector_store_binding": {
+            "store_binding": {
                 "provider_type": provider,
                 "collection_name": vector_store.collection_name,
             },

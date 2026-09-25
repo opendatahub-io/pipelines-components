@@ -26,7 +26,7 @@ Individual document failures (corrupt JSON, chunking errors) are recorded in the
 | `chunk_size` | `int` | `1024` | Maximum chunk size in tokens (128--2048). |
 | `chunk_overlap` | `int` | `0` | Token overlap between consecutive chunks (recursive method only). |
 | `batch_size` | `int` | `20` | Number of documents loaded and processed per batch. Controls peak memory usage, not API payload sizes. Defaults to ``20``; ``0`` processes all documents in a single batch. |
-| `collection_name` | `Optional[str]` | `None` | Vector store collection to reuse (matches ``pattern.json`` ``settings.vector_store_binding.collection_name``). Omit to create a new collection. |
+| `collection_name` | `Optional[str]` | `None` | Vector store collection to reuse (matches ``pattern.json`` ``settings.store_binding.collection_name``). Omit to create a new collection. |
 
 ## Usage Examples 🧪
 

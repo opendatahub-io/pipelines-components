@@ -48,7 +48,7 @@ def documents_rag_optimization_pipeline(
     input_data_secret_name: str,
     input_data_bucket_name: str,
     maas_secret_name: str,
-    vector_db_secret_name: str,
+    db_secret_name: str,
     embedding_models: list[str],
     generation_models: list[str],
     input_data_keys: list[str] = [],
@@ -83,7 +83,7 @@ def documents_rag_optimization_pipeline(
         input_data_bucket_name: S3 (or compatible) bucket name for the input documents.
         maas_secret_name: Name of the Kubernetes secret for the MaaS inference connection.
             The secret must define: MAAS_BASE_URL, MAAS_API_KEY.
-        vector_db_secret_name: Name of the Kubernetes secret carrying the vector database
+        db_secret_name: Name of the Kubernetes secret carrying the database
             configuration. The env-var prefix selects the backend: ``MILVUS_*`` keys (at least
             ``MILVUS_URI``) select Milvus, ``PGVECTOR_*`` keys select PGVector.
         embedding_models: List of embedding model identifiers to use in the search space.
@@ -172,7 +172,7 @@ def documents_rag_optimization_pipeline(
         test_data=documents_discovery_task.outputs["test_data"],
         search_space_mps_report=models_pre_selector_task.outputs["search_space_mps_report"],
         maas_secret_name=maas_secret_name,
-        vector_db_secret_name=vector_db_secret_name,
+        db_secret_name=db_secret_name,
         input_data_secret_name=input_data_secret_name,
         input_data_bucket_name=input_data_bucket_name,
         optimization_settings={
@@ -230,7 +230,7 @@ def documents_rag_optimization_pipeline(
 
     use_secret_as_env(
         rag_optimization_task,
-        vector_db_secret_name,
+        db_secret_name,
         secret_key_to_env={
             "MILVUS_URI": "MILVUS_URI",
             "MILVUS_TOKEN": "MILVUS_TOKEN",

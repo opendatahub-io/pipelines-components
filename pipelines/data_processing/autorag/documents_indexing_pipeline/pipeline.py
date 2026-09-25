@@ -21,7 +21,7 @@ MAX_MEMORY = "64Gi"
 )
 def documents_indexing_pipeline(
     maas_secret_name: str,
-    vector_db_secret_name: str,
+    db_secret_name: str,
     embedding_model_id: str,
     input_data_secret_name: str,
     input_data_bucket_name: str,
@@ -43,7 +43,7 @@ def documents_indexing_pipeline(
     Args:
         maas_secret_name: Name of the secret with MaaS inference credentials
             ("MAAS_BASE_URL", "MAAS_API_KEY").
-        vector_db_secret_name: Name of the secret carrying the vector database
+        db_secret_name: Name of the secret carrying the database
             configuration. The env-var prefix selects the backend: ``MILVUS_*`` keys
             (at least ``MILVUS_URI``) select Milvus, ``PGVECTOR_*`` keys select PGVector.
         embedding_model_id: Embedding model ID served by MaaS.
@@ -53,7 +53,7 @@ def documents_indexing_pipeline(
         input_data_keys: Paths to folders with input documents within bucket. Only the
             first entry is used by document discovery.
         collection_name: Vector store collection to reuse (aligned with
-            ``pattern.json`` ``settings.vector_store_binding.collection_name``).
+            ``pattern.json`` ``settings.store_binding.collection_name``).
             Omit to create a new collection.
         embedding_params: Dict passed to OpenAIEmbeddingParams (default: {}).
         chunking_method: Chunking method (e.g. "recursive").
@@ -129,7 +129,7 @@ def documents_indexing_pipeline(
     # Vector database configuration: one secret, backend chosen from the key prefix.
     use_secret_as_env(
         documents_indexing_task,
-        secret_name=vector_db_secret_name,
+        secret_name=db_secret_name,
         secret_key_to_env={
             "MILVUS_URI": "MILVUS_URI",
             "MILVUS_TOKEN": "MILVUS_TOKEN",
