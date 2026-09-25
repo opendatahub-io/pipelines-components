@@ -15,6 +15,7 @@ If the model is already present on the PVC, skips the download.
 | `model_name` | `str` | `None` | HuggingFace model ID (e.g. 'mistralai/Mistral-7B-Instruct-v0.3'). |
 | `model_cache_pvc` | `str` | `None` | Name of the PVC to store models (unused here, mounted via pipeline). |
 | `model_cache_mount` | `str` | `/mnt/models` | Mount path for the model cache PVC. |
+| `download_enabled` | `bool` | `True` | If False, return the expected model directory without downloading. |
 
 ## Outputs 📤
 
