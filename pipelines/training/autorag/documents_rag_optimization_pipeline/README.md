@@ -28,7 +28,7 @@ deployment settings), executable notebooks, and evaluation results.
 | `input_data_keys` | `list[str]` | `[]` | Object keys (paths) of the input documents in the input data bucket. Only the first entry is used by document discovery. |
 | `optimization_metric` | `str` | `overall_score` | Quality metric used to rank RAG patterns. Use an evaluator-qualified value such as ``"unitxt:faithfulness"``, ``"ragas:context_precision"``, or ``"custom:overall_score"`` (default). The ``speed`` preset supports Unitxt and custom metrics; ``balanced`` also supports RAGAS metrics. ``custom:overall_score`` aggregates Unitxt outputs for ``speed`` and Unitxt plus RAGAS outputs for ``balanced``. |
 | `optimization_max_rag_patterns` | `int` | `8` | Maximum number of RAG patterns to generate. Passed to ai4rag (max_number_of_rag_patterns). Defaults to 8. |
-| `preset` | `str` | `speed` | Pipeline quality tier. "speed" (default) uses recursive chunking, no table structure parsing, and no contextual enrichment. "balanced" enables Docling table layout parsing, hybrid chunking, and LLM contextual enrichment. Both presets use the same resource tier. |
+| `preset` | `str` | `speed` | Unified extraction preset. "speed" (default) uses recursive chunking, no table structure parsing, and no contextual enrichment on CPU. "balanced" enables Docling table layout parsing, hybrid chunking, and LLM contextual enrichment on CPU. "gpu_accelerated" runs the "balanced" quality tier but performs text extraction on one NVIDIA GPU; downstream optimization is unchanged. All presets share the same (non-GPU) resource tier for the non-extraction steps. |
 
 ## Metadata 🗂️
 

@@ -64,7 +64,7 @@ def search_space_preparation(
 
     logging.basicConfig(level=logging.INFO)
 
-    VALID_PRESETS = {"speed", "balanced"}
+    VALID_PRESETS = {"speed", "balanced", "gpu_accelerated"}
     PRESET_CHUNKING_METHODS = {"speed": ["recursive"], "balanced": ["recursive", "hybrid"]}
     PRESET_CHUNK_SIZES = {"speed": [128, 256, 512], "balanced": [512, 1024, 2048]}
     PRESET_CHUNK_OVERLAPS = {"speed": [32, 64], "balanced": [0, 128, 256]}
@@ -72,13 +72,15 @@ def search_space_preparation(
     if preset not in VALID_PRESETS:
         raise ValueError(f"preset must be one of {VALID_PRESETS}; got {preset!r}.")
 
+    quality_preset = "balanced" if preset == "gpu_accelerated" else preset
+
     for name, models in (("generation_models", generation_models), ("embedding_models", embedding_models)):
         if not isinstance(models, list) or not models or any(not m for m in models):
             raise ValueError(f"{name} must be a non-empty list of non-empty model identifiers.")
 
-    chunking_methods = PRESET_CHUNKING_METHODS[preset]
-    chunk_sizes = PRESET_CHUNK_SIZES[preset]
-    chunk_overlaps = PRESET_CHUNK_OVERLAPS[preset]
+    chunking_methods = PRESET_CHUNKING_METHODS[quality_preset]
+    chunk_sizes = PRESET_CHUNK_SIZES[quality_preset]
+    chunk_overlaps = PRESET_CHUNK_OVERLAPS[quality_preset]
 
     logging.info(
         "Preset %r: chunking_methods=%s, chunk_sizes=%s, chunk_overlaps=%s",

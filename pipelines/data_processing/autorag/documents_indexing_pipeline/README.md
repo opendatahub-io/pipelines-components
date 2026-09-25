@@ -25,6 +25,7 @@ Discovers documents from object storage, extracts text, and indexes chunks into 
 | `chunk_overlap` | `int` | `0` | Token overlap between consecutive chunks (recursive method only). |
 | `batch_size` | `int` | `20` | Number of documents per batch. Defaults to ``20``; ``0`` processes all documents in a single batch. |
 | `ocr_lang` | `Optional[str]` | `None` | Language used to pick the RapidOCR model bundle. Pass ``pattern.json`` ``settings.generation.language.code`` from the optimization run so indexing OCRs the corpus the same way the experiment did. Note that AutoRAG derives that code from the benchmark questions, not from the documents themselves, so override it when the corpus is in a different language. Chinese selects the Chinese bundle; omitting it selects the English bundle, which covers all Latin-script languages. |
+| `preset` | `Optional[str]` | `None` | Unified extraction preset. ``speed`` (CPU, no table parsing) and ``balanced`` (CPU, table parsing) select the quality tier; ``gpu_accelerated`` runs the ``balanced`` tier on one NVIDIA GPU. Omitted, ``null``, or empty values are normalized to ``speed``. |
 
 ## Metadata 🗂️
 

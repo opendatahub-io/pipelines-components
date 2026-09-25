@@ -490,6 +490,7 @@ class TestRagTemplatesOptimizationRun:
                 input_data_bucket_name="customer-docs",
                 leaderboard=leaderboard_html,
                 input_data_keys=["data/docs/"],
+                preset="speed",
             )
 
         mocks.create_maas_client.assert_called_once_with(
@@ -512,6 +513,9 @@ class TestRagTemplatesOptimizationRun:
         # The whole list reaches the indexing blueprint, but the notebook takes the first key.
         pattern_json = json.loads((pattern_dir / "pattern.json").read_text(encoding="utf-8"))
         assert pattern_json["indexing"]["pipeline_spec"]["parameters"]["input_data_keys"] == ["data/docs/"]
+        # The stamped indexing preset is independent of the optimization preset
+        # (run above with preset="speed"); it defaults to balanced.
+        assert pattern_json["indexing"]["pipeline_spec"]["parameters"]["preset"] == "balanced"
         indexing_notebook_call = next(
             call for call in mocks.generate_notebook_from_template.call_args_list if call.args[0] == "maas_indexing"
         )

@@ -10,6 +10,7 @@ AUTORAG_OPTIMIZATION_EXECUTOR_RESOURCES = {
     "publish-component-stage-map": STAGE_MAP_RESOURCES,
     "documents-discovery": STANDARD_RESOURCES,
     "text-extraction": HEAVY_RESOURCES,
+    "text-extraction-2": HEAVY_RESOURCES,
     "search-space-preparation": STANDARD_RESOURCES,
     "models-pre-selector": STANDARD_RESOURCES,
     "rag-templates-optimization": HEAVY_RESOURCES,
