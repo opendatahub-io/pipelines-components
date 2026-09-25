@@ -36,7 +36,8 @@ def timeseries_data_loader(
     """Load and split timeseries data from S3 for AutoGluon training.
 
     This component loads time series data from S3, samples it (up to 100 MB for the
-    ``"speed"`` preset, up to 1 GB for ``"balanced"``),
+    ``"speed"`` preset, up to 1 GB for ``"balanced"``, and up to 10 GB for
+    ``"deep"``),
     applies light **cleansing** (replace ``+/-inf`` with NaN so AutoGluon can apply its
     own missing-value logic; require parseable timestamps and non-null ids; drop
     exact duplicate ``(id_column, timestamp_column)`` rows, keep last), then performs a two-stage
@@ -75,8 +76,9 @@ def timeseries_data_loader(
         test_data_bucket_name: S3 bucket name for user-provided test dataset (default: empty string).
         test_data_file_key: S3 object key of the user-provided test CSV (default: empty string).
         preset: Training quality tier controlling the sampling size budget. ``"speed"``
-            (default) samples up to 100 MB; ``"balanced"`` samples up to 1 GB. The cap for
-            user-provided test datasets (50 MB) is unaffected by this setting.
+            (default) samples up to 100 MB; ``"balanced"`` samples up to 1 GB; and
+            ``"deep"`` samples up to 10 GB. User-provided test datasets are capped
+            at 50 MB, 100 MB, and 1 GB respectively.
 
     Raises:
         ValueError: If a required parameter is empty or invalid, if only one of the
@@ -133,14 +135,20 @@ def timeseries_data_loader(
         validate_test_data_params,
     )
 
-    VALID_PRESETS = {"speed", "balanced"}
+    VALID_PRESETS = {"speed", "balanced", "deep"}
     # Sampling budget per quality tier: "speed" stays small for fast runs,
-    # "balanced" allows the full supported dataset size.
+    # "balanced" allows the default supported dataset size, while
+    # "deep" is sized for the higher-memory training profile.
     PRESET_MAX_SIZE_BYTES = {
         "speed": 100 * 1024 * 1024,  # 100 MB
         "balanced": 1024 * 1024 * 1024,  # 1 GB
+        "deep": 10 * 1024 * 1024 * 1024,  # 10 GB
     }
-    TEST_DATA_MAX_SIZE_BYTES = 50 * 1024 * 1024  # 50 MB — smaller cap for user-provided holdout sets
+    PRESET_TEST_DATA_MAX_SIZE_BYTES = {
+        "speed": 50 * 1024 * 1024,  # 50 MiB
+        "balanced": 100 * 1024 * 1024,  # 100 MiB
+        "deep": 1024 * 1024 * 1024,  # 1 GiB
+    }
     MIN_VALID_RECORDS_AFTER_CLEANSING = 100
     PANDAS_CHUNK_SIZE = 10000  # Rows per batch for streaming read
     DEFAULT_TEST_SIZE = 0.2
@@ -148,6 +156,7 @@ def timeseries_data_loader(
     if preset not in VALID_PRESETS:
         raise ValueError(f"preset must be one of {sorted(VALID_PRESETS)}; got {preset!r}.")
     MAX_SIZE_BYTES = PRESET_MAX_SIZE_BYTES[preset]
+    TEST_DATA_MAX_SIZE_BYTES = PRESET_TEST_DATA_MAX_SIZE_BYTES[preset]
 
     SYNTHETIC_ITEM_ID_COLUMN = "__synthetic_item_id"
     SYNTHETIC_ITEM_ID_VALUE = "item_0"
@@ -232,10 +241,11 @@ def timeseries_data_loader(
         ):
             """Load time series CSV from S3, truncating to max_size_bytes while preserving order.
 
-            When ``truncation_report`` is a dict, its ``"truncated"`` key is set to True if the
-            size limit stopped the read before the stream was exhausted. The signal is
-            conservative: a stream whose rows add up to exactly ``max_size_bytes`` is also
-            reported, since the read stops without proving no rows follow.
+            When ``truncation_report`` is a dict:
+            - ``"cap_reached"`` is True only when the size limit stopped the read (including the
+              conservative case where accumulated rows hit exactly ``max_size_bytes``).
+            - ``"truncated"`` is True when the returned frame may be incomplete for any reason
+              (cap exhaustion or mid-stream read error with partial recovery).
 
             When ``fail_on_partial_read`` is True, a mid-stream error is fatal. If no rows were
             read, an empty dataframe is returned so the caller can report an empty test dataset.
@@ -259,7 +269,12 @@ def timeseries_data_loader(
             accumulated_size = 0
             total_rows_read = 0
 
-            def _mark_truncated():
+            def _mark_cap_reached():
+                if truncation_report is not None:
+                    truncation_report["truncated"] = True
+                    truncation_report["cap_reached"] = True
+
+            def _mark_partial_read():
                 if truncation_report is not None:
                     truncation_report["truncated"] = True
 
@@ -268,7 +283,7 @@ def timeseries_data_loader(
                     chunk_memory = chunk_df.memory_usage(deep=True).sum()
 
                     if accumulated_size + chunk_memory > max_size_bytes:
-                        _mark_truncated()
+                        _mark_cap_reached()
                         remaining_bytes = max_size_bytes - accumulated_size
                         if remaining_bytes <= 0:
                             break
@@ -286,7 +301,7 @@ def timeseries_data_loader(
                     total_rows_read += len(chunk_df)
 
                     if accumulated_size >= max_size_bytes:
-                        _mark_truncated()
+                        _mark_cap_reached()
                         break
 
             except Exception as e:
@@ -299,7 +314,7 @@ def timeseries_data_loader(
                     total_rows_read,
                     e,
                 )
-                _mark_truncated()
+                _mark_partial_read()
 
             if not chunk_list:
                 if fail_on_partial_read:
@@ -421,7 +436,14 @@ def timeseries_data_loader(
             "running",
             metrics={"source": f"s3://{bucket_name}/{file_key}"},
         )
-        df = load_timeseries_data_truncate(bucket_name, file_key, MAX_SIZE_BYTES, PANDAS_CHUNK_SIZE)
+        sampling_report = {}
+        df = load_timeseries_data_truncate(
+            bucket_name,
+            file_key,
+            MAX_SIZE_BYTES,
+            PANDAS_CHUNK_SIZE,
+            truncation_report=sampling_report,
+        )
 
         # Reject collision with reserved synthetic-ID column (CWE-20)
         # Check if any user-specified column uses the reserved name before we try to inject it.
@@ -489,7 +511,19 @@ def timeseries_data_loader(
                 "Provide a larger dataset or fix invalid timestamps, null ids, and duplicate keys."
             )
 
-        status.record("prepare_data", "completed", metrics={"rows": n_valid})
+        status.record(
+            "prepare_data",
+            "completed",
+            metrics={
+                "rows": n_valid,
+                "sampled_rows": n_valid,
+                "sampled_in_memory_bytes": int(df.memory_usage(deep=True).sum()),
+                "sample_cap_bytes": MAX_SIZE_BYTES,
+                "sample_cap_reached": bool(sampling_report.get("cap_reached")),
+                "sampling_method": "first_n_rows",
+                "preset": preset,
+            },
+        )
         status.record("split_and_export", "started")
 
         if not sampled_test_dataset.uri or not sampled_test_dataset.uri.endswith(".parquet"):
@@ -716,6 +750,11 @@ def timeseries_data_loader(
         split_export_metrics = {
             "test_size": split_config_out["test_size"],
             "selection_train_size": selection_train_size,
+            "selection_train_rows": len(selection_train_df),
+            "extra_train_rows": len(extra_train_df),
+            "test_rows": len(test_data_for_sample),
+            "selection_train_disk_bytes": selection_path.stat().st_size,
+            "extra_train_disk_bytes": extra_path.stat().st_size,
         }
         if has_user_test_data:
             split_export_metrics["user_test_source"] = test_data_source
