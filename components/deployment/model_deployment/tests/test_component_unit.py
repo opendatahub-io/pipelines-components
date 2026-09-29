@@ -286,6 +286,10 @@ def test_patches_isvc_in_place_by_default(mock_api_cls, mock_config, mock_sleep)
     isvc_patches = [c for c in patch_calls if c.kwargs.get("plural") == "inferenceservices"]
     assert len(isvc_patches) == 1
 
+    isvc_patch = isvc_patches[0].kwargs["body"]
+    patch_annotations = isvc_patch["metadata"]["annotations"]
+    assert patch_annotations["opendatahub.io/genai-use-case"] is None
+
     # No delete was issued
     mock_api.delete_namespaced_custom_object.assert_not_called()
 

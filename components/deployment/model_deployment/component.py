@@ -289,6 +289,8 @@ def model_deployment(
         existing = False
 
     if existing:
+        if not genai_use_case:
+            isvc["metadata"]["annotations"]["opendatahub.io/genai-use-case"] = None
         custom_api.patch_namespaced_custom_object(
             group="serving.kserve.io",
             version="v1beta1",
