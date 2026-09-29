@@ -37,6 +37,7 @@ def documents_indexing_pipeline(
     batch_size: int = 20,
     ocr_lang: Optional[str] = None,
     preset: Optional[str] = None,
+    gpu_acceleration: bool = False,
 ):
     """Build a production vector index from documents for AutoRAG.
 
@@ -72,10 +73,13 @@ def documents_indexing_pipeline(
             so override it when the corpus is in a different language. Chinese selects
             the Chinese bundle; omitting it selects the English bundle, which covers all
             Latin-script languages.
-        preset: Unified extraction preset. ``speed`` (CPU, no table parsing) and
-            ``balanced`` (CPU, table parsing) select the quality tier;
-            ``gpu_accelerated`` runs the ``balanced`` tier on one NVIDIA GPU.
-            Omitted, ``null``, or empty values are normalized to ``speed``.
+        preset: Extraction quality tier. ``speed`` (no table parsing) or
+            ``balanced`` (table parsing). Omitted, ``null``, or empty values are
+            normalized to ``speed``. Orthogonal to ``gpu_acceleration``.
+        gpu_acceleration: When True, run Docling text extraction on one NVIDIA GPU
+            (the extraction task requests ``nvidia.com/gpu``). Defaults to False
+            (CPU extraction). Independent of ``preset``, so any quality tier can run
+            on CPU or GPU.
     """
     documents_discovery_task = documents_discovery(
         input_data_bucket_name=input_data_bucket_name,
@@ -110,6 +114,7 @@ def documents_indexing_pipeline(
     extracted_text = gpu_aware_text_extraction(
         documents_descriptor=documents_discovery_task.outputs["discovered_documents"],
         normalized_preset=normalized_preset_task.output,
+        gpu_acceleration=gpu_acceleration,
         configure=configure_extraction,
         ocr_lang=ocr_lang,
     )

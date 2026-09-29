@@ -56,6 +56,7 @@ def documents_rag_optimization_pipeline(
     optimization_metric: str = "overall_score",
     optimization_max_rag_patterns: int = 8,
     preset: str = "speed",
+    gpu_acceleration: bool = False,
 ):
     """Automated system for building and optimizing Retrieval-Augmented Generation (RAG) applications.
 
@@ -103,13 +104,16 @@ def documents_rag_optimization_pipeline(
             for ``speed`` and Unitxt plus RAGAS outputs for ``balanced``.
         optimization_max_rag_patterns: Maximum number of RAG patterns to generate. Passed to ai4rag
             (max_number_of_rag_patterns). Defaults to 8.
-        preset: Unified extraction preset. "speed" (default) uses recursive
-            chunking, no table structure parsing, and no contextual enrichment on
-            CPU. "balanced" enables Docling table layout parsing, hybrid chunking,
-            and LLM contextual enrichment on CPU. "gpu_accelerated" runs the
-            "balanced" quality tier but performs text extraction on one NVIDIA GPU;
-            downstream optimization is unchanged. All presets share the same
-            (non-GPU) resource tier for the non-extraction steps.
+        preset: Extraction and optimization quality tier. "speed" (default) uses
+            recursive chunking, no table structure parsing, and no contextual
+            enrichment. "balanced" enables Docling table layout parsing, hybrid
+            chunking, and LLM contextual enrichment. Orthogonal to
+            ``gpu_acceleration``.
+        gpu_acceleration: When True, run Docling text extraction on one NVIDIA GPU
+            (only the extraction task requests ``nvidia.com/gpu``); downstream
+            optimization is unchanged and stays on the shared (non-GPU) resource
+            tier. Defaults to False (CPU extraction). Independent of ``preset``, so
+            any quality tier can run extraction on CPU or GPU.
     """
     component_stage_map_task = publish_component_stage_map(
         pipeline_id=PIPELINE_NAME,
@@ -171,6 +175,7 @@ def documents_rag_optimization_pipeline(
     extracted_text = gpu_aware_text_extraction(
         documents_descriptor=documents_discovery_task.outputs["discovered_documents"],
         normalized_preset=normalized_preset,
+        gpu_acceleration=gpu_acceleration,
         configure=configure_extraction,
         ocr_lang=search_space_preparation_task.outputs["detected_ocr_lang"],
     )

@@ -45,6 +45,7 @@ class TestDocumentsIndexingPipelineUnit:
             "collection_name",
             "ocr_lang",
             "preset",
+            "gpu_acceleration",
         ):
             assert name in inputs
 
@@ -123,7 +124,7 @@ class TestDocumentsIndexingPipelineUnit:
         assert "componentInputParameter: ocr_lang" in content
 
     def test_compiled_pipeline_declares_gpu_extraction_resources(self):
-        """Only the gpu_accelerated extraction branch requests an NVIDIA GPU."""
+        """Only the gpu_acceleration extraction branch requests an NVIDIA GPU."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as tmp:
             tmp_path = tmp.name
         try:
@@ -145,16 +146,15 @@ class TestDocumentsIndexingPipelineUnit:
             ("", "speed"),
             ("speed", "speed"),
             ("balanced", "balanced"),
-            ("gpu_accelerated", "gpu_accelerated"),
         ],
     )
     def test_normalizes_extraction_preset(self, preset, expected):
-        """Missing and empty presets keep existing indexing runs at the speed CPU tier."""
+        """Missing and empty presets keep existing indexing runs at the speed tier."""
         assert normalize_extraction_preset.python_func(preset=preset) == expected
 
     def test_rejects_invalid_extraction_preset(self):
         """Extraction preset validation names the supported values."""
-        with pytest.raises(ValueError, match="balanced.*gpu_accelerated"):
+        with pytest.raises(ValueError, match="speed.*balanced"):
             normalize_extraction_preset.python_func(preset="turbo")
 
     def test_compiled_pipeline_wires_s3_maas_and_vector_db_secrets(self):

@@ -102,7 +102,7 @@ def rag_templates_optimization(
     DEFAULT_MAX_RAG_PATTERNS = 8
     MIN_MAX_RAG_PATTERNS_RANGE = (4, 20)
 
-    VALID_PRESETS = {"speed", "balanced", "gpu_accelerated"}
+    VALID_PRESETS = {"speed", "balanced"}
     # custom:overall_score aggregates the outputs of the evaluators enabled for the preset.
     PRESET_EVALUATORS = {
         "speed": frozenset({"unitxt", "custom"}),
@@ -302,9 +302,8 @@ def rag_templates_optimization(
     if preset not in VALID_PRESETS:
         raise ValueError(f"preset must be one of {VALID_PRESETS}; got {preset!r}.")
 
-    quality_preset = "balanced" if preset == "gpu_accelerated" else preset
-    active_evaluators = PRESET_EVALUATORS[quality_preset]
-    inference_max_threads = PRESET_INFERENCE_MAX_THREADS[quality_preset]
+    active_evaluators = PRESET_EVALUATORS[preset]
+    inference_max_threads = PRESET_INFERENCE_MAX_THREADS[preset]
     logging.info("Preset %r: inference_max_threads=%d", preset, inference_max_threads)
 
     if component_status is None:

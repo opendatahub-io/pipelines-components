@@ -568,7 +568,7 @@ class TestTextExtractionUnitTests:
         assert kwargs["do_table_structure"] is (preset_value == "balanced")
 
     @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
-    def test_gpu_extraction_requires_cuda(self, tmp_path):
+    def test_gpu_acceleration_requires_cuda(self, tmp_path):
         """GPU mode fails clearly instead of silently falling back to CPU."""
         modules, mock_extract, _ = _make_ai4rag_mocks()
         torch = mock.MagicMock()
@@ -588,7 +588,8 @@ class TestTextExtractionUnitTests:
                 text_extraction.python_func(
                     documents_descriptor=descriptor_artifact,
                     extracted_text=output_artifact,
-                    preset="gpu_accelerated",
+                    preset="balanced",
+                    gpu_acceleration=True,
                 )
 
         mock_extract.assert_not_called()

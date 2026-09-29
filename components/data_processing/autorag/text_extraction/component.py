@@ -20,6 +20,7 @@ def text_extraction(
     error_tolerance: Optional[float] = None,
     max_extraction_workers: Optional[int] = None,
     preset: str = "speed",
+    gpu_acceleration: bool = False,
     ocr_lang: Optional[str] = None,
 ):
     """Text Extraction component.
@@ -51,11 +52,15 @@ def text_extraction(
             raising an error. None (the default) means zero tolerance.
         max_extraction_workers: Number of parallel worker processes used for text
             extraction. Defaults to 4. Set to None to use all available CPU cores.
-        preset: Extraction preset shared by the optimization and indexing
-            pipelines. "speed" (default) disables Docling table structure parsing
-            on CPU. "balanced" enables TableFormer table reconstruction on CPU.
-            "gpu_accelerated" runs the "balanced" quality tier but requires a
-            CUDA-capable GPU for Docling extraction.
+        preset: Extraction quality tier shared by the optimization and indexing
+            pipelines. "speed" (default) disables Docling table structure parsing.
+            "balanced" enables TableFormer table reconstruction. This is orthogonal
+            to ``gpu_acceleration``: any preset can run on CPU or GPU.
+        gpu_acceleration: When True, run Docling extraction on a CUDA-capable GPU.
+            Requires the task to request an NVIDIA GPU and a CUDA-enabled AutoRAG
+            image; the component fails fast if CUDA is unavailable. Defaults to
+            False (CPU extraction). Does not change the quality tier selected by
+            ``preset``.
         ocr_lang: Language of the document text, used only to pick the RapidOCR model
             bundle. Accepts a language name or ISO 639-1 code. Chinese ("chinese", "zh",
             "ch") selects the Chinese bundle; everything else, including None (the
@@ -74,15 +79,15 @@ def text_extraction(
 
     logging.basicConfig(level=logging.INFO)
 
-    VALID_PRESETS = {"speed", "balanced", "gpu_accelerated"}
-    PRESET_DO_TABLE_STRUCTURE = {"speed": False, "balanced": True, "gpu_accelerated": True}
+    VALID_PRESETS = {"speed", "balanced"}
+    PRESET_DO_TABLE_STRUCTURE = {"speed": False, "balanced": True}
     LAYOUT_OCR_EXTENSIONS = {".pdf", ".jpg", ".jpeg", ".png", ".tif", ".tiff"}
     ASR_EXTENSIONS = {".wav", ".mp3", ".m4a", ".aac", ".ogg", ".flac"}
 
     if preset not in VALID_PRESETS:
         raise ValueError(f"preset must be one of {VALID_PRESETS}; got {preset!r}.")
 
-    if preset == "gpu_accelerated":
+    if gpu_acceleration:
         try:
             import torch
         except ImportError as exc:
@@ -100,7 +105,9 @@ def text_extraction(
         os.environ["DOCLING_DEVICE"] = "cuda"
 
     do_table_structure = PRESET_DO_TABLE_STRUCTURE[preset]
-    logging.info("Preset %r: do_table_structure=%s", preset, do_table_structure)
+    logging.info(
+        "Preset %r: do_table_structure=%s, gpu_acceleration=%s", preset, do_table_structure, gpu_acceleration
+    )
 
     # Paths are relative to $DOCLING_ARTIFACTS_PATH/RapidOcr/ and mirror the on-disk
     # layout of the RHAI OGX modelcar baked into the AutoRAG image. The classifier is

@@ -64,7 +64,7 @@ def models_pre_selector(
 
     logging.basicConfig(level=logging.INFO)
 
-    VALID_PRESETS = {"speed", "balanced", "gpu_accelerated"}
+    VALID_PRESETS = {"speed", "balanced"}
     PRESET_INFERENCE_MAX_THREADS = {"speed": 10, "balanced": 4}
     SAMPLE_SIZE = 5
     RANDOM_SEED = 17
@@ -72,8 +72,7 @@ def models_pre_selector(
     if preset not in VALID_PRESETS:
         raise ValueError(f"preset must be one of {VALID_PRESETS}; got {preset!r}.")
 
-    quality_preset = "balanced" if preset == "gpu_accelerated" else preset
-    inference_max_threads = PRESET_INFERENCE_MAX_THREADS[quality_preset]
+    inference_max_threads = PRESET_INFERENCE_MAX_THREADS[preset]
 
     if component_status is None:
         from kfp_components.components.training.autorag.shared.component_status import (  # pyright: ignore[reportMissingImports]
