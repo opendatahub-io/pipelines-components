@@ -79,8 +79,8 @@ def autogluon_timeseries_models_training(
         split_config: Optional split config stored in artifact metadata.
         prediction_length: Forecast horizon (number of timesteps).
         known_covariates_names: Optional list of known covariate column names.
-        preset: Training quality tier. ``"speed"`` (default) or ``"balanced"``
-            (may run more than 2x longer).
+        preset: Training quality tier. ``"speed"`` (default), ``"balanced"``, or
+            ``"quality"`` (up to six hours with AutoGluon ``high_quality``).
         eval_metric: Metric for model ranking (e.g. ``"mean_absolute_scaled_error"``,
             ``"weighted_quantile_loss"``). Defaults to ``"mean_absolute_scaled_error"``.
             Legacy uppercase acronyms (e.g. ``"MASE"``) are accepted and normalized to snake_case.
@@ -130,9 +130,9 @@ def autogluon_timeseries_models_training(
         status.set_metadata(display_name="Timeseries Models Training Status")
         component_status.metadata["display_name"] = "Timeseries Models Training Status"
         TOP_N_MAX = 7
-        VALID_PRESETS = {"speed", "balanced"}
-        PRESET_AG_NAMES = {"speed": "fast_training", "balanced": "medium_quality"}
-        PRESET_TIME_LIMITS = {"speed": 10 * 60, "balanced": 60 * 60}
+        VALID_PRESETS = {"speed", "balanced", "quality"}
+        PRESET_AG_NAMES = {"speed": "fast_training", "balanced": "medium_quality", "quality": "high_quality"}
+        PRESET_TIME_LIMITS = {"speed": 10 * 60, "balanced": 60 * 60, "quality": 360 * 60}
 
         # Normalize eval_metric to snake_case; accept legacy uppercase acronyms (e.g. "MASE") for back-compat.
         _acronym_to_snake = {acronym: snake for snake, acronym in METRIC_ALIASES.items()}
@@ -267,10 +267,18 @@ def autogluon_timeseries_models_training(
             )
 
         top_models = leaderboard.head(top_n)["model"].values.tolist()
+        # Refit is a separate stage, so give it one preset-sized budget in total,
+        # divided fairly between selected models. Without this, every selected model
+        # received the entire selection budget and top_n multiplied wall-clock time.
+        refit_time_limit = max(1, time_limit // len(top_models))
         status.record(
             "model_selection",
             "completed",
-            metrics={"top_n": top_n, "selected_models": top_models},
+            metrics={
+                "top_n": top_n,
+                "selected_models": top_models,
+                "refit_time_limit_per_model_seconds": refit_time_limit,
+            },
         )
         logger.info(
             "Timeseries selection done: top_%s=%s best_score_test=%s",
@@ -288,6 +296,7 @@ def autogluon_timeseries_models_training(
             "timestamp_column": timestamp_column,
             "presets": preset,
             "time_limit": time_limit,
+            "refit_time_limit_per_model": refit_time_limit,
             "known_covariates_names": known_covariates_names or [],
             "num_models_trained": len(leaderboard),
         }
@@ -514,7 +523,7 @@ def autogluon_timeseries_models_training(
                     predictor_refit.fit(
                         train_data=full_train_ts_df,
                         **additional_fit_params,
-                        time_limit=time_limit,
+                        time_limit=refit_time_limit,
                         excluded_model_types=["Chronos", "Chronos2", "Toto"],
                     )
                     total_fit_time_seconds += time.perf_counter() - refit_start_time

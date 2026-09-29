@@ -6,7 +6,7 @@
 
 AutoML Data Loader component.
 
-Loads tabular (CSV) data from S3 in batches, sampling up to a preset-dependent size budget (``"speed"``: 100 MB, ``"balanced"``: 1 GB), then splits the sampled data into test, selection-train, and extra-train sets.
+Loads tabular (CSV) data from S3 in batches, sampling up to a preset-dependent size budget (``"speed"``: 100 MiB, ``"balanced"``: 1 GiB, ``"quality"``: 10 GiB), then splits the sampled data into test, selection-train, and extra-train sets.
 
 The component reads data in chunks to efficiently handle large files without loading the entire dataset into memory at once. After sampling, it performs a two-stage split:
 
@@ -42,7 +42,7 @@ Authentication uses AWS-style credentials provided via environment variables (e.
 | `selection_train_size` | `float` | `0.3` | Fraction of the train portion used for model selection (default 0.3). |
 | `test_data_bucket_name` | `str` | `""` | S3 bucket name for user-provided test dataset (default: empty string). |
 | `test_data_file_key` | `str` | `""` | S3 object key of the user-provided test CSV (default: empty string). |
-| `preset` | `str` | `speed` | Training quality tier controlling the sampling size budget. ``"speed"`` (default) samples up to 100 MB; ``"balanced"`` samples up to 1 GB. The cap for user-provided test datasets (50 MB) is unaffected by this setting. |
+| `preset` | `str` | `speed` | Training quality tier controlling the sampling size budget. ``"speed"`` (default) samples up to 100 MiB; ``"balanced"`` samples up to 1 GiB; and ``"quality"`` samples up to 10 GiB. User-provided test datasets are capped at 50 MiB, 100 MiB, and 1 GiB respectively. |
 
 ## Outputs 📤
 
@@ -114,7 +114,7 @@ def example_pipeline(
 
 Available values for the `sampling_method` parameter are:
 
-- `"first_n_rows"`: Reads the first N rows from the file up to the component's preset-dependent memory limit (``"speed"``: 100 MB, ``"balanced"``: 1 GB).
+- `"first_n_rows"`: Reads the first N rows from the file up to the component's preset-dependent memory limit (``"speed"``: 100 MiB, ``"balanced"``: 1 GiB).
 - `"stratified"`: Samples the dataset in a way that preserves the distribution of the `label_column`. Only available if `label_column` is specified and task type is classification.
 - `"random"`: Randomly samples rows from the dataset up to the size limit.
 
@@ -240,7 +240,7 @@ Match stage ids to the tabular pipeline entry in ``component_stage_map.json`` fr
 - **Output format**: Snappy-compressed Parquet for all pipeline-owned copies — the two PVC
   workspace train splits (`models_selection_train_dataset.parquet`, `extra_train_dataset.parquet`)
   and the `sampled_test_dataset` artifact. No full-size CSV copy of any split is kept.
-- **Size limit**: Preset-dependent size budget in memory (sampled if larger) — ``"speed"``: 100 MB, ``"balanced"``: 1 GB.
+- **Size limit**: Preset-dependent size budget in memory (sampled if larger) — ``"speed"``: 100 MiB, ``"balanced"``: 1 GiB.
 - **Streaming**: Data is read in batches (10k rows per chunk) to handle large files.
 
 ## Logging 📝

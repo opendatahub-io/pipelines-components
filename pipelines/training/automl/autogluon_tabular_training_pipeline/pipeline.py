@@ -21,7 +21,7 @@ PIPELINE_NAME = "autogluon-tabular-training-pipeline"
     ),
     pipeline_config=dsl.PipelineConfig(
         workspace=dsl.WorkspaceConfig(
-            size="12Gi",  # TODO: change to recommended size
+            size="32Gi",
             kubernetes=dsl.KubernetesWorkspaceConfig(
                 pvcSpecPatch={
                     # use default storage class from the cluster
@@ -80,7 +80,7 @@ def autogluon_tabular_training_pipeline(
     1. **Data Loading & Splitting**: Loads tabular (CSV) data from an S3-compatible
        object storage bucket using AWS credentials configured via Kubernetes secrets.
        The component samples the data (up to 100 MiB for the "speed" preset, up to 1 GiB
-       for "balanced"), then performs a two-stage split:
+       for "balanced", and up to 10 GiB for "quality"), then performs a two-stage split:
        *Primary split** (default 80/20): separates a *test set* (20%, written to an
          S3 artifact) from the *train portion* (80%).
          **Secondary split** (default 30/70 of the train portion): produces
@@ -136,7 +136,7 @@ def autogluon_tabular_training_pipeline(
         top_n: Number of top models to select and refit (default: 3); positive integer from range [1, 10].
         positive_class: Optional label value for the positive class in binary classification. Defaults to the second unique class after sorting label values.
         eval_metric: Metric used for model ranking. Empty string (default) is resolved by the component to "r2" for regression and "accuracy" for binary and multiclass classification.
-        preset: Training quality tier. "speed" (45-minute selection budget, default, 4 vCPU / 16 GiB) or "balanced" (180-minute selection budget, 8 vCPU / 32 GiB).
+        preset: Training quality tier. "speed" (45-minute selection budget, default, 4 vCPU / 16 GiB), "balanced" (180-minute selection budget, 8 vCPU / 32 GiB), or "quality" (six-hour selection budget, 16 vCPU / 64 GiB).
         test_data_bucket_name: Optional S3-compatible bucket name for a user-provided test dataset.
             Default: empty string (use the holdout split from training data).
         test_data_file_key: Optional S3 object key for a user-provided test CSV file.
@@ -176,73 +176,79 @@ def autogluon_tabular_training_pipeline(
         "1Gi"
     )
 
-    data_loader_task = automl_data_loader(
-        bucket_name=train_data_bucket_name,
-        file_key=train_data_file_key,
-        workspace_path=dsl.WORKSPACE_PATH_PLACEHOLDER,
-        label_column=label_column,
-        task_type=task_type,
-        test_data_bucket_name=test_data_bucket_name,
-        test_data_file_key=test_data_file_key,
-        preset=preset,
-    )
-    data_loader_task.after(component_stage_map_task)
-    data_loader_task.set_caching_options(False)
-    # The loader parses and samples large CSVs; reserve CPU for pandas parsing and
-    # the bounded multipart S3 transfer fast path instead of relying on burst capacity.
-    data_loader_task.set_cpu_request("4").set_memory_request("8Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(MAX_MEMORY)
+    def _create_data_loader(loader_preset: str, memory_request: str):
+        data_loader_task = automl_data_loader(
+            bucket_name=train_data_bucket_name,
+            file_key=train_data_file_key,
+            workspace_path=dsl.WORKSPACE_PATH_PLACEHOLDER,
+            label_column=label_column,
+            task_type=task_type,
+            test_data_bucket_name=test_data_bucket_name,
+            test_data_file_key=test_data_file_key,
+            preset=loader_preset,
+        )
+        data_loader_task.after(component_stage_map_task)
+        data_loader_task.set_caching_options(False)
+        data_loader_task.set_cpu_request("4").set_memory_request(memory_request).set_cpu_limit(
+            MAX_CPUS
+        ).set_memory_limit(MAX_MEMORY)
+        use_secret_as_env(
+            data_loader_task,
+            secret_name=train_data_secret_name,
+            secret_key_to_env={
+                "AWS_ACCESS_KEY_ID": "AWS_ACCESS_KEY_ID",
+                "AWS_SECRET_ACCESS_KEY": "AWS_SECRET_ACCESS_KEY",
+                "AWS_S3_ENDPOINT": "AWS_S3_ENDPOINT",
+                "AWS_DEFAULT_REGION": "AWS_DEFAULT_REGION",
+            },
+            optional=True,
+        )
+        return data_loader_task
 
-    # Object storage credentials for data loading.
-    use_secret_as_env(
-        data_loader_task,
-        secret_name=train_data_secret_name,
-        secret_key_to_env={
-            "AWS_ACCESS_KEY_ID": "AWS_ACCESS_KEY_ID",
-            "AWS_SECRET_ACCESS_KEY": "AWS_SECRET_ACCESS_KEY",
-            "AWS_S3_ENDPOINT": "AWS_S3_ENDPOINT",
-            "AWS_DEFAULT_REGION": "AWS_DEFAULT_REGION",
-        },
-        optional=True,
-    )
-
-    # Stage 1 + 2: Model selection and sequential refit of top N models.
-    # The training component logs results to MLflow incrementally (one nested child run per
-    # model) when the platform injects KFP_MLFLOW_CONFIG. Tracking is best-effort: missing
-    # config or MLflow errors are recorded on component_status only and never fail the run.
-    # Resource limits differ by preset: balanced needs more CPU/memory than speed.
-    _training_kwargs = dict(
-        label_column=label_column,
-        task_type=task_type,
-        top_n=top_n,
-        positive_class=positive_class,
-        train_data_path=data_loader_task.outputs["models_selection_train_data_path"],
-        test_data=data_loader_task.outputs["sampled_test_dataset"],
-        workspace_path=dsl.WORKSPACE_PATH_PLACEHOLDER,
-        pipeline_name=dsl.PIPELINE_JOB_RESOURCE_NAME_PLACEHOLDER,
-        run_id=dsl.PIPELINE_JOB_ID_PLACEHOLDER,
-        run_name=dsl.PIPELINE_JOB_NAME_PLACEHOLDER,
-        sample_row=data_loader_task.outputs["sample_row"],
-        train_data_secret_name=train_data_secret_name,
-        train_data_bucket_name=train_data_bucket_name,
-        train_data_file_key=train_data_file_key,
-        sampling_config=data_loader_task.outputs["sample_config"],
-        split_config=data_loader_task.outputs["split_config"],
-        extra_train_data_path=data_loader_task.outputs["extra_train_data_path"],
-        preset=preset,
-        eval_metric=eval_metric,
-        test_data_bucket_name=test_data_bucket_name,
-        test_data_file_key=test_data_file_key,
-    )
+    def _create_training_task(data_loader_task, training_preset: str):
+        return autogluon_models_training(
+            label_column=label_column,
+            task_type=task_type,
+            top_n=top_n,
+            positive_class=positive_class,
+            train_data_path=data_loader_task.outputs["models_selection_train_data_path"],
+            test_data=data_loader_task.outputs["sampled_test_dataset"],
+            workspace_path=dsl.WORKSPACE_PATH_PLACEHOLDER,
+            pipeline_name=dsl.PIPELINE_JOB_RESOURCE_NAME_PLACEHOLDER,
+            run_id=dsl.PIPELINE_JOB_ID_PLACEHOLDER,
+            run_name=dsl.PIPELINE_JOB_NAME_PLACEHOLDER,
+            sample_row=data_loader_task.outputs["sample_row"],
+            train_data_secret_name=train_data_secret_name,
+            train_data_bucket_name=train_data_bucket_name,
+            train_data_file_key=train_data_file_key,
+            sampling_config=data_loader_task.outputs["sample_config"],
+            split_config=data_loader_task.outputs["split_config"],
+            extra_train_data_path=data_loader_task.outputs["extra_train_data_path"],
+            preset=training_preset,
+            eval_metric=eval_metric,
+            test_data_bucket_name=test_data_bucket_name,
+            test_data_file_key=test_data_file_key,
+        )
 
     with dsl.If(preset == "balanced"):
-        training_task_bl = autogluon_models_training(**_training_kwargs)
+        data_loader_task_bl = _create_data_loader("balanced", "32Gi")
+        training_task_bl = _create_training_task(data_loader_task_bl, "balanced")
         training_task_bl.set_caching_options(False)
         training_task_bl.set_cpu_request("8").set_memory_request("32Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(
             MAX_MEMORY
         )
 
+    with dsl.Elif(preset == "quality"):
+        data_loader_task_quality = _create_data_loader("quality", "64Gi")
+        training_task_quality = _create_training_task(data_loader_task_quality, "quality")
+        training_task_quality.set_caching_options(False)
+        training_task_quality.set_cpu_request("16").set_memory_request("64Gi").set_cpu_limit("32").set_memory_limit(
+            "128Gi"
+        )
+
     with dsl.Else():
-        training_task_sp = autogluon_models_training(**_training_kwargs)
+        data_loader_task_sp = _create_data_loader("speed", "16Gi")
+        training_task_sp = _create_training_task(data_loader_task_sp, "speed")
         training_task_sp.set_caching_options(False)
         training_task_sp.set_cpu_request("4").set_memory_request("16Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(
             MAX_MEMORY

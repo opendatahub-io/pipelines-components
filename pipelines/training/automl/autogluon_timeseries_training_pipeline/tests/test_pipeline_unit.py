@@ -14,7 +14,6 @@ from ..pipeline import autogluon_timeseries_training_pipeline
 _EXPECTED_ROOT_DAG_TASK_IDS = (
     "condition-branches-1",
     "publish-component-stage-map",
-    "timeseries-data-loader",
 )
 
 
@@ -209,8 +208,8 @@ class TestAutogluonTimeseriesTrainingPipelineUnitTests:
         assert "componentInputParameter: test_data_bucket_name" in content
         assert "componentInputParameter: test_data_file_key" in content
 
-    def test_compiled_pipeline_uses_single_train_secret_mount(self):
-        """Train secret is mounted once; test data reuses AWS_* via component fallback."""
+    def test_compiled_pipeline_uses_conditional_train_secret_mounts(self):
+        """Each conditional loader mounts the shared train secret."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as tmp_file:
             tmp_path = tmp_file.name
         try:
@@ -224,6 +223,6 @@ class TestAutogluonTimeseriesTrainingPipelineUnitTests:
 
         assert "condition-1" not in content
         assert "TEST_DATA_AWS_ACCESS_KEY_ID" not in content
-        train_secret_block = content.split("envVar: AWS_ACCESS_KEY_ID", 1)[1]
-        assert "optional: true" in train_secret_block[:500]
-        assert "componentInputParameter: train_data_secret_name" in train_secret_block[:500]
+        assert content.count("envVar: AWS_ACCESS_KEY_ID") == 3
+        assert "optional: true" in content
+        assert "pipelinechannel--train_data_secret_name" in content
