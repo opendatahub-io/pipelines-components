@@ -126,7 +126,7 @@ def autogluon_timeseries_training_pipeline(
             ``"weighted_quantile_loss"``) or legacy uppercase acronym form. Defaults to
             ``"mean_absolute_scaled_error"``.
         preset: Training quality tier. ``"speed"`` (default, 4 vCPU / 16 GiB),
-            ``"balanced"`` (8 vCPU / 32 GiB), or ``"quality"`` (six-hour budget,
+            ``"balanced"`` (8 vCPU / 32 GiB), or ``"quality"`` (two-hour selection budget,
             16 vCPU / 64 GiB).
         test_data_bucket_name: Optional S3-compatible bucket name for a user-provided test dataset.
             Default: empty string (use the per-series holdout split from training data).

@@ -80,7 +80,7 @@ def autogluon_timeseries_models_training(
         prediction_length: Forecast horizon (number of timesteps).
         known_covariates_names: Optional list of known covariate column names.
         preset: Training quality tier. ``"speed"`` (default), ``"balanced"``, or
-            ``"quality"`` (up to six hours with AutoGluon ``high_quality``).
+            ``"quality"`` (two-hour selection budget with AutoGluon ``high_quality``).
         eval_metric: Metric for model ranking (e.g. ``"mean_absolute_scaled_error"``,
             ``"weighted_quantile_loss"``). Defaults to ``"mean_absolute_scaled_error"``.
             Legacy uppercase acronyms (e.g. ``"MASE"``) are accepted and normalized to snake_case.
@@ -132,7 +132,7 @@ def autogluon_timeseries_models_training(
         TOP_N_MAX = 7
         VALID_PRESETS = {"speed", "balanced", "quality"}
         PRESET_AG_NAMES = {"speed": "fast_training", "balanced": "medium_quality", "quality": "high_quality"}
-        PRESET_TIME_LIMITS = {"speed": 10 * 60, "balanced": 60 * 60, "quality": 360 * 60}
+        PRESET_TIME_LIMITS = {"speed": 10 * 60, "balanced": 60 * 60, "quality": 120 * 60}
 
         # Normalize eval_metric to snake_case; accept legacy uppercase acronyms (e.g. "MASE") for back-compat.
         _acronym_to_snake = {acronym: snake for snake, acronym in METRIC_ALIASES.items()}
