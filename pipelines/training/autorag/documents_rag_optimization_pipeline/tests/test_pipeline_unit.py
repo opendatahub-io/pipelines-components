@@ -17,7 +17,8 @@ _EXPECTED_ROOT_DAG_TASK_IDS = (
     "rag-templates-optimization",
     "search-space-preparation",
     "normalize-extraction-preset",
-    "condition-branches-1",
+    "gpu-accelerator-count",
+    "text-extraction",
     "models-pre-selector",
 )
 
@@ -70,7 +71,7 @@ class TestDocumentsRagOptimizationPipelineUnit:
             Path(tmp_path).unlink(missing_ok=True)
 
     def test_text_extraction_runs_after_search_space_preparation(self):
-        """Heavy text extraction (behind the CPU/GPU branch) is gated behind fail-fast validation."""
+        """Heavy text extraction is gated behind the fail-fast search-space validation."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as tmp:
             tmp_path = tmp.name
         try:
@@ -79,18 +80,13 @@ class TestDocumentsRagOptimizationPipelineUnit:
                 package_path=tmp_path,
             )
             spec = load_pipeline_spec_document(Path(tmp_path))
-            branch_task = spec["root"]["dag"]["tasks"]["condition-branches-1"]
-            assert "search-space-preparation" in branch_task["dependentTasks"]
+            te_task = spec["root"]["dag"]["tasks"]["text-extraction"]
+            assert "search-space-preparation" in te_task["dependentTasks"]
         finally:
             Path(tmp_path).unlink(missing_ok=True)
 
     def test_text_extraction_consumes_the_detected_ocr_language(self):
-        """The OCR bundle follows the language AutoRAG detected from the benchmark questions.
-
-        Extraction sits behind the CPU/GPU branch, so the detected language is fed
-        into ``condition-branches-1`` and forwarded to whichever text-extraction
-        branch runs.
-        """
+        """The OCR bundle follows the language AutoRAG detected from the benchmark questions."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as tmp:
             tmp_path = tmp.name
         try:
@@ -99,10 +95,8 @@ class TestDocumentsRagOptimizationPipelineUnit:
                 package_path=tmp_path,
             )
             spec = load_pipeline_spec_document(Path(tmp_path))
-            branch_params = spec["root"]["dag"]["tasks"]["condition-branches-1"]["inputs"]["parameters"]
-            ocr_lang = branch_params["pipelinechannel--search-space-preparation-detected_ocr_lang"][
-                "taskOutputParameter"
-            ]
+            te_task = spec["root"]["dag"]["tasks"]["text-extraction"]
+            ocr_lang = te_task["inputs"]["parameters"]["ocr_lang"]["taskOutputParameter"]
             assert ocr_lang["producerTask"] == "search-space-preparation"
             assert ocr_lang["outputParameterKey"] == "detected_ocr_lang"
         finally:

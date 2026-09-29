@@ -14,6 +14,12 @@ Keeping the two dimensions separate lets callers request, for example, speed-qua
 extraction on a GPU, and keeps the generated indexing configuration transparent.
 Quality-only components (chunking, model pre-selection, optimization) only ever see
 ``preset`` and are unaffected by ``gpu_acceleration``.
+
+Both dimensions are applied to a single ``text_extraction`` task: the quality tier is
+forwarded as ``preset`` and the hardware choice is turned into an accelerator count
+(``1`` when GPU-accelerated, ``0`` otherwise) that drives the task's GPU request. This
+avoids a CPU/GPU conditional branch, so the compiled DAG stays a single extraction
+step with clean input/output names.
 """
 
 from typing import Callable, Optional
@@ -44,7 +50,18 @@ def normalize_extraction_preset(preset: Optional[str] = None) -> str:
     return preset
 
 
-def gpu_aware_text_extraction(
+@dsl.component(base_image=AUTORAG_IMAGE, install_kfp_package=False)
+def gpu_accelerator_count(gpu_acceleration: bool = False) -> int:
+    """Translate the ``gpu_acceleration`` toggle into an NVIDIA GPU count.
+
+    Returns ``1`` when GPU acceleration is requested and ``0`` otherwise. The value
+    drives ``text_extraction``'s accelerator limit so a single task can run on either
+    CPU or GPU without a conditional branch.
+    """
+    return 1 if gpu_acceleration else 0
+
+
+def configurable_text_extraction(
     *,
     documents_descriptor: "dsl.pipeline_channel.PipelineArtifactChannel",
     normalized_preset: "dsl.pipeline_channel.PipelineParameterChannel",
@@ -52,43 +69,37 @@ def gpu_aware_text_extraction(
     configure: Callable[[dsl.PipelineTask], None],
     ocr_lang=None,
 ):
-    """Build the CPU/GPU text-extraction branch and return its extracted-text artifact.
+    """Build a single text-extraction task and return its extracted-text artifact.
 
     ``normalized_preset`` must be the output of :func:`normalize_extraction_preset`
     and selects the quality tier. ``gpu_acceleration`` is a boolean pipeline
-    parameter/channel that selects the hardware: only the GPU branch requests an
-    NVIDIA GPU and runs extraction with ``gpu_acceleration=True``. Both branches use
-    the same ``preset``, so quality and hardware stay independent.
+    parameter/channel that selects the hardware: it is forwarded to the component (so
+    the CUDA runtime is only used when requested) and converted into the task's
+    NVIDIA GPU count via :func:`gpu_accelerator_count`. Quality and hardware stay
+    independent, and there is no CPU/GPU conditional branch.
 
-    ``configure`` is called with each branch task so callers can attach resources,
+    ``configure`` is called with the extraction task so callers can attach resources,
     caching options, and object-storage secrets.
 
-    ``ocr_lang`` (a pipeline parameter/channel or ``None``) is forwarded to both
-    branches so the RapidOCR model bundle matches the corpus language regardless of
-    whether extraction runs on CPU or GPU.
+    ``ocr_lang`` (a pipeline parameter/channel or ``None``) is forwarded so the
+    RapidOCR model bundle matches the corpus language.
     """
-    with dsl.If(gpu_acceleration == True, name="gpu-extraction"):  # noqa: E712 -- KFP channels require ``==`` equality.
-        gpu_task = text_extraction(
-            documents_descriptor=documents_descriptor,
-            preset=normalized_preset,
-            gpu_acceleration=True,
-            ocr_lang=ocr_lang,
-        )
-        gpu_task.set_display_name("text-extraction-gpu")
-        configure(gpu_task)
-        gpu_task.set_accelerator_type(GPU_RESOURCE).set_accelerator_limit(1)
+    accelerator_count_task = gpu_accelerator_count(gpu_acceleration=gpu_acceleration)
+    accelerator_count_task.set_caching_options(False)
 
-    with dsl.Else(name="cpu-extraction"):
-        cpu_task = text_extraction(
-            documents_descriptor=documents_descriptor,
-            preset=normalized_preset,
-            gpu_acceleration=False,
-            ocr_lang=ocr_lang,
-        )
-        cpu_task.set_display_name("text-extraction-cpu")
-        configure(cpu_task)
-
-    return dsl.OneOf(
-        gpu_task.outputs["extracted_text"],
-        cpu_task.outputs["extracted_text"],
+    extraction_task = text_extraction(
+        documents_descriptor=documents_descriptor,
+        preset=normalized_preset,
+        gpu_acceleration=gpu_acceleration,
+        ocr_lang=ocr_lang,
     )
+    configure(extraction_task)
+    # A single task requests 0 or 1 GPUs at runtime, so CPU runs compile to
+    # ``nvidia.com/gpu: 0`` and GPU runs to ``nvidia.com/gpu: 1``.
+    extraction_task.set_accelerator_type(GPU_RESOURCE).set_accelerator_limit(accelerator_count_task.output)
+    # Consuming the count only through the accelerator resource field does not register
+    # a DAG ordering edge, so make the dependency explicit: the count must be resolved
+    # before the extraction pod is created.
+    extraction_task.after(accelerator_count_task)
+
+    return extraction_task.outputs["extracted_text"]

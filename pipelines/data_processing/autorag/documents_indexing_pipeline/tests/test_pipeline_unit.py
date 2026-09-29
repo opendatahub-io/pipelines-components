@@ -16,8 +16,9 @@ from kfp_components.utils.pipeline_dag_tasks import (
 from ..pipeline import documents_indexing_pipeline
 
 _EXPECTED_ROOT_DAG_TASK_IDS = (
-    "condition-branches-1",
     "documents-discovery",
+    "gpu-accelerator-count",
+    "text-extraction",
     "documents-indexing",
     "normalize-extraction-preset",
 )
@@ -70,7 +71,7 @@ class TestDocumentsIndexingPipelineUnit:
         )
 
     def test_compiled_pipeline_task_dependencies(self):
-        """Indexing consumes the conditional extraction artifact after validation."""
+        """A single extraction task consumes discovery/preset/GPU-count; indexing follows it."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as tmp:
             tmp_path = tmp.name
         try:
@@ -80,11 +81,12 @@ class TestDocumentsIndexingPipelineUnit:
             )
             spec = load_pipeline_spec_document(Path(tmp_path))
             tasks = spec["root"]["dag"]["tasks"]
-            assert set(tasks["condition-branches-1"]["dependentTasks"]) == {
+            assert set(tasks["text-extraction"]["dependentTasks"]) == {
                 "documents-discovery",
                 "normalize-extraction-preset",
+                "gpu-accelerator-count",
             }
-            assert tasks["documents-indexing"]["dependentTasks"] == ["condition-branches-1"]
+            assert tasks["documents-indexing"]["dependentTasks"] == ["text-extraction"]
         finally:
             Path(tmp_path).unlink(missing_ok=True)
 
@@ -109,7 +111,7 @@ class TestDocumentsIndexingPipelineUnit:
         assert "comp-documents-indexing:" in content
 
     def test_compiled_pipeline_wires_ocr_lang_to_text_extraction(self):
-        """ocr_lang reaches both extraction branches so indexing OCRs the corpus the way the experiment did."""
+        """ocr_lang reaches text extraction so indexing OCRs the corpus the way the experiment did."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as tmp:
             tmp_path = tmp.name
         try:
@@ -123,8 +125,8 @@ class TestDocumentsIndexingPipelineUnit:
 
         assert "componentInputParameter: ocr_lang" in content
 
-    def test_compiled_pipeline_declares_gpu_extraction_resources(self):
-        """Only the gpu_acceleration extraction branch requests an NVIDIA GPU."""
+    def test_compiled_pipeline_declares_parameterized_gpu_resources(self):
+        """The single extraction task requests an NVIDIA GPU count driven by gpu_acceleration."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as tmp:
             tmp_path = tmp.name
         try:
@@ -137,7 +139,8 @@ class TestDocumentsIndexingPipelineUnit:
             Path(tmp_path).unlink(missing_ok=True)
 
         assert "resourceType: nvidia.com/gpu" in content
-        assert "resourceCount: '1'" in content
+        # Count is a runtime parameter (0 or 1) produced by gpu-accelerator-count, not a constant.
+        assert "pipelinechannel--gpu-accelerator-count-Output" in content
 
     @pytest.mark.parametrize(
         ("preset", "expected"),

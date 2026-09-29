@@ -5,7 +5,7 @@ from kfp.kubernetes import use_secret_as_env
 from kfp_components.components.data_processing.autorag.documents_discovery.component import documents_discovery
 from kfp_components.components.data_processing.autorag.documents_indexing.component import documents_indexing
 from kfp_components.utils.autorag_extraction import (
-    gpu_aware_text_extraction,
+    configurable_text_extraction,
     normalize_extraction_preset,
 )
 
@@ -111,7 +111,7 @@ def documents_indexing_pipeline(
         task.set_cpu_request("2").set_memory_request("8Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(MAX_MEMORY)
         set_input_data_secrets(task, input_data_secret_name)
 
-    extracted_text = gpu_aware_text_extraction(
+    extracted_text = configurable_text_extraction(
         documents_descriptor=documents_discovery_task.outputs["discovered_documents"],
         normalized_preset=normalized_preset_task.output,
         gpu_acceleration=gpu_acceleration,

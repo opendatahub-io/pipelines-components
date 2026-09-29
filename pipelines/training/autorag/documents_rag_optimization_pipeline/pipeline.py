@@ -16,7 +16,7 @@ from kfp_components.components.training.autorag.search_space_preparation.compone
     search_space_preparation,
 )
 from kfp_components.utils.autorag_extraction import (
-    gpu_aware_text_extraction,
+    configurable_text_extraction,
     normalize_extraction_preset,
 )
 
@@ -172,7 +172,7 @@ def documents_rag_optimization_pipeline(
 
     # ``ocr_lang`` comes from search space preparation, gating extraction behind it
     # so misconfigured models fail before any heavy document processing starts.
-    extracted_text = gpu_aware_text_extraction(
+    extracted_text = configurable_text_extraction(
         documents_descriptor=documents_discovery_task.outputs["discovered_documents"],
         normalized_preset=normalized_preset,
         gpu_acceleration=gpu_acceleration,
