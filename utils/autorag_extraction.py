@@ -67,7 +67,7 @@ def gpu_aware_text_extraction(
     branches so the RapidOCR model bundle matches the corpus language regardless of
     whether extraction runs on CPU or GPU.
     """
-    with dsl.If(gpu_acceleration == True):  # noqa: E712 -- KFP channels require ``==`` equality.
+    with dsl.If(gpu_acceleration == True, name="gpu-extraction"):  # noqa: E712 -- KFP channels require ``==`` equality.
         gpu_task = text_extraction(
             documents_descriptor=documents_descriptor,
             preset=normalized_preset,
@@ -78,7 +78,7 @@ def gpu_aware_text_extraction(
         configure(gpu_task)
         gpu_task.set_accelerator_type(GPU_RESOURCE).set_accelerator_limit(1)
 
-    with dsl.Else():
+    with dsl.Else(name="cpu-extraction"):
         cpu_task = text_extraction(
             documents_descriptor=documents_descriptor,
             preset=normalized_preset,
