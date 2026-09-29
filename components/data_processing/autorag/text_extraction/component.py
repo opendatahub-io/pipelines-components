@@ -177,6 +177,8 @@ def text_extraction(
             suffixes = [Path(document["key"]).suffix.lower() for document in documents]
             candidate_metrics = {
                 "documents_total": len(documents),
+                "extraction_device": "GPU (CUDA)" if gpu_acceleration else "CPU",
+                "gpu_acceleration": gpu_acceleration,
                 "layout_candidate_documents": sum(suffix in LAYOUT_OCR_EXTENSIONS for suffix in suffixes),
                 "layout_model": "Docling Layout Heron",
                 "ocr_candidate_documents": sum(suffix in LAYOUT_OCR_EXTENSIONS for suffix in suffixes),
