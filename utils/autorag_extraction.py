@@ -74,6 +74,7 @@ def gpu_aware_text_extraction(
             gpu_acceleration=True,
             ocr_lang=ocr_lang,
         )
+        gpu_task.set_display_name("text-extraction-gpu")
         configure(gpu_task)
         gpu_task.set_accelerator_type(GPU_RESOURCE).set_accelerator_limit(1)
 
@@ -84,6 +85,7 @@ def gpu_aware_text_extraction(
             gpu_acceleration=False,
             ocr_lang=ocr_lang,
         )
+        cpu_task.set_display_name("text-extraction-cpu")
         configure(cpu_task)
 
     return dsl.OneOf(
