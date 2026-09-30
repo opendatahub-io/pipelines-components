@@ -16,8 +16,7 @@ _EXPECTED_ROOT_DAG_TASK_IDS = (
     "documents-discovery",
     "rag-templates-optimization",
     "search-space-preparation",
-    "normalize-extraction-preset",
-    "gpu-accelerator-count",
+    "prepare-extraction-inputs",
     "text-extraction",
     "models-pre-selector",
 )

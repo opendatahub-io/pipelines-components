@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from kfp import compiler
 from kfp_components.components.data_processing.autorag.documents_indexing.component import documents_indexing
-from kfp_components.utils.autorag_extraction import normalize_extraction_preset
+from kfp_components.utils.autorag_extraction import prepare_extraction_inputs
 from kfp_components.utils.pipeline_dag_tasks import (
     assert_compiled_pipeline_root_dag_task_ids,
     load_pipeline_spec_document,
@@ -17,10 +17,9 @@ from ..pipeline import documents_indexing_pipeline
 
 _EXPECTED_ROOT_DAG_TASK_IDS = (
     "documents-discovery",
-    "gpu-accelerator-count",
+    "prepare-extraction-inputs",
     "text-extraction",
     "documents-indexing",
-    "normalize-extraction-preset",
 )
 
 
@@ -71,7 +70,7 @@ class TestDocumentsIndexingPipelineUnit:
         )
 
     def test_compiled_pipeline_task_dependencies(self):
-        """A single extraction task consumes discovery/preset/GPU-count; indexing follows it."""
+        """Extraction consumes discovery and the resolved inputs; indexing follows it."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as tmp:
             tmp_path = tmp.name
         try:
@@ -83,8 +82,7 @@ class TestDocumentsIndexingPipelineUnit:
             tasks = spec["root"]["dag"]["tasks"]
             assert set(tasks["text-extraction"]["dependentTasks"]) == {
                 "documents-discovery",
-                "normalize-extraction-preset",
-                "gpu-accelerator-count",
+                "prepare-extraction-inputs",
             }
             assert tasks["documents-indexing"]["dependentTasks"] == ["text-extraction"]
         finally:
@@ -139,8 +137,8 @@ class TestDocumentsIndexingPipelineUnit:
             Path(tmp_path).unlink(missing_ok=True)
 
         assert "resourceType: nvidia.com/gpu" in content
-        # Count is a runtime parameter (0 or 1) produced by gpu-accelerator-count, not a constant.
-        assert "pipelinechannel--gpu-accelerator-count-Output" in content
+        # Count is a runtime value (0 or 1) produced by prepare-extraction-inputs, not a constant.
+        assert "pipelinechannel--prepare-extraction-inputs-gpu_count" in content
 
     @pytest.mark.parametrize(
         ("preset", "expected"),
@@ -152,13 +150,18 @@ class TestDocumentsIndexingPipelineUnit:
         ],
     )
     def test_normalizes_extraction_preset(self, preset, expected):
-        """Missing and empty presets keep existing indexing runs at the speed tier."""
-        assert normalize_extraction_preset.python_func(preset=preset) == expected
+        """Missing and empty presets keep extraction at the speed tier."""
+        assert prepare_extraction_inputs.python_func(preset=preset).preset == expected
 
     def test_rejects_invalid_extraction_preset(self):
         """Extraction preset validation names the supported values."""
         with pytest.raises(ValueError, match="speed.*balanced"):
-            normalize_extraction_preset.python_func(preset="turbo")
+            prepare_extraction_inputs.python_func(preset="turbo")
+
+    @pytest.mark.parametrize(("gpu_acceleration", "expected_count"), [(False, 0), (True, 1)])
+    def test_gpu_acceleration_maps_to_accelerator_count(self, gpu_acceleration, expected_count):
+        """The boolean toggle becomes the integer NVIDIA GPU count the task requests."""
+        assert prepare_extraction_inputs.python_func(gpu_acceleration=gpu_acceleration).gpu_count == expected_count
 
     def test_compiled_pipeline_wires_s3_maas_and_vector_db_secrets(self):
         """S3 secrets attach to discovery/extraction; MaaS + vector-DB secrets attach to indexing."""

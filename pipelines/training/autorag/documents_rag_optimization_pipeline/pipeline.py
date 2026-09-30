@@ -3,6 +3,9 @@ from kfp.kubernetes import use_secret_as_env
 from kfp_components.components.data_processing.autorag.documents_discovery import (
     documents_discovery,
 )
+from kfp_components.components.data_processing.autorag.text_extraction.component import (
+    text_extraction,
+)
 from kfp_components.components.training.autorag.component_stage_map_publisher import (
     publish_component_stage_map,
 )
@@ -15,10 +18,7 @@ from kfp_components.components.training.autorag.rag_templates_optimization.compo
 from kfp_components.components.training.autorag.search_space_preparation.component import (
     search_space_preparation,
 )
-from kfp_components.utils.autorag_extraction import (
-    configurable_text_extraction,
-    normalize_extraction_preset,
-)
+from kfp_components.utils.autorag_extraction import GPU_RESOURCE, prepare_extraction_inputs
 
 MAX_CPUS = "32"
 MAX_MEMORY = "64Gi"
@@ -30,6 +30,14 @@ PIPELINE_NAME = "documents-rag-optimization-pipeline"
 MAAS_SECRET_KEYS = {
     "MAAS_BASE_URL": "MAAS_BASE_URL",
     "MAAS_API_KEY": "MAAS_API_KEY",
+}
+
+# S3 credentials for text extraction (unprefixed, unlike document discovery below).
+EXTRACTION_S3_SECRET_KEYS = {
+    "AWS_ACCESS_KEY_ID": "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY": "AWS_SECRET_ACCESS_KEY",
+    "AWS_S3_ENDPOINT": "AWS_S3_ENDPOINT",
+    "AWS_DEFAULT_REGION": "AWS_DEFAULT_REGION",
 }
 
 
@@ -137,10 +145,10 @@ def documents_rag_optimization_pipeline(
         MAX_MEMORY
     )
 
-    # Normalize once (blank/empty -> "speed") and reuse everywhere so extraction and
-    # the quality components agree on the effective preset.
-    normalized_preset_task = normalize_extraction_preset(preset=preset)
-    normalized_preset = normalized_preset_task.output
+    # Resolve preset + GPU count once and reuse the preset across every quality
+    # component so they all agree on the effective tier.
+    extraction_inputs_task = prepare_extraction_inputs(preset=preset, gpu_acceleration=gpu_acceleration)
+    normalized_preset = extraction_inputs_task.outputs["preset"]
 
     search_space_preparation_task = search_space_preparation(
         test_data=documents_discovery_task.outputs["test_data"],
@@ -154,31 +162,24 @@ def documents_rag_optimization_pipeline(
         MAX_CPUS
     ).set_memory_limit(MAX_MEMORY)
 
-    def configure_extraction(task):
-        task.after(search_space_preparation_task)
-        task.set_caching_options(False)
-        task.set_cpu_request("4").set_memory_request("16Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(MAX_MEMORY)
-        use_secret_as_env(
-            task,
-            secret_name=input_data_secret_name,
-            secret_key_to_env={
-                "AWS_ACCESS_KEY_ID": "AWS_ACCESS_KEY_ID",
-                "AWS_SECRET_ACCESS_KEY": "AWS_SECRET_ACCESS_KEY",
-                "AWS_S3_ENDPOINT": "AWS_S3_ENDPOINT",
-                "AWS_DEFAULT_REGION": "AWS_DEFAULT_REGION",
-            },
-            optional=True,
-        )
-
-    # ``ocr_lang`` comes from search space preparation, gating extraction behind it
-    # so misconfigured models fail before any heavy document processing starts.
-    extracted_text = configurable_text_extraction(
+    # ocr_lang comes from search space preparation; gating extraction behind it fails
+    # misconfigured models before any heavy document processing starts.
+    text_extraction_task = text_extraction(
         documents_descriptor=documents_discovery_task.outputs["discovered_documents"],
-        normalized_preset=normalized_preset,
+        preset=normalized_preset,
         gpu_acceleration=gpu_acceleration,
-        configure=configure_extraction,
         ocr_lang=search_space_preparation_task.outputs["detected_ocr_lang"],
     )
+    text_extraction_task.after(search_space_preparation_task)
+    text_extraction_task.set_caching_options(False)
+    text_extraction_task.set_cpu_request("4").set_memory_request("16Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(
+        MAX_MEMORY
+    )
+    use_secret_as_env(text_extraction_task, input_data_secret_name, EXTRACTION_S3_SECRET_KEYS, optional=True)
+    text_extraction_task.set_accelerator_type(GPU_RESOURCE).set_accelerator_limit(
+        extraction_inputs_task.outputs["gpu_count"]
+    )
+    extracted_text = text_extraction_task.outputs["extracted_text"]
 
     models_pre_selector_task = models_pre_selector(
         search_space_report=search_space_preparation_task.outputs["search_space_report"],

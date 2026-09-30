@@ -4,13 +4,18 @@ from kfp import dsl
 from kfp.kubernetes import use_secret_as_env
 from kfp_components.components.data_processing.autorag.documents_discovery.component import documents_discovery
 from kfp_components.components.data_processing.autorag.documents_indexing.component import documents_indexing
-from kfp_components.utils.autorag_extraction import (
-    configurable_text_extraction,
-    normalize_extraction_preset,
-)
+from kfp_components.components.data_processing.autorag.text_extraction.component import text_extraction
+from kfp_components.utils.autorag_extraction import GPU_RESOURCE, prepare_extraction_inputs
 
 MAX_CPUS = "32"
 MAX_MEMORY = "64Gi"
+
+INPUT_DATA_SECRET_KEYS = {
+    "AWS_ACCESS_KEY_ID": "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY": "AWS_SECRET_ACCESS_KEY",
+    "AWS_S3_ENDPOINT": "AWS_S3_ENDPOINT",
+    "AWS_DEFAULT_REGION": "AWS_DEFAULT_REGION",
+}
 
 
 @dsl.pipeline(
@@ -36,7 +41,7 @@ def documents_indexing_pipeline(
     chunk_overlap: int = 0,
     batch_size: int = 20,
     ocr_lang: Optional[str] = None,
-    preset: Optional[str] = None,
+    preset: str = "speed",
     gpu_acceleration: bool = False,
 ):
     """Build a production vector index from documents for AutoRAG.
@@ -73,9 +78,8 @@ def documents_indexing_pipeline(
             so override it when the corpus is in a different language. Chinese selects
             the Chinese bundle; omitting it selects the English bundle, which covers all
             Latin-script languages.
-        preset: Extraction quality tier. ``speed`` (no table parsing) or
-            ``balanced`` (table parsing). Omitted, ``null``, or empty values are
-            normalized to ``speed``. Orthogonal to ``gpu_acceleration``.
+        preset: Extraction quality tier. ``speed`` (default, no table parsing) or
+            ``balanced`` (table parsing). Orthogonal to ``gpu_acceleration``.
         gpu_acceleration: When True, run Docling text extraction on one NVIDIA GPU
             (the extraction task requests ``nvidia.com/gpu``). Defaults to False
             (CPU extraction). Independent of ``preset``, so any quality tier can run
@@ -90,39 +94,30 @@ def documents_indexing_pipeline(
         MAX_MEMORY
     )
 
-    def set_input_data_secrets(task, secret_name):
-        use_secret_as_env(
-            task,
-            secret_name=secret_name,
-            secret_key_to_env={
-                "AWS_ACCESS_KEY_ID": "AWS_ACCESS_KEY_ID",
-                "AWS_SECRET_ACCESS_KEY": "AWS_SECRET_ACCESS_KEY",
-                "AWS_S3_ENDPOINT": "AWS_S3_ENDPOINT",
-                "AWS_DEFAULT_REGION": "AWS_DEFAULT_REGION",
-            },
-        )
+    use_secret_as_env(documents_discovery_task, input_data_secret_name, INPUT_DATA_SECRET_KEYS)
 
-    set_input_data_secrets(documents_discovery_task, input_data_secret_name)
+    extraction_inputs_task = prepare_extraction_inputs(preset=preset, gpu_acceleration=gpu_acceleration)
+    extraction_inputs_task.set_caching_options(False)
 
-    normalized_preset_task = normalize_extraction_preset(preset=preset)
-
-    def configure_extraction(task):
-        task.set_caching_options(False)
-        task.set_cpu_request("2").set_memory_request("8Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(MAX_MEMORY)
-        set_input_data_secrets(task, input_data_secret_name)
-
-    extracted_text = configurable_text_extraction(
+    text_extraction_task = text_extraction(
         documents_descriptor=documents_discovery_task.outputs["discovered_documents"],
-        normalized_preset=normalized_preset_task.output,
+        preset=extraction_inputs_task.outputs["preset"],
         gpu_acceleration=gpu_acceleration,
-        configure=configure_extraction,
         ocr_lang=ocr_lang,
+    )
+    text_extraction_task.set_caching_options(False)
+    text_extraction_task.set_cpu_request("2").set_memory_request("8Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(
+        MAX_MEMORY
+    )
+    use_secret_as_env(text_extraction_task, input_data_secret_name, INPUT_DATA_SECRET_KEYS)
+    text_extraction_task.set_accelerator_type(GPU_RESOURCE).set_accelerator_limit(
+        extraction_inputs_task.outputs["gpu_count"]
     )
 
     documents_indexing_task = documents_indexing(
         embedding_params=embedding_params,
         embedding_model_id=embedding_model_id,
-        extracted_text=extracted_text,
+        extracted_text=text_extraction_task.outputs["extracted_text"],
         chunking_method=chunking_method,
         chunk_size=chunk_size,
         chunk_overlap=chunk_overlap,
