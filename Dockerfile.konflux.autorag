@@ -15,14 +15,6 @@ COPY pipelines/training/autorag/documents_rag_optimization_pipeline/requirements
 ## TODO: Ensure build isolation
 RUN pip install --index-url https://console.redhat.com/api/pypi/public-rhai/rhoai/3.6-EA2/cpu-ubi9-test/simple/ --no-cache-dir -r /tmp/requirements.txt
 
-# Temporary workaround for docling-core versions that reject the MIME type
-# emitted by Docling's M4A ASR path. Remove when the upstream fix is available.
-RUN ORIGIN_FILE="$(python -c 'import inspect; from docling_core.types.doc.common.origin import DocumentOrigin; print(inspect.getfile(DocumentOrigin))')" && \
-    sed -i '/"audio\/mp3",/a\
-        "audio/m4a",\
-        "audio/mp4",' "$ORIGIN_FILE" && \
-    python -c 'from docling_core.types.doc import DocumentOrigin; DocumentOrigin(filename="test.m4a", mimetype="audio/m4a", binary_hash=0); print("M4A MIME workaround enabled")'
-
 # Docling models for offline text extraction (RHAI OGX modelcar). Its /models/docling/models/
 # is already Docling's artifacts layout (docling-project--*/ plus RapidOcr/), so it is copied
 # wholesale. RapidOcr/ is what ai4rag requires for OCR: it resolves OCR models relative to
@@ -36,8 +28,7 @@ COPY --from=docling-ogx-modelcar \
 COPY --from=whisper-modelcar \
      /models/ \
      /opt/app-root/docling-artifacts/models/
-RUN chown -R 1001:0 /opt/app-root/docling-artifacts && \
-    chmod -R g+rw /opt/app-root/docling-artifacts
+RUN chown -R 1001:0 /opt/app-root/docling-artifacts
 USER default
 
 LABEL com.redhat.component="odh-autorag-container" \
