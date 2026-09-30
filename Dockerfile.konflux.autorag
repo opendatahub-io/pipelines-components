@@ -36,7 +36,8 @@ COPY --from=docling-ogx-modelcar \
 COPY --from=whisper-modelcar \
      /models/ \
      /opt/app-root/docling-artifacts/models/
-RUN chown -R 1001:0 /opt/app-root/docling-artifacts
+RUN chown -R 1001:0 /opt/app-root/docling-artifacts && \
+    chmod -R g+rw /opt/app-root/docling-artifacts
 USER default
 
 LABEL com.redhat.component="odh-autorag-container" \
