@@ -31,8 +31,6 @@ from kfp_components.components.data_processing.autorag.text_extraction.component
 from kfp_components.utils.consts import AUTORAG_IMAGE  # pyright: ignore[reportMissingImports]
 
 GPU_RESOURCE = "nvidia.com/gpu"
-DEFAULT_EXTRACTION_PRESET = "speed"
-VALID_EXTRACTION_PRESETS = ("speed", "balanced")
 
 
 @dsl.component(base_image=AUTORAG_IMAGE, install_kfp_package=False)
