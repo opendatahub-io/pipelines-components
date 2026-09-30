@@ -105,9 +105,7 @@ def text_extraction(
         os.environ["DOCLING_DEVICE"] = "cuda"
 
     do_table_structure = PRESET_DO_TABLE_STRUCTURE[preset]
-    logging.info(
-        "Preset %r: do_table_structure=%s, gpu_acceleration=%s", preset, do_table_structure, gpu_acceleration
-    )
+    logging.info("Preset %r: do_table_structure=%s, gpu_acceleration=%s", preset, do_table_structure, gpu_acceleration)
 
     # Paths are relative to $DOCLING_ARTIFACTS_PATH/RapidOcr/ and mirror the on-disk
     # layout of the RHAI OGX modelcar baked into the AutoRAG image. The classifier is
