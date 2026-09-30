@@ -29,13 +29,15 @@ def documents_discovery(
     Discovers input documents in S3 and optionally downloads benchmark test data
     for document-prioritised sampling.  When ``test_data_bucket_name`` is provided,
     the component first downloads and samples the benchmark JSON, then uses the
-    referenced document IDs to prioritise discovery.
+    referenced document keys to prioritise discovery and to validate that every
+    referenced document was actually ingested.
 
     Args:
         input_data_bucket_name: S3 (or compatible) bucket containing input documents.
-        input_data_keys: Paths to folders with input documents within the bucket.  Only the
-            first entry is used; the remaining ones are ignored until multi-folder discovery
-            is supported.  Leave empty to discover the whole bucket.
+        input_data_keys: Paths to folders with input documents within the bucket, 1-10 of them.
+            All of them are discovered and merged into a single corpus deduplicated by object
+            key, so overlapping folders are safe and the size cap applies to the whole corpus.
+            Leave empty to discover the whole bucket.  More than 10 folders raises a ``ValueError``.
         test_data_bucket_name: S3 bucket containing the test data file.  Leave empty
             to skip test data loading (e.g. for the indexing pipeline).
         test_data_path_key: S3 object key to the JSON test data file.
@@ -49,6 +51,13 @@ def documents_discovery(
             Empty when test data loading is skipped.
         component_status: Output artifact containing stage-level progress tracking.
         embedded_artifact: Embedded ``autorag.shared`` helpers injected by KFP at runtime.
+
+    Raises:
+        ValueError: When more than 10 input data keys are given.
+        BenchmarkKeyError: When a ``correct_answer_document_keys`` entry in the benchmark
+            matches no discovered document, or matches a file name shared by documents in
+            two folders.  Such a question would otherwise be scored against no grounding
+            at all.
 
     Environment variables (required when run with pipeline secret injection):
         AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_S3_ENDPOINT for input documents
@@ -87,6 +96,17 @@ def documents_discovery(
         if component_status is not None:
             status.set_metadata(display_name="Documents Discovery Status")
             component_status.metadata["display_name"] = "Documents Discovery Status"
+
+        max_input_data_keys = 10
+        # Deduplicate the way discovery does, so the same folder selected twice
+        # does not count against the limit.
+        input_data_prefixes = list(dict.fromkeys(key.strip().lstrip("/") for key in input_data_keys or []))
+        if len(input_data_prefixes) > max_input_data_keys:
+            raise ValueError(
+                f"Received {len(input_data_prefixes)} input data keys, but at most {max_input_data_keys} "
+                f"locations can be ingested in a single run. Reduce the selection to "
+                f"{max_input_data_keys} folders or fewer, or leave it empty to ingest the whole bucket."
+            )
 
         test_data_doc_names = None
         load_benchmark = bool(test_data_bucket_name and test_data_path_key)
@@ -128,18 +148,9 @@ def documents_discovery(
             else:
                 input_s3_client = create_s3_client()
 
-            # Discovery accepts a single prefix, so only the first key is honoured.
-            input_data_prefix = input_data_keys[0] if input_data_keys else ""
-            if input_data_keys and len(input_data_keys) > 1:
-                logging.warning(
-                    "Received %d input data keys; only the first one (%s) is used for discovery.",
-                    len(input_data_keys),
-                    input_data_prefix,
-                )
-
             result = discover_documents(
                 bucket_name=input_data_bucket_name,
-                prefix=input_data_prefix,
+                prefixes=input_data_prefixes,
                 test_data_doc_names=test_data_doc_names,
                 sampling_enabled=sampling_enabled,
                 sampling_max_size_gb=sampling_max_size,

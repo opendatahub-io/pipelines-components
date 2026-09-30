@@ -37,6 +37,8 @@ _DEFAULT_KWARGS = {
     "cpu_limits": "2",
     "memory_limits": "8Gi",
     "force_recreate": False,
+    "genai_use_case": "",
+    "tokenizer_mode": "auto",
 }
 
 # The expected isvc_name derived from "org/Model-Name"
@@ -104,8 +106,21 @@ def test_component_signature():
         "cpu_limits",
         "memory_limits",
         "force_recreate",
+        "genai_use_case",
+        "tokenizer_mode",
     }
     assert expected == input_names
+
+    assert spec.inputs["genai_use_case"].default == ""
+    assert spec.inputs["tokenizer_mode"].default == "auto"
+
+
+def test_vllm_image_is_defined_inside_embedded_component():
+    """The embedded executor source must not depend on module globals."""
+    command = " ".join(model_deployment.component_spec.implementation.container.command)
+
+    assert "_VLLM_IMAGE = (" in command
+    assert '"image": _VLLM_IMAGE' in command
 
 
 # ---------------------------------------------------------------------------
@@ -147,18 +162,30 @@ def test_creates_serving_runtime_when_not_found(mock_api_cls, mock_config, mock_
         call_count["n"] += 1
         # After create calls have been made, the ready-check poll calls
         # get for inferenceservices again. Return ready object for those.
-        if plural == "inferenceservices" and call_count["n"] > 2:
+        if plural == "inferenceservices" and call_count["n"] > 3:
             return ready_obj
         return original_side_effect(group, version, namespace, plural, name)
 
     mock_api.get_namespaced_custom_object.side_effect = _get_with_ready
 
-    result = model_deployment.python_func(**_DEFAULT_KWARGS)
+    kwargs = {
+        **_DEFAULT_KWARGS,
+        "genai_use_case": "text-generation",
+        "tokenizer_mode": "slow",
+    }
+    result = model_deployment.python_func(**kwargs)
 
     # ServingRuntime was created (not patched)
     create_calls = mock_api.create_namespaced_custom_object.call_args_list
     sr_creates = [c for c in create_calls if c.kwargs.get("plural") == "servingruntimes"]
     assert len(sr_creates) == 1
+    runtime = sr_creates[0].kwargs["body"]
+    assert "--tokenizer-mode=slow" in runtime["spec"]["containers"][0]["args"]
+
+    isvc_creates = [c for c in create_calls if c.kwargs.get("plural") == "inferenceservices"]
+    assert len(isvc_creates) == 1
+    annotations = isvc_creates[0].kwargs["body"]["metadata"]["annotations"]
+    assert annotations["opendatahub.io/genai-use-case"] == "text-generation"
 
     # Verify patch was NOT called for serving runtimes
     patch_calls = mock_api.patch_namespaced_custom_object.call_args_list
@@ -258,6 +285,10 @@ def test_patches_isvc_in_place_by_default(mock_api_cls, mock_config, mock_sleep)
     patch_calls = mock_api.patch_namespaced_custom_object.call_args_list
     isvc_patches = [c for c in patch_calls if c.kwargs.get("plural") == "inferenceservices"]
     assert len(isvc_patches) == 1
+
+    isvc_patch = isvc_patches[0].kwargs["body"]
+    patch_annotations = isvc_patch["metadata"]["annotations"]
+    assert patch_annotations["opendatahub.io/genai-use-case"] is None
 
     # No delete was issued
     mock_api.delete_namespaced_custom_object.assert_not_called()

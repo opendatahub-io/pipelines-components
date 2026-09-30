@@ -10,10 +10,6 @@ explicit API URL or token required.
 from kfp import dsl
 from kfp_components.utils.consts import RAY_RAG_BASE_IMAGE  # pyright: ignore[reportMissingImports]
 
-_VLLM_IMAGE = (
-    "registry.redhat.io/rhaiis/vllm-cuda-rhel9@sha256:094db84a1da5e8a575d0c9eade114fa30f4a2061064a338e3e032f3578f8082a"
-)
-
 
 @dsl.component(
     base_image=RAY_RAG_BASE_IMAGE,
@@ -35,6 +31,8 @@ def model_deployment(
     cpu_limits: str = "2",
     memory_limits: str = "8Gi",
     force_recreate: bool = False,
+    genai_use_case: str = "",
+    tokenizer_mode: str = "auto",
 ) -> str:
     """Deploy a model on OpenShift AI using vLLM InferenceService.
 
@@ -59,6 +57,14 @@ def model_deployment(
         memory_limits: Memory limits for the predictor pod.
         force_recreate: If True, delete and recreate the InferenceService
             (causes downtime). If False (default), patch in place.
+        genai_use_case: Tasks performed by the deployed model, shown as the
+            Use case field in the RHOAI Model deployment details page. Examples
+            include chat, multimodal, and natural language processing. Leave
+            empty to omit the annotation.
+        tokenizer_mode: vLLM tokenizer mode. Supported values are ``auto``
+            (use the fast tokenizer when available), ``slow`` (force the
+            HuggingFace slow tokenizer), and ``mistral`` (use the
+            ``mistral_common`` tokenizer).
 
     Returns:
         The inference endpoint URL.
@@ -67,6 +73,13 @@ def model_deployment(
 
     from kubernetes import client as kclient
     from kubernetes import config
+
+    # KFP embeds the function source in the executor and does not include
+    # module-level globals.
+    _VLLM_IMAGE = (
+        "registry.redhat.io/rhaiis/vllm-cuda-rhel9@sha256:"
+        "094db84a1da5e8a575d0c9eade114fa30f4a2061064a338e3e032f3578f8082a"
+    )
 
     config.load_incluster_config()
     custom_api = kclient.CustomObjectsApi()
@@ -130,6 +143,7 @@ def model_deployment(
                     "command": ["python", "-m", "vllm.entrypoints.openai.api_server"],
                     "args": [
                         "--port=8080",
+                        f"--tokenizer-mode={tokenizer_mode}",
                         "--model=/mnt/models",
                         "--served-model-name={{.Name}}",
                         f"--max-model-len={max_model_len}",
@@ -195,9 +209,10 @@ def model_deployment(
         "opendatahub.io/hardware-profile-name": hardware_profile_name,
         "opendatahub.io/hardware-profile-namespace": hardware_profile_namespace,
         "opendatahub.io/model-type": "generative",
-        "opendatahub.io/genai-use-case": "ray-rag",
         "openshift.io/display-name": isvc_name,
     }
+    if genai_use_case:
+        isvc_annotations["opendatahub.io/genai-use-case"] = genai_use_case
     if hp_resource_version:
         isvc_annotations["opendatahub.io/hardware-profile-resource-version"] = hp_resource_version
 
@@ -274,6 +289,8 @@ def model_deployment(
         existing = False
 
     if existing:
+        if not genai_use_case:
+            isvc["metadata"]["annotations"]["opendatahub.io/genai-use-case"] = None
         custom_api.patch_namespaced_custom_object(
             group="serving.kserve.io",
             version="v1beta1",

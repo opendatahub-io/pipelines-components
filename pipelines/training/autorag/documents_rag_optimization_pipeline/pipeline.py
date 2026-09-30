@@ -53,12 +53,12 @@ def documents_rag_optimization_pipeline(
     input_data_secret_name: str,
     input_data_bucket_name: str,
     maas_secret_name: str,
-    vector_db_secret_name: str,
+    db_secret_name: str,
     embedding_models: list[str],
     generation_models: list[str],
     input_data_keys: list[str] = [],
     optimization_metric: str = "overall_score",
-    optimization_max_rag_patterns: int = 8,
+    optimization_max_rag_patterns: int = 5,
     preset: str = "speed",
     gpu_acceleration: bool = False,
 ):
@@ -89,7 +89,7 @@ def documents_rag_optimization_pipeline(
         input_data_bucket_name: S3 (or compatible) bucket name for the input documents.
         maas_secret_name: Name of the Kubernetes secret for the MaaS inference connection.
             The secret must define: MAAS_BASE_URL, MAAS_API_KEY.
-        vector_db_secret_name: Name of the Kubernetes secret carrying the vector database
+        db_secret_name: Name of the Kubernetes secret carrying the database
             configuration. The env-var prefix selects the backend: ``MILVUS_*`` keys (at least
             ``MILVUS_URI``) select Milvus, ``PGVECTOR_*`` keys select PGVector.
         embedding_models: List of embedding model identifiers to use in the search space.
@@ -98,16 +98,16 @@ def documents_rag_optimization_pipeline(
         generation_models: List of foundation/generation model identifiers to use in the
             search space. Required: MaaS exposes no metadata to distinguish model types, so
             generation models can no longer be inferred and must be declared explicitly.
-        input_data_keys: Object keys (paths) of the input documents in the input data bucket.
-            Only the first entry is used by document discovery.
+        input_data_keys: Up to ten object-key prefixes for input documents in the input
+            data bucket. Every location is discovered and merged into one deduplicated corpus.
         optimization_metric: Quality metric used to rank RAG patterns. Use an
             evaluator-qualified value such as ``"unitxt:faithfulness"``,
             ``"ragas:context_precision"``, or ``"custom:overall_score"`` (default).
             The ``speed`` preset supports Unitxt and custom metrics; ``balanced`` also
             supports RAGAS metrics. ``custom:overall_score`` aggregates Unitxt outputs
             for ``speed`` and Unitxt plus RAGAS outputs for ``balanced``.
-        optimization_max_rag_patterns: Maximum number of RAG patterns to generate. Passed to ai4rag
-            (max_number_of_rag_patterns). Defaults to 8.
+        optimization_max_rag_patterns: Maximum number of optimization iterations
+            and published RAG patterns (4-10, default 5).
         preset: Extraction and optimization quality tier. "speed" (default) uses
             recursive chunking, no table structure parsing, and no contextual
             enrichment. "balanced" enables Docling table layout parsing, hybrid
@@ -193,7 +193,7 @@ def documents_rag_optimization_pipeline(
         test_data=documents_discovery_task.outputs["test_data"],
         search_space_mps_report=models_pre_selector_task.outputs["search_space_mps_report"],
         maas_secret_name=maas_secret_name,
-        vector_db_secret_name=vector_db_secret_name,
+        db_secret_name=db_secret_name,
         input_data_secret_name=input_data_secret_name,
         input_data_bucket_name=input_data_bucket_name,
         optimization_settings={
@@ -240,7 +240,7 @@ def documents_rag_optimization_pipeline(
 
     use_secret_as_env(
         rag_optimization_task,
-        vector_db_secret_name,
+        db_secret_name,
         secret_key_to_env={
             "MILVUS_URI": "MILVUS_URI",
             "MILVUS_TOKEN": "MILVUS_TOKEN",

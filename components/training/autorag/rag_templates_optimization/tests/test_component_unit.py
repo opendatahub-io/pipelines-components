@@ -183,11 +183,11 @@ def _write_json(path: Path, data) -> None:
 
 
 def _pattern_payload(name: str) -> dict:
-    """Build a pattern payload with the ``settings`` shape ``_generate_output_artifacts`` expects."""
+    """Build a pattern payload with the ai4rag ``settings`` shape used for artifact generation."""
     return {
         "name": name,
         "settings": {
-            "vector_store_binding": {"provider_type": "milvus", "collection_name": f"{name}-collection"},
+            "store_binding": {"provider_type": "milvus", "collection_name": f"{name}-collection"},
             "embedding": {"model_id": "em-0", "embedding_params": {}},
             "chunking": {"method": "recursive", "chunk_size": 512, "chunk_overlap": 64},
         },
@@ -245,7 +245,7 @@ class TestRagTemplatesOptimizationInterface:
             "rag_patterns",
             "test_data_key",
             "maas_secret_name",
-            "vector_db_secret_name",
+            "db_secret_name",
             "input_data_secret_name",
             "input_data_bucket_name",
             "leaderboard",
@@ -257,7 +257,7 @@ class TestRagTemplatesOptimizationInterface:
         ):
             assert name in params
         assert "evaluators" not in params
-        for name in ("maas_secret_name", "vector_db_secret_name", "input_data_secret_name", "input_data_bucket_name"):
+        for name in ("maas_secret_name", "db_secret_name", "input_data_secret_name", "input_data_bucket_name"):
             assert sig.parameters[name].default is inspect.Parameter.empty
         assert sig.parameters["preset"].default == "speed"
         assert sig.parameters["component_status"].default is None
@@ -280,7 +280,7 @@ class TestRagTemplatesOptimizationValidation:
                     rag_patterns=rag_patterns,
                     test_data_key="key.json",
                     maas_secret_name="maas-secret",
-                    vector_db_secret_name="vector-db-secret",
+                    db_secret_name="vector-db-secret",
                     input_data_secret_name="s3-secret",
                     input_data_bucket_name="bucket",
                     leaderboard=leaderboard_html,
@@ -302,7 +302,7 @@ class TestRagTemplatesOptimizationValidation:
                         rag_patterns=rag_patterns,
                         test_data_key="key.json",
                         maas_secret_name="maas-secret",
-                        vector_db_secret_name="vector-db-secret",
+                        db_secret_name="vector-db-secret",
                         input_data_secret_name="s3-secret",
                         input_data_bucket_name="bucket",
                         leaderboard=leaderboard_html,
@@ -323,7 +323,7 @@ class TestRagTemplatesOptimizationValidation:
                     rag_patterns=rag_patterns,
                     test_data_key="key.json",
                     maas_secret_name="maas-secret",
-                    vector_db_secret_name="vector-db-secret",
+                    db_secret_name="vector-db-secret",
                     input_data_secret_name="s3-secret",
                     input_data_bucket_name="bucket",
                     leaderboard=leaderboard_html,
@@ -345,14 +345,15 @@ class TestRagTemplatesOptimizationValidation:
                     rag_patterns=rag_patterns,
                     test_data_key=test_data_key,
                     maas_secret_name="maas-secret",
-                    vector_db_secret_name="vector-db-secret",
+                    db_secret_name="vector-db-secret",
                     input_data_secret_name="s3-secret",
                     input_data_bucket_name="bucket",
                     leaderboard=leaderboard_html,
                 )
 
+    @pytest.mark.parametrize("limit", [1, 3, 11])
     @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
-    def test_invalid_max_rag_patterns_raises_value_error(self, tmp_path):
+    def test_invalid_max_rag_patterns_raises_value_error(self, tmp_path, limit):
         """Out-of-range max_number_of_rag_patterns raises before any ai4rag work."""
         mocks = _make_ai4rag_mocks()
         rag_patterns, leaderboard_html = _artifacts(tmp_path)
@@ -366,11 +367,11 @@ class TestRagTemplatesOptimizationValidation:
                     rag_patterns=rag_patterns,
                     test_data_key="key.json",
                     maas_secret_name="maas-secret",
-                    vector_db_secret_name="vector-db-secret",
+                    db_secret_name="vector-db-secret",
                     input_data_secret_name="s3-secret",
                     input_data_bucket_name="bucket",
                     leaderboard=leaderboard_html,
-                    optimization_settings={"max_number_of_rag_patterns": 1},
+                    optimization_settings={"max_number_of_rag_patterns": limit},
                 )
 
 
@@ -405,7 +406,7 @@ class TestRagTemplatesOptimizationMetricResolution:
                 rag_patterns=rag_patterns,
                 test_data_key="key.json",
                 maas_secret_name="maas-secret",
-                vector_db_secret_name="vector-db-secret",
+                db_secret_name="vector-db-secret",
                 input_data_secret_name="s3-secret",
                 input_data_bucket_name="bucket",
                 leaderboard=leaderboard_html,
@@ -451,7 +452,7 @@ class TestRagTemplatesOptimizationMetricResolution:
                     rag_patterns=rag_patterns,
                     test_data_key="key.json",
                     maas_secret_name="maas-secret",
-                    vector_db_secret_name="vector-db-secret",
+                    db_secret_name="vector-db-secret",
                     input_data_secret_name="s3-secret",
                     input_data_bucket_name="bucket",
                     leaderboard=leaderboard_html,
@@ -485,11 +486,11 @@ class TestRagTemplatesOptimizationRun:
                 rag_patterns=rag_patterns,
                 test_data_key="data/test.json",
                 maas_secret_name="maas-connection",
-                vector_db_secret_name="vector-db-connection",
+                db_secret_name="vector-db-connection",
                 input_data_secret_name="s3-input-connection",
                 input_data_bucket_name="customer-docs",
                 leaderboard=leaderboard_html,
-                input_data_keys=["data/docs/"],
+                input_data_keys=["data/docs/", "data/manuals/"],
                 preset="speed",
             )
 
@@ -510,16 +511,21 @@ class TestRagTemplatesOptimizationRun:
         assert (pattern_dir / "pattern.json").exists()
         assert (pattern_dir / "evaluation_results.json").exists()
 
-        # The whole list reaches the indexing blueprint, but the notebook takes the first key.
+        # The whole list reaches both the indexing blueprint and the notebook.
         pattern_json = json.loads((pattern_dir / "pattern.json").read_text(encoding="utf-8"))
-        assert pattern_json["indexing"]["pipeline_spec"]["parameters"]["input_data_keys"] == ["data/docs/"]
+        assert pattern_json["indexing"]["pipeline_spec"]["parameters"]["input_data_keys"] == [
+            "data/docs/",
+            "data/manuals/",
+        ]
+        assert pattern_json["indexing"]["pipeline_spec"]["pipeline_name"] == "documents-indexing-pipeline"
         # The stamped indexing preset mirrors the optimization preset (run above with
         # preset="speed") so the deployed index reproduces the evaluated extraction tier.
         assert pattern_json["indexing"]["pipeline_spec"]["parameters"]["preset"] == "speed"
         indexing_notebook_call = next(
             call for call in mocks.generate_notebook_from_template.call_args_list if call.args[0] == "maas_indexing"
         )
-        assert indexing_notebook_call.kwargs["input_data_key"] == "data/docs/"
+        assert indexing_notebook_call.kwargs["input_data_keys"] == ["data/docs/", "data/manuals/"]
+        assert indexing_notebook_call.kwargs["test_data_key"] == "data/test.json"
 
         assert rag_patterns.metadata["name"] == "rag_patterns_artifact"
         assert rag_patterns.metadata["uri"] == "gs://bucket/rag_patterns"
@@ -552,7 +558,7 @@ class TestRagTemplatesOptimizationRun:
                 rag_patterns=rag_patterns,
                 test_data_key="key.json",
                 maas_secret_name="maas-secret",
-                vector_db_secret_name="vector-db-secret",
+                db_secret_name="vector-db-secret",
                 input_data_secret_name="s3-secret",
                 input_data_bucket_name="bucket",
                 leaderboard=leaderboard_html,
@@ -578,7 +584,7 @@ class TestRagTemplatesOptimizationRun:
                 rag_patterns=rag_patterns,
                 test_data_key="key.json",
                 maas_secret_name="maas-secret",
-                vector_db_secret_name="vector-db-secret",
+                db_secret_name="vector-db-secret",
                 input_data_secret_name="s3-secret",
                 input_data_bucket_name="bucket",
                 leaderboard=leaderboard_html,
@@ -588,6 +594,49 @@ class TestRagTemplatesOptimizationRun:
         pattern_json = json.loads((Path(rag_patterns.path) / "pattern_a" / "pattern.json").read_text(encoding="utf-8"))
         indexing_params = pattern_json["indexing"]["pipeline_spec"]["parameters"]
         assert indexing_params["input_data_keys"] == []
+
+        indexing_notebook_call = next(
+            call for call in mocks.generate_notebook_from_template.call_args_list if call.args[0] == "maas_indexing"
+        )
+        assert indexing_notebook_call.kwargs["input_data_keys"] == []
+
+    @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
+    def test_every_input_data_key_reaches_the_indexing_notebook(self, tmp_path):
+        """The generated notebook must reingest every location, not just the first.
+
+        The notebook is the manual route to the same corpus the pipeline built,
+        so dropping locations here would silently produce a smaller index.
+        """
+        mocks = _make_ai4rag_mocks()
+        search_space_path = _write_search_space_report(tmp_path)
+        mocks.KFPEventHandler.return_value.patterns = [
+            {"payload": _pattern_payload("pattern_a"), "evaluation_results": []},
+        ]
+        rag_patterns, leaderboard_html = _artifacts(tmp_path)
+        keys = ["data/manuals/", "data/reports/"]
+
+        with mock.patch.dict("sys.modules", mocks.modules):
+            rag_templates_optimization.python_func(
+                extracted_text=str(tmp_path / "ext"),
+                test_data=str(tmp_path / "test_data.json"),
+                search_space_mps_report=search_space_path,
+                rag_patterns=rag_patterns,
+                test_data_key="key.json",
+                maas_secret_name="maas-secret",
+                db_secret_name="vector-db-secret",
+                input_data_secret_name="s3-secret",
+                input_data_bucket_name="bucket",
+                leaderboard=leaderboard_html,
+                input_data_keys=keys,
+            )
+
+        pattern_json = json.loads((Path(rag_patterns.path) / "pattern_a" / "pattern.json").read_text(encoding="utf-8"))
+        assert pattern_json["indexing"]["pipeline_spec"]["parameters"]["input_data_keys"] == keys
+
+        indexing_notebook_call = next(
+            call for call in mocks.generate_notebook_from_template.call_args_list if call.args[0] == "maas_indexing"
+        )
+        assert indexing_notebook_call.kwargs["input_data_keys"] == keys
 
     @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
     def test_propagates_ai4rag_exception(self, tmp_path):
@@ -606,8 +655,125 @@ class TestRagTemplatesOptimizationRun:
                     rag_patterns=rag_patterns,
                     test_data_key="key.json",
                     maas_secret_name="maas-secret",
-                    vector_db_secret_name="vector-db-secret",
+                    db_secret_name="vector-db-secret",
                     input_data_secret_name="s3-secret",
                     input_data_bucket_name="bucket",
                     leaderboard=leaderboard_html,
                 )
+
+
+class TestPresetWarmStartConfiguration:
+    """Verify that each preset wires the correct warm-start strategy into GAMOptSettings."""
+
+    def _run_component(
+        self,
+        tmp_path,
+        mocks,
+        preset: str,
+        search_space_raw: dict | None = None,
+        optimization_settings: dict | None = None,
+    ):
+        if search_space_raw is None:
+            search_space_raw = {
+                "foundation_model": [{"model_id": "fm-0"}],
+                "embedding_model": [{"model_id": "em-0"}],
+                "chunk_size": [256, 512],
+            }
+        search_space_path = tmp_path / "ss.json"
+        _write_json(search_space_path, search_space_raw)
+        rag_patterns, leaderboard_html = _artifacts(tmp_path)
+        starter_kit = mock.MagicMock()
+        starter_kit.metadata = {}
+
+        with mock.patch.dict("sys.modules", mocks.modules):
+            rag_templates_optimization.python_func(
+                extracted_text=str(tmp_path / "ext"),
+                test_data=str(tmp_path / "test_data.json"),
+                search_space_mps_report=str(search_space_path),
+                rag_patterns=rag_patterns,
+                starter_kit=starter_kit,
+                test_data_key="key.json",
+                maas_secret_name="maas-secret",
+                db_secret_name="vector-db-secret",
+                input_data_secret_name="s3-secret",
+                input_data_bucket_name="bucket",
+                leaderboard=leaderboard_html,
+                preset=preset,
+                optimization_settings=optimization_settings,
+            )
+        return rag_patterns
+
+    @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
+    def test_speed_preset_uses_greedy_warm_start(self, tmp_path):
+        """Speed preset passes greedy warm-start settings to GAMOptSettings."""
+        mocks = _make_ai4rag_mocks()
+        self._run_component(tmp_path, mocks, preset="speed")
+
+        gam_call_kwargs = mocks.modules["ai4rag.core.hpo.gam_opt"].GAMOptSettings.call_args.kwargs
+        assert gam_call_kwargs["warm_start_strategy"] == "greedy"
+        assert gam_call_kwargs.get("fields_to_balance") is None
+        assert gam_call_kwargs["max_evals"] == 22
+        assert gam_call_kwargs["max_iterations"] == 5
+
+    @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
+    def test_balanced_preset_uses_balanced_warm_start(self, tmp_path):
+        """Balanced preset passes warm_start_strategy='balanced' and fields_to_balance."""
+        mocks = _make_ai4rag_mocks()
+        self._run_component(tmp_path, mocks, preset="balanced")
+
+        gam_call_kwargs = mocks.modules["ai4rag.core.hpo.gam_opt"].GAMOptSettings.call_args.kwargs
+        assert gam_call_kwargs["warm_start_strategy"] == "balanced"
+        assert gam_call_kwargs["fields_to_balance"] == ["foundation_model", "embedding_model", "chunking_method"]
+        assert gam_call_kwargs["max_evals"] == 22
+        assert gam_call_kwargs["max_iterations"] == 5
+
+    @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
+    def test_preset_speed_with_3_embeddings_and_2_llm_models(self, tmp_path):
+        """Speed preset correctly configures warm start with 3 embedding models and 2 LLM models."""
+        mocks = _make_ai4rag_mocks()
+        mocks.get_foundation_models.return_value = [
+            mock.MagicMock(model_id="fm-0"),
+            mock.MagicMock(model_id="fm-1"),
+        ]
+        mocks.get_embedding_models.return_value = [
+            mock.MagicMock(model_id="em-0"),
+            mock.MagicMock(model_id="em-1"),
+            mock.MagicMock(model_id="em-2"),
+        ]
+        search_space_raw = {
+            "foundation_model": [{"model_id": "fm-0"}, {"model_id": "fm-1"}],
+            "embedding_model": [{"model_id": "em-0"}, {"model_id": "em-1"}, {"model_id": "em-2"}],
+            "chunk_size": [256, 512],
+            "chunking_method": ["recursive", "hybrid"],
+        }
+        self._run_component(tmp_path, mocks, preset="speed", search_space_raw=search_space_raw)
+
+        gam_call_kwargs = mocks.modules["ai4rag.core.hpo.gam_opt"].GAMOptSettings.call_args.kwargs
+        assert gam_call_kwargs["warm_start_strategy"] == "greedy"
+        assert gam_call_kwargs.get("fields_to_balance") is None
+        parameter_calls = mocks.modules["ai4rag.search_space.src.parameter"].Parameter.call_args_list
+        assert len(parameter_calls[0].kwargs["values"]) == 2
+        assert len(parameter_calls[1].kwargs["values"]) == 3
+
+    @pytest.mark.parametrize("limit", [4, 10])
+    @pytest.mark.parametrize("preset", ["speed", "balanced"])
+    @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
+    def test_explicit_pattern_limit_caps_output(self, tmp_path, limit, preset):
+        """An explicit limit bounds output even when ai4rag reports extra evaluations."""
+        mocks = _make_ai4rag_mocks()
+        mocks.KFPEventHandler.return_value.patterns = [
+            {"payload": _pattern_payload(f"pattern_{index}"), "evaluation_results": []} for index in range(limit + 1)
+        ]
+
+        rag_patterns = self._run_component(
+            tmp_path,
+            mocks,
+            preset=preset,
+            optimization_settings={"max_number_of_rag_patterns": str(limit)},
+        )
+
+        gam_call_kwargs = mocks.modules["ai4rag.core.hpo.gam_opt"].GAMOptSettings.call_args.kwargs
+        assert gam_call_kwargs["max_evals"] == 22
+        assert gam_call_kwargs["max_iterations"] == limit
+        assert len(rag_patterns.metadata["metadata"]["patterns"]) == limit
+        assert len(list(Path(rag_patterns.path).glob("*/pattern.json"))) == limit

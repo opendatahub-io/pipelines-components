@@ -154,7 +154,7 @@ class TestSanitizeIndexUrlForLog:
 
     def test_strips_path_and_query_without_credentials(self):
         """Removes path and query from credential-free URLs."""
-        url = "https://console.redhat.com/api/pypi/public-rhai/rhoai/3.6-EA2/cpu-ubi9-test/simple"
+        url = "https://console.redhat.com/api/pypi/public-rhai/rhoai/3.6/cpu-ubi9-test/simple"
 
         assert sanitize_index_url_for_log(url) == "https://console.redhat.com"
 

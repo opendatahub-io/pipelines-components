@@ -563,8 +563,8 @@ class TestDocumentsIndexingReport:
 
         assert "settings" in data
         settings = data["settings"]
-        assert settings["vector_store_binding"]["provider_type"] == "milvus"
-        assert settings["vector_store_binding"]["collection_name"] == "vs_auto_generated"
+        assert settings["store_binding"]["provider_type"] == "milvus"
+        assert settings["store_binding"]["collection_name"] == "vs_auto_generated"
         assert settings["chunking"]["method"] == "recursive"
         assert settings["chunking"]["chunk_size"] == 256
         assert settings["chunking"]["chunk_overlap"] == 64
@@ -582,8 +582,8 @@ class TestDocumentsIndexingReport:
         report_path = tmp_path / "indexing_report.json"
         data = json.loads(report_path.read_text())
         assert "settings" in data
-        assert data["settings"]["vector_store_binding"]["provider_type"] == "milvus"
-        assert data["settings"]["vector_store_binding"]["collection_name"] is None
+        assert data["settings"]["store_binding"]["provider_type"] == "milvus"
+        assert data["settings"]["store_binding"]["collection_name"] is None
         assert data["settings"]["chunking"]["method"] == "recursive"
 
     @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)

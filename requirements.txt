@@ -1,4 +1,4 @@
---index-url https://console.redhat.com/api/pypi/public-rhai/rhoai/3.6-EA2/cpu-ubi9-test/simple
+--index-url https://console.redhat.com/api/pypi/public-rhai/rhoai/3.6/cpu-ubi9-test/simple
 
 certifi==2026.7.22 \
     --hash=sha256:6d6e74b6c0ddce5f1fc2470baed59215e04a90e20a769cfaf114052584056e69
@@ -22,8 +22,8 @@ docstring-parser==0.18.0 \
     --hash=sha256:9c5320c27124b926c7c44ed569788bed1efc1c74b3cf544f710c2fe384404694
 durationpy==0.11 \
     --hash=sha256:c5d7083e29197532d32ba19f669461b1934721390a5f75bbcf2abaac1b2cc225
-google-api-core==2.36.0 \
-    --hash=sha256:385472355fe79492ea65d9b9ff12f184a90923f37089f195d0b87c8b506688be
+google-api-core==2.38.0 \
+    --hash=sha256:54ef0b8b8252b5ceb8f679e446b6d4f3a45d7ea3221552721c9f9e3c7031f50f
 google-auth==2.58.0 \
     --hash=sha256:9a9b9d7f0dd6debd9eaea1bc52bde1d79e9e35d2bb8efbd8ec35773ad9b3ecfc
 google-cloud-core==2.7.0 \
@@ -36,8 +36,8 @@ google-resumable-media==2.10.2 \
     --hash=sha256:626c12dd7db75040a738d5153657a8717ff632234f0baaf008a8b71981818e78
 googleapis-common-protos==1.75.3 \
     --hash=sha256:03ee98a59092216cd75fd259fa9cd7ddb46db1c654e0416a9e70c5ff8dcb3516
-idna==3.19 \
-    --hash=sha256:492c0c229145c325e797f50f3aabad4fb65eaa27821e08da07542bf114dc64ed
+idna==3.20 \
+    --hash=sha256:9b6ba010b72e754501022b8dad49782b4f179ab9454bf3c095c4dcf218e00a52
 kfp==2.17.0 \
     --hash=sha256:a6bb17423aaae00d05b22505ba663d91d39aac192619989e17ed44d65c905030
 kfp-kubernetes==2.17.0 \

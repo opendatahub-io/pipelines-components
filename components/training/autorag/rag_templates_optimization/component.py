@@ -19,10 +19,11 @@ def rag_templates_optimization(
     rag_patterns: dsl.Output[dsl.Artifact],
     test_data_key: str,
     maas_secret_name: str,
-    vector_db_secret_name: str,
+    db_secret_name: str,
     input_data_secret_name: str,
     input_data_bucket_name: str,
     leaderboard: dsl.Output[dsl.HTML],
+    starter_kit: dsl.Output[dsl.Artifact],
     embedded_artifact: dsl.EmbeddedInput[dsl.Dataset] = None,
     optimization_settings: Optional[dict] = None,
     input_data_keys: Optional[list[str]] = None,
@@ -45,7 +46,7 @@ def rag_templates_optimization(
         maas_secret_name: Name of the K8s secret with MaaS inference credentials
             ("MAAS_BASE_URL", "MAAS_API_KEY"). Propagated into each generated
             ``pattern.json`` indexing spec for downstream deployment.
-        vector_db_secret_name: Name of the K8s secret holding the vector database
+        db_secret_name: Name of the K8s secret holding the database
             configuration. Its keys select the backend: ``MILVUS_*`` keys use
             Milvus, ``PGVECTOR_*`` keys use PGVector. Propagated into each
             generated ``pattern.json`` indexing spec.
@@ -54,19 +55,23 @@ def rag_templates_optimization(
         input_data_bucket_name: S3 bucket containing input documents.
         leaderboard: Output HTML artifact; the leaderboard table is written to
             leaderboard_html.path (single file).
+        starter_kit: Output ZIP artifact named ``starter_kit.zip``; currently an
+            empty placeholder.
         component_status: Output artifact containing stage-level progress tracking.
         embedded_artifact: Embedded ``autorag.shared`` helpers injected by KFP at runtime.
-        optimization_settings: Additional experiment settings.
-        input_data_keys: Paths to documents dirs within bucket. Only the first entry is
-            used for the generated indexing notebook; the full list is propagated to the
-            indexing pipeline blueprint.
+        optimization_settings: Additional experiment settings. The
+            ``max_number_of_rag_patterns`` setting (4-10, default 5) limits
+            optimization iterations and published patterns.
+        input_data_keys: Paths to documents dirs within bucket, 1-10 of them. The full list
+            is propagated both to the generated indexing notebook and to the indexing
+            pipeline blueprint, so either route reingests the same corpus.
         preset: Pipeline quality tier. "speed" (default) uses 10 benchmark query
             threads. "balanced" uses 4 threads (reduced due to larger per-request
             context).
 
     Environment variables (required):
         MAAS_BASE_URL, MAAS_API_KEY for inference. Plus the vector database
-        configuration injected from ``vector_db_secret_name``: ``MILVUS_*`` keys
+        configuration injected from ``db_secret_name``: ``MILVUS_*`` keys
         (at least ``MILVUS_URI``) select Milvus, ``PGVECTOR_*`` keys select
         PGVector.
     """
@@ -75,6 +80,7 @@ def rag_templates_optimization(
     import logging
     import os
     from pathlib import Path
+    from zipfile import ZipFile
 
     import pandas as pd
     from ai4rag import handler
@@ -99,17 +105,23 @@ def rag_templates_optimization(
 
     DEFAULT_METRIC = Metrics.OVERALL_SCORE.name
 
-    DEFAULT_MAX_RAG_PATTERNS = 8
-    MIN_MAX_RAG_PATTERNS_RANGE = (4, 20)
+    DEFAULT_MAX_RAG_PATTERNS = 5
+    MIN_MAX_RAG_PATTERNS_RANGE = (4, 10)
 
-    VALID_PRESETS = {"speed", "balanced"}
     # custom:overall_score aggregates the outputs of the evaluators enabled for the preset.
     PRESET_EVALUATORS = {
         "speed": frozenset({"unitxt", "custom"}),
         "balanced": frozenset({"unitxt", "ragas", "custom"}),
     }
     LEGACY_METRIC_PREFERENCES = {"faithfulness": "ragas"}
-    PRESET_INFERENCE_MAX_THREADS = {"speed": 10, "balanced": 4}
+    PRESET_SETTINGS = {
+        "speed": {"inference_max_threads": 10, "warm_start_strategy": "greedy"},
+        "balanced": {
+            "inference_max_threads": 4,
+            "warm_start_strategy": "balanced",
+            "fields_to_balance": ["foundation_model", "embedding_model", "chunking_method"],
+        },
+    }
 
     def _build_evaluators(
         foundation_models: list[OpenAIFoundationModel],
@@ -138,7 +150,7 @@ def rag_templates_optimization(
     def _generate_output_artifacts(
         patterns_raw: list[dict],
         output_dir: Path,
-        input_data_key: str,
+        input_data_keys: list[str],
         test_data_key: str,
         indexing_pipeline_params: dict | None,
     ) -> list[dict]:
@@ -152,20 +164,20 @@ def rag_templates_optimization(
             pattern_data = pattern.get("payload")
             if indexing_pipeline_params:
                 settings = pattern_data["settings"]
-                vector_store_binding = settings["vector_store_binding"]
+                store_binding = settings["store_binding"]
                 pattern_data["indexing"] = {
                     "pipeline_spec": {
-                        "pipeline_name": indexing_pipeline_params.get("pipeline_name", "documents_indexing_pipeline"),
+                        "pipeline_name": indexing_pipeline_params.get("pipeline_name", "documents-indexing-pipeline"),
                         "parameters": {
                             "maas_secret_name": indexing_pipeline_params.get("maas_secret_name"),
-                            "vector_db_secret_name": indexing_pipeline_params.get("vector_db_secret_name"),
+                            "db_secret_name": indexing_pipeline_params.get("db_secret_name"),
                             "input_data_secret_name": indexing_pipeline_params.get("input_data_secret_name"),
                             "input_data_bucket_name": indexing_pipeline_params.get("input_data_bucket_name"),
                             "input_data_keys": indexing_pipeline_params.get("input_data_keys"),
                             "batch_size": indexing_pipeline_params.get("batch_size"),
                             "preset": indexing_pipeline_params.get("preset", "speed"),
-                            "provider_type": vector_store_binding["provider_type"],
-                            "collection_name": vector_store_binding["collection_name"],
+                            "provider_type": store_binding["provider_type"],
+                            "collection_name": store_binding["collection_name"],
                             "embedding_model_id": settings["embedding"]["model_id"],
                             "embedding_params": settings["embedding"]["embedding_params"],
                             "chunking_method": settings["chunking"]["method"],
@@ -186,7 +198,8 @@ def rag_templates_optimization(
                 "maas_indexing",
                 pattern_data,
                 patt_dir / "indexing.ipynb",
-                input_data_key=input_data_key,
+                input_data_keys=input_data_keys,
+                test_data_key=test_data_key,
             )
             generate_notebook_from_template(
                 "maas_inference",
@@ -209,16 +222,19 @@ def rag_templates_optimization(
         """Validate and normalize optimization settings.
 
         Returns:
-            Validated settings dictionary (empty dict when input is ``None``).
+            Validated settings dictionary, including the default evaluation limit
+            when input is ``None``.
 
         Raises:
             TypeError: If settings or ``max_number_of_rag_patterns`` have
                 wrong types.
-            ValueError: If ``max_number_of_rag_patterns`` is out of the
-                allowed range or cannot be parsed as an integer.
+            ValueError: If ``max_number_of_rag_patterns`` cannot be parsed as
+                an integer or is outside its allowed range.
         """
         if optimization_settings is None:
-            return {}
+            return {
+                "max_number_of_rag_patterns": DEFAULT_MAX_RAG_PATTERNS,
+            }
 
         if not isinstance(optimization_settings, dict):
             raise TypeError("optimization_settings must be a dictionary.")
@@ -242,7 +258,10 @@ def rag_templates_optimization(
                 f"{MIN_MAX_RAG_PATTERNS_RANGE[0]} to {MIN_MAX_RAG_PATTERNS_RANGE[1]}."
             )
 
-        return optimization_settings
+        return {
+            **optimization_settings,
+            "max_number_of_rag_patterns": max_rag_patterns,
+        }
 
     def _get_optimization_metric(metric_id: str | None, *, active_evaluators: frozenset[str]) -> RAGMetric:
         """Resolve a preset-supported ``evaluator:metric`` ID to a ``RAGMetric``.
@@ -298,11 +317,12 @@ def rag_templates_optimization(
     # Component logic starts here
     # -------------------------------------------------------------------------
 
-    if preset not in VALID_PRESETS:
-        raise ValueError(f"preset must be one of {VALID_PRESETS}; got {preset!r}.")
+    if preset not in PRESET_SETTINGS:
+        raise ValueError(f"preset must be one of {set(PRESET_SETTINGS)}; got {preset!r}.")
 
     active_evaluators = PRESET_EVALUATORS[preset]
-    inference_max_threads = PRESET_INFERENCE_MAX_THREADS[preset]
+    preset_cfg = PRESET_SETTINGS[preset]
+    inference_max_threads = preset_cfg["inference_max_threads"]
     logging.info("Preset %r: inference_max_threads=%d", preset, inference_max_threads)
 
     if component_status is None:
@@ -339,7 +359,7 @@ def rag_templates_optimization(
             else:
                 raise ValueError(
                     "No vector database configuration found. Expected MILVUS_* or PGVECTOR_* "
-                    "environment variables injected from vector_db_secret_name."
+                    "environment variables injected from db_secret_name."
                 )
             vector_store_config = get_vector_store_config(provider)
             logging.info("Detected %s database provider from secret.", provider)
@@ -347,12 +367,13 @@ def rag_templates_optimization(
             output_dir = Path(rag_patterns.path)
             output_dir.mkdir(parents=True, exist_ok=True)
 
-            # Deployment blueprint stamped into every pattern.json to reproduce the
-            # indexing run; provider_type/collection_name come from vector_store_binding.
+            # Deployment blueprint stamped into every pattern.json so the indexing
+            # pipeline can be reproduced. provider_type/collection_name are added
+            # by ai4rag from each pattern's store_binding.
             indexing_pipeline_params = {
                 "pipeline_name": "documents-indexing-pipeline",
                 "maas_secret_name": maas_secret_name,
-                "vector_db_secret_name": vector_db_secret_name,
+                "db_secret_name": db_secret_name,
                 "input_data_secret_name": input_data_secret_name,
                 "input_data_bucket_name": input_data_bucket_name,
                 "input_data_keys": input_data_keys or [],
@@ -401,10 +422,16 @@ def rag_templates_optimization(
             )
 
             # --- Configure experiment ---
-            max_rag_patterns = settings.get("max_number_of_rag_patterns", DEFAULT_MAX_RAG_PATTERNS)
-            if isinstance(max_rag_patterns, str):
-                max_rag_patterns = int(max_rag_patterns.strip())
-            optimizer_settings = GAMOptSettings(max_evals=max_rag_patterns)
+            max_rag_patterns = settings["max_number_of_rag_patterns"]
+            # In the worst balanced-preset case, 3 embedding models, 2 LLMs, and
+            # 2 chunking methods require 12 warm-start evaluations. Reserve the
+            # maximum allowed number of RAG patterns (10) beyond those evaluations.
+            optimizer_settings = GAMOptSettings(
+                max_evals=12 + MIN_MAX_RAG_PATTERNS_RANGE[1],
+                max_iterations=max_rag_patterns,
+                warm_start_strategy=preset_cfg["warm_start_strategy"],
+                fields_to_balance=preset_cfg.get("fields_to_balance"),
+            )
 
             event_handler = KFPEventHandler()
 
@@ -428,12 +455,33 @@ def rag_templates_optimization(
             output_dir.mkdir(parents=True, exist_ok=True)
 
             patterns = _generate_output_artifacts(
-                patterns_raw=event_handler.patterns,
+                patterns_raw=event_handler.patterns[:max_rag_patterns],
                 output_dir=output_dir,
-                input_data_key=input_data_keys[0] if input_data_keys else "",
+                input_data_keys=input_data_keys or [],
                 test_data_key=test_data_key,
                 indexing_pipeline_params=indexing_pipeline_params,
             )
+
+            # Keep the ZIP in the task artifact directory, next to the
+            # leaderboard and executor logs. ``rag_patterns`` is the
+            # directory-shaped output in that directory, so its parent is
+            # the stable task-artifact root. The default path assigned to
+            # the starter-kit output may point to a separate output directory.
+            rag_patterns_path = Path(rag_patterns.path)
+            starter_kit_path = rag_patterns_path.parent / "starter_kit" / "starter_kit.zip"
+            starter_kit_path.parent.mkdir(parents=True, exist_ok=True)
+
+            rag_patterns_uri = str(rag_patterns.uri).rstrip("/")
+            artifact_root_uri = rag_patterns_uri.rsplit("/", 1)[0] if "/" in rag_patterns_uri else rag_patterns_uri
+            starter_kit.uri = f"{artifact_root_uri}/starter_kit/starter_kit.zip"
+            starter_kit.set_path(str(starter_kit_path))
+
+            # Keep the output contract available before ai4rag ships its
+            # starter-kit generator. The empty archive is intentionally a
+            # valid ZIP so clients can download it already.
+            with ZipFile(starter_kit_path, "w"):
+                pass
+            starter_kit.metadata["display_name"] = "starter_kit.zip"
 
             status.record(
                 "optimize_templates",

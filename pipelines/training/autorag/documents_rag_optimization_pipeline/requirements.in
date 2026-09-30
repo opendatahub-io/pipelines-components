@@ -1,7 +1,7 @@
---index-url https://console.redhat.com/api/pypi/public-rhai/rhoai/3.6-EA2/cpu-ubi9-test/simple
+--index-url https://console.redhat.com/api/pypi/public-rhai/rhoai/3.6/cpu-ubi9-test/simple
 
 kfp==2.17.0
-ai4rag[text-extraction]==0.17.0
+ai4rag[text-extraction]==0.18.0
 # RapidOCR ships no inference engine of its own; Docling's OCR stage fails with
 # "onnxruntime is not installed" unless the runtime is pulled in explicitly.
 onnxruntime==1.25.0

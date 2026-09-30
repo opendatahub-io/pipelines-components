@@ -41,6 +41,12 @@ def wrap_component_python_func(
             html = mock.MagicMock()
             html.path = str(tmp_path / "leaderboard.html")
             kwargs["leaderboard"] = html
+        if "starter_kit" in signature.parameters and "starter_kit" not in bound.arguments:
+            starter_kit = mock.MagicMock()
+            starter_kit.path = str(tmp_path / "starter_kit-output")
+            starter_kit.uri = "gs://bucket/starter_kit"
+            starter_kit.metadata = {}
+            kwargs["starter_kit"] = starter_kit
         return original(*args, **kwargs)
 
     wrapper = functools.wraps(original)(wrapper)

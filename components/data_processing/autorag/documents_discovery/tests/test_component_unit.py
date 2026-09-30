@@ -95,15 +95,15 @@ class TestDocumentsDiscoveryUnitTests:
         mock_create_s3.assert_called_once()
         mock_discover.assert_called_once_with(
             bucket_name="my-bucket",
-            prefix="docs/",
+            prefixes=["docs/"],
             test_data_doc_names=None,
             sampling_enabled=True,
             sampling_max_size_gb=2.5,
             s3_client=mock_s3_client,
         )
 
-    def test_uses_only_the_first_input_data_key(self, tmp_path):
-        """Discovery takes a single prefix, so only the first key is forwarded."""
+    def test_forwards_every_input_data_key(self, tmp_path):
+        """All selected folders are ingested, not just the first one."""
         modules, mock_create_s3, mock_discover, _ = _make_ai4rag_mocks()
         mock_create_s3.return_value = mock.MagicMock()
         mock_discover.return_value = mock.MagicMock()
@@ -118,11 +118,85 @@ class TestDocumentsDiscoveryUnitTests:
                 discovered_documents=discovered,
             )
 
-        assert mock_discover.call_args.kwargs["prefix"] == "first/"
+        assert mock_discover.call_args.kwargs["prefixes"] == ["first/", "second/", "third/"]
+
+    def test_duplicate_input_data_keys_are_collapsed(self, tmp_path):
+        """The same folder selected twice is one location, not two."""
+        modules, mock_create_s3, mock_discover, _ = _make_ai4rag_mocks()
+        mock_create_s3.return_value = mock.MagicMock()
+        mock_discover.return_value = mock.MagicMock()
+
+        discovered = mock.MagicMock()
+        discovered.path = str(tmp_path / "descriptor")
+
+        with mock.patch.dict("sys.modules", modules):
+            documents_discovery.python_func(
+                input_data_bucket_name="my-bucket",
+                input_data_keys=["first/", "/first/", " first/ ", "second/"],
+                discovered_documents=discovered,
+            )
+
+        assert mock_discover.call_args.kwargs["prefixes"] == ["first/", "second/"]
+
+    def test_more_than_ten_input_data_keys_is_rejected(self, tmp_path):
+        """The documented 1-10 range is enforced rather than silently truncated."""
+        modules, mock_create_s3, mock_discover, _ = _make_ai4rag_mocks()
+        mock_create_s3.return_value = mock.MagicMock()
+        mock_discover.return_value = mock.MagicMock()
+
+        discovered = mock.MagicMock()
+        discovered.path = str(tmp_path / "descriptor")
+
+        with mock.patch.dict("sys.modules", modules):
+            with pytest.raises(ValueError, match="Received 11 input data keys"):
+                documents_discovery.python_func(
+                    input_data_bucket_name="my-bucket",
+                    input_data_keys=[f"folder-{i}/" for i in range(11)],
+                    discovered_documents=discovered,
+                )
+
+        mock_discover.assert_not_called()
+
+    def test_exactly_ten_input_data_keys_is_allowed(self, tmp_path):
+        """Ten is the documented maximum, so it must pass."""
+        modules, mock_create_s3, mock_discover, _ = _make_ai4rag_mocks()
+        mock_create_s3.return_value = mock.MagicMock()
+        mock_discover.return_value = mock.MagicMock()
+
+        discovered = mock.MagicMock()
+        discovered.path = str(tmp_path / "descriptor")
+        keys = [f"folder-{i}/" for i in range(10)]
+
+        with mock.patch.dict("sys.modules", modules):
+            documents_discovery.python_func(
+                input_data_bucket_name="my-bucket",
+                input_data_keys=keys,
+                discovered_documents=discovered,
+            )
+
+        assert mock_discover.call_args.kwargs["prefixes"] == keys
+
+    def test_duplicates_do_not_count_against_the_limit(self, tmp_path):
+        """Eleven entries pointing at ten folders is a valid selection."""
+        modules, mock_create_s3, mock_discover, _ = _make_ai4rag_mocks()
+        mock_create_s3.return_value = mock.MagicMock()
+        mock_discover.return_value = mock.MagicMock()
+
+        discovered = mock.MagicMock()
+        discovered.path = str(tmp_path / "descriptor")
+
+        with mock.patch.dict("sys.modules", modules):
+            documents_discovery.python_func(
+                input_data_bucket_name="my-bucket",
+                input_data_keys=[f"folder-{i}/" for i in range(10)] + ["folder-0/"],
+                discovered_documents=discovered,
+            )
+
+        assert len(mock_discover.call_args.kwargs["prefixes"]) == 10
 
     @pytest.mark.parametrize("input_data_keys", [[], None])
     def test_empty_input_data_keys_discovers_whole_bucket(self, tmp_path, input_data_keys):
-        """An empty (or unset) key list falls back to an empty prefix."""
+        """An empty (or unset) key list discovers the whole bucket."""
         modules, mock_create_s3, mock_discover, _ = _make_ai4rag_mocks()
         mock_create_s3.return_value = mock.MagicMock()
         mock_discover.return_value = mock.MagicMock()
@@ -137,7 +211,7 @@ class TestDocumentsDiscoveryUnitTests:
                 discovered_documents=discovered,
             )
 
-        assert mock_discover.call_args.kwargs["prefix"] == ""
+        assert mock_discover.call_args.kwargs["prefixes"] == []
 
     def test_saves_result_to_artifact_path(self, tmp_path):
         """DiscoveryResult.save is called with the correct output path."""
@@ -239,7 +313,7 @@ class TestDocumentsDiscoveryWithTestDataUnitTests:
         mock_discover.assert_called_once()
         call_kwargs = mock_discover.call_args.kwargs
         assert call_kwargs["bucket_name"] == "input-bucket"
-        assert call_kwargs["prefix"] == "docs/"
+        assert call_kwargs["prefixes"] == ["docs/"]
         assert set(call_kwargs["test_data_doc_names"]) == {"doc_a.pdf", "doc_b.txt"}
         assert call_kwargs["s3_client"] == input_s3
 
@@ -329,6 +403,37 @@ class TestDocumentsDiscoveryWithTestDataUnitTests:
             with pytest.raises(RuntimeError, match="No supported documents found"):
                 documents_discovery.python_func(
                     input_data_bucket_name="bucket",
+                    test_data_bucket_name="test-bucket",
+                    test_data_path_key="t.json",
+                    test_data=test_data_artifact,
+                    discovered_documents=discovered,
+                )
+
+    def test_propagates_benchmark_key_validation_failure(self, tmp_path):
+        """A benchmark key matching no ingested document must fail the run.
+
+        ai4rag raises ``BenchmarkKeyError``; the wrapper must not swallow it,
+        because the alternative is a run that scores questions against nothing.
+        """
+        modules, mock_create_s3, mock_discover, mock_load = _make_ai4rag_mocks(include_test_data_loader=True)
+        mock_create_s3.return_value = mock.MagicMock()
+        mock_load.return_value = SimpleNamespace(data=VALID_BENCHMARK_RECORDS)
+
+        class _BenchmarkKeyError(ValueError):
+            pass
+
+        mock_discover.side_effect = _BenchmarkKeyError("'doc_a.pdf' is not part of the discovered corpus")
+
+        test_data_artifact = mock.MagicMock()
+        test_data_artifact.path = str(tmp_path / "td.json")
+        discovered = mock.MagicMock()
+        discovered.path = str(tmp_path / "desc")
+
+        with mock.patch.dict("sys.modules", modules):
+            with pytest.raises(ValueError, match="not part of the discovered corpus"):
+                documents_discovery.python_func(
+                    input_data_bucket_name="bucket",
+                    input_data_keys=["docs/"],
                     test_data_bucket_name="test-bucket",
                     test_data_path_key="t.json",
                     test_data=test_data_artifact,
