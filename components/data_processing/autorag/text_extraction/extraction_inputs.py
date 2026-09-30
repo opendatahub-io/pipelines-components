@@ -14,6 +14,14 @@ from kfp_components.utils.consts import AUTORAG_IMAGE  # pyright: ignore[reportM
 
 GPU_RESOURCE = "nvidia.com/gpu"
 
+# Unprefixed S3 credential env vars shared by the tasks that read the input corpus.
+S3_SECRET_ENV_KEYS = {
+    "AWS_ACCESS_KEY_ID": "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY": "AWS_SECRET_ACCESS_KEY",
+    "AWS_S3_ENDPOINT": "AWS_S3_ENDPOINT",
+    "AWS_DEFAULT_REGION": "AWS_DEFAULT_REGION",
+}
+
 
 @dsl.component(base_image=AUTORAG_IMAGE, install_kfp_package=False)
 def prepare_extraction_inputs(

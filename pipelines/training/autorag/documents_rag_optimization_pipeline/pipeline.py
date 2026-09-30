@@ -8,6 +8,7 @@ from kfp_components.components.data_processing.autorag.text_extraction.component
 )
 from kfp_components.components.data_processing.autorag.text_extraction.extraction_inputs import (
     GPU_RESOURCE,
+    S3_SECRET_ENV_KEYS,
     prepare_extraction_inputs,
 )
 from kfp_components.components.training.autorag.component_stage_map_publisher import (
@@ -33,14 +34,6 @@ PIPELINE_NAME = "documents-rag-optimization-pipeline"
 MAAS_SECRET_KEYS = {
     "MAAS_BASE_URL": "MAAS_BASE_URL",
     "MAAS_API_KEY": "MAAS_API_KEY",
-}
-
-# S3 credentials for text extraction (unprefixed, unlike document discovery below).
-EXTRACTION_S3_SECRET_KEYS = {
-    "AWS_ACCESS_KEY_ID": "AWS_ACCESS_KEY_ID",
-    "AWS_SECRET_ACCESS_KEY": "AWS_SECRET_ACCESS_KEY",
-    "AWS_S3_ENDPOINT": "AWS_S3_ENDPOINT",
-    "AWS_DEFAULT_REGION": "AWS_DEFAULT_REGION",
 }
 
 
@@ -173,12 +166,11 @@ def documents_rag_optimization_pipeline(
         gpu_acceleration=gpu_acceleration,
         ocr_lang=search_space_preparation_task.outputs["detected_ocr_lang"],
     )
-    text_extraction_task.after(search_space_preparation_task)
     text_extraction_task.set_caching_options(False)
     text_extraction_task.set_cpu_request("4").set_memory_request("16Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(
         MAX_MEMORY
     )
-    use_secret_as_env(text_extraction_task, input_data_secret_name, EXTRACTION_S3_SECRET_KEYS, optional=True)
+    use_secret_as_env(text_extraction_task, input_data_secret_name, S3_SECRET_ENV_KEYS, optional=True)
     text_extraction_task.set_accelerator_type(GPU_RESOURCE).set_accelerator_limit(
         extraction_inputs_task.outputs["gpu_count"]
     )

@@ -7,18 +7,12 @@ from kfp_components.components.data_processing.autorag.documents_indexing.compon
 from kfp_components.components.data_processing.autorag.text_extraction.component import text_extraction
 from kfp_components.components.data_processing.autorag.text_extraction.extraction_inputs import (
     GPU_RESOURCE,
+    S3_SECRET_ENV_KEYS,
     prepare_extraction_inputs,
 )
 
 MAX_CPUS = "32"
 MAX_MEMORY = "64Gi"
-
-INPUT_DATA_SECRET_KEYS = {
-    "AWS_ACCESS_KEY_ID": "AWS_ACCESS_KEY_ID",
-    "AWS_SECRET_ACCESS_KEY": "AWS_SECRET_ACCESS_KEY",
-    "AWS_S3_ENDPOINT": "AWS_S3_ENDPOINT",
-    "AWS_DEFAULT_REGION": "AWS_DEFAULT_REGION",
-}
 
 
 @dsl.pipeline(
@@ -97,7 +91,7 @@ def documents_indexing_pipeline(
         MAX_MEMORY
     )
 
-    use_secret_as_env(documents_discovery_task, input_data_secret_name, INPUT_DATA_SECRET_KEYS)
+    use_secret_as_env(documents_discovery_task, input_data_secret_name, S3_SECRET_ENV_KEYS)
 
     extraction_inputs_task = prepare_extraction_inputs(preset=preset, gpu_acceleration=gpu_acceleration)
     extraction_inputs_task.set_caching_options(False)
@@ -112,7 +106,7 @@ def documents_indexing_pipeline(
     text_extraction_task.set_cpu_request("2").set_memory_request("8Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(
         MAX_MEMORY
     )
-    use_secret_as_env(text_extraction_task, input_data_secret_name, INPUT_DATA_SECRET_KEYS)
+    use_secret_as_env(text_extraction_task, input_data_secret_name, S3_SECRET_ENV_KEYS)
     text_extraction_task.set_accelerator_type(GPU_RESOURCE).set_accelerator_limit(
         extraction_inputs_task.outputs["gpu_count"]
     )
