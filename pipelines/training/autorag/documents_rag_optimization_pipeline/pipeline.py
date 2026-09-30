@@ -6,6 +6,10 @@ from kfp_components.components.data_processing.autorag.documents_discovery impor
 from kfp_components.components.data_processing.autorag.text_extraction.component import (
     text_extraction,
 )
+from kfp_components.components.data_processing.autorag.text_extraction.extraction_inputs import (
+    GPU_RESOURCE,
+    prepare_extraction_inputs,
+)
 from kfp_components.components.training.autorag.component_stage_map_publisher import (
     publish_component_stage_map,
 )
@@ -18,7 +22,6 @@ from kfp_components.components.training.autorag.rag_templates_optimization.compo
 from kfp_components.components.training.autorag.search_space_preparation.component import (
     search_space_preparation,
 )
-from kfp_components.utils.autorag_extraction import GPU_RESOURCE, prepare_extraction_inputs
 
 MAX_CPUS = "32"
 MAX_MEMORY = "64Gi"

@@ -5,7 +5,10 @@ from kfp.kubernetes import use_secret_as_env
 from kfp_components.components.data_processing.autorag.documents_discovery.component import documents_discovery
 from kfp_components.components.data_processing.autorag.documents_indexing.component import documents_indexing
 from kfp_components.components.data_processing.autorag.text_extraction.component import text_extraction
-from kfp_components.utils.autorag_extraction import GPU_RESOURCE, prepare_extraction_inputs
+from kfp_components.components.data_processing.autorag.text_extraction.extraction_inputs import (
+    GPU_RESOURCE,
+    prepare_extraction_inputs,
+)
 
 MAX_CPUS = "32"
 MAX_MEMORY = "64Gi"

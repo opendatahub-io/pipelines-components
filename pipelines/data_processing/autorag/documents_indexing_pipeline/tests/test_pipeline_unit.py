@@ -7,7 +7,9 @@ from pathlib import Path
 import pytest
 from kfp import compiler
 from kfp_components.components.data_processing.autorag.documents_indexing.component import documents_indexing
-from kfp_components.utils.autorag_extraction import prepare_extraction_inputs
+from kfp_components.components.data_processing.autorag.text_extraction.extraction_inputs import (
+    prepare_extraction_inputs,
+)
 from kfp_components.utils.pipeline_dag_tasks import (
     assert_compiled_pipeline_root_dag_task_ids,
     load_pipeline_spec_document,
