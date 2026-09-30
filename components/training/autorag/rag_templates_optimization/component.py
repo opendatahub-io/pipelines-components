@@ -163,8 +163,6 @@ def rag_templates_optimization(
                             "input_data_bucket_name": indexing_pipeline_params.get("input_data_bucket_name"),
                             "input_data_keys": indexing_pipeline_params.get("input_data_keys"),
                             "batch_size": indexing_pipeline_params.get("batch_size"),
-                            # Carry forward the extraction tier this run evaluated so the
-                            # deployed index is built the same way the patterns were scored.
                             "preset": indexing_pipeline_params.get("preset", "speed"),
                             "provider_type": vector_store_binding["provider_type"],
                             "collection_name": vector_store_binding["collection_name"],
@@ -359,9 +357,6 @@ def rag_templates_optimization(
                 "input_data_bucket_name": input_data_bucket_name,
                 "input_data_keys": input_data_keys or [],
                 "batch_size": 20,
-                # Reproduce the extraction quality this run evaluated: indexing must
-                # parse tables (or not) the same way, or the deployed index diverges
-                # from the patterns that were scored.
                 "preset": preset,
             }
 
