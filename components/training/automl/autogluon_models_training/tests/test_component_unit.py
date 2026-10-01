@@ -567,7 +567,7 @@ class TestAutogluonModelsTrainingUnitTests:
     @mock.patch("pandas.read_parquet")
     @mock.patch("autogluon.tabular.TabularPredictor")
     def test_quality_preset_fit_args(self, mock_predictor_class, mock_read_parquet, tmp_path):
-        """Quality uses best_quality, default hyperparameters, bagging, and parallel fit."""
+        """Quality uses best_quality, default hyperparameters, bagging, and stacking."""
         mock_predictor = mock.MagicMock()
         mock_predictor_clone = mock.MagicMock()
         mock_predictor_class.return_value.fit.return_value = mock_predictor
@@ -617,7 +617,7 @@ class TestAutogluonModelsTrainingUnitTests:
         assert fit_call[1]["excluded_model_types"] == ["CAT", "KNN"]
         assert fit_call[1]["num_bag_folds"] == 5
         assert fit_call[1]["num_stack_levels"] == 1
-        assert fit_call[1]["fit_strategy"] == "parallel"
+        assert "fit_strategy" not in fit_call[1]
 
         context = mock_models_artifact.metadata["context"]
         assert context["model_config"]["preset"] == "quality"

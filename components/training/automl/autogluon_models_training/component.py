@@ -79,8 +79,8 @@ def autogluon_models_training(
             Ignored for ``multiclass`` and ``regression``.
         preset: Training quality tier. ``"speed"`` (45-minute selection budget, default),
             ``"balanced"`` (180-minute selection budget), or ``"quality"`` (six-hour
-            selection budget with AutoGluon ``best_quality``, light hyperparameters,
-            bagging/stacking, and parallel fit).
+            selection budget with AutoGluon ``best_quality``, default hyperparameters,
+            and bagging/stacking).
         eval_metric: Metric for model ranking (e.g. ``"r2"``, ``"accuracy"``). Defaults
             to ``"r2"`` for regression and ``"accuracy"`` otherwise.
         run_name: Per-execution MLflow run name recorded as a tag on child runs. Falls
@@ -148,8 +148,8 @@ def autogluon_models_training(
     PRESET_FIT_KWARGS = {
         "speed": {},
         "balanced": {},
-        # AG recommends ~5-10 bag folds and stacking when time allows; use parallel fit on this tier's CPUs.
-        "quality": {"num_bag_folds": 5, "num_stack_levels": 1, "fit_strategy": "parallel"},
+        # AutoGluon recommends ~5-10 bag folds and stacking when time allows.
+        "quality": {"num_bag_folds": 5, "num_stack_levels": 1},
     }
     TOP_N_MAX = 10
 
