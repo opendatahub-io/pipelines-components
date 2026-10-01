@@ -2,6 +2,7 @@
 
 import json
 import logging
+import stat
 import sys
 import tempfile
 from pathlib import Path
@@ -150,8 +151,10 @@ class TestTimeseriesModelsTrainingUnitTests:
         mock_read_parquet,
         mock_artifacts,  # noqa: F811
     ):
-        """Happy path returns top models, config, and predictor path with full refit."""
+        """Happy path keeps selection models in scratch and returns a refitted predictor."""
         models_artifact, extra_train_path, html_artifact, experiment_notebook = mock_artifacts
+        workspace = Path(models_artifact.path).parent / "workspace"
+        workspace.mkdir()
 
         # Mock selection predictor
         mock_predictor = mock.MagicMock()
@@ -188,7 +191,7 @@ class TestTimeseriesModelsTrainingUnitTests:
             train_data_path="/tmp/train.parquet",
             test_data=test_data,
             top_n=2,
-            workspace_path="/tmp/workspace",
+            workspace_path=str(workspace),
             pipeline_name="ts-pipeline-123",
             run_id="run-123",
             train_data_secret_name="my-s3-secret",
@@ -218,7 +221,12 @@ class TestTimeseriesModelsTrainingUnitTests:
 
         assert result.top_models == ["DeepAR", "TFT"]
         assert result.eval_metric == "mean_absolute_scaled_error"
-        assert result.predictor_path == "/tmp/workspace/timeseries_predictor"
+        selection_path = Path(mock_predictor_cls.call_args_list[0].kwargs["path"])
+        assert selection_path.name == "timeseries_predictor"
+        assert selection_path.parent.parent == Path("/tmp/autogluon-scratch")
+        assert not selection_path.parent.exists()
+        assert list(workspace.iterdir()) == []
+        assert result.predictor_path == str(Path(models_artifact.path) / result.best_model_name / "predictor")
         assert result.model_config["prediction_length"] == 24
         assert result.model_config["presets"] == "speed"
         assert result.model_config["time_limit"] == 600
@@ -514,6 +522,8 @@ class TestTimeseriesModelsTrainingUnitTests:
         mock_predictor = mock.MagicMock()
         mock_predictor.fit.side_effect = RuntimeError("boom")
         mock_predictor_cls.return_value = mock_predictor
+        workspace = Path(models_artifact.path).parent / "workspace"
+        workspace.mkdir()
         mock_ts_df_cls.from_data_frame.return_value = _mock_ts_df()
         mock_read_parquet.side_effect = [mock.MagicMock(), mock.MagicMock()]
         test_data = mock.MagicMock()
@@ -527,7 +537,7 @@ class TestTimeseriesModelsTrainingUnitTests:
                 train_data_path="/tmp/train.parquet",
                 test_data=test_data,
                 top_n=2,
-                workspace_path="/tmp/workspace",
+                workspace_path=str(workspace),
                 pipeline_name="ts-pipeline-123",
                 run_id="run-123",
                 models_artifact=models_artifact,
@@ -536,6 +546,48 @@ class TestTimeseriesModelsTrainingUnitTests:
                 experiment_notebook=_DEFAULT_EXPERIMENT_NOTEBOOK_ARTIFACT,
                 component_status=_DEFAULT_COMPONENT_STATUS,
             )
+        selection_path = Path(mock_predictor_cls.call_args.kwargs["path"])
+        assert selection_path.parent.parent == Path("/tmp/autogluon-scratch")
+        assert not selection_path.parent.exists()
+        assert list(workspace.iterdir()) == []
+
+    @mock.patch("pandas.read_parquet")
+    @mock.patch("autogluon.timeseries.TimeSeriesDataFrame")
+    def test_symlink_scratch_root_is_rejected(self, mock_ts_df_cls, mock_read_parquet, mock_artifacts):  # noqa: F811
+        """A symlinked scratch root cannot redirect temporary model writes."""
+        models_artifact, extra_train_path, html_artifact, experiment_notebook = mock_artifacts
+        mock_ts_df_cls.from_data_frame.return_value = _mock_ts_df()
+        mock_read_parquet.side_effect = [mock.MagicMock(), mock.MagicMock()]
+        scratch_root = Path("/tmp/autogluon-scratch")
+        real_lstat = Path.lstat
+
+        def root_lstat(path):
+            if path == scratch_root:
+                return mock.Mock(st_mode=stat.S_IFLNK)
+            return real_lstat(path)
+
+        with (
+            mock.patch.object(Path, "lstat", autospec=True, side_effect=root_lstat),
+            mock.patch("tempfile.mkdtemp") as create_temp_dir,
+            pytest.raises(PermissionError, match="Unsafe scratch directory"),
+        ):
+            autogluon_timeseries_models_training.python_func(
+                target="sales",
+                id_column="item_id",
+                timestamp_column="timestamp",
+                train_data_path="/tmp/train.parquet",
+                test_data=mock.MagicMock(path="/tmp/test.parquet"),
+                top_n=2,
+                workspace_path="/tmp/workspace",
+                pipeline_name="ts-pipeline-123",
+                run_id="run-123",
+                models_artifact=models_artifact,
+                extra_train_data_path=extra_train_path,
+                html_artifact=html_artifact,
+                experiment_notebook=experiment_notebook,
+                component_status=_DEFAULT_COMPONENT_STATUS,
+            )
+        create_temp_dir.assert_not_called()
 
     @mock.patch("pandas.read_parquet")
     @mock.patch("autogluon.timeseries.TimeSeriesDataFrame")

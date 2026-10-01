@@ -21,7 +21,7 @@ mutates predictor state. All artifacts are written under a single output artifac
 | `top_n` | `int` | `None` | Number of top models to select and refit (1-10). |
 | `train_data_path` | `str` | `None` | Path to the selection-train Parquet file on the PVC workspace. |
 | `test_data` | `dsl.Input[dsl.Dataset]` | `None` | Dataset artifact (Parquet) used for leaderboard ranking and evaluation. |
-| `workspace_path` | `str` | `None` | PVC workspace directory; predictor saved at ``workspace_path/autogluon_predictor``. |
+| `workspace_path` | `str` | `None` | PVC workspace directory containing the two training splits. |
 | `pipeline_name` | `str` | `None` | Pipeline run name; last dash-segment stripped for the notebook. |
 | `run_id` | `str` | `None` | Pipeline run ID written into the generated notebook. |
 | `sample_row` | `str` | `None` | JSON array of row dicts for the notebook example input; label column is stripped. |
@@ -58,7 +58,7 @@ mutates predictor state. All artifacts are written under a single output artifac
 - **Tags**:
   - training
   - automl
-- **Last Verified**: 2026-06-10 12:00:00+00:00
+- **Last Verified**: 2026-09-29 00:00:00+00:00
 - **Owners**:
   - No Parent Owners: Yes
   - Approvers:
@@ -80,7 +80,11 @@ when completed), ``refit_and_evaluate``. Artifact metadata display name:
 
 ## Usage Examples 💡
 
-This component is typically used inside a KFP pipeline. It depends on a PVC workspace (for predictor storage) and a test dataset artifact (for leaderboard evaluation).
+This component is typically used inside a KFP pipeline. The shared PVC holds the two training splits,
+and a test dataset artifact supplies leaderboard evaluation data. The predictor and refit clone use
+task-local scratch storage under `/tmp/autogluon-scratch`; both must be on a normal local filesystem
+because AutoGluon's clone operation can drop files on S3 FUSE. The tabular pipeline mounts a disk-backed
+`emptyDir` there. Scratch is removed when training succeeds or fails.
 
 ### Regression
 

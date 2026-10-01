@@ -62,7 +62,7 @@ def autogluon_timeseries_models_training(
         train_data_path: Path to the selection training Parquet file.
         test_data: Test dataset artifact for evaluation.
         top_n: Number of top models to select for full refit.
-        workspace_path: Workspace directory where predictor will be saved.
+        workspace_path: PVC workspace directory containing the two training splits.
         pipeline_name: Pipeline name used in generated notebook placeholders.
         run_id: Pipeline run id used in generated notebook placeholders.
         train_data_secret_name: Kubernetes secret name for S3 credentials used by the pipeline.
@@ -98,14 +98,17 @@ def autogluon_timeseries_models_training(
         MLflow work is best-effort and never fails training.
 
     Returns:
-        NamedTuple: top_models list, predictor_path, eval_metric, model_config.
+        NamedTuple: top_models list, best refitted predictor path in models_artifact,
+        eval_metric, model_config, and best_model_name.
     """
     import json
     import logging
     import math
     import shutil
+    import stat
     import tempfile
     import time
+    from contextlib import ExitStack
     from pathlib import Path
 
     import pandas as pd
@@ -126,7 +129,7 @@ def autogluon_timeseries_models_training(
     )
 
     status = ComponentStatusTracker(component_status.path, "autogluon_timeseries_models_training")
-    with status:
+    with status, ExitStack() as cleanup_stack:
         status.set_metadata(display_name="Timeseries Models Training Status")
         component_status.metadata["display_name"] = "Timeseries Models Training Status"
         TOP_N_MAX = 7
@@ -218,8 +221,15 @@ def autogluon_timeseries_models_training(
             test_ts.num_items,
         )
 
-        # Create predictor path in workspace
-        predictor_path = Path(workspace_path) / "timeseries_predictor"
+        # Selection models are temporary. Keep them off the shared PVC and artifact
+        # store; the pipeline mounts a disk-backed emptyDir here for this task.
+        scratch_root = Path("/tmp/autogluon-scratch")
+        scratch_root.mkdir(mode=0o700, parents=True, exist_ok=True)
+        if stat.S_ISLNK(scratch_root.lstat().st_mode):
+            raise PermissionError(f"Unsafe scratch directory: {scratch_root}")
+        scratch_path = Path(tempfile.mkdtemp(prefix="training-", dir=scratch_root))
+        cleanup_stack.callback(shutil.rmtree, scratch_path, ignore_errors=True)
+        predictor_path = scratch_path / "timeseries_predictor"
 
         # Create TimeSeriesPredictor
         predictor = TimeSeriesPredictor(
@@ -837,7 +847,7 @@ def autogluon_timeseries_models_training(
         )
         return outputs(
             top_models=top_models,
-            predictor_path=str(predictor_path),
+            predictor_path=str(Path(models_artifact.path) / best_model_name / "predictor"),
             eval_metric=eval_metric,
             model_config=model_config,
             best_model_name=best_model_name,

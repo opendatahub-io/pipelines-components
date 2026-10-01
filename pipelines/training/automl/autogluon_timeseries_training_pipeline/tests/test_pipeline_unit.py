@@ -41,6 +41,27 @@ class TestAutogluonTimeseriesTrainingPipelineUnitTests:
         finally:
             Path(tmp_path).unlink(missing_ok=True)
 
+    def test_training_branches_mount_local_scratch(self):
+        """Both preset branches mount disk-backed scratch for selection training."""
+        import yaml
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as tmp_file:
+            tmp_path = tmp_file.name
+        try:
+            compiler.Compiler().compile(autogluon_timeseries_training_pipeline, package_path=tmp_path)
+            platform = list(yaml.safe_load_all(Path(tmp_path).read_text(encoding="utf-8")))[1]
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
+
+        executors = platform["platforms"]["kubernetes"]["deploymentSpec"]["executors"]
+        for name, size_limit in (
+            ("exec-autogluon-timeseries-models-training", "32Gi"),
+            ("exec-autogluon-timeseries-models-training-2", "16Gi"),
+        ):
+            assert executors[name]["emptyDirMounts"] == [
+                {"volumeName": "autogluon-scratch", "mountPath": "/tmp/autogluon-scratch", "sizeLimit": size_limit}
+            ]
+
     def test_pipeline_signature(self):
         """Test that the pipeline has the expected parameters and defaults."""
         expected_params = {

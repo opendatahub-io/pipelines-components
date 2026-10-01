@@ -1,6 +1,8 @@
 """Unit tests for the autogluon_models_training component."""
 
 import json
+import os
+import stat
 import sys
 from contextlib import contextmanager
 from pathlib import Path
@@ -357,11 +359,14 @@ class TestAutogluonModelsTrainingUnitTests:
         assert result.best_model_name in ("LightGBM_BAG_L1_FULL", "NeuralNetFastAI_BAG_L1_FULL")
 
         # TabularPredictor constructed and fitted with correct params
+        predictor_path = mock_predictor_class.call_args.kwargs["path"]
+        assert predictor_path.name == "autogluon_predictor"
+        assert predictor_path.parent.parent == Path("/tmp/autogluon-scratch")
         mock_predictor_class.assert_called_once_with(
             problem_type="regression",
             label="target",
             eval_metric="r2",
-            path=Path(workspace_path) / "autogluon_predictor",
+            path=predictor_path,
             verbosity=2,
         )
         fit_call = mock_predictor_class.return_value.fit.call_args
@@ -383,9 +388,9 @@ class TestAutogluonModelsTrainingUnitTests:
         # leaderboard called with test df
         mock_predictor.leaderboard.assert_called_once_with(mock_test_df)
 
-        # clone called ONCE (not per model), with PVC work path
+        # Clone source and destination share task-local scratch storage.
         mock_predictor.clone.assert_called_once()
-        work_path = Path(workspace_path) / "refit_work"
+        work_path = predictor_path.parent / "refit_work"
         assert mock_predictor.clone.call_args[1]["path"] == work_path
         assert mock_predictor.clone.call_args[1]["return_clone"] is True
         assert mock_predictor.clone.call_args[1]["dirs_exist_ok"] is True
@@ -695,7 +700,7 @@ class TestAutogluonModelsTrainingUnitTests:
             problem_type="binary",
             label="target",
             eval_metric="accuracy",
-            path=Path(workspace_path) / "autogluon_predictor",
+            path=mock_predictor_class.call_args.kwargs["path"],
             verbosity=2,
             positive_class=0,
         )
@@ -746,7 +751,7 @@ class TestAutogluonModelsTrainingUnitTests:
             problem_type="regression",
             label="target",
             eval_metric="r2",
-            path=Path(workspace_path) / "autogluon_predictor",
+            path=mock_predictor_class.call_args.kwargs["path"],
             verbosity=2,
         )
         assert "ignored when task_type='regression'" in caplog.text
@@ -1084,11 +1089,10 @@ class TestAutogluonModelsTrainingUnitTests:
         assert call_order[7] == "clone_for_deployment"
         assert call_order[-1] == "rmtree"
 
-    @mock.patch("shutil.rmtree")
     @mock.patch("pandas.read_parquet")
     @mock.patch("autogluon.tabular.TabularPredictor")
-    def test_work_path_is_on_pvc_and_cleaned_up(self, mock_predictor_class, mock_read_parquet, mock_rmtree, tmp_path):
-        """Clone work path is inside workspace_path (PVC), not inside models_artifact (S3)."""
+    def test_work_path_is_task_local_and_cleaned_up(self, mock_predictor_class, mock_read_parquet, tmp_path):
+        """Predictor and refit clone share local scratch, which is removed afterward."""
         mock_predictor = mock.MagicMock()
         mock_predictor_clone = mock.MagicMock()
         mock_predictor_class.return_value.fit.return_value = mock_predictor
@@ -1126,14 +1130,95 @@ class TestAutogluonModelsTrainingUnitTests:
             html_artifact=_make_html_artifact(tmp_path),
         )
 
-        expected_work_path = Path(workspace_path) / "refit_work"
+        predictor_path = mock_predictor_class.call_args.kwargs["path"]
+        scratch_path = predictor_path.parent
+        expected_work_path = scratch_path / "refit_work"
         clone_path = mock_predictor.clone.call_args[1]["path"]
-        # Must be inside workspace (PVC), not inside models_artifact path (S3)
+        assert scratch_path.parent == Path("/tmp/autogluon-scratch")
+        assert not str(predictor_path).startswith(workspace_path)
         assert clone_path == expected_work_path
         assert not str(clone_path).startswith(models_output_dir)
-        # Work dir cleaned up after all models are saved (the sanitized-notebook temp dir
-        # is also removed, so there may be more than one rmtree call).
-        mock_rmtree.assert_any_call(expected_work_path, ignore_errors=True)
+        assert not scratch_path.exists()
+
+    @mock.patch("pandas.read_parquet")
+    @mock.patch("autogluon.tabular.TabularPredictor")
+    def test_scratch_is_cleaned_when_fit_fails(self, mock_predictor_class, mock_read_parquet, tmp_path):
+        """A failed fit removes local scratch without writing to the workspace."""
+        mock_read_parquet.side_effect = [_mock_parquet_frame(), _mock_parquet_frame(), _mock_parquet_frame()]
+        mock_predictor_class.return_value.fit.side_effect = RuntimeError("fit failed")
+        workspace_path = tmp_path / "ws"
+        workspace_path.mkdir()
+        models_artifact = mock.MagicMock(path=str(tmp_path / "out"), metadata={})
+
+        with pytest.raises(RuntimeError, match="fit failed"):
+            autogluon_models_training.python_func(
+                **_base_call_kwargs(
+                    str(workspace_path), models_artifact, mock.MagicMock(path="/tmp/test.parquet"), tmp_path
+                )
+            )
+
+        scratch_path = mock_predictor_class.call_args.kwargs["path"].parent
+        assert scratch_path.parent == Path("/tmp/autogluon-scratch")
+        assert not scratch_path.exists()
+        assert list(workspace_path.iterdir()) == []
+
+    @mock.patch("pandas.read_parquet")
+    def test_symlink_scratch_root_is_rejected(self, mock_read_parquet, tmp_path):
+        """Training must not create a child directory under a symlinked scratch root."""
+        mock_read_parquet.side_effect = [_mock_parquet_frame(), _mock_parquet_frame(), _mock_parquet_frame()]
+        scratch_root = Path("/tmp/autogluon-scratch")
+        real_lstat = Path.lstat
+
+        def root_lstat(path):
+            if path != scratch_root:
+                return real_lstat(path)
+            return mock.Mock(st_mode=stat.S_IFLNK)
+
+        workspace_path = tmp_path / "ws"
+        workspace_path.mkdir()
+        models_artifact = mock.MagicMock(path=str(tmp_path / "out"), metadata={})
+        with (
+            mock.patch.object(Path, "lstat", autospec=True, side_effect=root_lstat),
+            mock.patch("tempfile.mkdtemp") as create_temp_dir,
+            pytest.raises(PermissionError, match="Unsafe scratch directory"),
+        ):
+            autogluon_models_training.python_func(
+                **_base_call_kwargs(
+                    str(workspace_path), models_artifact, mock.MagicMock(path="/tmp/test.parquet"), tmp_path
+                )
+            )
+        create_temp_dir.assert_not_called()
+
+    @mock.patch("pandas.read_parquet")
+    @mock.patch("autogluon.tabular.TabularPredictor")
+    def test_writable_foreign_owned_scratch_root_is_allowed(self, mock_predictor_class, mock_read_parquet, tmp_path):
+        """A writable Kubernetes emptyDir can have a different owner than the process."""
+        mock_read_parquet.side_effect = [_mock_parquet_frame(), _mock_parquet_frame(), _mock_parquet_frame()]
+        mock_predictor_class.return_value.fit.side_effect = RuntimeError("fit failed")
+        scratch_root = Path("/tmp/autogluon-scratch")
+        real_lstat = Path.lstat
+
+        def root_lstat(path):
+            if path == scratch_root:
+                return mock.Mock(st_mode=stat.S_IFDIR, st_uid=os.getuid() + 1)
+            return real_lstat(path)
+
+        workspace_path = tmp_path / "ws"
+        workspace_path.mkdir()
+        models_artifact = mock.MagicMock(path=str(tmp_path / "out"), metadata={})
+        with (
+            mock.patch.object(Path, "lstat", autospec=True, side_effect=root_lstat),
+            pytest.raises(RuntimeError, match="fit failed"),
+        ):
+            autogluon_models_training.python_func(
+                **_base_call_kwargs(
+                    str(workspace_path), models_artifact, mock.MagicMock(path="/tmp/test.parquet"), tmp_path
+                )
+            )
+
+        scratch_path = mock_predictor_class.call_args.kwargs["path"].parent
+        assert scratch_path.parent == scratch_root
+        assert not scratch_path.exists()
 
     @mock.patch("pandas.read_parquet")
     @mock.patch("autogluon.tabular.TabularPredictor")
@@ -1693,7 +1778,7 @@ class TestAutogluonModelsTrainingUnitTests:
             problem_type="regression",
             label="target",
             eval_metric="r2",
-            path=Path(workspace_path) / "autogluon_predictor",
+            path=mock_predictor_class.call_args.kwargs["path"],
             verbosity=2,
         )
         assert result.eval_metric == "r2"

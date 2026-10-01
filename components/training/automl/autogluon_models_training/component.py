@@ -59,7 +59,7 @@ def autogluon_models_training(
         top_n: Number of top models to select and refit (1-10).
         train_data_path: Path to the selection-train Parquet file on the PVC workspace.
         test_data: Dataset artifact (Parquet) used for leaderboard ranking and evaluation.
-        workspace_path: PVC workspace directory; predictor saved at ``workspace_path/autogluon_predictor``.
+        workspace_path: PVC workspace directory containing the two training splits.
         pipeline_name: Pipeline run name; last dash-segment stripped for the notebook.
         run_id: Pipeline run ID written into the generated notebook.
         sample_row: JSON array of row dicts for the notebook example input; label column is stripped.
@@ -109,9 +109,11 @@ def autogluon_models_training(
     import logging
     import math
     import shutil
+    import stat
     import tempfile
     import time
     from concurrent.futures import ThreadPoolExecutor
+    from contextlib import ExitStack
     from copy import deepcopy
     from pathlib import Path
     from typing import (
@@ -124,6 +126,9 @@ def autogluon_models_training(
     from autogluon.core.metrics import METRICS
     from autogluon.tabular import TabularPredictor
     from autogluon.tabular.configs.hyperparameter_configs import get_hyperparameter_config
+    from kfp_components.components.training.automl.shared.component_status import ComponentStatusTracker
+    from kfp_components.components.training.automl.shared.mlflow_tracking import experiment_run_logger
+    from kfp_components.components.training.automl.shared.run_status import shared_automl_dir
 
     VALID_TASK_TYPES = {"binary", "multiclass", "regression"}
     VALID_PRESETS = {"speed", "balanced"}
@@ -190,9 +195,6 @@ def autogluon_models_training(
 
     logger = logging.getLogger(__name__)
 
-    from kfp_components.components.training.automl.shared.component_status import ComponentStatusTracker
-    from kfp_components.components.training.automl.shared.run_status import shared_automl_dir
-
     # Initialize status tracker
     status = ComponentStatusTracker(component_status.path, "autogluon_models_training")
     with status:
@@ -240,7 +242,15 @@ def autogluon_models_training(
                 task_type,
             )
 
-        predictor_path = Path(workspace_path) / "autogluon_predictor"
+        # Both the fit source and refit clone must be on a normal local filesystem.
+        # The pipeline mounts a disk-backed emptyDir here; standalone tasks use the
+        # container's writable filesystem at the same path.
+        scratch_root = Path("/tmp/autogluon-scratch")
+        scratch_root.mkdir(mode=0o700, parents=True, exist_ok=True)
+        if stat.S_ISLNK(scratch_root.lstat().st_mode):
+            raise PermissionError(f"Unsafe scratch directory: {scratch_root}")
+        scratch_path = Path(tempfile.mkdtemp(prefix="training-", dir=scratch_root))
+        predictor_path = scratch_path / "autogluon_predictor"
         predictor_init_kwargs: dict[str, Any] = {
             "problem_type": task_type,
             "label": label_column,
@@ -263,12 +273,6 @@ def autogluon_models_training(
         # each candidate's validation score during fit(). Best-effort: a disabled logger
         # is a no-op. Entered via ExitStack to avoid re-indenting the large training body;
         # closed just before status recording below.
-        from contextlib import ExitStack
-
-        from kfp_components.components.training.automl.shared.mlflow_tracking import (
-            experiment_run_logger,
-        )
-
         # Fall back to the pipeline name when no per-run name was provided, so the parent
         # MLflow run (and its experiment, on the create path) is named instead of anonymous.
         effective_run_name = run_name or pipeline_name
@@ -379,8 +383,8 @@ def autogluon_models_training(
 
             # 2. models refit stage
 
-            # Clone once to PVC (same filesystem as predictor_path) to avoid S3 FUSE file-dropping
-            # during shutil.copytree inside predictor.clone().
+            # Clone on the same local filesystem as the predictor. S3 FUSE can drop
+            # files during the shutil.copytree used by predictor.clone().
             work_path = predictor_path.parent / "refit_work"
             predictor_clone = predictor.clone(path=work_path, return_clone=True, dirs_exist_ok=True)
 
@@ -754,8 +758,6 @@ def autogluon_models_training(
                 predictor_clone.set_model_best(model=model_name_full, save_trainer=True)
                 predictor_clone.clone_for_deployment(path=output_path / "predictor", dirs_exist_ok=True)
 
-            shutil.rmtree(work_path, ignore_errors=True)
-
             # Build ordered models_metadata (preserves top-N ranking order).
             inference_block = _build_tabular_inference_block(predictor_clone)
 
@@ -997,7 +999,10 @@ def autogluon_models_training(
         finally:
             # Always end the MLflow parent run, even if training or artifact
             # processing raised, so it never leaks in RUNNING state (idempotent).
-            mlflow_stack.close()
+            try:
+                mlflow_stack.close()
+            finally:
+                shutil.rmtree(scratch_path, ignore_errors=True)
 
     return NamedTuple("outputs", eval_metric=str, best_model_name=str)(
         eval_metric=eval_metric,

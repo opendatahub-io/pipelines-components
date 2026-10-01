@@ -21,7 +21,7 @@ Refit outputs for all selected models are written under one ``models_artifact``,
 | `train_data_path` | `str` | `None` | Path to the selection training Parquet file. |
 | `test_data` | `dsl.Input[dsl.Dataset]` | `None` | Test dataset artifact for evaluation. |
 | `top_n` | `int` | `None` | Number of top models to select for full refit. |
-| `workspace_path` | `str` | `None` | Workspace directory where predictor will be saved. |
+| `workspace_path` | `str` | `None` | PVC workspace directory containing the two training splits. |
 | `pipeline_name` | `str` | `None` | Pipeline name used in generated notebook placeholders. |
 | `run_id` | `str` | `None` | Pipeline run id used in generated notebook placeholders. |
 | `models_artifact` | `dsl.Output[dsl.Model]` | `None` | Combined output artifact containing all refitted models. |
@@ -48,7 +48,7 @@ Refit outputs for all selected models are written under one ``models_artifact``,
 
 | Name | Type | Description |
 | ---- | ---- | ----------- |
-| Output | `NamedTuple('outputs', top_models=List[str], predictor_path=str, eval_metric=str, model_config=dict, best_model_name=str)` | top_models list, predictor_path, eval_metric, model_config. |
+| Output | `NamedTuple('outputs', top_models=List[str], predictor_path=str, eval_metric=str, model_config=dict, best_model_name=str)` | top_models list, best refitted predictor path in models_artifact, eval_metric, model_config, and best_model_name. |
 
 ## Usage Examples 🧪
 
@@ -120,7 +120,7 @@ def example_pipeline(
   - timeseries
   - automl
   - model-selection
-- **Last Verified**: 2026-07-08 12:00:00+00:00
+- **Last Verified**: 2026-09-30 00:00:00+00:00
 - **Owners**:
   - No Parent Owners: Yes
   - Approvers:
@@ -132,6 +132,14 @@ def example_pipeline(
     - DorotaDR
 
 <!-- custom-content -->
+
+### Training scratch storage
+
+The selection predictor uses task-local scratch under `/tmp/autogluon-scratch`, mounted as a
+disk-backed `emptyDir` by the time series pipeline. The component removes this scratch directory
+after success or failure. The shared PVC holds only the two Parquet training splits; each refitted
+predictor is saved in `models_artifact`. The `predictor_path` output points to the best refitted
+predictor in that artifact.
 
 ### Component status artifact
 
