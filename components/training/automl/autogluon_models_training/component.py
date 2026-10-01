@@ -410,7 +410,7 @@ def autogluon_models_training(
             # Refit all top models in a single call:  AutoGluon resolves stacking dependencies internally.
             status.record("refit_and_evaluate", "started")
             refit_start_time = time.perf_counter()
-            predictor_clone.refit_full(model=top_models, train_data_extra=extra_train_df)
+            predictor_clone.refit_full(model=top_models, train_data_extra=extra_train_df, num_cpus=num_cpus)
             total_fit_time_seconds += time.perf_counter() - refit_start_time
 
             def replace_placeholder_in_notebook(notebook, replacements):

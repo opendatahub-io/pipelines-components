@@ -243,7 +243,7 @@ def autogluon_timeseries_training_pipeline(
         )
 
     with dsl.Else():
-        data_loader_task_sp = _create_data_loader("speed", "16Gi")
+        data_loader_task_sp = _create_data_loader(preset, "16Gi")
         training_task_sp = _create_training_task(data_loader_task_sp, "speed")
         training_task_sp.set_caching_options(False)
         training_task_sp.set_cpu_request("4").set_memory_request("16Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(

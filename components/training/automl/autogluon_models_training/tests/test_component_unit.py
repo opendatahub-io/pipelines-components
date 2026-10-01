@@ -365,7 +365,11 @@ class TestAutogluonModelsTrainingUnitTests:
         assert mock_predictor.clone.call_args[1]["dirs_exist_ok"] is True
 
         # refit_full called ONCE with full list (batch, not per-model)
-        mock_predictor_clone.refit_full.assert_called_once_with(model=top_models, train_data_extra=mock_extra_df)
+        mock_predictor_clone.refit_full.assert_called_once_with(
+            model=top_models,
+            train_data_extra=mock_extra_df,
+            num_cpus=4,
+        )
 
         # predict called per model with explicit model= arg
         assert mock_predictor_clone.predict.call_count == 2
@@ -668,7 +672,11 @@ class TestAutogluonModelsTrainingUnitTests:
         )
 
         # refit_full gets None for extra data
-        mock_predictor_clone.refit_full.assert_called_once_with(model=["LightGBM_BAG_L1"], train_data_extra=None)
+        mock_predictor_clone.refit_full.assert_called_once_with(
+            model=["LightGBM_BAG_L1"],
+            train_data_extra=None,
+            num_cpus=4,
+        )
         # read_parquet called only twice (train + test, no extra)
         assert mock_read_parquet.call_count == 2
 
@@ -1214,7 +1222,7 @@ class TestAutogluonModelsTrainingUnitTests:
             html_artifact=_make_html_artifact(tmp_path),
         )
 
-        mock_predictor_clone.refit_full.assert_called_once_with(model=top_models, train_data_extra=None)
+        mock_predictor_clone.refit_full.assert_called_once_with(model=top_models, train_data_extra=None, num_cpus=4)
         # clone also called exactly once (not per model)
         mock_predictor.clone.assert_called_once()
 
