@@ -175,6 +175,7 @@ def rag_templates_optimization(
                             "input_data_bucket_name": indexing_pipeline_params.get("input_data_bucket_name"),
                             "input_data_keys": indexing_pipeline_params.get("input_data_keys"),
                             "batch_size": indexing_pipeline_params.get("batch_size"),
+                            "preset": indexing_pipeline_params.get("preset", "speed"),
                             "provider_type": store_binding["provider_type"],
                             "collection_name": store_binding["collection_name"],
                             "embedding_model_id": settings["embedding"]["model_id"],
@@ -377,6 +378,7 @@ def rag_templates_optimization(
                 "input_data_bucket_name": input_data_bucket_name,
                 "input_data_keys": input_data_keys or [],
                 "batch_size": 20,
+                "preset": preset,
             }
 
             if (
