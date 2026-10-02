@@ -13,7 +13,8 @@ The component reads data in chunks to efficiently handle large files without loa
 1. **Primary split** (default 80/20): separates a *test set* (20%, written as Parquet to the ``sampled_test_dataset`` artifact) from the *train portion* (80%).
 
 2. **Secondary split** (default 30/70 of the train portion): produces ``models_selection_train_dataset.parquet`` (30%, used for model selection) and ``extra_train_dataset.parquet`` (70%, passed to ``refit_full`` as extra data). Both are written to the PVC workspace under
-``{workspace_path}/datasets/`` as Snappy-compressed Parquet so the workspace never holds a full-size CSV copy of either split.
+``{workspace_path}/datasets/`` as Snappy-compressed Parquet so the workspace never holds a full-size CSV copy of either split. For the ``"quality"`` preset, the selection fraction decreases when the eligible training data exceeds 1 GiB, keeping model selection at most 30% of the balanced preset's 1
+GiB data budget. All remaining rows still go to the extra-train split and are available to ``refit_full``.
 
 For **regression** tasks the split is random; for **binary** and **multiclass** tasks the split is **stratified** by the label column by default.
 
@@ -39,7 +40,7 @@ Authentication uses AWS-style credentials provided via environment variables (e.
 | `sampling_method` | `Optional[str]` | `None` | "first_n_rows", "stratified", or "random"; if None, derived from task_type. |
 | `task_type` | `str` | `regression` | "binary", "multiclass", or "regression" (default); used when sampling_method is None. |
 | `split_config` | `Optional[dict]` | `None` | Split configuration dictionary. Available keys: "test_size" (float), "random_state" (int), "stratify" (bool). |
-| `selection_train_size` | `float` | `0.3` | Fraction of the train portion used for model selection (default 0.3). |
+| `selection_train_size` | `float` | `0.3` | Maximum model-selection fraction (default 0.3). ``quality`` caps selection at 30% of the balanced preset's 1 GiB budget. |
 | `test_data_bucket_name` | `str` | `""` | S3 bucket name for user-provided test dataset (default: empty string). |
 | `test_data_file_key` | `str` | `""` | S3 object key of the user-provided test CSV (default: empty string). |
 | `preset` | `str` | `speed` | Training quality tier controlling the sampling size budget. ``"speed"`` (default) samples up to 100 MiB; ``"balanced"`` samples up to 1 GiB; and ``"quality"`` samples up to 10 GiB. User-provided test datasets are capped at 50 MiB, 100 MiB, and 1 GiB respectively. |

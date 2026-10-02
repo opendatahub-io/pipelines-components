@@ -127,7 +127,7 @@ def autogluon_timeseries_training_pipeline(
             ``"mean_absolute_scaled_error"``.
         preset: Training quality tier. ``"speed"`` (default, 4 vCPU / 16 GiB),
             ``"balanced"`` (8 vCPU / 32 GiB), or ``"quality"`` (two-hour selection budget,
-            16 vCPU / 64 GiB).
+            16 vCPU / 64 GiB, AutoGluon ``best_quality`` with three rolling validation windows).
         test_data_bucket_name: Optional S3-compatible bucket name for a user-provided test dataset.
             Default: empty string (use the per-series holdout split from training data).
         test_data_file_key: Optional S3 object key for a user-provided test CSV file.
