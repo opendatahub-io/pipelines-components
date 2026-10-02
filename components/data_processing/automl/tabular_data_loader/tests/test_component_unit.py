@@ -304,6 +304,39 @@ class TestComponentStatusArtifact:
         prepare_stage = next(stage for stage in payload["stages"] if stage["id"] == "prepare_data")
         assert prepare_stage["metrics"]["sample_cap_bytes"] == 10 * 1024 * 1024 * 1024
 
+    @mock.patch.dict("os.environ", mocked_env_variables)
+    def test_quality_caps_selection_fraction_at_balanced_relative_data_budget(self, tmp_path):
+        """Quality limits selection data volume while preserving the remainder for refit."""
+        body_stream = _csv_body("a,b,c\n1,2,3\n4,5,6\n")
+        sampled_test = _make_test_artifact(tmp_path)
+        component_status = mock.MagicMock()
+        component_status.path = str(tmp_path / "component_status_out")
+        component_status.metadata = {}
+
+        # Simulate wide rows without allocating a multi-GiB fixture. The 10 GiB quality
+        # sample budget admits this frame, but its eligible training data exceeds the
+        # balanced-relative selection-data budget.
+        with mock.patch.object(MockedDataFrame, "BYTES_PER_ROW", 30 * 1024 * 1024):
+            with _mock_boto3_and_pandas(get_object_return={"Body": body_stream}):
+                automl_data_loader.python_func(
+                    file_key="data/file.csv",
+                    bucket_name="my-bucket",
+                    workspace_path=str(tmp_path),
+                    label_column="c",
+                    sampled_test_dataset=sampled_test,
+                    component_status=component_status,
+                    preset="quality",
+                )
+
+        payload = json.loads((Path(component_status.path) / "component_status.json").read_text())
+        split_stage = next(stage for stage in payload["stages"] if stage["id"] == "split_and_export")
+        metrics = split_stage["metrics"]
+        assert metrics["requested_selection_train_size"] == 0.3
+        assert metrics["effective_selection_train_size"] < 0.3
+        assert metrics["selection_capped"] is True
+        assert metrics["selection_data_budget_bytes"] == int(0.3 * 1024 * 1024 * 1024)
+        assert metrics["extra_train_rows"] > metrics["selection_train_rows"]
+
 
 class TestAutomlDataLoaderUnitTests:
     """Unit tests for component logic."""

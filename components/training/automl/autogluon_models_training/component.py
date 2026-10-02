@@ -79,7 +79,7 @@ def autogluon_models_training(
             Ignored for ``multiclass`` and ``regression``.
         preset: Training quality tier. ``"speed"`` (45-minute selection budget, default),
             ``"balanced"`` (180-minute selection budget), or ``"quality"`` (six-hour
-            selection budget with AutoGluon ``best_quality``, default hyperparameters,
+            selection budget with AutoGluon ``best_quality``, the broad ``zeroshot`` portfolio,
             and bagging/stacking).
         eval_metric: Metric for model ranking (e.g. ``"r2"``, ``"accuracy"``). Defaults
             to ``"r2"`` for regression and ``"accuracy"`` otherwise.
@@ -131,10 +131,10 @@ def autogluon_models_training(
     VALID_PRESETS = {"speed", "balanced", "quality"}
     PRESET_TIME_LIMITS = {"speed": 45 * 60, "balanced": 180 * 60, "quality": 360 * 60}
     PRESET_AG_NAMES = {"speed": "good_quality", "balanced": "high_quality", "quality": "best_quality"}
-    # The quality tier uses AutoGluon's standard portfolio rather than the deliberately
-    # constrained light portfolio used for speed. This makes its larger data and time
-    # budgets available to the full set of suitable model configurations.
-    PRESET_HYPERPARAMETERS = {"speed": "light", "balanced": "zeroshot", "quality": "default"}
+    # Quality must use the same broad portfolio as balanced. ``default`` overrides
+    # best_quality's normal portfolio with a much smaller candidate set and causes a
+    # quality run to finish early despite its larger resource/time budget.
+    PRESET_HYPERPARAMETERS = {"speed": "light", "balanced": "zeroshot", "quality": "zeroshot"}
     # Keep AutoGluon's scheduler and every model family within the resources reserved
     # by the pipeline for each tier. memory_limit is expressed in GiB by AutoGluon.
     PRESET_NUM_CPUS = {"speed": 4, "balanced": 8, "quality": 16}
@@ -148,8 +148,9 @@ def autogluon_models_training(
     PRESET_FIT_KWARGS = {
         "speed": {},
         "balanced": {},
-        # AutoGluon recommends ~5-10 bag folds and stacking when time allows.
-        "quality": {"num_bag_folds": 5, "num_stack_levels": 1},
+        # Match balanced's eight folds so quality does not trade ensemble stability
+        # for its larger data and time budgets.
+        "quality": {"num_bag_folds": 8, "num_stack_levels": 1},
     }
     TOP_N_MAX = 10
 

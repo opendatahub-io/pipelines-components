@@ -599,7 +599,7 @@ class TestAutogluonModelsTrainingUnitTests:
     @mock.patch("pandas.read_parquet")
     @mock.patch("autogluon.tabular.TabularPredictor")
     def test_quality_preset_fit_args(self, mock_predictor_class, mock_read_parquet, tmp_path):
-        """Quality uses best_quality, default hyperparameters, bagging, and stacking."""
+        """Quality uses best_quality, zeroshot hyperparameters, eight-fold bagging, and stacking."""
         mock_predictor = mock.MagicMock()
         mock_predictor_clone = mock.MagicMock()
         mock_predictor_class.return_value.fit.return_value = mock_predictor
@@ -642,12 +642,15 @@ class TestAutogluonModelsTrainingUnitTests:
 
         fit_call = mock_predictor_class.return_value.fit.call_args
         assert fit_call[1]["presets"] == "best_quality"
+        sys.modules["autogluon.tabular.configs.hyperparameter_configs"].get_hyperparameter_config.assert_called_with(
+            "zeroshot"
+        )
         assert fit_call[1]["time_limit"] == 360 * 60
         assert fit_call[1]["num_cpus"] == 16
         assert fit_call[1]["memory_limit"] == 64
         assert all("num_threads" not in config for config in fit_call[1]["hyperparameters"]["GBM"])
         assert fit_call[1]["excluded_model_types"] == ["CAT", "KNN"]
-        assert fit_call[1]["num_bag_folds"] == 5
+        assert fit_call[1]["num_bag_folds"] == 8
         assert fit_call[1]["num_stack_levels"] == 1
         assert "fit_strategy" not in fit_call[1]
 

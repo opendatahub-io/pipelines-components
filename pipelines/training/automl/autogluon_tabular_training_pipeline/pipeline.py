@@ -88,7 +88,8 @@ def autogluon_tabular_training_pipeline(
          ``extra_train_dataset.parquet`` (70%, passed to ``refit_full`` as extra data).
          Both train Parquet files are written to the PVC workspace under
          ``{workspace_path}/datasets/``. For classification tasks the splits are
-         stratified by the label column.
+         stratified by the label column. For ``quality``, selection is capped at 30%
+         of the balanced 1 GiB budget; remaining rows are used for final refit.
 
     2. **Model Training & Refitting**: Trains multiple AutoGluon models on the
        *selection train* data using stacking (1 level) and bagging (4 folds).
