@@ -100,9 +100,6 @@ def text_extraction(
                 "and uses a CUDA-enabled AutoRAG image."
             )
         logging.info("GPU extraction enabled: using CUDA device %s", torch.cuda.get_device_name(0))
-        # Pin Docling to CUDA before extract_text spawns its workers so an inherited
-        # DOCLING_DEVICE=cpu cannot force conversion back onto the CPU.
-        os.environ["DOCLING_DEVICE"] = "cuda"
 
     do_table_structure = PRESET_DO_TABLE_STRUCTURE[preset]
     logging.info("Preset %r: do_table_structure=%s, gpu_acceleration=%s", preset, do_table_structure, gpu_acceleration)
@@ -194,6 +191,7 @@ def text_extraction(
                 do_table_structure=do_table_structure,
                 do_ocr=True,
                 ocr_lang=bundle_name,
+                device="cuda" if gpu_acceleration else "cpu",
                 **ocr_model_paths,
             )
 

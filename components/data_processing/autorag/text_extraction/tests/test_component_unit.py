@@ -138,6 +138,7 @@ class TestTextExtractionUnitTests:
             do_table_structure=False,
             do_ocr=True,
             ocr_lang="english",
+            device="cpu",
         )
         mock_extract.assert_called_once_with(
             documents=[{"key": "docs/a.pdf", "size_bytes": 1000}],
@@ -431,6 +432,7 @@ class TestTextExtractionUnitTests:
             do_table_structure=expected_do_table_structure,
             do_ocr=True,
             ocr_lang="english",
+            device="cpu",
         )
         assert mock_extract.call_args.kwargs["docling_config"] == mock_docling_config_cls.return_value
 
@@ -599,7 +601,7 @@ class TestTextExtractionUnitTests:
     @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
     def test_gpu_acceleration_recorded_in_status(self, tmp_path):
         """The extraction status surfaces GPU selection so the UI shows the device used."""
-        modules, mock_extract, _ = _make_ai4rag_mocks()
+        modules, mock_extract, mock_docling_config_cls = _make_ai4rag_mocks()
         mock_extract.return_value = SimpleNamespace(total_documents=1, processed_count=1, error_count=0)
         torch = mock.MagicMock()
         torch.cuda.is_available.return_value = True
@@ -625,3 +627,4 @@ class TestTextExtractionUnitTests:
         metrics = status["stages"][0]["metrics"]
         assert metrics["extraction_device"] == "GPU (CUDA)"
         assert metrics["gpu_acceleration"] is True
+        assert mock_docling_config_cls.call_args.kwargs["device"] == "cuda"
