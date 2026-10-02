@@ -103,8 +103,6 @@ def autogluon_timeseries_models_training(
     import json
     import logging
     import math
-    import shutil
-    import tempfile
     import time
     from pathlib import Path
 
@@ -416,52 +414,6 @@ def autogluon_timeseries_models_training(
 
         ts_inference_block = _build_timeseries_inference_block()
 
-        # The notebook rendered into models_artifact embeds real historical sample rows, so
-        # it must never reach the MLflow tracking server. Build a sanitized predict sample
-        # (typed placeholders instead of real values) for a separate MLflow-only notebook.
-        # Reuses the already-sanitized inference-block payload; returns None (no notebook
-        # uploaded) if the inference block could not be built (fail safe).
-        def _sanitized_predict_sample():
-            if not ts_inference_block:
-                return None
-            payload = ts_inference_block.get("sample_payload", {})
-            instances = payload.get("instances")
-            if not instances:
-                return None
-            return {
-                "id_column": id_column,
-                "timestamp_column": timestamp_column,
-                "known_covariates_names": known_covariates_names or [],
-                "history": [instances[0]],
-                "known_covariates": payload.get("known_covariates"),
-            }
-
-        sanitized_predict_sample = _sanitized_predict_sample()
-        mlflow_notebook_dir = Path(tempfile.mkdtemp(prefix="mlflow-sanitized-nb-"))
-
-        def _render_sanitized_notebook(model_name_full: str):
-            if sanitized_predict_sample is None:
-                return None
-            with (shared_automl_dir() / "notebook_templates" / "timeseries_notebook.ipynb").open(
-                "r", encoding="utf-8"
-            ) as f:
-                sanitized_notebook = json.load(f)
-            sanitized_notebook = replace_placeholder_in_notebook(
-                sanitized_notebook,
-                {
-                    "<REPLACE_RUN_ID>": run_id,
-                    "<REPLACE_PIPELINE_NAME>": pipeline_name_trimmed,
-                    "<REPLACE_MODEL_NAME>": model_name_full,
-                    "<REPLACE_PREDICT_SAMPLE>": str(sanitized_predict_sample),
-                    "<REPLACE_BACKTEST_PLOT_HELPERS>": notebook_backtest_charts_source(),
-                    "<REPLACE_TIMESERIES_SAMPLE_HELPERS>": notebook_timeseries_sample_helpers_source(),
-                },
-            )
-            sanitized_notebook_path = mlflow_notebook_dir / f"{model_name_full}.ipynb"
-            with sanitized_notebook_path.open("w", encoding="utf-8") as f:
-                json.dump(sanitized_notebook, f)
-            return sanitized_notebook_path
-
         # Open the MLflow parent run around the refit loop so each model is logged as a
         # nested child run the moment it finishes (incremental updates). TimeSeriesPredictor
         # has no callback API, so there is no live per-candidate streaming during fit().
@@ -650,17 +602,13 @@ def autogluon_timeseries_models_training(
                     # so the experiment updates live. Best-effort: never fails the refit loop.
                     run_logger.log_model(
                         model_name=model_name_full,
-                        model_dir=output_path,
                         model_uri=f"{models_artifact.uri.rstrip('/')}/{model_name_full}",
                         metrics={"test_data": metrics_dict},
-                        notebook_path=_render_sanitized_notebook(model_name_full) if run_logger.enabled else None,
                     )
 
                 except Exception as e:
                     logger.error("Refit failed for model '%s': %s", model_name, e)
                     failed_models.append(model_name)
-
-            shutil.rmtree(mlflow_notebook_dir, ignore_errors=True)
 
             # Report partial failures
             if failed_models:
@@ -782,8 +730,6 @@ def autogluon_timeseries_models_training(
             # Best-effort: never fails the training step.
             status.record("log_mlflow_results", "started")
             run_logger.finalize(
-                html_artifact_path=html_artifact.path,
-                model_names=model_names_full,
                 total_fit_time_seconds=total_fit_time_seconds,
             )
             logged_to_mlflow, mlflow_tracking_info = run_logger.result()
