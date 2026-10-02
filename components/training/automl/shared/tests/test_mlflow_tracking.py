@@ -298,6 +298,7 @@ def _mock_run_context(run_id: str, experiment_id: str = "1") -> mock.MagicMock:
     ctx = mock.MagicMock()
     ctx.info.run_id = run_id
     ctx.info.experiment_id = experiment_id
+    ctx.data.tags = {}
     ctx.__enter__ = mock.Mock(return_value=ctx)
     ctx.__exit__ = mock.Mock(return_value=False)
     return ctx
@@ -320,6 +321,7 @@ def _make_mock_mlflow(parent_ctx, child_ctxs) -> mock.MagicMock:
     mock_mlflow.start_run.side_effect = [parent_ctx, *child_ctxs]
     mock_mlflow.active_run.side_effect = [parent_ctx, *child_ctxs]
     mock_mlflow.entities.RunTag = mock.Mock(side_effect=lambda key, value: (key, value))
+    mock_mlflow.MlflowClient.return_value.get_run.return_value = parent_ctx
     return mock_mlflow
 
 
@@ -691,12 +693,13 @@ class TestTrackingFailureReporting:
 class TestParentRunAdrFields:
     """The parent run records the ADR-required identity/metadata fields."""
 
-    def _log_header(self, monkeypatch, *, dataset_uri="") -> mock.MagicMock:
+    def _log_header(self, monkeypatch, *, dataset_uri="", test_dataset_uri="") -> mock.MagicMock:
         _set_kfp_mlflow_config(monkeypatch, parent_run_id="parent-run", experiment_id="1")
         parent_ctx = _mock_run_context("parent-run", "1")
         mock_mlflow = mock.MagicMock()
         mock_mlflow.start_run.return_value = parent_ctx
         mock_mlflow.active_run.return_value = parent_ctx
+        mock_mlflow.MlflowClient.return_value.get_run.return_value = parent_ctx
         with mock.patch.dict(sys.modules, {"mlflow": mock_mlflow}):
             with experiment_run_logger(task_type="binary", eval_metric="accuracy") as run_logger:
                 run_logger.log_header(
@@ -705,6 +708,7 @@ class TestParentRunAdrFields:
                     preset="speed",
                     top_n=3,
                     dataset_uri=dataset_uri,
+                    test_dataset_uri=test_dataset_uri,
                 )
         return mock_mlflow
 
@@ -716,14 +720,14 @@ class TestParentRunAdrFields:
         assert "task_type" not in tags
         assert params["task_type"] == "binary"
 
-    def test_kfp_version_and_image_logged(self, monkeypatch):
-        """ADR: kfp_version and image are recorded on the parent run."""
+    def test_versions_and_image_logged_as_tags_only(self, monkeypatch):
+        """Record versions and image once as tags, not duplicate parameters."""
         mock_mlflow = self._log_header(monkeypatch)
         tags = mock_mlflow.set_tags.call_args.args[0]
         params = mock_mlflow.log_params.call_args.args[0]
-        for key in ("kfp_version", "image"):
+        for key in ("kfp_version", "image", "autogluon_version"):
             assert key in tags
-            assert key in params
+            assert key not in params
 
     def test_dataset_uri_logged_when_provided(self, monkeypatch):
         """ADR: the non-secret dataset URI is recorded when available."""
@@ -736,6 +740,23 @@ class TestParentRunAdrFields:
         mock_mlflow = self._log_header(monkeypatch, dataset_uri="")
         params = mock_mlflow.log_params.call_args.args[0]
         assert "dataset_uri" not in params
+
+    def test_test_dataset_uri_logged_when_provided(self, monkeypatch):
+        """Record both train and user-provided test dataset identities."""
+        mock_mlflow = self._log_header(
+            monkeypatch,
+            dataset_uri="s3://bucket/train.csv",
+            test_dataset_uri="s3://bucket/test.csv",
+        )
+        params = mock_mlflow.log_params.call_args.args[0]
+        assert params["dataset_uri"] == "s3://bucket/train.csv"
+        assert params["test_dataset_uri"] == "s3://bucket/test.csv"
+
+    def test_test_dataset_uri_omitted_when_empty(self, monkeypatch):
+        """Do not record an absent user-provided test dataset."""
+        mock_mlflow = self._log_header(monkeypatch, dataset_uri="s3://bucket/train.csv")
+        params = mock_mlflow.log_params.call_args.args[0]
+        assert "test_dataset_uri" not in params
 
     def test_total_fit_time_logged_as_parent_metric(self, tmp_path, monkeypatch):
         """ADR: finalize logs total_fit_time_seconds as a parent metric."""
@@ -766,3 +787,46 @@ class TestParentRunAdrFields:
         )
         logged_metric_names = [c.args[0] for c in mock_mlflow.log_metric.call_args_list]
         assert "total_fit_time_seconds" not in logged_metric_names
+
+
+class TestKfpTagDeduplication:
+    """The parent run carries the KFP identity under one set of keys."""
+
+    def _log_header_with_parent_tags(self, monkeypatch, parent_tags: dict) -> tuple[dict, mock.MagicMock]:
+        _set_kfp_mlflow_config(monkeypatch, parent_run_id="parent-run", experiment_id="1")
+        parent_ctx = _mock_run_context("parent-run", "1")
+        parent_ctx.data.tags = parent_tags
+        mock_mlflow = _make_mock_mlflow(parent_ctx, [])
+        with mock.patch.dict(sys.modules, {"mlflow": mock_mlflow}):
+            with experiment_run_logger(task_type="binary", eval_metric="accuracy") as run_logger:
+                run_logger.log_header(pipeline_name="p", kfp_run_id="run-1", kfp_run_name="Fraud detection")
+        return mock_mlflow.set_tags.call_args.args[0], mock_mlflow
+
+    def test_skips_automl_kfp_tags_when_platform_set_them(self, monkeypatch):
+        """Platform KFP tags prevent duplicate AutoML run-identity tags."""
+        tags, _ = self._log_header_with_parent_tags(
+            monkeypatch,
+            {"kfp.pipeline_run_id": "parent-run", "kfp.pipeline_id": "pipeline-123"},
+        )
+        assert "kfp_run_id" not in tags
+        assert "kfp_run_name" not in tags
+        assert tags["pipeline_name"] == "p"
+
+    def test_sets_automl_kfp_tags_when_platform_absent(self, monkeypatch):
+        """Retain AutoML fallback identity tags outside the platform integration."""
+        tags, _ = self._log_header_with_parent_tags(monkeypatch, {})
+        assert tags["kfp_run_id"] == "run-1"
+        assert tags["kfp_run_name"] == "Fraud detection"
+
+    def test_falls_back_to_automl_tags_when_parent_tags_unreadable(self, monkeypatch):
+        """A failed parent-tag lookup must not drop the run identity."""
+        _set_kfp_mlflow_config(monkeypatch, parent_run_id="parent-run", experiment_id="1")
+        parent_ctx = _mock_run_context("parent-run", "1")
+        mock_mlflow = _make_mock_mlflow(parent_ctx, [])
+        mock_mlflow.MlflowClient.side_effect = RuntimeError("tracking server unreachable")
+
+        with mock.patch.dict(sys.modules, {"mlflow": mock_mlflow}):
+            with experiment_run_logger(task_type="binary", eval_metric="accuracy") as run_logger:
+                run_logger.log_header(pipeline_name="p", kfp_run_id="run-1")
+
+        assert mock_mlflow.set_tags.call_args.args[0]["kfp_run_id"] == "run-1"

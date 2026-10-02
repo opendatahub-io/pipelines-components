@@ -39,6 +39,10 @@ RUN_TYPE_PIPELINE = "pipeline"
 RUN_TYPE_MODEL = "model"
 MLFLOW_PARENT_RUN_ID_TAG = "mlflow.parentRunId"
 
+# The platform integration owns canonical KFP identity tags on the parent run. AutoML
+# only writes its fallback ``kfp_run_*`` tags when that integration is absent.
+PLATFORM_KFP_RUN_ID_TAG = "kfp.pipeline_run_id"
+
 # HTTP header RHOAI's multi-tenant MLflow requires to scope every request to a workspace
 # (the project namespace, e.g. "ns-automl-benchmarking"). Sent from MLFLOW_WORKSPACE.
 MLFLOW_WORKSPACE_HEADER = "x-mlflow-workspace"
@@ -427,6 +431,22 @@ def _parse_timeout_seconds(timeout: str) -> int | None:
     return seconds if seconds > 0 else None
 
 
+def _platform_owns_kfp_tags(mlflow: Any, parent_run_id: str) -> bool:
+    """Return whether the platform already recorded the parent's KFP identity."""
+    if not parent_run_id:
+        return False
+    try:
+        tags = mlflow.MlflowClient().get_run(parent_run_id).data.tags or {}
+    except Exception:
+        logger.warning(
+            "Could not read tags on parent run %s; using AutoML KFP identity tags.",
+            parent_run_id,
+            exc_info=True,
+        )
+        return False
+    return bool(tags.get(PLATFORM_KFP_RUN_ID_TAG))
+
+
 @contextmanager
 def _child_mlflow_run(
     mlflow: Any,
@@ -541,6 +561,7 @@ class MlflowExperimentLogger:
         top_n: int = 0,
         data_config: dict[str, Any] | None = None,
         dataset_uri: str = "",
+        test_dataset_uri: str = "",
     ) -> None:
         """Tag the parent run and log run-level params. Call once before ``log_model``."""
         if not self.enabled:
@@ -554,24 +575,27 @@ class MlflowExperimentLogger:
             kfp_version = _resolve_kfp_version()
             image = _resolve_image()
 
-            self._mlflow.set_tags(
-                {
-                    "pipeline_name": pipeline_name,
-                    "kfp_run_id": kfp_run_id,
-                    "kfp_run_name": kfp_run_name,
-                    "autogluon_version": autogluon_version,
-                    "kfp_version": kfp_version,
-                    "image": image,
-                    "run_type": RUN_TYPE_PIPELINE,
-                }
-            )
+            tags_to_set: dict[str, str] = {
+                "pipeline_name": pipeline_name,
+                "autogluon_version": autogluon_version,
+                "kfp_version": kfp_version,
+                "image": image,
+                "run_type": RUN_TYPE_PIPELINE,
+            }
+            if _platform_owns_kfp_tags(self._mlflow, self.parent_run_id):
+                logger.info(
+                    "Platform-set %s found on parent run; skipping duplicate AutoML KFP identity tags.",
+                    PLATFORM_KFP_RUN_ID_TAG,
+                )
+            else:
+                tags_to_set["kfp_run_id"] = kfp_run_id
+                if kfp_run_name:
+                    tags_to_set["kfp_run_name"] = kfp_run_name
+            self._mlflow.set_tags(tags_to_set)
             # task_type is a run parameter (per the MLflow integration ADR), not a tag.
             parent_params: dict[str, Any] = {
                 "task_type": self._task_type,
                 "eval_metric": self._eval_metric,
-                "autogluon_version": autogluon_version,
-                "kfp_version": kfp_version,
-                "image": image,
             }
             if preset:
                 parent_params["preset"] = preset
@@ -580,6 +604,8 @@ class MlflowExperimentLogger:
             if dataset_uri:
                 # Non-secret dataset identity (s3://bucket/key); credentials live in the K8s secret.
                 parent_params["dataset_uri"] = dataset_uri
+            if test_dataset_uri:
+                parent_params["test_dataset_uri"] = test_dataset_uri
             if data_config:
                 parent_params["data_config"] = json.dumps(data_config, sort_keys=True)
             self._mlflow.log_params(_stringify_params(parent_params))

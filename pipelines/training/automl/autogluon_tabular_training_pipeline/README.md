@@ -20,6 +20,12 @@ test) are written as Snappy-compressed Parquet rather than CSV to keep the pipel
 Results are logged to MLflow only when the platform injects ``KFP_MLFLOW_CONFIG`` into the step (configured on the Data Science Pipelines / KFP pipeline server, not via a pipeline parameter). To disable MLflow logging, run the pipeline on a server without MLflow configured, or have the cluster admin
 remove the MLflow configuration from the pipeline server; the training step then skips all tracking and runs unchanged.
 
+The KFP run identity is tagged on the parent run under a single canonical key set. When the platform MLflow integration is active it owns the ``kfp.*`` namespace (``kfp.pipeline_run_id``, ``kfp.pipeline_run_url``, ``kfp.pipeline_id``, ``kfp.pipeline_version_id``) and this pipeline does not add its
+own ``kfp_run_id`` / ``kfp_run_name`` duplicates; those are only written when the integration is absent and the identity would otherwise be lost.
+
+Known limitation: the platform integration also creates one nested MLflow child run per KFP task, so the parent's child-run list includes graph nodes (``condition-*``, ``automl-data-loader``, ``publish-component-stage-map``) alongside the AutoGluon model trials. Those are created and owned by the
+platform, not by this pipeline. Filter the child runs by the ``run_type=model`` tag to see only model trials.
+
 **Pipeline Stages:**
 
 0. **Component stage map**: Publishes the static component-to-stage-to-step map as a KFP artifact for dashboards before any data I/O.

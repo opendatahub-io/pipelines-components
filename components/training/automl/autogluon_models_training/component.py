@@ -303,6 +303,7 @@ def autogluon_models_training(
             )
             # Non-secret dataset identity for the parent run; credentials stay in the K8s secret.
             dataset_uri = f"s3://{train_data_bucket_name}/{train_data_file_key}" if train_data_bucket_name else ""
+            test_dataset_uri = f"s3://{test_data_bucket_name}/{test_data_file_key}" if test_data_bucket_name else ""
             run_logger.log_header(
                 pipeline_name=pipeline_name,
                 kfp_run_id=run_id,
@@ -311,6 +312,7 @@ def autogluon_models_training(
                 top_n=top_n,
                 data_config={"sampling_config": sampling_config, "split_config": split_config},
                 dataset_uri=dataset_uri,
+                test_dataset_uri=test_dataset_uri,
             )
             progress_callback = run_logger.build_progress_callback()
 
