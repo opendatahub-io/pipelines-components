@@ -80,8 +80,7 @@ def autogluon_timeseries_models_training(
         prediction_length: Forecast horizon (number of timesteps).
         known_covariates_names: Optional list of known covariate column names.
         preset: Training quality tier. ``"speed"`` (default), ``"balanced"``, or
-            ``"quality"`` (two-hour selection budget with AutoGluon ``best_quality``
-            and three rolling validation windows).
+            ``"quality"`` (two-hour selection budget with AutoGluon ``best_quality``).
         eval_metric: Metric for model ranking (e.g. ``"mean_absolute_scaled_error"``,
             ``"weighted_quantile_loss"``). Defaults to ``"mean_absolute_scaled_error"``.
             Legacy uppercase acronyms (e.g. ``"MASE"``) are accepted and normalized to snake_case.
@@ -134,13 +133,6 @@ def autogluon_timeseries_models_training(
         VALID_PRESETS = {"speed", "balanced", "quality"}
         PRESET_AG_NAMES = {"speed": "fast_training", "balanced": "medium_quality", "quality": "best_quality"}
         PRESET_TIME_LIMITS = {"speed": 10 * 60, "balanced": 60 * 60, "quality": 120 * 60}
-        PRESET_FIT_KWARGS = {
-            "speed": {},
-            "balanced": {},
-            # More rolling windows make the quality tier's model selection less sensitive
-            # to a single forecast origin, without changing lower-cost preset behavior.
-            "quality": {"num_val_windows": 3},
-        }
 
         # Normalize eval_metric to snake_case; accept legacy uppercase acronyms (e.g. "MASE") for back-compat.
         _acronym_to_snake = {acronym: snake for snake, acronym in METRIC_ALIASES.items()}
@@ -257,7 +249,6 @@ def autogluon_timeseries_models_training(
                 time_limit=time_limit,
                 # exclude deep learning models pretrained on large time series datasets
                 excluded_model_types=["Chronos", "Toto", "Chronos2"],
-                **PRESET_FIT_KWARGS[preset],
             )
         except Exception as e:
             logger.error(f"Training failed: {str(e)}")
@@ -305,7 +296,6 @@ def autogluon_timeseries_models_training(
             "timestamp_column": timestamp_column,
             "presets": preset,
             "time_limit": time_limit,
-            "num_val_windows": PRESET_FIT_KWARGS[preset].get("num_val_windows", 1),
             "refit_time_limit_per_model": refit_time_limit,
             "known_covariates_names": known_covariates_names or [],
             "num_models_trained": len(leaderboard),

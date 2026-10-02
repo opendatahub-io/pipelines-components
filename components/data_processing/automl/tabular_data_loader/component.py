@@ -48,10 +48,7 @@ def automl_data_loader(  # noqa: D417
        ``extra_train_dataset.parquet`` (70%, passed to ``refit_full`` as extra data).
        Both are written to the PVC workspace under ``{workspace_path}/datasets/`` as
        Snappy-compressed Parquet so the workspace never holds a full-size CSV copy of
-       either split. For the ``"quality"`` preset, the selection fraction decreases
-       when the eligible training data exceeds 1 GiB, keeping model selection at most
-       30% of the balanced preset's 1 GiB data budget. All remaining rows still go to
-       the extra-train split and are available to ``refit_full``.
+       either split.
 
     For **regression** tasks the split is random; for **binary** and **multiclass**
     tasks the split is **stratified** by the label column by default.
@@ -82,8 +79,7 @@ def automl_data_loader(  # noqa: D417
         sampling_method: "first_n_rows", "stratified", or "random"; if None, derived from task_type.
         task_type: "binary", "multiclass", or "regression" (default); used when sampling_method is None.
         split_config: Split configuration dictionary. Available keys: "test_size" (float), "random_state" (int), "stratify" (bool).
-        selection_train_size: Maximum model-selection fraction (default 0.3). ``quality``
-            caps selection at 30% of the balanced preset's 1 GiB budget.
+        selection_train_size: Model-selection fraction (default 0.3).
         test_data_bucket_name: S3 bucket name for user-provided test dataset (default: empty string).
         test_data_file_key: S3 object key of the user-provided test CSV (default: empty string).
         preset: Training quality tier controlling the sampling size budget. ``"speed"``
@@ -165,10 +161,6 @@ def automl_data_loader(  # noqa: D417
         "balanced": 100 * 1024 * 1024,  # 100 MiB
         "quality": 1024 * 1024 * 1024,  # 1 GiB
     }
-    # Keep quality's model-selection dataset no larger than the selection volume a
-    # balanced run could receive from its 1 GiB sample. The final refit still receives
-    # the full sampled training population through train_data_extra.
-    QUALITY_SELECTION_DATA_BUDGET_BYTES = int(0.3 * PRESET_MAX_SIZE_BYTES["balanced"])
     MIN_VALID_RECORDS_AFTER_CLEANSING = 100
     PANDAS_CHUNK_SIZE = 10000  # Rows per batch for streaming read
     SAMPLE_COMPACTION_CHUNKS = 10
@@ -852,29 +844,11 @@ def automl_data_loader(  # noqa: D417
 
         eligible_train_rows = len(selection_X)
         eligible_train_bytes = _memory_usage_bytes(selection_X) + _memory_usage_bytes(selection_y)
-        requested_selection_train_size = selection_train_size
-        effective_selection_train_size = selection_train_size
-        selection_data_budget_bytes = None
-        if preset == "quality" and eligible_train_bytes > 0:
-            selection_data_budget_bytes = QUALITY_SELECTION_DATA_BUDGET_BYTES
-            effective_selection_train_size = min(
-                selection_train_size,
-                selection_data_budget_bytes / eligible_train_bytes,
-            )
-            if effective_selection_train_size < selection_train_size:
-                logger.info(
-                    "Capping quality model-selection split from %.4f to %.4f of %d eligible rows "
-                    "to keep it within the %d-byte balanced-relative budget.",
-                    selection_train_size,
-                    effective_selection_train_size,
-                    eligible_train_rows,
-                    selection_data_budget_bytes,
-                )
 
         X_sel, X_extra, y_sel, y_extra = train_test_split(
             selection_X,
             selection_y,
-            test_size=(1 - effective_selection_train_size),
+            test_size=(1 - selection_train_size),
             stratify=(selection_y if stratify_effective else None),
             random_state=random_state,
         )
@@ -913,11 +887,7 @@ def automl_data_loader(  # noqa: D417
 
         split_export_metrics = {
             "test_size": split_config_out["test_size"],
-            "selection_train_size": effective_selection_train_size,
-            "requested_selection_train_size": requested_selection_train_size,
-            "effective_selection_train_size": effective_selection_train_size,
-            "selection_capped": effective_selection_train_size < requested_selection_train_size,
-            "selection_data_budget_bytes": selection_data_budget_bytes,
+            "selection_train_size": selection_train_size,
             "eligible_train_rows": eligible_train_rows,
             "eligible_train_in_memory_bytes": eligible_train_bytes,
             "stratify": stratify_effective,
