@@ -44,8 +44,10 @@ def _extract_validation_functions():
                 func_source = textwrap.dedent("\n".join(current_lines))
                 functions[current_func] = func_source
 
-            if stripped.startswith("def _has_tool_calls_in_messages(") or stripped.startswith(
-                "def validate_tool_call_format_dataset("
+            if (
+                stripped.startswith("def _has_tool_calls_in_messages(")
+                or stripped.startswith("def _get_target_tool_value(")
+                or stripped.startswith("def validate_tool_call_format_dataset(")
             ):
                 current_func = stripped.split("(")[0].replace("def ", "")
                 current_lines = [line]
@@ -71,8 +73,17 @@ def _extract_validation_functions():
     # Compile and return the functions in a namespace
     from datasets import Dataset
 
-    namespace = {"log_message": lambda msg: None, "Dataset": Dataset}  # stub log_message
-    for name in ["_has_tool_calls_in_messages", "validate_chat_format_dataset", "validate_tool_call_format_dataset"]:
+    namespace = {
+        "log_message": lambda msg: None,  # stub log_message
+        "Dataset": Dataset,
+        "_TARGET_TOOL_FIELDS": ("target_tool_name", "target_tools"),
+    }
+    for name in [
+        "_has_tool_calls_in_messages",
+        "_get_target_tool_value",
+        "validate_chat_format_dataset",
+        "validate_tool_call_format_dataset",
+    ]:
         if name in functions:
             exec(functions[name], namespace)
 
@@ -256,7 +267,28 @@ class TestToolCallValidation:
                 {"question": "Weather in NY?", "target_tool_name": None},
             ]
         )
-        with pytest.raises(ValueError, match="Item 1: 'target_tool_name' is missing or empty"):
+        with pytest.raises(ValueError, match="Item 1: none of .* is present or non-empty"):
+            self.validate_tool_call(dataset)
+
+    def test_single_turn_target_tools_alias(self):
+        """Single-turn samples using plural 'target_tools' field also pass validation."""
+        dataset = _MockDataset(
+            [
+                {"question": "Research StellarPay", "target_tools": "company_research_exa, competitor_finder_exa"},
+                {"question": "Research AcmeCorp", "target_tools": "company_research_exa"},
+            ]
+        )
+        assert self.validate_tool_call(dataset) is True
+
+    def test_single_turn_missing_target_tools_alias(self):
+        """Single-turn sample missing both target_tool_name and target_tools raises ValueError."""
+        dataset = _MockDataset(
+            [
+                {"question": "Research StellarPay", "target_tools": "company_research_exa"},
+                {"question": "Research AcmeCorp", "target_tools": None},
+            ]
+        )
+        with pytest.raises(ValueError, match="Item 1: none of .* is present or non-empty"):
             self.validate_tool_call(dataset)
 
     def test_single_turn_missing_question(self):
@@ -352,7 +384,7 @@ class TestToolCallValidation:
                 },
             ]
         )
-        with pytest.raises(ValueError, match="'target_tool_name' is missing or empty"):
+        with pytest.raises(ValueError, match="none of .* is present or non-empty"):
             self.validate_tool_call(dataset)
 
     def test_unrecognized_format_raises(self):
@@ -510,3 +542,55 @@ class TestToolCallJsonlRoundTrip:
         log = (tmp_path / "pipeline_log.txt").read_text()
         assert "matches both single-turn and multi-turn" in log
         assert "using single-turn validation" in log
+
+    def test_messages_column_typed_as_whole_json_string(self, tmp_path):
+        """Regression: 'messages' column typed as a single JSON string (e.g. Toucan-1.5M).
+
+        Some datasets store the entire messages array as a JSON-encoded string
+        rather than a native list (Arrow types the column as `string`). Since
+        these rows are single-turn (target_tools + question), 'messages' is
+        just an extra unused column, but it must not crash JSONL writing.
+        """
+        input_path = tmp_path / "input.jsonl"
+        embedded_messages = json.dumps(
+            [
+                {"role": "system", "content": "tool_declare: [...]"},
+                {"role": "user", "content": "Research StellarPay"},
+            ]
+        )
+        rows = [
+            {
+                "question": "Research StellarPay",
+                "target_tools": "company_research_exa, linkedin_search_exa",
+                "messages": embedded_messages,
+            },
+            {
+                "question": "Research AcmeCorp",
+                "target_tools": "company_research_exa",
+                "messages": embedded_messages,
+            },
+        ]
+        input_path.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+
+        train_artifact = _MockArtifact(str(tmp_path / "train.jsonl"))
+        eval_artifact = _MockArtifact(str(tmp_path / "eval.jsonl"))
+
+        dataset_download.python_func(
+            train_dataset=train_artifact,
+            eval_dataset=eval_artifact,
+            dataset_uri=str(input_path),
+            pvc_mount_path=str(tmp_path),
+            train_split_ratio=1.0,
+            subset_count=0,
+            dataset_format="tool_call",
+        )
+
+        with open(train_artifact.path) as f:
+            output_rows = [json.loads(line) for line in f if line.strip()]
+
+        assert len(output_rows) == 2
+        for output_row in output_rows:
+            assert isinstance(output_row["messages"], list), "whole-string messages column must be parsed to a list"
+            for msg in output_row["messages"]:
+                assert isinstance(msg, dict)
+                assert "role" in msg
