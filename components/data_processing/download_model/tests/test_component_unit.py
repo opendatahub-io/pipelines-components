@@ -20,10 +20,10 @@ def test_component_signature():
     """Verify the component exposes the expected input parameters."""
     spec = download_model.component_spec
     input_names = set(spec.inputs.keys())
-    assert input_names == {"model_name", "model_cache_pvc", "model_cache_mount"}
+    assert input_names == {"model_name", "model_cache_pvc", "model_cache_mount", "download_enabled"}
 
 
-def _run_download(tmp_path, model_name="mistralai/Mistral-7B", pre_cached=False):
+def _run_download(tmp_path, model_name="mistralai/Mistral-7B", pre_cached=False, download_enabled=True):
     """Invoke download_model.python_func with huggingface_hub mocked via sys.modules."""
     model_dir_name = model_name.replace("/", "--")
     model_path = tmp_path / model_dir_name
@@ -45,6 +45,7 @@ def _run_download(tmp_path, model_name="mistralai/Mistral-7B", pre_cached=False)
             model_name=model_name,
             model_cache_pvc="my-pvc",
             model_cache_mount=str(tmp_path),
+            download_enabled=download_enabled,
         )
 
     return result, mock_hf, model_path
@@ -80,3 +81,12 @@ def test_sentinel_contains_model_name(tmp_path):
     """Verify sentinel file content equals the original model name."""
     _, _, model_path = _run_download(tmp_path)
     assert (model_path / ".download_complete").read_text() == "mistralai/Mistral-7B"
+
+
+def test_download_can_be_disabled(tmp_path):
+    """Verify disabled downloads return the expected path without importing HF."""
+    result, mock_hf, model_path = _run_download(tmp_path, download_enabled=False)
+
+    assert result == "mistralai--Mistral-7B"
+    mock_hf.snapshot_download.assert_not_called()
+    assert not model_path.exists()
