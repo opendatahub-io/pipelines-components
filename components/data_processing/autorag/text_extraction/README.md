@@ -8,7 +8,8 @@ Text Extraction component.
 
 Thin wrapper that delegates to ``ai4rag.utils.data.text_extraction.extract_text``.
 
-OCR is always enabled. Docling runs RapidOCR only on pages it flags as needing it, so pages carrying a text layer are read directly and scanned or image-only pages are OCR'd.
+OCR is enabled when the selected corpus contains a PDF or image. For a PDF page with an embedded text layer, Docling extracts that text directly. For a scanned PDF page or an image without embedded text, Docling uses RapidOCR to recognize the text. Audio and Office formats use their dedicated
+extraction pipelines without RapidOCR.
 
 The four RapidOCR model paths are pinned explicitly from ``$DOCLING_ARTIFACTS_PATH`` rather than left to Docling. Docling resolves an unpinned language to PP-OCRv6 and looks for flat filenames directly under ``RapidOcr/``, but the AutoRAG image ships the PP-OCRv4 bundle in its nested
 ``RapidOcr/onnx/PP-OCRv4/...`` layout, so leaving the paths unset fails with ``FileNotFoundError`` at conversion time. Pinning them makes Docling skip resolution and use the models that are actually present.
@@ -25,6 +26,7 @@ The four RapidOCR model paths are pinned explicitly from ``$DOCLING_ARTIFACTS_PA
 | `max_extraction_workers` | `Optional[int]` | `None` | Number of parallel worker processes used for text extraction. Defaults to 4. Set to None to use all available CPU cores. |
 | `preset` | `str` | `speed` | Pipeline quality tier. "speed" (default) disables Docling table structure parsing. "balanced" enables TableFormer table reconstruction. |
 | `ocr_lang` | `Optional[str]` | `None` | Language of the document text, used only to pick the RapidOCR model bundle. Accepts a language name or ISO 639-1 code. Chinese ("chinese", "zh", "ch") selects the Chinese bundle; everything else, including None (the default), selects the English bundle, which covers all Latin-script languages. In the optimization pipeline this is filled from the language AutoRAG detects; for the indexing pipeline pass ``pattern.json`` ``settings.generation.language.code``. |
+| `ssl_cert_path` | `Optional[str]` | `None` | Optional path to a PEM-encoded CA bundle used to verify the S3 endpoint. The filename extension is not significant; ``.pem`` and ``.crt`` are both common. It overrides ``AWS_CA_BUNDLE`` for this component. A wrong or unreadable bundle fails with an actionable error; TLS verification is never disabled. |
 
 ## Usage Examples 🧪
 
