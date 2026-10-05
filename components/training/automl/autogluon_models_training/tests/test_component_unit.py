@@ -264,6 +264,34 @@ _DEFAULT_EXPERIMENT_NOTEBOOK_ARTIFACT = _make_experiment_notebook_artifact(Path(
 class TestAutogluonModelsTrainingUnitTests:
     """Unit tests for the autogluon_models_training component."""
 
+    @pytest.mark.parametrize(
+        "template_name",
+        ["classification_notebook.ipynb", "regression_notebook.ipynb", "timeseries_notebook.ipynb"],
+    )
+    def test_notebook_template_documents_pip_index(self, template_name):
+        """Templates must direct AutoGluon installation to one trusted package index."""
+        notebook = json.loads((_NOTEBOOK_TEMPLATES_DIR / template_name).read_text(encoding="utf-8"))
+        install_cells = [
+            cell
+            for cell in notebook["cells"]
+            if cell["cell_type"] == "code" and "%pip install autogluon" in "".join(cell["source"])
+        ]
+
+        assert len(install_cells) == 1
+        assert "PIP_EXTRA_INDEX_URL" not in "".join(install_cells[0]["source"])
+        assert any(
+            cell["cell_type"] == "markdown"
+            and "Package index" in "".join(cell["source"])
+            and "The AutoGluon version used in this notebook" in "".join(cell["source"])
+            and "PIP_INDEX_URL" in "".join(cell["source"])
+            and "Red Hat package index" in "".join(cell["source"])
+            and "%env PIP_INDEX_URL=https://console.redhat.com/api/pypi/public-rhai/rhoai/3.6/cpu-ubi9-test/simple/"
+            in "".join(cell["source"])
+            and "If your notebook environment does not already provide it" in "".join(cell["source"])
+            and "PIP_EXTRA_INDEX_URL" not in "".join(cell["source"])
+            for cell in notebook["cells"]
+        )
+
     def test_regression_notebook_template_excludes_curves(self):
         """Regression template must not reference curves.json (classification-only artifact)."""
         text = (_NOTEBOOK_TEMPLATES_DIR / "regression_notebook.ipynb").read_text(encoding="utf-8")
@@ -340,10 +368,12 @@ class TestAutogluonModelsTrainingUnitTests:
         assert fit_call[1]["train_data"] is mock_train_df
         assert fit_call[1]["presets"] == "good_quality"
         assert fit_call[1]["time_limit"] == 45 * 60
+        assert fit_call[1]["num_cpus"] == 4
+        assert fit_call[1]["memory_limit"] == 16
         assert fit_call[1]["refit_full"] is False
         assert fit_call[1]["set_best_to_refit_full"] is False
         assert fit_call[1]["save_bag_folds"] is True
-        assert all(config["num_threads"] == 4 for config in fit_call[1]["hyperparameters"]["GBM"])
+        assert all("num_threads" not in config for config in fit_call[1]["hyperparameters"]["GBM"])
         assert fit_call[1]["excluded_model_types"] == ["CAT"]
 
         # read_parquet: train, test, extra
@@ -363,7 +393,11 @@ class TestAutogluonModelsTrainingUnitTests:
         assert mock_predictor.clone.call_args[1]["dirs_exist_ok"] is True
 
         # refit_full called ONCE with full list (batch, not per-model)
-        mock_predictor_clone.refit_full.assert_called_once_with(model=top_models, train_data_extra=mock_extra_df)
+        mock_predictor_clone.refit_full.assert_called_once_with(
+            model=top_models,
+            train_data_extra=mock_extra_df,
+            num_cpus=4,
+        )
 
         # predict called per model with explicit model= arg
         assert mock_predictor_clone.predict.call_count == 2
@@ -497,7 +531,9 @@ class TestAutogluonModelsTrainingUnitTests:
         assert fit_call[1]["refit_full"] is False
         assert fit_call[1]["set_best_to_refit_full"] is False
         assert fit_call[1]["save_bag_folds"] is True
-        assert all(config["num_threads"] == 4 for config in fit_call[1]["hyperparameters"]["GBM"])
+        assert fit_call[1]["num_cpus"] == 4
+        assert fit_call[1]["memory_limit"] == 16
+        assert all("num_threads" not in config for config in fit_call[1]["hyperparameters"]["GBM"])
         assert fit_call[1]["excluded_model_types"] == ["CAT"]
 
         context = mock_models_artifact.metadata["context"]
@@ -551,12 +587,76 @@ class TestAutogluonModelsTrainingUnitTests:
         fit_call = mock_predictor_class.return_value.fit.call_args
         assert fit_call[1]["presets"] == "high_quality"
         assert fit_call[1]["time_limit"] == 180 * 60
-        assert all(config["num_threads"] == 8 for config in fit_call[1]["hyperparameters"]["GBM"])
+        assert fit_call[1]["num_cpus"] == 8
+        assert fit_call[1]["memory_limit"] == 32
+        assert all("num_threads" not in config for config in fit_call[1]["hyperparameters"]["GBM"])
         assert fit_call[1]["excluded_model_types"] == ["CAT"]
 
         context = mock_models_artifact.metadata["context"]
         assert context["model_config"]["preset"] == "balanced"
         assert context["model_config"]["time_limit"] == 180 * 60
+
+    @mock.patch("pandas.read_parquet")
+    @mock.patch("autogluon.tabular.TabularPredictor")
+    def test_quality_preset_fit_args(self, mock_predictor_class, mock_read_parquet, tmp_path):
+        """Quality uses best_quality, zeroshot hyperparameters, eight-fold bagging, and stacking."""
+        mock_predictor = mock.MagicMock()
+        mock_predictor_clone = mock.MagicMock()
+        mock_predictor_class.return_value.fit.return_value = mock_predictor
+        mock_predictor.clone.return_value = mock_predictor_clone
+        mock_predictor.problem_type = "regression"
+        mock_predictor.label = "target"
+        mock_predictor.eval_metric = "r2"
+        _mock_leaderboard_top_models(mock_predictor, ["LightGBM_BAG_L1"])
+        mock_predictor_clone.evaluate_predictions.return_value = {"r2": 0.9}
+        mock_predictor_clone.feature_importance.return_value = mock.MagicMock(to_dict=lambda: {"f": 0.1})
+        mock_predictor_clone.predict.return_value = mock.MagicMock()
+
+        mock_train_df, mock_test_df = _mock_parquet_frame(), _mock_parquet_frame()
+        mock_read_parquet.side_effect = [mock_train_df, mock_test_df]
+
+        workspace_path = str(tmp_path / "ws")
+        Path(workspace_path).mkdir()
+        models_output_dir = str(tmp_path / "out")
+        Path(models_output_dir).mkdir()
+        mock_models_artifact = mock.MagicMock()
+        mock_models_artifact.path = models_output_dir
+        mock_models_artifact.metadata = {}
+
+        autogluon_models_training.python_func(
+            label_column="target",
+            task_type="regression",
+            top_n=1,
+            train_data_path="/tmp/train.parquet",
+            test_data=mock.MagicMock(path="/tmp/test.parquet"),
+            workspace_path=workspace_path,
+            pipeline_name=PIPELINE_NAME,
+            run_id=RUN_ID,
+            sample_row=SAMPLE_ROW,
+            models_artifact=mock_models_artifact,
+            html_artifact=_make_html_artifact(tmp_path),
+            preset="quality",
+            experiment_notebook=_make_experiment_notebook_artifact(tmp_path),
+            component_status=_make_component_status_artifact(tmp_path),
+        )
+
+        fit_call = mock_predictor_class.return_value.fit.call_args
+        assert fit_call[1]["presets"] == "best_quality"
+        sys.modules["autogluon.tabular.configs.hyperparameter_configs"].get_hyperparameter_config.assert_called_with(
+            "zeroshot"
+        )
+        assert fit_call[1]["time_limit"] == 360 * 60
+        assert fit_call[1]["num_cpus"] == 16
+        assert fit_call[1]["memory_limit"] == 64
+        assert all("num_threads" not in config for config in fit_call[1]["hyperparameters"]["GBM"])
+        assert fit_call[1]["excluded_model_types"] == ["CAT", "KNN"]
+        assert fit_call[1]["num_bag_folds"] == 8
+        assert fit_call[1]["num_stack_levels"] == 1
+        assert "fit_strategy" not in fit_call[1]
+
+        context = mock_models_artifact.metadata["context"]
+        assert context["model_config"]["preset"] == "quality"
+        assert context["model_config"]["time_limit"] == 360 * 60
 
     @mock.patch("pandas.read_parquet")
     @mock.patch("autogluon.tabular.TabularPredictor")
@@ -603,7 +703,11 @@ class TestAutogluonModelsTrainingUnitTests:
         )
 
         # refit_full gets None for extra data
-        mock_predictor_clone.refit_full.assert_called_once_with(model=["LightGBM_BAG_L1"], train_data_extra=None)
+        mock_predictor_clone.refit_full.assert_called_once_with(
+            model=["LightGBM_BAG_L1"],
+            train_data_extra=None,
+            num_cpus=4,
+        )
         # read_parquet called only twice (train + test, no extra)
         assert mock_read_parquet.call_count == 2
 
@@ -1149,7 +1253,7 @@ class TestAutogluonModelsTrainingUnitTests:
             html_artifact=_make_html_artifact(tmp_path),
         )
 
-        mock_predictor_clone.refit_full.assert_called_once_with(model=top_models, train_data_extra=None)
+        mock_predictor_clone.refit_full.assert_called_once_with(model=top_models, train_data_extra=None, num_cpus=4)
         # clone also called exactly once (not per model)
         mock_predictor.clone.assert_called_once()
 

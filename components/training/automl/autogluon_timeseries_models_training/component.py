@@ -79,8 +79,8 @@ def autogluon_timeseries_models_training(
         split_config: Optional split config stored in artifact metadata.
         prediction_length: Forecast horizon (number of timesteps).
         known_covariates_names: Optional list of known covariate column names.
-        preset: Training quality tier. ``"speed"`` (default) or ``"balanced"``
-            (may run more than 2x longer).
+        preset: Training quality tier. ``"speed"`` (default), ``"balanced"``, or
+            ``"quality"`` (two-hour selection budget with AutoGluon ``best_quality``).
         eval_metric: Metric for model ranking (e.g. ``"mean_absolute_scaled_error"``,
             ``"weighted_quantile_loss"``). Defaults to ``"mean_absolute_scaled_error"``.
             Legacy uppercase acronyms (e.g. ``"MASE"``) are accepted and normalized to snake_case.
@@ -103,8 +103,6 @@ def autogluon_timeseries_models_training(
     import json
     import logging
     import math
-    import shutil
-    import tempfile
     import time
     from pathlib import Path
 
@@ -130,9 +128,9 @@ def autogluon_timeseries_models_training(
         status.set_metadata(display_name="Timeseries Models Training Status")
         component_status.metadata["display_name"] = "Timeseries Models Training Status"
         TOP_N_MAX = 7
-        VALID_PRESETS = {"speed", "balanced"}
-        PRESET_AG_NAMES = {"speed": "fast_training", "balanced": "medium_quality"}
-        PRESET_TIME_LIMITS = {"speed": 10 * 60, "balanced": 60 * 60}
+        VALID_PRESETS = {"speed", "balanced", "quality"}
+        PRESET_AG_NAMES = {"speed": "fast_training", "balanced": "medium_quality", "quality": "best_quality"}
+        PRESET_TIME_LIMITS = {"speed": 10 * 60, "balanced": 60 * 60, "quality": 120 * 60}
 
         # Normalize eval_metric to snake_case; accept legacy uppercase acronyms (e.g. "MASE") for back-compat.
         _acronym_to_snake = {acronym: snake for snake, acronym in METRIC_ALIASES.items()}
@@ -267,10 +265,18 @@ def autogluon_timeseries_models_training(
             )
 
         top_models = leaderboard.head(top_n)["model"].values.tolist()
+        # Refit is a separate stage, so give it one preset-sized budget in total,
+        # divided fairly between selected models. Without this, every selected model
+        # received the entire selection budget and top_n multiplied wall-clock time.
+        refit_time_limit = max(1, time_limit // len(top_models))
         status.record(
             "model_selection",
             "completed",
-            metrics={"top_n": top_n, "selected_models": top_models},
+            metrics={
+                "top_n": top_n,
+                "selected_models": top_models,
+                "refit_time_limit_per_model_seconds": refit_time_limit,
+            },
         )
         logger.info(
             "Timeseries selection done: top_%s=%s best_score_test=%s",
@@ -288,6 +294,7 @@ def autogluon_timeseries_models_training(
             "timestamp_column": timestamp_column,
             "presets": preset,
             "time_limit": time_limit,
+            "refit_time_limit_per_model": refit_time_limit,
             "known_covariates_names": known_covariates_names or [],
             "num_models_trained": len(leaderboard),
         }
@@ -407,52 +414,6 @@ def autogluon_timeseries_models_training(
 
         ts_inference_block = _build_timeseries_inference_block()
 
-        # The notebook rendered into models_artifact embeds real historical sample rows, so
-        # it must never reach the MLflow tracking server. Build a sanitized predict sample
-        # (typed placeholders instead of real values) for a separate MLflow-only notebook.
-        # Reuses the already-sanitized inference-block payload; returns None (no notebook
-        # uploaded) if the inference block could not be built (fail safe).
-        def _sanitized_predict_sample():
-            if not ts_inference_block:
-                return None
-            payload = ts_inference_block.get("sample_payload", {})
-            instances = payload.get("instances")
-            if not instances:
-                return None
-            return {
-                "id_column": id_column,
-                "timestamp_column": timestamp_column,
-                "known_covariates_names": known_covariates_names or [],
-                "history": [instances[0]],
-                "known_covariates": payload.get("known_covariates"),
-            }
-
-        sanitized_predict_sample = _sanitized_predict_sample()
-        mlflow_notebook_dir = Path(tempfile.mkdtemp(prefix="mlflow-sanitized-nb-"))
-
-        def _render_sanitized_notebook(model_name_full: str):
-            if sanitized_predict_sample is None:
-                return None
-            with (shared_automl_dir() / "notebook_templates" / "timeseries_notebook.ipynb").open(
-                "r", encoding="utf-8"
-            ) as f:
-                sanitized_notebook = json.load(f)
-            sanitized_notebook = replace_placeholder_in_notebook(
-                sanitized_notebook,
-                {
-                    "<REPLACE_RUN_ID>": run_id,
-                    "<REPLACE_PIPELINE_NAME>": pipeline_name_trimmed,
-                    "<REPLACE_MODEL_NAME>": model_name_full,
-                    "<REPLACE_PREDICT_SAMPLE>": str(sanitized_predict_sample),
-                    "<REPLACE_BACKTEST_PLOT_HELPERS>": notebook_backtest_charts_source(),
-                    "<REPLACE_TIMESERIES_SAMPLE_HELPERS>": notebook_timeseries_sample_helpers_source(),
-                },
-            )
-            sanitized_notebook_path = mlflow_notebook_dir / f"{model_name_full}.ipynb"
-            with sanitized_notebook_path.open("w", encoding="utf-8") as f:
-                json.dump(sanitized_notebook, f)
-            return sanitized_notebook_path
-
         # Open the MLflow parent run around the refit loop so each model is logged as a
         # nested child run the moment it finishes (incremental updates). TimeSeriesPredictor
         # has no callback API, so there is no live per-candidate streaming during fit().
@@ -479,6 +440,7 @@ def autogluon_timeseries_models_training(
             )
             # Non-secret dataset identity for the parent run; credentials stay in the K8s secret.
             dataset_uri = f"s3://{train_data_bucket_name}/{train_data_file_key}" if train_data_bucket_name else ""
+            test_dataset_uri = f"s3://{test_data_bucket_name}/{test_data_file_key}" if test_data_bucket_name else ""
             run_logger.log_header(
                 pipeline_name=pipeline_name,
                 kfp_run_id=run_id,
@@ -487,6 +449,7 @@ def autogluon_timeseries_models_training(
                 top_n=top_n,
                 data_config={"sampling_config": sampling_config, "split_config": split_config},
                 dataset_uri=dataset_uri,
+                test_dataset_uri=test_dataset_uri,
             )
 
             for model_name in top_models:
@@ -514,7 +477,7 @@ def autogluon_timeseries_models_training(
                     predictor_refit.fit(
                         train_data=full_train_ts_df,
                         **additional_fit_params,
-                        time_limit=time_limit,
+                        time_limit=refit_time_limit,
                         excluded_model_types=["Chronos", "Chronos2", "Toto"],
                     )
                     total_fit_time_seconds += time.perf_counter() - refit_start_time
@@ -641,17 +604,13 @@ def autogluon_timeseries_models_training(
                     # so the experiment updates live. Best-effort: never fails the refit loop.
                     run_logger.log_model(
                         model_name=model_name_full,
-                        model_dir=output_path,
                         model_uri=f"{models_artifact.uri.rstrip('/')}/{model_name_full}",
                         metrics={"test_data": metrics_dict},
-                        notebook_path=_render_sanitized_notebook(model_name_full) if run_logger.enabled else None,
                     )
 
                 except Exception as e:
                     logger.error("Refit failed for model '%s': %s", model_name, e)
                     failed_models.append(model_name)
-
-            shutil.rmtree(mlflow_notebook_dir, ignore_errors=True)
 
             # Report partial failures
             if failed_models:
@@ -773,8 +732,6 @@ def autogluon_timeseries_models_training(
             # Best-effort: never fails the training step.
             status.record("log_mlflow_results", "started")
             run_logger.finalize(
-                html_artifact_path=html_artifact.path,
-                model_names=model_names_full,
                 total_fit_time_seconds=total_fit_time_seconds,
             )
             logged_to_mlflow, mlflow_tracking_info = run_logger.result()

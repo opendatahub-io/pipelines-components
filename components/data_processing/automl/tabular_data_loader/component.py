@@ -33,7 +33,7 @@ def automl_data_loader(  # noqa: D417
     """AutoML Data Loader component.
 
     Loads tabular (CSV) data from S3 in batches, sampling up to a preset-dependent
-    size budget (``"speed"``: 100 MB, ``"balanced"``: 1 GB), then splits the sampled
+    size budget (``"speed"``: 100 MiB, ``"balanced"``: 1 GiB, ``"quality"``: 10 GiB), then splits the sampled
     data into test, selection-train, and extra-train sets.
 
     The component reads data in chunks to efficiently handle large files without
@@ -79,12 +79,13 @@ def automl_data_loader(  # noqa: D417
         sampling_method: "first_n_rows", "stratified", or "random"; if None, derived from task_type.
         task_type: "binary", "multiclass", or "regression" (default); used when sampling_method is None.
         split_config: Split configuration dictionary. Available keys: "test_size" (float), "random_state" (int), "stratify" (bool).
-        selection_train_size: Fraction of the train portion used for model selection (default 0.3).
+        selection_train_size: Model-selection fraction (default 0.3).
         test_data_bucket_name: S3 bucket name for user-provided test dataset (default: empty string).
         test_data_file_key: S3 object key of the user-provided test CSV (default: empty string).
         preset: Training quality tier controlling the sampling size budget. ``"speed"``
-            (default) samples up to 100 MB; ``"balanced"`` samples up to 1 GB. The cap for
-            user-provided test datasets (50 MB) is unaffected by this setting.
+            (default) samples up to 100 MiB; ``"balanced"`` samples up to 1 GiB; and
+            ``"quality"`` samples up to 10 GiB. User-provided test datasets are capped at
+            50 MiB, 100 MiB, and 1 GiB respectively.
 
     Raises:
         ValueError: If sampling_method, task_type, or preset is invalid, if required parameters are missing,
@@ -132,7 +133,7 @@ def automl_data_loader(  # noqa: D417
             n_cols = df.shape[1] if hasattr(df, "shape") else len(df.columns)
             n_bytes = int(df.memory_usage(deep=True).sum())
             logger.info(
-                "Dataset stats [%s]: rows=%s, columns=%s, size=%s bytes (%.2f MB)",
+                "Dataset stats [%s]: rows=%s, columns=%s, size=%s bytes (%.2f MiB)",
                 name,
                 n_rows,
                 n_cols,
@@ -142,14 +143,24 @@ def automl_data_loader(  # noqa: D417
         except Exception as e:  # noqa: BLE001 - stats logging must never break the run
             logger.debug("Could not compute dataset stats for %s: %s", name, e)
 
-    VALID_PRESETS = {"speed", "balanced"}
+    def _memory_usage_bytes(data):
+        """Return pandas DataFrame or Series deep-memory usage as an integer."""
+        memory_usage = data.memory_usage(deep=True)
+        return int(memory_usage.sum() if hasattr(memory_usage, "sum") else memory_usage)
+
+    VALID_PRESETS = {"speed", "balanced", "quality"}
     # Sampling budget per quality tier: "speed" stays small for fast runs,
     # "balanced" allows the full supported dataset size.
     PRESET_MAX_SIZE_BYTES = {
-        "speed": 100 * 1024 * 1024,  # 100 MB
-        "balanced": 1024 * 1024 * 1024,  # 1 GB
+        "speed": 100 * 1024 * 1024,  # 100 MiB
+        "balanced": 1024 * 1024 * 1024,  # 1 GiB
+        "quality": 10 * 1024 * 1024 * 1024,  # 10 GiB
     }
-    TEST_DATA_MAX_SIZE_BYTES = 50 * 1024 * 1024  # 50 MB — smaller cap for user-provided holdout sets
+    PRESET_TEST_DATA_MAX_SIZE_BYTES = {
+        "speed": 50 * 1024 * 1024,  # 50 MiB
+        "balanced": 100 * 1024 * 1024,  # 100 MiB
+        "quality": 1024 * 1024 * 1024,  # 1 GiB
+    }
     MIN_VALID_RECORDS_AFTER_CLEANSING = 100
     PANDAS_CHUNK_SIZE = 10000  # Rows per batch for streaming read
     SAMPLE_COMPACTION_CHUNKS = 10
@@ -167,6 +178,7 @@ def automl_data_loader(  # noqa: D417
     if preset not in VALID_PRESETS:
         raise ValueError(f"preset must be one of {sorted(VALID_PRESETS)}; got {preset!r}.")
     MAX_SIZE_BYTES = PRESET_MAX_SIZE_BYTES[preset]
+    TEST_DATA_MAX_SIZE_BYTES = PRESET_TEST_DATA_MAX_SIZE_BYTES[preset]
 
     # Input validation
     for param, value in (
@@ -207,7 +219,7 @@ def automl_data_loader(  # noqa: D417
         status.record("prepare_data", "started")
 
         logger.info(
-            "Sampling size budget: preset=%s, max_size=%s bytes (%.0f MB)",
+            "Sampling size budget: preset=%s, max_size=%s bytes (%.0f MiB)",
             preset,
             MAX_SIZE_BYTES,
             MAX_SIZE_BYTES / (1024**2),
@@ -689,6 +701,7 @@ def automl_data_loader(  # noqa: D417
         )
         stringify_mixed_object_columns(sampled_dataframe)
         _log_dataset_stats("loaded (after cleansing)", sampled_dataframe)
+        sampled_in_memory_bytes = int(sampled_dataframe.memory_usage(deep=True).sum())
         status.record(
             "prepare_data",
             "completed",
@@ -696,6 +709,10 @@ def automl_data_loader(  # noqa: D417
                 "rows": n_samples,
                 "duplicates_dropped": n_dup_dropped,
                 "labels_dropped": n_dropped,
+                "source_rows_scanned": load_metrics.get("source_rows_read", 0),
+                "sampled_rows": n_samples,
+                "sampled_in_memory_bytes": sampled_in_memory_bytes,
+                "sample_cap_bytes": MAX_SIZE_BYTES,
                 "cleansing_seconds": round(time.monotonic() - cleansing_started, 3),
                 **load_metrics,
             },
@@ -825,6 +842,9 @@ def automl_data_loader(  # noqa: D417
             test_sample_df.to_parquet(sampled_test_dataset.path, index=False)
             effective_test_size = test_size
 
+        eligible_train_rows = len(selection_X)
+        eligible_train_bytes = _memory_usage_bytes(selection_X) + _memory_usage_bytes(selection_y)
+
         X_sel, X_extra, y_sel, y_extra = train_test_split(
             selection_X,
             selection_y,
@@ -868,7 +888,14 @@ def automl_data_loader(  # noqa: D417
         split_export_metrics = {
             "test_size": split_config_out["test_size"],
             "selection_train_size": selection_train_size,
+            "eligible_train_rows": eligible_train_rows,
+            "eligible_train_in_memory_bytes": eligible_train_bytes,
             "stratify": stratify_effective,
+            "selection_train_rows": len(X_y_sel),
+            "extra_train_rows": len(X_y_extra),
+            "test_rows": len(test_sample_df),
+            "selection_train_disk_bytes": Path(models_selection_train_data_path).stat().st_size,
+            "extra_train_disk_bytes": Path(extra_train_data_path).stat().st_size,
             "split_and_export_seconds": round(time.monotonic() - split_export_started, 3),
         }
         if has_user_test_data:

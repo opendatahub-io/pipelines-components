@@ -11,7 +11,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import tempfile
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -32,13 +31,6 @@ KFP_MLFLOW_CONFIG_ENV = "KFP_MLFLOW_CONFIG"
 SERVICE_ACCOUNT_TOKEN_PATH = "/var/run/secrets/kubernetes.io/serviceaccount/token"
 KUBERNETES_AUTH_TYPE = "kubernetes"
 
-OPTIONAL_METRIC_ARTIFACTS = (
-    "feature_importance.json",
-    "confusion_matrix.json",
-    "curves.json",
-    "back_testing.json",
-)
-
 # Redundant per-model metrics excluded from child-run logging.
 # Leaving it empty for now, can be used to reduced noise
 METRIC_EXCLUDE_KEYS: frozenset[str] = frozenset({})
@@ -47,9 +39,9 @@ RUN_TYPE_PIPELINE = "pipeline"
 RUN_TYPE_MODEL = "model"
 MLFLOW_PARENT_RUN_ID_TAG = "mlflow.parentRunId"
 
-# Relative locations inside each ``<model>_FULL`` directory of the models artifact.
-MODEL_PREDICTOR_SUBDIR = "predictor"
-MODEL_NOTEBOOK_RELPATH = "notebooks/automl_predictor_notebook.ipynb"
+# The platform integration owns canonical KFP identity tags on the parent run. AutoML
+# only writes its fallback ``kfp_run_*`` tags when that integration is absent.
+PLATFORM_KFP_RUN_ID_TAG = "kfp.pipeline_run_id"
 
 # HTTP header RHOAI's multi-tenant MLflow requires to scope every request to a workspace
 # (the project namespace, e.g. "ns-automl-benchmarking"). Sent from MLFLOW_WORKSPACE.
@@ -161,24 +153,6 @@ def build_mlflow_run_url(tracking_uri: str, experiment_id: str, run_id: str) -> 
     if not base or not experiment_id or not run_id:
         return ""
     return f"{base}/#/experiments/{experiment_id}/runs/{run_id}"
-
-
-def resolve_leaderboard_html_path(html_artifact_path: str | Path) -> Path | None:
-    """Resolve the leaderboard HTML file from a KFP ``dsl.HTML`` artifact path.
-
-    KFP may mount the artifact as a file path or as a directory containing the HTML.
-    """
-    path = Path(html_artifact_path)
-    if path.is_file():
-        return path
-    if path.is_dir():
-        for candidate in (path / "index.html", path / "leaderboard.html"):
-            if candidate.is_file():
-                return candidate
-        html_files = sorted(path.glob("*.html"))
-        if len(html_files) == 1:
-            return html_files[0]
-    return None
 
 
 def build_mlflow_stage_map_block(
@@ -457,120 +431,20 @@ def _parse_timeout_seconds(timeout: str) -> int | None:
     return seconds if seconds > 0 else None
 
 
-def _safe_log_artifact(mlflow: Any, file_path: Path, artifact_path: str) -> bool:
-    """Upload a local file to MLflow, logging and continuing on failure."""
-    if not file_path.is_file():
+def _platform_owns_kfp_tags(mlflow: Any, parent_run_id: str) -> bool:
+    """Return whether the platform already recorded the parent's KFP identity."""
+    if not parent_run_id:
         return False
     try:
-        mlflow.log_artifact(str(file_path), artifact_path=artifact_path)
-        return True
+        tags = mlflow.MlflowClient().get_run(parent_run_id).data.tags or {}
     except Exception:
-        logger.exception("Failed to upload MLflow artifact %s to %s", file_path, artifact_path)
-        return False
-
-
-def _safe_log_artifacts_dir(mlflow: Any, dir_path: Path, artifact_path: str) -> bool:
-    """Upload a local directory tree to MLflow, logging and continuing on failure."""
-    if not dir_path.is_dir():
-        return False
-    try:
-        mlflow.log_artifacts(str(dir_path), artifact_path=artifact_path)
-        return True
-    except Exception:
-        logger.exception("Failed to upload MLflow artifacts dir %s to %s", dir_path, artifact_path)
-        return False
-
-
-def _write_temp_json(tmp_dir: Path, filename: str, payload: dict[str, Any]) -> Path:
-    tmp_dir.mkdir(parents=True, exist_ok=True)
-    output = tmp_dir / filename
-    output.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    return output
-
-
-def _load_plot_renderer() -> Any:
-    """Return the ``mlflow_plots`` module, or ``None`` when it cannot be imported.
-
-    Available on the AutoML runtime image (ships ``kfp_components``). In the rare
-    embedded-fallback path (older images), only ``mlflow_tracking.py`` is embedded, so
-    plot rendering is skipped.
-    """
-    try:
-        from kfp_components.components.training.automl.shared import mlflow_plots
-
-        return mlflow_plots
-    except Exception:
-        try:
-            import mlflow_plots  # type: ignore[import-not-found]
-
-            return mlflow_plots
-        except Exception:
-            logger.info("mlflow_plots module unavailable; skipping plot rendering.")
-            return None
-
-
-def _log_model_and_notebook_artifacts(
-    mlflow: Any, model_dir: Path, *, notebook_path: Path | None = None
-) -> dict[str, bool]:
-    """Upload the deployment predictor (model.pkl) and a model notebook to MLflow.
-
-    The deployment predictor is data-stripped (``clone_for_deployment``), so it is safe
-    to upload. The model notebook rendered into ``model_dir`` embeds real sample rows and
-    is NEVER uploaded to the tracking server; callers must pass a pre-sanitized notebook
-    (typed placeholders instead of real values) via ``notebook_path`` to have a notebook
-    uploaded. When ``notebook_path`` is None, no notebook is uploaded (fail safe).
-    """
-    results = {"model": False, "notebook": False}
-    predictor_dir = model_dir / MODEL_PREDICTOR_SUBDIR
-    if _safe_log_artifacts_dir(mlflow, predictor_dir, "model"):
-        results["model"] = True
-    if notebook_path is not None and _safe_log_artifact(mlflow, Path(notebook_path), "notebooks"):
-        results["notebook"] = True
-    return results
-
-
-def _log_rendered_plots(
-    mlflow: Any,
-    *,
-    task_type: str,
-    model_dir: Path,
-    tmp_dir: Path,
-    plot_renderer: Any,
-) -> int:
-    """Render confusion-matrix/ROC (or back-testing) PNGs and upload them to MLflow."""
-    if plot_renderer is None:
-        return 0
-    try:
-        rendered = plot_renderer.render_model_plots(task_type, model_dir, tmp_dir)
-    except Exception:
-        logger.exception("Plot rendering failed for %s", model_dir)
-        return 0
-    uploaded = 0
-    for plot_path in rendered:
-        if _safe_log_artifact(mlflow, Path(plot_path), "plots"):
-            uploaded += 1
-    return uploaded
-
-
-def _build_leaderboard_summary(
-    *,
-    model_names: list[str],
-    valid_metrics: dict[str, dict[str, Any]],
-    eval_metric: str,
-) -> dict[str, Any]:
-    models = []
-    for model_name in model_names:
-        metrics = valid_metrics.get(model_name)
-        if not metrics:
-            continue
-        models.append(
-            {
-                "model_name": model_name,
-                "display_name": display_model_run_name(model_name),
-                "metrics": _normalize_model_metrics(metrics),
-            }
+        logger.warning(
+            "Could not read tags on parent run %s; using AutoML KFP identity tags.",
+            parent_run_id,
+            exc_info=True,
         )
-    return {"eval_metric": eval_metric, "models": models}
+        return False
+    return bool(tags.get(PLATFORM_KFP_RUN_ID_TAG))
 
 
 @contextmanager
@@ -623,33 +497,6 @@ def _aggregate_scores(model_metrics: dict[str, dict[str, Any]], eval_metric: str
     return scores
 
 
-def _log_optional_metric_artifacts(
-    mlflow: Any,
-    metrics_dir: Path,
-    *,
-    metrics: dict[str, Any],
-    display_name: str,
-    tmp_dir: Path,
-) -> None:
-    uploaded = False
-    metrics_json = metrics_dir / "metrics.json"
-    if _safe_log_artifact(mlflow, metrics_json, "metrics"):
-        uploaded = True
-
-    for filename in OPTIONAL_METRIC_ARTIFACTS:
-        artifact_file = metrics_dir / filename
-        if _safe_log_artifact(mlflow, artifact_file, "metrics"):
-            uploaded = True
-
-    if not uploaded:
-        summary = _write_temp_json(
-            tmp_dir,
-            f"{display_name}_metrics.json",
-            _normalize_model_metrics(metrics),
-        )
-        _safe_log_artifact(mlflow, summary, "metrics")
-
-
 class MlflowExperimentLogger:
     """Incremental MLflow logger used inside the training components.
 
@@ -667,8 +514,8 @@ class MlflowExperimentLogger:
             run_logger.log_header(pipeline_name=..., kfp_run_id=..., ...)
             for model_name in model_names:
                 # ... compute + write this model's metrics/artifacts ...
-                run_logger.log_model(model_name=..., model_dir=..., model_uri=..., metrics=...)
-            run_logger.finalize(html_artifact_path=..., model_names=model_names, ...)
+                run_logger.log_model(model_name=..., model_uri=..., metrics=...)
+            run_logger.finalize(...)
         logged, tracking_info = run_logger.result()
     """
 
@@ -703,8 +550,6 @@ class MlflowExperimentLogger:
         # loop enriches those runs instead of creating duplicate ones.
         self._live_child_runs: dict[str, str] = {}
         self._valid_metrics: dict[str, dict[str, Any]] = {}
-        self._plot_renderer: Any = None
-        self._tmp_dir: Path | None = None
 
     def log_header(
         self,
@@ -716,6 +561,7 @@ class MlflowExperimentLogger:
         top_n: int = 0,
         data_config: dict[str, Any] | None = None,
         dataset_uri: str = "",
+        test_dataset_uri: str = "",
     ) -> None:
         """Tag the parent run and log run-level params. Call once before ``log_model``."""
         if not self.enabled:
@@ -725,30 +571,31 @@ class MlflowExperimentLogger:
             if active is not None:
                 self.parent_run_id = active.info.run_id
                 self.experiment_id = active.info.experiment_id
-            self._plot_renderer = _load_plot_renderer()
-            self._tmp_dir = Path(tempfile.mkdtemp(prefix="automl-mlflow-"))
             autogluon_version = _resolve_autogluon_version()
             kfp_version = _resolve_kfp_version()
             image = _resolve_image()
 
-            self._mlflow.set_tags(
-                {
-                    "pipeline_name": pipeline_name,
-                    "kfp_run_id": kfp_run_id,
-                    "kfp_run_name": kfp_run_name,
-                    "autogluon_version": autogluon_version,
-                    "kfp_version": kfp_version,
-                    "image": image,
-                    "run_type": RUN_TYPE_PIPELINE,
-                }
-            )
+            tags_to_set: dict[str, str] = {
+                "pipeline_name": pipeline_name,
+                "autogluon_version": autogluon_version,
+                "kfp_version": kfp_version,
+                "image": image,
+                "run_type": RUN_TYPE_PIPELINE,
+            }
+            if _platform_owns_kfp_tags(self._mlflow, self.parent_run_id):
+                logger.info(
+                    "Platform-set %s found on parent run; skipping duplicate AutoML KFP identity tags.",
+                    PLATFORM_KFP_RUN_ID_TAG,
+                )
+            else:
+                tags_to_set["kfp_run_id"] = kfp_run_id
+                if kfp_run_name:
+                    tags_to_set["kfp_run_name"] = kfp_run_name
+            self._mlflow.set_tags(tags_to_set)
             # task_type is a run parameter (per the MLflow integration ADR), not a tag.
             parent_params: dict[str, Any] = {
                 "task_type": self._task_type,
                 "eval_metric": self._eval_metric,
-                "autogluon_version": autogluon_version,
-                "kfp_version": kfp_version,
-                "image": image,
             }
             if preset:
                 parent_params["preset"] = preset
@@ -757,6 +604,8 @@ class MlflowExperimentLogger:
             if dataset_uri:
                 # Non-secret dataset identity (s3://bucket/key); credentials live in the K8s secret.
                 parent_params["dataset_uri"] = dataset_uri
+            if test_dataset_uri:
+                parent_params["test_dataset_uri"] = test_dataset_uri
             if data_config:
                 parent_params["data_config"] = json.dumps(data_config, sort_keys=True)
             self._mlflow.log_params(_stringify_params(parent_params))
@@ -822,16 +671,13 @@ class MlflowExperimentLogger:
         self,
         *,
         model_name: str,
-        model_dir: Path,
         model_uri: str,
         metrics: dict[str, Any],
-        notebook_path: Path | None = None,
     ) -> None:
         """Create and finalize one nested child run for a single model.
 
-        ``notebook_path`` is an optional pre-sanitized inference notebook (typed
-        placeholders instead of real sample rows). Only this notebook is uploaded as an
-        artifact; the data-bearing notebook rendered into ``model_dir`` is never uploaded.
+        Pipeline artifacts remain in KFP-managed object storage. Their URIs are logged
+        as child-run parameters; this logger never copies artifacts into MLflow storage.
         """
         if not self.enabled:
             return
@@ -866,7 +712,6 @@ class MlflowExperimentLogger:
                 "kfp_run_id": self._config.run_id if self._config else "",
             }
 
-            tmp_dir = self._tmp_dir or Path(tempfile.mkdtemp(prefix="automl-mlflow-"))
             # Prefer enriching the live run the progress callback already created for this
             # model during fit() (matched by name); otherwise open a fresh nested run.
             live_run_id = self._live_child_runs.get(display_name) or self._live_child_runs.get(model_name)
@@ -890,22 +735,6 @@ class MlflowExperimentLogger:
                 else:
                     logger.warning("No scalar metrics to log for MLflow child run %s.", display_name)
 
-                _log_optional_metric_artifacts(
-                    self._mlflow,
-                    model_dir / "metrics",
-                    metrics=metrics,
-                    display_name=display_name,
-                    tmp_dir=tmp_dir,
-                )
-                _log_rendered_plots(
-                    self._mlflow,
-                    task_type=self._task_type,
-                    model_dir=model_dir,
-                    tmp_dir=tmp_dir / f"{display_name}_plots",
-                    plot_renderer=self._plot_renderer,
-                )
-                _log_model_and_notebook_artifacts(self._mlflow, model_dir, notebook_path=notebook_path)
-
                 active_child = self._mlflow.active_run()
                 if active_child is not None and active_child.info.run_id:
                     child_run_id = str(active_child.info.run_id)
@@ -917,15 +746,12 @@ class MlflowExperimentLogger:
     def finalize(
         self,
         *,
-        html_artifact_path: str | Path,
-        model_names: list[str],
         total_fit_time_seconds: float | None = None,
     ) -> None:
-        """Log parent aggregates and the leaderboard."""
+        """Log parent aggregate metrics without copying KFP artifacts to MLflow."""
         if not self.enabled:
             return
         try:
-            tmp_dir = self._tmp_dir or Path(tempfile.mkdtemp(prefix="automl-mlflow-"))
             if total_fit_time_seconds is not None:
                 self._mlflow.log_metric("total_fit_time_seconds", float(total_fit_time_seconds))
             scores = _aggregate_scores(self._valid_metrics, self._eval_metric)
@@ -934,23 +760,6 @@ class MlflowExperimentLogger:
                 self._mlflow.log_metric("worst_score", min(scores))
                 self._mlflow.log_metric("mean_score", sum(scores) / len(scores))
             self._mlflow.log_metric("num_models_trained", len(self._valid_metrics))
-
-            html_path = resolve_leaderboard_html_path(html_artifact_path)
-            if html_path is not None:
-                _safe_log_artifact(self._mlflow, html_path, "reports")
-            else:
-                logger.warning("Leaderboard HTML not found at %s.", html_artifact_path)
-
-            summary_path = _write_temp_json(
-                tmp_dir,
-                "leaderboard_summary.json",
-                _build_leaderboard_summary(
-                    model_names=model_names,
-                    valid_metrics=self._valid_metrics,
-                    eval_metric=self._eval_metric,
-                ),
-            )
-            _safe_log_artifact(self._mlflow, summary_path, "reports")
 
             if self._child_run_ids:
                 self._mlflow.log_metric("child_run_count", len(self._child_run_ids))

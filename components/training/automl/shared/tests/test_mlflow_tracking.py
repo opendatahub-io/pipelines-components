@@ -20,7 +20,6 @@ from kfp_components.components.training.automl.shared.mlflow_tracking import (
     experiment_run_logger,
     is_mlflow_enabled,
     parse_model_name,
-    resolve_leaderboard_html_path,
     resolve_mlflow_config,
 )
 
@@ -294,25 +293,12 @@ class TestMlflowTrackingHelpers:
         )
         assert metrics == {"accuracy": 0.91, "f1": 0.88, "roc_auc": 0.95, "log_loss": 0.31}
 
-    def test_resolve_leaderboard_html_path_file(self, tmp_path):
-        """Resolve a direct HTML file path."""
-        html_file = tmp_path / "leaderboard.html"
-        html_file.write_text("<html></html>", encoding="utf-8")
-        assert resolve_leaderboard_html_path(html_file) == html_file
-
-    def test_resolve_leaderboard_html_path_directory(self, tmp_path):
-        """Resolve HTML inside a KFP artifact directory."""
-        artifact_dir = tmp_path / "html_artifact"
-        artifact_dir.mkdir()
-        html_file = artifact_dir / "index.html"
-        html_file.write_text("<html></html>", encoding="utf-8")
-        assert resolve_leaderboard_html_path(artifact_dir) == html_file
-
 
 def _mock_run_context(run_id: str, experiment_id: str = "1") -> mock.MagicMock:
     ctx = mock.MagicMock()
     ctx.info.run_id = run_id
     ctx.info.experiment_id = experiment_id
+    ctx.data.tags = {}
     ctx.__enter__ = mock.Mock(return_value=ctx)
     ctx.__exit__ = mock.Mock(return_value=False)
     return ctx
@@ -335,6 +321,7 @@ def _make_mock_mlflow(parent_ctx, child_ctxs) -> mock.MagicMock:
     mock_mlflow.start_run.side_effect = [parent_ctx, *child_ctxs]
     mock_mlflow.active_run.side_effect = [parent_ctx, *child_ctxs]
     mock_mlflow.entities.RunTag = mock.Mock(side_effect=lambda key, value: (key, value))
+    mock_mlflow.MlflowClient.return_value.get_run.return_value = parent_ctx
     return mock_mlflow
 
 
@@ -346,13 +333,10 @@ def _run_logger_lifecycle(
     task_type: str = "binary",
     eval_metric: str = "accuracy",
     metrics_by_model: dict | None = None,
-    notebook_path: Path | None = None,
     total_fit_time_seconds: float | None = None,
 ):
     """Drive a full ``experiment_run_logger`` lifecycle and return ``result()``."""
     metrics_by_model = metrics_by_model or {name: {"accuracy": 0.9} for name in model_names}
-    html_path = tmp_path / "leaderboard.html"
-    html_path.write_text("<html></html>", encoding="utf-8")
     with mock.patch.dict(sys.modules, {"mlflow": mock_mlflow}):
         with experiment_run_logger(
             task_type=task_type,
@@ -367,14 +351,10 @@ def _run_logger_lifecycle(
             for model_name in model_names:
                 run_logger.log_model(
                     model_name=model_name,
-                    model_dir=tmp_path / model_name,
                     model_uri=f"s3://bucket/models/{model_name}",
                     metrics={"test_data": metrics_by_model[model_name]},
-                    notebook_path=notebook_path,
                 )
             run_logger.finalize(
-                html_artifact_path=html_path,
-                model_names=model_names,
                 total_fit_time_seconds=total_fit_time_seconds,
             )
     return run_logger.result()
@@ -391,11 +371,10 @@ class TestMlflowExperimentLogger:
             run_logger.log_header(pipeline_name="p", kfp_run_id="run-1")
             run_logger.log_model(
                 model_name="M_FULL",
-                model_dir=tmp_path,
                 model_uri="s3://bucket/models/M_FULL",
                 metrics={"test_data": {"accuracy": 0.9}},
             )
-            run_logger.finalize(html_artifact_path=tmp_path / "leaderboard.html", model_names=["M_FULL"])
+            run_logger.finalize()
         logged, tracking_info = run_logger.result()
         assert logged is False
         assert tracking_info == {}
@@ -405,9 +384,6 @@ class TestMlflowExperimentLogger:
         _set_kfp_mlflow_config(monkeypatch, parent_run_id="parent-run", experiment_id="1")
 
         model_name = "LightGBM_BAG_L1_FULL"
-        metrics_dir = _write_model_metrics(tmp_path, model_name, {"accuracy": 0.91, "f1": 0.88})
-        (metrics_dir / "confusion_matrix.json").write_text("{}", encoding="utf-8")
-
         mock_mlflow = _make_mock_mlflow(_mock_run_context("parent-run", "1"), [_mock_run_context("child-run-1", "1")])
         logged, tracking_info = _run_logger_lifecycle(
             mock_mlflow,
@@ -425,7 +401,8 @@ class TestMlflowExperimentLogger:
         mock_mlflow.set_tags.assert_called()
         mock_mlflow.log_params.assert_called()
         mock_mlflow.log_metrics.assert_called()
-        mock_mlflow.log_artifact.assert_called()
+        mock_mlflow.log_artifact.assert_not_called()
+        mock_mlflow.log_artifacts.assert_not_called()
 
     def test_reuses_live_child_run_created_by_callback(self, tmp_path, monkeypatch):
         """Refit reopens the live run the progress callback created for a model (no duplicate)."""
@@ -445,11 +422,10 @@ class TestMlflowExperimentLogger:
                 run_logger._live_child_runs[display_name] = "live-child-1"
                 run_logger.log_model(
                     model_name=model_name,
-                    model_dir=tmp_path / model_name,
                     model_uri=f"s3://bucket/models/{model_name}",
                     metrics={"test_data": {"accuracy": 0.91}},
                 )
-                run_logger.finalize(html_artifact_path=html_path, model_names=[model_name])
+                run_logger.finalize()
         logged, tracking_info = run_logger.result()
 
         assert logged is True
@@ -521,11 +497,10 @@ class TestMlflowExperimentLogger:
                 run_logger.log_header(pipeline_name="p", kfp_run_id="run-1", kfp_run_name="Mlflow-test", top_n=1)
                 run_logger.log_model(
                     model_name=model_name,
-                    model_dir=tmp_path / model_name,
                     model_uri=f"s3://bucket/models/{model_name}",
                     metrics={"test_data": {"accuracy": 0.9}},
                 )
-                run_logger.finalize(html_artifact_path=html_path, model_names=[model_name])
+                run_logger.finalize()
         logged, tracking_info = run_logger.result()
 
         assert logged is True
@@ -556,11 +531,10 @@ class TestMlflowExperimentLogger:
                 run_logger.log_header(pipeline_name="p", kfp_run_id="run-1", top_n=1)
                 run_logger.log_model(
                     model_name=model_name,
-                    model_dir=tmp_path / model_name,
                     model_uri=f"s3://bucket/models/{model_name}",
                     metrics={"test_data": {"accuracy": 0.9}},
                 )
-                run_logger.finalize(html_artifact_path=html_path, model_names=[model_name])
+                run_logger.finalize()
         logged, _ = run_logger.result()
 
         assert logged is True
@@ -595,77 +569,35 @@ class TestMlflowExperimentLogger:
         mock_mlflow.start_run.assert_any_call(run_name="WeightedEnsemble_L3", nested=True)
         mock_mlflow.start_run.assert_any_call(run_name="CatBoost_BAG_L1", nested=True)
 
-    def test_uploads_model_and_sanitized_notebook_only(self, tmp_path, monkeypatch):
-        """Upload the predictor dir plus ONLY the caller-provided sanitized notebook.
-
-        The data-bearing notebook rendered into ``model_dir`` must never be uploaded to the
-        tracking server; only the sanitized notebook passed via ``notebook_path`` is.
-        """
+    def test_logs_kfp_artifact_references_without_uploading_them(self, tmp_path, monkeypatch):
+        """Keep pipeline artifacts in S3 and log only their references to MLflow."""
         _set_kfp_mlflow_config(monkeypatch, parent_run_id="parent-run", experiment_id="1")
 
         model_name = "LightGBM_BAG_L1_FULL"
-        _write_model_metrics(tmp_path, model_name, {"accuracy": 0.91})
-        predictor_dir = tmp_path / model_name / "predictor"
-        predictor_dir.mkdir(parents=True)
-        (predictor_dir / "model.pkl").write_bytes(b"payload")
-        # Real-data notebook rendered into model_dir (must NOT be uploaded).
-        notebook_dir = tmp_path / model_name / "notebooks"
-        notebook_dir.mkdir(parents=True)
-        real_notebook = notebook_dir / "automl_predictor_notebook.ipynb"
-        real_notebook.write_text('{"sensitive": "customer-value"}', encoding="utf-8")
-        # Sanitized notebook the caller opts to upload.
-        sanitized_notebook = tmp_path / "sanitized.ipynb"
-        sanitized_notebook.write_text('{"placeholder": "<number>"}', encoding="utf-8")
-
         mock_mlflow = _make_mock_mlflow(_mock_run_context("parent-run", "1"), [_mock_run_context("child-run-1", "1")])
         logged, _ = _run_logger_lifecycle(
             mock_mlflow,
             tmp_path=tmp_path,
             model_names=[model_name],
             metrics_by_model={model_name: {"accuracy": 0.91}},
-            notebook_path=sanitized_notebook,
         )
 
         assert logged is True
-        assert any(call.kwargs.get("artifact_path") == "model" for call in mock_mlflow.log_artifacts.call_args_list)
-        notebook_calls = [
-            call for call in mock_mlflow.log_artifact.call_args_list if call.kwargs.get("artifact_path") == "notebooks"
+        child_params = [
+            call.args[0] for call in mock_mlflow.log_params.call_args_list if "predictor_path" in call.args[0]
         ]
-        assert len(notebook_calls) == 1
-        uploaded_paths = {
-            str(call.args[0]) if call.args else str(call.kwargs.get("local_path")) for call in notebook_calls
-        }
-        assert str(sanitized_notebook) in uploaded_paths
-        assert str(real_notebook) not in uploaded_paths
-
-    def test_no_notebook_uploaded_without_sanitized_path(self, tmp_path, monkeypatch):
-        """Fail safe: with no sanitized notebook provided, no notebook is uploaded."""
-        _set_kfp_mlflow_config(monkeypatch, parent_run_id="parent-run", experiment_id="1")
-
-        model_name = "LightGBM_BAG_L1_FULL"
-        _write_model_metrics(tmp_path, model_name, {"accuracy": 0.91})
-        predictor_dir = tmp_path / model_name / "predictor"
-        predictor_dir.mkdir(parents=True)
-        (predictor_dir / "model.pkl").write_bytes(b"payload")
-        notebook_dir = tmp_path / model_name / "notebooks"
-        notebook_dir.mkdir(parents=True)
-        (notebook_dir / "automl_predictor_notebook.ipynb").write_text(
-            '{"sensitive": "customer-value"}', encoding="utf-8"
-        )
-
-        mock_mlflow = _make_mock_mlflow(_mock_run_context("parent-run", "1"), [_mock_run_context("child-run-1", "1")])
-        logged, _ = _run_logger_lifecycle(
-            mock_mlflow,
-            tmp_path=tmp_path,
-            model_names=[model_name],
-            metrics_by_model={model_name: {"accuracy": 0.91}},
-        )
-
-        assert logged is True
-        assert any(call.kwargs.get("artifact_path") == "model" for call in mock_mlflow.log_artifacts.call_args_list)
-        assert not any(
-            call.kwargs.get("artifact_path") == "notebooks" for call in mock_mlflow.log_artifact.call_args_list
-        )
+        assert child_params == [
+            {
+                "model_name": model_name,
+                "model_type": "LightGBM",
+                "stack_level": "1",
+                "metrics_path": f"s3://bucket/models/{model_name}/metrics",
+                "predictor_path": f"s3://bucket/models/{model_name}/predictor",
+                "notebook_path": f"s3://bucket/models/{model_name}/notebooks/automl_predictor_notebook.ipynb",
+            }
+        ]
+        mock_mlflow.log_artifact.assert_not_called()
+        mock_mlflow.log_artifacts.assert_not_called()
 
     def test_disables_when_parent_run_open_fails(self, tmp_path, monkeypatch):
         """Disable tracking (no raise) when the parent run cannot be opened."""
@@ -761,12 +693,13 @@ class TestTrackingFailureReporting:
 class TestParentRunAdrFields:
     """The parent run records the ADR-required identity/metadata fields."""
 
-    def _log_header(self, monkeypatch, *, dataset_uri="") -> mock.MagicMock:
+    def _log_header(self, monkeypatch, *, dataset_uri="", test_dataset_uri="") -> mock.MagicMock:
         _set_kfp_mlflow_config(monkeypatch, parent_run_id="parent-run", experiment_id="1")
         parent_ctx = _mock_run_context("parent-run", "1")
         mock_mlflow = mock.MagicMock()
         mock_mlflow.start_run.return_value = parent_ctx
         mock_mlflow.active_run.return_value = parent_ctx
+        mock_mlflow.MlflowClient.return_value.get_run.return_value = parent_ctx
         with mock.patch.dict(sys.modules, {"mlflow": mock_mlflow}):
             with experiment_run_logger(task_type="binary", eval_metric="accuracy") as run_logger:
                 run_logger.log_header(
@@ -775,6 +708,7 @@ class TestParentRunAdrFields:
                     preset="speed",
                     top_n=3,
                     dataset_uri=dataset_uri,
+                    test_dataset_uri=test_dataset_uri,
                 )
         return mock_mlflow
 
@@ -786,14 +720,14 @@ class TestParentRunAdrFields:
         assert "task_type" not in tags
         assert params["task_type"] == "binary"
 
-    def test_kfp_version_and_image_logged(self, monkeypatch):
-        """ADR: kfp_version and image are recorded on the parent run."""
+    def test_versions_and_image_logged_as_tags_only(self, monkeypatch):
+        """Record versions and image once as tags, not duplicate parameters."""
         mock_mlflow = self._log_header(monkeypatch)
         tags = mock_mlflow.set_tags.call_args.args[0]
         params = mock_mlflow.log_params.call_args.args[0]
-        for key in ("kfp_version", "image"):
+        for key in ("kfp_version", "image", "autogluon_version"):
             assert key in tags
-            assert key in params
+            assert key not in params
 
     def test_dataset_uri_logged_when_provided(self, monkeypatch):
         """ADR: the non-secret dataset URI is recorded when available."""
@@ -806,6 +740,23 @@ class TestParentRunAdrFields:
         mock_mlflow = self._log_header(monkeypatch, dataset_uri="")
         params = mock_mlflow.log_params.call_args.args[0]
         assert "dataset_uri" not in params
+
+    def test_test_dataset_uri_logged_when_provided(self, monkeypatch):
+        """Record both train and user-provided test dataset identities."""
+        mock_mlflow = self._log_header(
+            monkeypatch,
+            dataset_uri="s3://bucket/train.csv",
+            test_dataset_uri="s3://bucket/test.csv",
+        )
+        params = mock_mlflow.log_params.call_args.args[0]
+        assert params["dataset_uri"] == "s3://bucket/train.csv"
+        assert params["test_dataset_uri"] == "s3://bucket/test.csv"
+
+    def test_test_dataset_uri_omitted_when_empty(self, monkeypatch):
+        """Do not record an absent user-provided test dataset."""
+        mock_mlflow = self._log_header(monkeypatch, dataset_uri="s3://bucket/train.csv")
+        params = mock_mlflow.log_params.call_args.args[0]
+        assert "test_dataset_uri" not in params
 
     def test_total_fit_time_logged_as_parent_metric(self, tmp_path, monkeypatch):
         """ADR: finalize logs total_fit_time_seconds as a parent metric."""
@@ -836,3 +787,46 @@ class TestParentRunAdrFields:
         )
         logged_metric_names = [c.args[0] for c in mock_mlflow.log_metric.call_args_list]
         assert "total_fit_time_seconds" not in logged_metric_names
+
+
+class TestKfpTagDeduplication:
+    """The parent run carries the KFP identity under one set of keys."""
+
+    def _log_header_with_parent_tags(self, monkeypatch, parent_tags: dict) -> tuple[dict, mock.MagicMock]:
+        _set_kfp_mlflow_config(monkeypatch, parent_run_id="parent-run", experiment_id="1")
+        parent_ctx = _mock_run_context("parent-run", "1")
+        parent_ctx.data.tags = parent_tags
+        mock_mlflow = _make_mock_mlflow(parent_ctx, [])
+        with mock.patch.dict(sys.modules, {"mlflow": mock_mlflow}):
+            with experiment_run_logger(task_type="binary", eval_metric="accuracy") as run_logger:
+                run_logger.log_header(pipeline_name="p", kfp_run_id="run-1", kfp_run_name="Fraud detection")
+        return mock_mlflow.set_tags.call_args.args[0], mock_mlflow
+
+    def test_skips_automl_kfp_tags_when_platform_set_them(self, monkeypatch):
+        """Platform KFP tags prevent duplicate AutoML run-identity tags."""
+        tags, _ = self._log_header_with_parent_tags(
+            monkeypatch,
+            {"kfp.pipeline_run_id": "parent-run", "kfp.pipeline_id": "pipeline-123"},
+        )
+        assert "kfp_run_id" not in tags
+        assert "kfp_run_name" not in tags
+        assert tags["pipeline_name"] == "p"
+
+    def test_sets_automl_kfp_tags_when_platform_absent(self, monkeypatch):
+        """Retain AutoML fallback identity tags outside the platform integration."""
+        tags, _ = self._log_header_with_parent_tags(monkeypatch, {})
+        assert tags["kfp_run_id"] == "run-1"
+        assert tags["kfp_run_name"] == "Fraud detection"
+
+    def test_falls_back_to_automl_tags_when_parent_tags_unreadable(self, monkeypatch):
+        """A failed parent-tag lookup must not drop the run identity."""
+        _set_kfp_mlflow_config(monkeypatch, parent_run_id="parent-run", experiment_id="1")
+        parent_ctx = _mock_run_context("parent-run", "1")
+        mock_mlflow = _make_mock_mlflow(parent_ctx, [])
+        mock_mlflow.MlflowClient.side_effect = RuntimeError("tracking server unreachable")
+
+        with mock.patch.dict(sys.modules, {"mlflow": mock_mlflow}):
+            with experiment_run_logger(task_type="binary", eval_metric="accuracy") as run_logger:
+                run_logger.log_header(pipeline_name="p", kfp_run_id="run-1")
+
+        assert mock_mlflow.set_tags.call_args.args[0]["kfp_run_id"] == "run-1"

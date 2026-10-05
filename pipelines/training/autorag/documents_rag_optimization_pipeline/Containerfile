@@ -2,7 +2,7 @@
 
 ARG DOCLING_OGX_MODELCAR="registry.redhat.io/rhai/modelcar-redhatai-ogx-distribution:3.0@sha256:63f710736cbd083ffeeb8bd90686727c63cc5ab8be373dcf1b202a5411909d77"
 ARG WHISPER_MODELCAR="registry.redhat.io/rhai/modelcar-redhatai-whisper-tiny:3.0"
-ARG BASE_IMAGE="quay.io/aipcc/base-images/cpu-el9.8:3.6.0-ea.2"
+ARG BASE_IMAGE="quay.io/aipcc/base-images/cpu-el9.8:3.6.0"
 
 FROM ${DOCLING_OGX_MODELCAR} AS docling-ogx-modelcar
 FROM ${WHISPER_MODELCAR} AS whisper-modelcar
