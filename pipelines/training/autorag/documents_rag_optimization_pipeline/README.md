@@ -67,6 +67,25 @@ deployment settings), executable notebooks, and evaluation results.
 
 <!-- custom-content -->
 
+### CUDA image build
+
+The training pipeline `Containerfile` installs its locked Python dependencies
+from the general RHOAI package index and direct wheel files from the Red Hat
+CUDA 13.0 / PyTorch 2.13 index.
+The lockfile pins x86_64 CUDA wheels for `torch`, `torchvision`, `triton`, and
+`onnxruntime-gpu`; the image build checks CUDA support without requiring a GPU
+on the build worker. The current Konflux build targets x86_64. Regenerate the
+lockfile with:
+
+```bash
+make pipeline-requirements PIPELINE=pipelines/training/autorag/documents_rag_optimization_pipeline
+```
+
+The CUDA package index URL ends in `/simple`. The `/simple/torch/` URL is only
+the package listing for Torch. The inference image remains on its own CPU
+requirements. Pipeline runs still default to CPU extraction; set
+`gpu_acceleration=true` to request an NVIDIA GPU for text extraction.
+
 ### Progress and dashboard artifacts
 
 Besides RAG pattern and data artifacts below, each run publishes:

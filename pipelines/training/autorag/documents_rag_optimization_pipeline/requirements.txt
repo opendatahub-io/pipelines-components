@@ -211,7 +211,7 @@ filetype==1.2.0 \
     # via docling-slim
 flatbuffers==25.12.19 \
     --hash=sha256:60915b8477a6e28d44166a597c72b14042f4fd986818f2206bfe7760d6a648d1
-    # via onnxruntime
+    # via onnxruntime-gpu
 frozenlist==1.8.0 \
     --hash=sha256:25cc97274d43add7842ecf7279a64f4567dc362f250e6074971fbfbf6f251005 \
     --hash=sha256:28cd1e39bf5a8cbe5fe4d7279a97ca15ab3aa0f90e792aa4986ab56c042d011e \
@@ -540,7 +540,7 @@ numpy==2.5.3 \
     #   langchain-community
     #   milvus-lite
     #   numba
-    #   onnxruntime
+    #   onnxruntime-gpu
     #   openai-whisper
     #   opencv-python
     #   pandas
@@ -567,11 +567,8 @@ olefile==0.47 \
 omegaconf==2.3.1 \
     --hash=sha256:e662f1c0660e1b9185dd8f400ba244384e1e1f6a7372d88f4d95466c101770c5
     # via rapidocr
-onnxruntime==1.25.0 \
-    --hash=sha256:6f9a0e367872b164b96bde07ab0411c564e729858e894d14a108cd22b350519d \
-    --hash=sha256:b07e318ac11a6aed1e96004c7870351d390484e3e19d83fd85b78b18a42faebb \
-    --hash=sha256:cef48b2d4263ae900ad3daa70d2262ca4c058658f5564db7d9cfd7f5f908cbc4 \
-    --hash=sha256:eeee14eaff8ff09d7ef95f8d65f54775ae0da28889cffab73af4e0ca49c61ecd
+onnxruntime-gpu @ https://packages.redhat.com/api/pulp-content/public-rhai/cuda13.0-torch2.13-el9.8-test/onnxruntime_gpu-1.25.0-4-cp312-cp312-linux_x86_64.whl \
+    --hash=sha256:60445420d324fa34fbb7c5a637b21567e104833b665a4703f622730bc1c3ad63
     # via -r requirements.in
 openai==2.53.0 \
     --hash=sha256:57cc1b518ad2a65147b61957095d139195eebf5031c1d8696808d2f00eb6db57
@@ -621,7 +618,7 @@ packaging==26.3 \
     #   langchain-core
     #   langsmith
     #   marshmallow
-    #   onnxruntime
+    #   onnxruntime-gpu
     #   transformers
 pandas==2.2.3 \
     --hash=sha256:374b8b38ada3d578f3bb18bd88fc1b139a64fb1028a12adcd1a8b23ce455e826 \
@@ -688,7 +685,7 @@ protobuf==6.33.6 \
     #   googleapis-common-protos
     #   kfp
     #   kfp-pipeline-spec
-    #   onnxruntime
+    #   onnxruntime-gpu
     #   proto-plus
     #   pymilvus
 psutil==7.2.2 \
@@ -993,12 +990,10 @@ tokenizers==0.23.2 \
     # via
     #   transformers
     #   whisper-s2t-reborn
-torch==2.13.0 \
-    --hash=sha256:2a04ad8ab85fbeeac8463915f8e070949a9f98bd7630601af8b6955ee1fe0f4d \
-    --hash=sha256:8a6ea722d77aecdcb3af8daf3d505419160281c81524fd0599dac13bdfa9a0d1 \
-    --hash=sha256:97ce14be01501f66257b84875af54124a510869d742163c2cb66e7fdc3bd2bd5 \
-    --hash=sha256:cfc35cf3b57b501b890a838bcdc7b7324195e047e92488f1faf9a8c8cbd402a7
+torch @ https://packages.redhat.com/api/pulp-content/public-rhai/cuda13.0-torch2.13-el9.8-test/torch-2.13.0-1-cp312-cp312-linux_x86_64.whl \
+    --hash=sha256:36b2cbbe086c1c65fda0c568d7f929a29c513fe44302f30cdf3756a92c0480b7
     # via
+    #   -r requirements.in
     #   accelerate
     #   docling-ibm-models
     #   docling-slim
@@ -1006,12 +1001,10 @@ torch==2.13.0 \
     #   safetensors
     #   torchvision
     #   whisper-s2t-reborn
-torchvision==0.28.0 \
-    --hash=sha256:0b8e5403c8cd3b87a9fdfeb0214660577f50f5b5f1de3d6b468689a2d5020b82 \
-    --hash=sha256:7b152773dc1560838cae3eb075ca450d52980f34a6b0eee103707073bf80858a \
-    --hash=sha256:a82cc9d830807fa7a583045194d2cb236d5f3cdf8193da80a545882a9815ac1b \
-    --hash=sha256:fd780b0a74546e59cb734be3e19c9fb902be9090655bce56b8d357f99b63091e
+torchvision @ https://packages.redhat.com/api/pulp-content/public-rhai/cuda13.0-torch2.13-el9.8-test/torchvision-0.28.0-2-cp312-cp312-linux_x86_64.whl \
+    --hash=sha256:1101d4125ac2fe087e1ff84a03f29223a9eb74452e609714184aeec26f776872
     # via
+    #   -r requirements.in
     #   docling-ibm-models
     #   docling-slim
 tqdm==4.70.1 \
@@ -1065,14 +1058,12 @@ tree-sitter-typescript==0.23.2 \
     --hash=sha256:7291317b737deeb3e7d656689d0ffc0b5b18a196237df4eaeccae508247f8ac0 \
     --hash=sha256:8a7b4f0fc4ee8875b66861a9ccfbb267d8ac019650895da9fdfadc2048ec6020
     # via docling-core
-triton==3.6.0 ; platform_machine != "s390x" \
-    --hash=sha256:10a4312290e8aa8ebd51fb7d609cdff7b5de87ea533554adbafc8209350b45f8 \
-    --hash=sha256:2cfbdb91cdb02bfc9c2f9e512bc4d56e0d228323ca5690bc8320077a291acec2 \
-    --hash=sha256:3bb6255461bc028df69d457907a2b00b49b12427788f63107badad314f288735 \
-    --hash=sha256:4faa64744bb3259b03481b1898f3094adb9e06d9a995401602fbe54d3c51b41c \
-    --hash=sha256:78526dd2b6ac29a2027e48440308988a97b95c4954220f6e4306b59312221330 \
-    --hash=sha256:e9131e05ac5186c50b3075f7ee17e1b698d334936f07606ed72cfacefbf47ece
-    # via -r requirements.in
+triton @ https://packages.redhat.com/api/pulp-content/public-rhai/cuda13.0-torch2.13-el9.8-test/triton-3.7.1-6-cp312-cp312-linux_x86_64.whl \
+    --hash=sha256:81ee746838acc18019cf433f10cc1c0a344b53de3e444577288e03861e6cf54c
+    # via
+    #   -r requirements.in
+    #   openai-whisper
+    #   torch
 truststore==0.10.4 \
     --hash=sha256:ec5aeeff724bc631384ca59b3411f0fb16ecf1af6217cd8e1b5f304733df4565
     # via
