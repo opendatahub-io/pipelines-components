@@ -72,8 +72,10 @@ deployment settings), executable notebooks, and evaluation results.
 The training pipeline `Containerfile` installs its locked Python dependencies
 from the general RHOAI package index and direct wheel files from the Red Hat
 CUDA 13.0 / PyTorch 2.13 index.
-The required CPU base image installs CUDA userspace RPMs from its configured
-NVIDIA repository before installing those wheels.
+The final image keeps the required CPU base image; the CUDA 13 userspace runtime
+(`libcudart`, `libcublas`, cuDNN, NCCL, ...) is copied from the Red Hat CUDA image
+used as a build stage, because Red Hat does not publish that runtime as pip wheels.
+Both images are OCI build inputs, so the build stays hermetic.
 The lockfile pins x86_64 CUDA wheels for `torch`, `torchvision`, `triton`, and
 `onnxruntime-gpu`; the image build checks CUDA support without requiring a GPU
 on the build worker. The current Konflux build targets x86_64. Regenerate the
