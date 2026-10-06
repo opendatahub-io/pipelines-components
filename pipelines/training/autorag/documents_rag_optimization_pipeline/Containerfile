@@ -2,11 +2,24 @@
 
 ARG DOCLING_OGX_MODELCAR="registry.redhat.io/rhai/modelcar-redhatai-ogx-distribution:3.0@sha256:63f710736cbd083ffeeb8bd90686727c63cc5ab8be373dcf1b202a5411909d77"
 ARG WHISPER_MODELCAR="registry.redhat.io/rhai/modelcar-redhatai-whisper-tiny:3.0"
-ARG BASE_IMAGE="quay.io/opendatahub/odh-base-image-cuda-py312-c9s:v13.0@sha256:6f8fcdd89279fd7217a53a76b912ff5a563600aff0d16faba15caa8f14600cd7"
+ARG BASE_IMAGE="quay.io/aipcc/base-images/cpu-el9.8:3.6.0"
 
 FROM ${DOCLING_OGX_MODELCAR} AS docling-ogx-modelcar
 FROM ${WHISPER_MODELCAR} AS whisper-modelcar
 FROM ${BASE_IMAGE}
+
+# The required CPU base has the NVIDIA RPM repository configured but disabled.
+# Install CUDA userspace libraries needed by the Red Hat GPU Python wheels.
+USER root
+RUN dnf --enablerepo='*cuda*' install -y \
+        cuda-libraries-13-0 \
+        libcudnn9-cuda-13 \
+        libnccl \
+        libcusparselt0-cuda-13 \
+        libcudss0-cuda-13 && \
+    dnf clean all && \
+    ldconfig
+USER default
 
 COPY pipelines/training/autorag/documents_rag_optimization_pipeline/requirements.txt /tmp/
 
