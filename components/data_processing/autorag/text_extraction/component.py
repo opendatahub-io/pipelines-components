@@ -20,6 +20,7 @@ def text_extraction(
     error_tolerance: Optional[float] = None,
     max_extraction_workers: Optional[int] = None,
     preset: str = "speed",
+    gpu_acceleration: bool = False,
     ocr_lang: Optional[str] = None,
 ):
     """Text Extraction component.
@@ -51,8 +52,15 @@ def text_extraction(
             raising an error. None (the default) means zero tolerance.
         max_extraction_workers: Number of parallel worker processes used for text
             extraction. Defaults to 4. Set to None to use all available CPU cores.
-        preset: Pipeline quality tier. "speed" (default) disables Docling table
-            structure parsing. "balanced" enables TableFormer table reconstruction.
+        preset: Extraction quality tier shared by the optimization and indexing
+            pipelines. "speed" (default) disables Docling table structure parsing.
+            "balanced" enables TableFormer table reconstruction. This is orthogonal
+            to ``gpu_acceleration``: any preset can run on CPU or GPU.
+        gpu_acceleration: When True, run Docling extraction on a CUDA-capable GPU.
+            Requires the task to request an NVIDIA GPU and a CUDA-enabled AutoRAG
+            image; the component fails fast if CUDA is unavailable. Defaults to
+            False (CPU extraction). Does not change the quality tier selected by
+            ``preset``.
         ocr_lang: Language of the document text, used only to pick the RapidOCR model
             bundle. Accepts a language name or ISO 639-1 code. Chinese ("chinese", "zh",
             "ch") selects the Chinese bundle; everything else, including None (the
@@ -79,8 +87,22 @@ def text_extraction(
     if preset not in VALID_PRESETS:
         raise ValueError(f"preset must be one of {VALID_PRESETS}; got {preset!r}.")
 
+    if gpu_acceleration:
+        try:
+            import torch
+        except ImportError as exc:
+            raise RuntimeError(
+                "GPU extraction requires a CUDA-enabled PyTorch/Docling runtime, but PyTorch is not installed."
+            ) from exc
+        if not torch.cuda.is_available():
+            raise RuntimeError(
+                "GPU extraction was requested, but CUDA is unavailable. Ensure the task requests an NVIDIA GPU "
+                "and uses a CUDA-enabled AutoRAG image."
+            )
+        logging.info("GPU extraction enabled: using CUDA device %s", torch.cuda.get_device_name(0))
+
     do_table_structure = PRESET_DO_TABLE_STRUCTURE[preset]
-    logging.info("Preset %r: do_table_structure=%s", preset, do_table_structure)
+    logging.info("Preset %r: do_table_structure=%s, gpu_acceleration=%s", preset, do_table_structure, gpu_acceleration)
 
     # Paths are relative to $DOCLING_ARTIFACTS_PATH/RapidOcr/ and mirror the on-disk
     # layout of the RHAI OGX modelcar baked into the AutoRAG image. The classifier is
@@ -150,6 +172,8 @@ def text_extraction(
             suffixes = [Path(document["key"]).suffix.lower() for document in documents]
             candidate_metrics = {
                 "documents_total": len(documents),
+                "extraction_device": "GPU (CUDA)" if gpu_acceleration else "CPU",
+                "gpu_acceleration": gpu_acceleration,
                 "layout_candidate_documents": sum(suffix in LAYOUT_OCR_EXTENSIONS for suffix in suffixes),
                 "layout_model": "Docling Layout Heron",
                 "ocr_candidate_documents": sum(suffix in LAYOUT_OCR_EXTENSIONS for suffix in suffixes),
@@ -167,6 +191,7 @@ def text_extraction(
                 do_table_structure=do_table_structure,
                 do_ocr=True,
                 ocr_lang=bundle_name,
+                device="cuda" if gpu_acceleration else "cpu",
                 **ocr_model_paths,
             )
 

@@ -28,7 +28,8 @@ deployment settings), executable notebooks, and evaluation results.
 | `input_data_keys` | `list[str]` | `[]` | Up to ten object-key prefixes for input documents in the input data bucket. Every location is discovered and merged into one deduplicated corpus. |
 | `optimization_metric` | `str` | `overall_score` | Quality metric used to rank RAG patterns. Use an evaluator-qualified value such as ``"unitxt:faithfulness"``, ``"ragas:context_precision"``, or ``"custom:overall_score"`` (default). The ``speed`` preset supports Unitxt and custom metrics; ``balanced`` also supports RAGAS metrics. ``custom:overall_score`` aggregates Unitxt outputs for ``speed`` and Unitxt plus RAGAS outputs for ``balanced``. |
 | `optimization_max_rag_patterns` | `int` | `5` | Maximum number of optimization iterations and published RAG patterns (4-10, default 5). |
-| `preset` | `str` | `speed` | Pipeline quality tier. "speed" (default) uses recursive chunking, no table structure parsing, and no contextual enrichment. "balanced" enables Docling table layout parsing, hybrid chunking, and LLM contextual enrichment. Both presets use the same resource tier. |
+| `preset` | `str` | `speed` | Extraction and optimization quality tier. "speed" (default) uses recursive chunking, no table structure parsing, and no contextual enrichment. "balanced" enables Docling table layout parsing, hybrid chunking, and LLM contextual enrichment. Orthogonal to ``gpu_acceleration``. |
+| `gpu_acceleration` | `bool` | `False` | When True, run Docling text extraction on one NVIDIA GPU (only the extraction task requests ``nvidia.com/gpu``); downstream optimization is unchanged and stays on the shared (non-GPU) resource tier. Defaults to False (CPU extraction). Independent of ``preset``, so any quality tier can run extraction on CPU or GPU. |
 
 ## Metadata 🗂️
 
@@ -65,6 +66,27 @@ deployment settings), executable notebooks, and evaluation results.
     - MichalSteczko
 
 <!-- custom-content -->
+
+### CUDA image build
+
+The training pipeline `Containerfile` installs its locked Python dependencies
+from the general RHOAI package index and direct wheel files from the Red Hat
+CUDA 13.0 / PyTorch 2.13 index.
+The required CPU base image installs CUDA userspace RPMs from its configured
+NVIDIA repository before installing those wheels.
+The lockfile pins x86_64 CUDA wheels for `torch`, `torchvision`, `triton`, and
+`onnxruntime-gpu`; the image build checks CUDA support without requiring a GPU
+on the build worker. The current Konflux build targets x86_64. Regenerate the
+lockfile with:
+
+```bash
+make pipeline-requirements PIPELINE=pipelines/training/autorag/documents_rag_optimization_pipeline
+```
+
+The CUDA package index URL ends in `/simple`. The `/simple/torch/` URL is only
+the package listing for Torch. The inference image remains on its own CPU
+requirements. Pipeline runs still default to CPU extraction; set
+`gpu_acceleration=true` to request an NVIDIA GPU for text extraction.
 
 ### Progress and dashboard artifacts
 

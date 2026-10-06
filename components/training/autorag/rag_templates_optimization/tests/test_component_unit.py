@@ -491,6 +491,7 @@ class TestRagTemplatesOptimizationRun:
                 input_data_bucket_name="customer-docs",
                 leaderboard=leaderboard_html,
                 input_data_keys=["data/docs/", "data/manuals/"],
+                preset="speed",
             )
 
         mocks.create_maas_client.assert_called_once_with(
@@ -517,6 +518,9 @@ class TestRagTemplatesOptimizationRun:
             "data/manuals/",
         ]
         assert pattern_json["indexing"]["pipeline_spec"]["pipeline_name"] == "documents-indexing-pipeline"
+        # The stamped indexing preset mirrors the optimization preset (run above with
+        # preset="speed") so the deployed index reproduces the evaluated extraction tier.
+        assert pattern_json["indexing"]["pipeline_spec"]["parameters"]["preset"] == "speed"
         indexing_notebook_call = next(
             call for call in mocks.generate_notebook_from_template.call_args_list if call.args[0] == "maas_indexing"
         )

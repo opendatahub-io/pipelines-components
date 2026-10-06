@@ -5,6 +5,11 @@ from kfp.kubernetes import use_secret_as_env
 from kfp_components.components.data_processing.autorag.documents_discovery.component import documents_discovery
 from kfp_components.components.data_processing.autorag.documents_indexing.component import documents_indexing
 from kfp_components.components.data_processing.autorag.text_extraction.component import text_extraction
+from kfp_components.components.data_processing.autorag.text_extraction.extraction_inputs import (
+    GPU_RESOURCE,
+    S3_SECRET_ENV_KEYS,
+    prepare_extraction_inputs,
+)
 
 MAX_CPUS = "32"
 MAX_MEMORY = "64Gi"
@@ -33,6 +38,8 @@ def documents_indexing_pipeline(
     chunk_overlap: int = 0,
     batch_size: int = 20,
     ocr_lang: Optional[str] = None,
+    preset: str = "speed",
+    gpu_acceleration: bool = False,
 ):
     """Build a production vector index from documents for AutoRAG.
 
@@ -69,6 +76,12 @@ def documents_indexing_pipeline(
             so override it when the corpus is in a different language. Chinese selects
             the Chinese bundle; omitting it selects the English bundle, which covers all
             Latin-script languages.
+        preset: Extraction quality tier. ``speed`` (default, no table parsing) or
+            ``balanced`` (table parsing). Orthogonal to ``gpu_acceleration``.
+        gpu_acceleration: When True, run Docling text extraction on one NVIDIA GPU
+            (the extraction task requests ``nvidia.com/gpu``). Defaults to False
+            (CPU extraction). Independent of ``preset``, so any quality tier can run
+            on CPU or GPU.
     """
     documents_discovery_task = documents_discovery(
         input_data_bucket_name=input_data_bucket_name,
@@ -79,13 +92,24 @@ def documents_indexing_pipeline(
         MAX_MEMORY
     )
 
+    use_secret_as_env(documents_discovery_task, input_data_secret_name, S3_SECRET_ENV_KEYS)
+
+    extraction_inputs_task = prepare_extraction_inputs(preset=preset, gpu_acceleration=gpu_acceleration)
+    extraction_inputs_task.set_caching_options(False)
+
     text_extraction_task = text_extraction(
         documents_descriptor=documents_discovery_task.outputs["discovered_documents"],
+        preset=extraction_inputs_task.outputs["preset"],
+        gpu_acceleration=gpu_acceleration,
         ocr_lang=ocr_lang,
     )
     text_extraction_task.set_caching_options(False)
     text_extraction_task.set_cpu_request("2").set_memory_request("8Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(
         MAX_MEMORY
+    )
+    use_secret_as_env(text_extraction_task, input_data_secret_name, S3_SECRET_ENV_KEYS)
+    text_extraction_task.set_accelerator_type(GPU_RESOURCE).set_accelerator_limit(
+        extraction_inputs_task.outputs["gpu_count"]
     )
 
     documents_indexing_task = documents_indexing(
@@ -102,21 +126,6 @@ def documents_indexing_pipeline(
     documents_indexing_task.set_cpu_request("2").set_memory_request("8Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(
         MAX_MEMORY
     )
-
-    def set_input_data_secrets(task, secret_name):
-        use_secret_as_env(
-            task,
-            secret_name=secret_name,
-            secret_key_to_env={
-                "AWS_ACCESS_KEY_ID": "AWS_ACCESS_KEY_ID",
-                "AWS_SECRET_ACCESS_KEY": "AWS_SECRET_ACCESS_KEY",
-                "AWS_S3_ENDPOINT": "AWS_S3_ENDPOINT",
-                "AWS_DEFAULT_REGION": "AWS_DEFAULT_REGION",
-            },
-        )
-
-    set_input_data_secrets(documents_discovery_task, input_data_secret_name)
-    set_input_data_secrets(text_extraction_task, input_data_secret_name)
 
     # MaaS inference credentials.
     use_secret_as_env(

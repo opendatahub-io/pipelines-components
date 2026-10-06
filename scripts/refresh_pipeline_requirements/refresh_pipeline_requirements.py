@@ -216,6 +216,8 @@ def build_container_command(
     upgrade: bool,
     dry_run: bool,
     verbose: bool,
+    python_platform: str | None = None,
+    upgrade_packages: Sequence[str] = (),
 ) -> list[str]:
     """Build the container command that runs uv pip compile."""
     python_bin = "python3 -u"
@@ -226,11 +228,16 @@ def build_container_command(
         "--emit-index-url",
         "--no-header",
     ]
+    if python_platform:
+        compile_flags.extend(["--python-platform", python_platform])
     # uv pip compile has no --dry-run; emit to stdout instead of writing the lockfile.
     if not dry_run:
         compile_flags.append(f"--output-file {_REQUIREMENTS_TXT}")
     if upgrade:
         compile_flags.append("--upgrade")
+    else:
+        for package in upgrade_packages:
+            compile_flags.extend(["--upgrade-package", package])
     if not verbose:
         compile_flags.append("--quiet")
 
@@ -266,6 +273,7 @@ def compile_pipeline_requirements(
         raise RefreshRequirementsError(f"{requirements_in} must declare --index-url for RHOAI package resolution")
 
     runtime = resolve_container_runtime(container_runtime)
+    requirements_content = requirements_in.read_text(encoding="utf-8")
     command = build_container_command(
         runtime=runtime,
         container_image=container_image,
@@ -273,6 +281,8 @@ def compile_pipeline_requirements(
         upgrade=upgrade,
         dry_run=dry_run,
         verbose=verbose,
+        python_platform="x86_64-unknown-linux-gnu" if "linux_x86_64.whl" in requirements_content else None,
+        upgrade_packages=re.findall(r"^([A-Za-z0-9][A-Za-z0-9._-]*) @ https://", requirements_content, re.MULTILINE),
     )
 
     print(f"Refreshing {pipeline_dir / _REQUIREMENTS_TXT}")

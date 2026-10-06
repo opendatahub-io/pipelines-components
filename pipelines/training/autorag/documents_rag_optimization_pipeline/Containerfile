@@ -8,10 +8,28 @@ FROM ${DOCLING_OGX_MODELCAR} AS docling-ogx-modelcar
 FROM ${WHISPER_MODELCAR} AS whisper-modelcar
 FROM ${BASE_IMAGE}
 
+# The required CPU base has the NVIDIA RPM repository configured but disabled.
+# Install CUDA userspace libraries needed by the Red Hat GPU Python wheels.
+USER root
+RUN dnf --enablerepo='*cuda*' install -y \
+        cuda-libraries-13-0 \
+        libcudnn9-cuda-13 \
+        libnccl \
+        libcusparselt0-cuda-13 \
+        libcudss0-cuda-13 && \
+    dnf clean all && \
+    ldconfig
+USER default
+
 COPY pipelines/training/autorag/documents_rag_optimization_pipeline/requirements.txt /tmp/
 
 ## TODO: Ensure build isolation
-RUN pip install --no-cache-dir -r /tmp/requirements.txt
+# Remove CPU runtime packages from the base image before installing the locked
+# CUDA wheels. The build container has no GPU, so verify compiled CUDA support
+# rather than checking torch.cuda.is_available().
+RUN pip uninstall -y torch torchvision onnxruntime && \
+    pip install --no-cache-dir -r /tmp/requirements.txt && \
+    python -c 'import torch, torchvision, onnxruntime as ort; assert torch.version.cuda == "13.0", torch.version.cuda; assert "CUDAExecutionProvider" in ort.get_available_providers(), ort.get_available_providers(); print(torch.__version__, torchvision.__version__, ort.get_available_providers())'
 
 # Temporary workaround for docling-core versions that reject the MIME type
 # emitted by Docling's M4A ASR path. Remove when the upstream fix is available.

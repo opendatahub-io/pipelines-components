@@ -3,8 +3,13 @@ from kfp.kubernetes import use_secret_as_env
 from kfp_components.components.data_processing.autorag.documents_discovery import (
     documents_discovery,
 )
-from kfp_components.components.data_processing.autorag.text_extraction import (
+from kfp_components.components.data_processing.autorag.text_extraction.component import (
     text_extraction,
+)
+from kfp_components.components.data_processing.autorag.text_extraction.extraction_inputs import (
+    GPU_RESOURCE,
+    S3_SECRET_ENV_KEYS,
+    prepare_extraction_inputs,
 )
 from kfp_components.components.training.autorag.component_stage_map_publisher import (
     publish_component_stage_map,
@@ -55,6 +60,7 @@ def documents_rag_optimization_pipeline(
     optimization_metric: str = "overall_score",
     optimization_max_rag_patterns: int = 5,
     preset: str = "speed",
+    gpu_acceleration: bool = False,
 ):
     """Automated system for building and optimizing Retrieval-Augmented Generation (RAG) applications.
 
@@ -102,10 +108,16 @@ def documents_rag_optimization_pipeline(
             for ``speed`` and Unitxt plus RAGAS outputs for ``balanced``.
         optimization_max_rag_patterns: Maximum number of optimization iterations
             and published RAG patterns (4-10, default 5).
-        preset: Pipeline quality tier. "speed" (default) uses recursive chunking,
-            no table structure parsing, and no contextual enrichment. "balanced"
-            enables Docling table layout parsing, hybrid chunking, and LLM
-            contextual enrichment. Both presets use the same resource tier.
+        preset: Extraction and optimization quality tier. "speed" (default) uses
+            recursive chunking, no table structure parsing, and no contextual
+            enrichment. "balanced" enables Docling table layout parsing, hybrid
+            chunking, and LLM contextual enrichment. Orthogonal to
+            ``gpu_acceleration``.
+        gpu_acceleration: When True, run Docling text extraction on one NVIDIA GPU
+            (only the extraction task requests ``nvidia.com/gpu``); downstream
+            optimization is unchanged and stays on the shared (non-GPU) resource
+            tier. Defaults to False (CPU extraction). Independent of ``preset``, so
+            any quality tier can run extraction on CPU or GPU.
     """
     component_stage_map_task = publish_component_stage_map(
         pipeline_id=PIPELINE_NAME,
@@ -129,11 +141,16 @@ def documents_rag_optimization_pipeline(
         MAX_MEMORY
     )
 
+    # Resolve preset + GPU count once and reuse the preset across every quality
+    # component so they all agree on the effective tier.
+    extraction_inputs_task = prepare_extraction_inputs(preset=preset, gpu_acceleration=gpu_acceleration)
+    normalized_preset = extraction_inputs_task.outputs["preset"]
+
     search_space_preparation_task = search_space_preparation(
         test_data=documents_discovery_task.outputs["test_data"],
         embedding_models=embedding_models,
         generation_models=generation_models,
-        preset=preset,
+        preset=normalized_preset,
     )
 
     search_space_preparation_task.set_caching_options(False)
@@ -141,25 +158,29 @@ def documents_rag_optimization_pipeline(
         MAX_CPUS
     ).set_memory_limit(MAX_MEMORY)
 
-    # Consuming the detected language also orders this task after search space
-    # preparation, so misconfigured models still fail before any heavy document
-    # processing starts.
+    # ocr_lang comes from search space preparation; gating extraction behind it fails
+    # misconfigured models before any heavy document processing starts.
     text_extraction_task = text_extraction(
         documents_descriptor=documents_discovery_task.outputs["discovered_documents"],
-        preset=preset,
+        preset=normalized_preset,
+        gpu_acceleration=gpu_acceleration,
         ocr_lang=search_space_preparation_task.outputs["detected_ocr_lang"],
     )
-
     text_extraction_task.set_caching_options(False)
     text_extraction_task.set_cpu_request("4").set_memory_request("16Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(
         MAX_MEMORY
     )
+    use_secret_as_env(text_extraction_task, input_data_secret_name, S3_SECRET_ENV_KEYS, optional=True)
+    text_extraction_task.set_accelerator_type(GPU_RESOURCE).set_accelerator_limit(
+        extraction_inputs_task.outputs["gpu_count"]
+    )
+    extracted_text = text_extraction_task.outputs["extracted_text"]
 
     models_pre_selector_task = models_pre_selector(
         search_space_report=search_space_preparation_task.outputs["search_space_report"],
-        extracted_text=text_extraction_task.outputs["extracted_text"],
+        extracted_text=extracted_text,
         test_data=documents_discovery_task.outputs["test_data"],
-        preset=preset,
+        preset=normalized_preset,
     )
 
     models_pre_selector_task.set_caching_options(False)
@@ -168,7 +189,7 @@ def documents_rag_optimization_pipeline(
     )
 
     rag_optimization_task = rag_templates_optimization(
-        extracted_text=text_extraction_task.outputs["extracted_text"],
+        extracted_text=extracted_text,
         test_data=documents_discovery_task.outputs["test_data"],
         search_space_mps_report=models_pre_selector_task.outputs["search_space_mps_report"],
         maas_secret_name=maas_secret_name,
@@ -181,7 +202,7 @@ def documents_rag_optimization_pipeline(
         },
         test_data_key=test_data_key,
         input_data_keys=input_data_keys,
-        preset=preset,
+        preset=normalized_preset,
     )
 
     rag_optimization_task.set_caching_options(False)
@@ -209,17 +230,6 @@ def documents_rag_optimization_pipeline(
             "AWS_SECRET_ACCESS_KEY": "TEST_DATA_AWS_SECRET_ACCESS_KEY",
             "AWS_S3_ENDPOINT": "TEST_DATA_AWS_S3_ENDPOINT",
             "AWS_DEFAULT_REGION": "TEST_DATA_AWS_DEFAULT_REGION",
-        },
-        optional=True,
-    )
-    use_secret_as_env(
-        text_extraction_task,
-        secret_name=input_data_secret_name,
-        secret_key_to_env={
-            "AWS_ACCESS_KEY_ID": "AWS_ACCESS_KEY_ID",
-            "AWS_SECRET_ACCESS_KEY": "AWS_SECRET_ACCESS_KEY",
-            "AWS_S3_ENDPOINT": "AWS_S3_ENDPOINT",
-            "AWS_DEFAULT_REGION": "AWS_DEFAULT_REGION",
         },
         optional=True,
     )

@@ -138,6 +138,7 @@ class TestTextExtractionUnitTests:
             do_table_structure=False,
             do_ocr=True,
             ocr_lang="english",
+            device="cpu",
         )
         mock_extract.assert_called_once_with(
             documents=[{"key": "docs/a.pdf", "size_bytes": 1000}],
@@ -219,6 +220,8 @@ class TestTextExtractionUnitTests:
         status = json.loads((tmp_path / "status" / "component_status.json").read_text(encoding="utf-8"))
         metrics = status["stages"][0]["metrics"]
         assert metrics == {
+            "extraction_device": "CPU",
+            "gpu_acceleration": False,
             "layout_candidate_documents": 2,
             "layout_model": "Docling Layout Heron",
             "ocr_candidate_documents": 2,
@@ -429,6 +432,7 @@ class TestTextExtractionUnitTests:
             do_table_structure=expected_do_table_structure,
             do_ocr=True,
             ocr_lang="english",
+            device="cpu",
         )
         assert mock_extract.call_args.kwargs["docling_config"] == mock_docling_config_cls.return_value
 
@@ -566,3 +570,61 @@ class TestTextExtractionUnitTests:
         kwargs = mock_docling_config_cls.call_args.kwargs
         assert kwargs["do_ocr"] is True
         assert kwargs["do_table_structure"] is (preset_value == "balanced")
+
+    @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
+    def test_gpu_acceleration_requires_cuda(self, tmp_path):
+        """GPU mode fails clearly instead of silently falling back to CPU."""
+        modules, mock_extract, _ = _make_ai4rag_mocks()
+        torch = mock.MagicMock()
+        torch.cuda.is_available.return_value = False
+        modules["torch"] = torch
+
+        descriptor_dir = tmp_path / "descriptor"
+        descriptor_dir.mkdir()
+        (descriptor_dir / "documents_descriptor.json").write_text(
+            json.dumps({"bucket": "b", "documents": []}), encoding="utf-8"
+        )
+        descriptor_artifact = mock.MagicMock(path=str(descriptor_dir))
+        output_artifact = mock.MagicMock(path=str(tmp_path / "output"))
+
+        with mock.patch.dict("sys.modules", modules):
+            with pytest.raises(RuntimeError, match="CUDA is unavailable"):
+                text_extraction.python_func(
+                    documents_descriptor=descriptor_artifact,
+                    extracted_text=output_artifact,
+                    preset="balanced",
+                    gpu_acceleration=True,
+                )
+
+        mock_extract.assert_not_called()
+
+    @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
+    def test_gpu_acceleration_recorded_in_status(self, tmp_path):
+        """The extraction status surfaces GPU selection so the UI shows the device used."""
+        modules, mock_extract, mock_docling_config_cls = _make_ai4rag_mocks()
+        mock_extract.return_value = SimpleNamespace(total_documents=1, processed_count=1, error_count=0)
+        torch = mock.MagicMock()
+        torch.cuda.is_available.return_value = True
+        torch.cuda.get_device_name.return_value = "NVIDIA A100"
+        modules["torch"] = torch
+
+        descriptor_artifact = _write_descriptor(tmp_path, {"bucket": "b", "documents": [{"key": "report.pdf"}]})
+        output_artifact = SimpleNamespace(path=str(tmp_path / "output"))
+        component_status = SimpleNamespace(path=str(tmp_path / "status"), metadata={})
+        embedded_artifact = SimpleNamespace(path=str(_AUTORAG_SHARED))
+
+        with mock.patch.dict("sys.modules", modules):
+            text_extraction.python_func(
+                documents_descriptor=descriptor_artifact,
+                extracted_text=output_artifact,
+                component_status=component_status,
+                embedded_artifact=embedded_artifact,
+                preset="balanced",
+                gpu_acceleration=True,
+            )
+
+        status = json.loads((tmp_path / "status" / "component_status.json").read_text(encoding="utf-8"))
+        metrics = status["stages"][0]["metrics"]
+        assert metrics["extraction_device"] == "GPU (CUDA)"
+        assert metrics["gpu_acceleration"] is True
+        assert mock_docling_config_cls.call_args.kwargs["device"] == "cuda"

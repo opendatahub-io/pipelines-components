@@ -351,6 +351,29 @@ class TestBuildContainerCommand:
 class TestCompilePipelineRequirements:
     """Tests for compile_pipeline_requirements."""
 
+    def test_x86_wheel_uses_x86_resolution(self, tmp_path: Path):
+        """Compile direct x86 CUDA wheels on non-x86 development hosts."""
+        pipeline_dir = tmp_path / "pipeline"
+        pipeline_dir.mkdir()
+        (pipeline_dir / "requirements.in").write_text(
+            "--index-url https://example.com/simple\n"
+            "torch @ https://example.com/torch-2.13.0-cp312-cp312-linux_x86_64.whl\n",
+            encoding="utf-8",
+        )
+
+        with (
+            mock.patch(
+                "scripts.refresh_pipeline_requirements.refresh_pipeline_requirements.resolve_container_runtime",
+                return_value="docker",
+            ),
+            mock.patch("subprocess.run") as run_mock,
+            mock.patch("builtins.print"),
+        ):
+            compile_pipeline_requirements(pipeline_dir, container_runtime="docker", upgrade=False)
+
+        assert "--python-platform x86_64-unknown-linux-gnu" in run_mock.call_args.args[0][-1]
+        assert "--upgrade-package torch" in run_mock.call_args.args[0][-1]
+
     def test_quiet_mode_suppresses_container_output(self, tmp_path: Path):
         """Discards container stdout/stderr when quiet mode is requested."""
         pipeline_dir = tmp_path / "pipeline"
