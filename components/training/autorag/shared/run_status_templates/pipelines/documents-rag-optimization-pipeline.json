@@ -64,6 +64,10 @@
         {
           "id": "build_leaderboard",
           "description": "Aggregate pattern metrics and render leaderboard HTML."
+        },
+        {
+          "id": "log_mlflow_results",
+          "description": "Finalize the MLflow parent run with job-level aggregates when tracking is enabled. Per-pattern child runs are written live during optimization."
         }
       ]
     }

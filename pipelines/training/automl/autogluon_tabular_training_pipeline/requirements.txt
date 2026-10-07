@@ -20,17 +20,13 @@ aiohttp==3.14.3 \
     --hash=sha256:6f10c0eeb9f5e7a1a1accf1ffeca2c1dadae6ce5ba6a228cab13b4512a3f6692 \
     --hash=sha256:82a67db99e72879f841e41bce35837716ea044c6694bed13dc35f37145666fca \
     --hash=sha256:df311d7e8edf757fe0c73f9785307450cc99dd8a0f00e04964f4db1659696b4b
-    # via
-    #   fsspec
-    #   mlflow
+    # via fsspec
 aiosignal==1.4.0 \
     --hash=sha256:1c7350f826518aee08b77722670980ad426cac6772f574c9d66a4ad4c634867d
     # via aiohttp
 alembic==1.20.0 \
     --hash=sha256:748bfb01ef181e811bf5fb8ad864aea7ddb3d88cf4dab3b480cb9c610799fc67
-    # via
-    #   mlflow
-    #   optuna
+    # via optuna
 annotated-doc==0.0.5 \
     --hash=sha256:100ac19d99f08cd0e76742ced1e14ff5a265e43432eb349790716a9ab4a7b09d
     # via
@@ -83,31 +79,26 @@ beartype==0.22.9 \
 beautifulsoup4==4.15.0 \
     --hash=sha256:093525ef67b60a99bc418b266eb9af9f096b422f73ccd397d5b7df8ef020a670
     # via python-fasthtml
-blinker==1.9.0 \
-    --hash=sha256:f78e1627cf0c4b71c4ab6a8a39a80b6231854edced70c5aa929b7b8db2601dd9
-    # via flask
 blis==1.3.3 \
     --hash=sha256:101ffdeb65225abbb623c1f4280855d16f6bfc824c1e0b8891c917faa4d50ef2 \
     --hash=sha256:32cb7174b3c033b00f402fb1c1756a8d09a72ed7f88f3274290d9982b36a3101 \
     --hash=sha256:75140dfe812abb41bf7680de85c4f87ebb61e4a048836306de5fa3ddda04c226 \
     --hash=sha256:ab16d28c0e71bc45b302c55cbcf29285026bcdbecd6feb75e6495f43b78ddeaa
     # via thinc
-boto3==1.43.99 \
-    --hash=sha256:7e1758664911ce3ccdf4394c43fcec96bb3e9d658aaa1b3d7c9bc7d642ca293b
+boto3==1.43.103 \
+    --hash=sha256:b600c7c655838b36ab4cff96cd89f1dc10b73bba2a113e87fd890e36e330f143
     # via
     #   -r requirements.in
     #   autogluon-common
     #   autogluon-core
-botocore==1.43.99 \
-    --hash=sha256:5e28a094fb7d75c7a0d682d1373d4e2fa5dcdfbfd64e74f30554a580f2761200
+botocore==1.43.103 \
+    --hash=sha256:e505372e9061c5c893f2715d681019195671c00f1c390ae3a6a833d2d6667215
     # via
     #   boto3
     #   s3transfer
 cachetools==7.2.0 \
     --hash=sha256:180776c12fda4cbeae2e6dc2a71c0c3bc59c32ab14b1e7b8981543c0a59f1558
-    # via
-    #   mlflow-skinny
-    #   mlflow-tracing
+    # via mlflow-skinny
 catalogue==2.0.10 \
     --hash=sha256:2dd2d4da6c8a28369b99595682ff1e9607c99ae6fd9649662b67c2d0a53d6e16
     # via
@@ -138,7 +129,6 @@ click==8.5.0 \
     --hash=sha256:87dddcbfce6b3967d8bd284f76304e1c6c9e491552a0eafa332d2613d52306b5
     # via
     #   click-option-group
-    #   flask
     #   huggingface-hub
     #   kfp
     #   mlflow-skinny
@@ -187,9 +177,7 @@ cryptography==50.0.1 \
     --hash=sha256:558f64d5e321422716e83f573ffda0539aee4df2eef2c1442bcf62aa8957d204 \
     --hash=sha256:cbab34813a87e21ef5fc14a049859984e8b0bb6da890d4fedd2cd941c316f05d \
     --hash=sha256:cbfd8106711fa3284a3ee7b0beba311125a3e32678b47db019921ad95050a0ff
-    # via
-    #   google-auth
-    #   mlflow
+    # via google-auth
 cycler==0.12.1 \
     --hash=sha256:315f6d03c4a0937fdfad775450228fb02e127d516e38f9f5a45818c7861abe4d
     # via matplotlib
@@ -202,14 +190,9 @@ cymem==2.0.13 \
     #   preshed
     #   spacy
     #   thinc
-databricks-sdk==0.140.0 \
-    --hash=sha256:e03fc451002a8b05fbb11ec50b41854e62d97743785c9395626f86450e9fb241
-    # via
-    #   mlflow-skinny
-    #   mlflow-tracing
-docker==7.2.0 \
-    --hash=sha256:5335477705c54ee1ca95ea9108b753a05b293a570211c50ff589d0be5c02372b
-    # via mlflow
+databricks-sdk==0.143.0 \
+    --hash=sha256:7bc5674f120edeb296ed0a3d0b11aa644bfe6d57f80e31df68ef42cad2ac97b1
+    # via mlflow-skinny
 docstring-parser==0.18.0 \
     --hash=sha256:9c5320c27124b926c7c44ed569788bed1efc1c74b3cf544f710c2fe384404694
     # via kfp
@@ -249,21 +232,13 @@ fastprogress==1.1.6 \
 fasttransform==0.0.5 \
     --hash=sha256:8574062bbdbe7db2b40db2ab29d6281d9da34135c0fef95e852b4aa8d8aa6141
     # via fastai
-filelock==4.0.1 \
-    --hash=sha256:4afbdd69c9c1b7da0329822be6b1b8d23677a7d696a9327453ee40d567a25caf
+filelock==4.0.4 \
+    --hash=sha256:0c0f79c6c7d8e7a027f9e0e455590bd3a3e4e38181fb0c494e979f4bdba0f027
     # via
     #   huggingface-hub
     #   torch
-flask==3.1.3 \
-    --hash=sha256:5d728531bbda91dac360163695d3cffd2eab2ba283a02be36b9543c27da7f7e4
-    # via
-    #   flask-cors
-    #   mlflow
-flask-cors==6.0.5 \
-    --hash=sha256:a401a140421dd8cbc30de6909a8f559dafb3c79cd2993ad07e6b7ad7960890c9
-    # via mlflow
-fonttools==4.65.0 \
-    --hash=sha256:c88b43410098b8be2b7e23c636d30f4e4a30398d3358854196e23012994530fe
+fonttools==4.66.0 \
+    --hash=sha256:421fca7c1757c8f124f9b28d01695906def98187c32d0757da9b04e31df3f9a2
     # via matplotlib
 formulaic==1.2.2 \
     --hash=sha256:7c55abc325f4a350bcd2a4fbe38f2fc49402c6a62f205d1b04bc22cdc44edfa2
@@ -299,14 +274,14 @@ gitpython==3.1.62 \
 gluonts==0.16.3 \
     --hash=sha256:113a97f62f9fd572a7dfc55d87e09f017e19a7dcff4643c9a42ea4a4bf476971
     # via autogluon-timeseries
-google-api-core==2.38.0 \
-    --hash=sha256:54ef0b8b8252b5ceb8f679e446b6d4f3a45d7ea3221552721c9f9e3c7031f50f
+google-api-core==2.39.0 \
+    --hash=sha256:fb25d1764b24866127d9827436c997dda9778cbdedfe8d4ac56eb3605cf87093
     # via
     #   google-cloud-core
     #   google-cloud-storage
     #   kfp
-google-auth==2.58.0 \
-    --hash=sha256:9a9b9d7f0dd6debd9eaea1bc52bde1d79e9e35d2bb8efbd8ec35773ad9b3ecfc
+google-auth==2.58.1 \
+    --hash=sha256:2c7954abb57d8a60dad7cd32f616e8fae9c02f913e0458f3af3b4ff2d30bb6a1
     # via
     #   databricks-sdk
     #   google-api-core
@@ -316,37 +291,20 @@ google-auth==2.58.0 \
 google-cloud-core==2.7.0 \
     --hash=sha256:189a300f2de463e563649860d4c131f26db251c15ead1b65f37c27eedd30f379
     # via google-cloud-storage
-google-cloud-storage==3.14.1 \
-    --hash=sha256:dd961d2d4f46d0fe7029ea879ab70c26935562dcdc71523a4021592decd81e6e
+google-cloud-storage==3.15.0 \
+    --hash=sha256:02480382f2bdf7e9ac5713b5a5022d88f4403ddc87007be43db4662de475881e
     # via kfp
-google-crc32c==1.8.0 \
-    --hash=sha256:6f62c011e01848fcbd0f4e51b45fe8680d40880b8f3b1245dca4df175bfff48b
+google-crc32c==1.9.0 \
+    --hash=sha256:904913f056718bf6e468932f38ea15f31c046de2474a4494b16ec96c206c9a21
     # via
     #   google-cloud-storage
     #   google-resumable-media
 google-resumable-media==2.10.2 \
     --hash=sha256:626c12dd7db75040a738d5153657a8717ff632234f0baaf008a8b71981818e78
     # via google-cloud-storage
-googleapis-common-protos==1.75.3 \
-    --hash=sha256:03ee98a59092216cd75fd259fa9cd7ddb46db1c654e0416a9e70c5ff8dcb3516
+googleapis-common-protos==1.75.4 \
+    --hash=sha256:5066f5846b4049366464ef0f6b1dac8b1de8f8a3cf30947f40c55937754e0e45
     # via google-api-core
-graphene==3.4.3 \
-    --hash=sha256:5985ea550c7653175dc1b7098ed818294c1a8cda07d7baa532ad15aaaa3dfe4a
-    # via mlflow
-graphql-core==3.2.12 \
-    --hash=sha256:b836bdaa875ac621d803b60b0f46e0c5aa2b7d86bcb20e769094262f59a54640
-    # via
-    #   graphene
-    #   graphql-relay
-graphql-relay==3.2.0 \
-    --hash=sha256:3d6454bbbffb5e743727d1e3115d19f33268cc63d0ecdc33cc8ab7dcdcd8fe11
-    # via graphene
-greenlet==3.5.6 \
-    --hash=sha256:20c99479e87b23ffba935ca36ff0f026ebaecee5ac0f545f917bd5c235845c36 \
-    --hash=sha256:33eb58791ae051509e7b0b55e55ed1f9f0199fab8fb60792dc8bc06855cb49cb \
-    --hash=sha256:35dd92012b469a8d0e16e5cb6e0441a61cacc786e176efee0ef792a86f4009d2 \
-    --hash=sha256:c95cecb5afaa81fcc8d9736f31e21e8bcb021b9dcaa016cc5a55779e1ee29cdf
-    # via sqlalchemy
 grpcio==1.84.0 \
     --hash=sha256:0fcfd3e9b3da6c27928e175d0825c2e37a644662be0947b8f084a8051747d868 \
     --hash=sha256:181fa369740a0526f68ee14754c2cd8ff9a91e6cc21ca1946f1c03496a352edf \
@@ -357,9 +315,6 @@ grpcio==1.84.0 \
     --hash=sha256:b145ddf0127b3052e5e22d19d2a94e9bcbc2ea9602bcd29528c149907770f98a \
     --hash=sha256:f1e118f55dd1bbb4b2b2a0b71ed94453ef948218c8d17ef0bcac890d22f0c20a
     # via tensorboard
-gunicorn==26.2.0 \
-    --hash=sha256:8dfcad25b6119900a672d77ce5369d1ebde066364ff8e640ca61cc0077b37242
-    # via mlflow
 h11==0.16.0 \
     --hash=sha256:e44ad99adcda4c6141fdf245e22a6b506959df7fcb89d1f8f08e675e60eaf782
     # via
@@ -375,8 +330,8 @@ hf-xet==1.6.0 \
 httpcore==1.0.9 \
     --hash=sha256:c5597b774a5e1061731601fe2a5e84ec2336af935a2aa964943efcdb8ef85a2f
     # via httpx
-httpcore2==2.13.0 \
-    --hash=sha256:dfb8c305ec2dc0d793c2c54ff77b8e993ee117f58bb37dbc0ec4e23e2e1620a5
+httpcore2==2.13.1 \
+    --hash=sha256:a489dfaf76126d5f441bb693b57886695fd2a88903c471d105d1dc7fa612d905
     # via httpx2
 httptools==0.8.0 \
     --hash=sha256:36065a8403a2d462ac86d47fe6ca1de18c5b3bbbbca2a1e898e1804a77111e1d \
@@ -389,14 +344,11 @@ httpx==0.28.1 \
     # via
     #   huggingface-hub
     #   weasel
-httpx2==2.13.0 \
-    --hash=sha256:efdaebda035472ae8f03a00f9a9f26ec6683b7dd142cfd45a4cd3ca063eb1882
+httpx2==2.13.1 \
+    --hash=sha256:61423a5f92cea4dfb5a92746d8216c5a812f5b3a6a423ce9016ce180988439f7
     # via python-fasthtml
-huey==3.4.0 \
-    --hash=sha256:fe8e44a9a40e66af805810b0b55cb0ebba868cd1930609ece0bc9e3e40a89905
-    # via mlflow
-huggingface-hub==1.32.0 \
-    --hash=sha256:6bd5cb75c333ae9513668e04289e67dbc4bfe12cdf1836ff8e5d260a2519057f
+huggingface-hub==1.33.0 \
+    --hash=sha256:1cd89e875245794a4aad4e895d9a886f5e98f06d2e726451b9e7a8d6caa85114
     # via
     #   accelerate
     #   peft
@@ -424,16 +376,13 @@ ipython-pygments-lexers==1.1.1 \
     # via ipython
 itsdangerous==2.2.0 \
     --hash=sha256:b0f9b950d2f935a11c3873e5aa2f21aba06f3411f036b97731c11931224b4bca
-    # via
-    #   flask
-    #   python-fasthtml
+    # via python-fasthtml
 jedi==0.20.0 \
     --hash=sha256:54e49ba04597ee4416eff7d94cea47c7e7b0918d078bd241461c22b8246f37ff
     # via ipython
 jinja2==3.1.6 \
     --hash=sha256:fba973f3495c14a0ddfa2f1bbae1195a65ff3d8fe43147111779f9fd2d6710c1
     # via
-    #   flask
     #   spacy
     #   torch
 jmespath==1.1.0 \
@@ -491,11 +440,11 @@ llvmlite==0.49.0 \
     --hash=sha256:5cacfe0bb6e27df7c560b6ff440c4f985826fdaf8ef4b47e6dca146194796298 \
     --hash=sha256:ccaa2c821f6c1ba0701cae9d23f171ad85ac05a80b153e0b947166d15b4d5eb8
     # via numba
-mako==1.4.1 \
-    --hash=sha256:b5a1757f10ea01e7fbeb4df6987abad4e928eb07b2f898870291bebe260c0916
+mako==1.4.3 \
+    --hash=sha256:66bc4f5da42335be7c657b4cbee64bb8f2d9ad0141b7f5fe1566cf8c2971e6db
     # via alembic
-markdown==3.10.3 \
-    --hash=sha256:bfd0b5b594a140d3278dd11a2b21327ab1b7e18238893358744bfafe7d9e4cc5
+markdown==3.11 \
+    --hash=sha256:4e241cb381775a5fe3a58f5e458f3c2acf746357b7e7e58aab2aa62e5850cbb0
     # via tensorboard
 markdown-it-py==4.2.0 \
     --hash=sha256:32bd4bc84ef825135802dd1c04983977b54436dce26e2c75234770ba58557b63
@@ -506,7 +455,6 @@ markupsafe==3.0.3 \
     --hash=sha256:f2190f6edad3c6cd70c86f6242f418d403f2549e7fcd7de5bcfa8644ded7cf69 \
     --hash=sha256:fc358c5ad36d7eeaf159dcf3af9121cb9b6982ed7a0280dc94c3cd9b1a775bd8
     # via
-    #   flask
     #   jinja2
     #   mako
     #   werkzeug
@@ -518,22 +466,15 @@ matplotlib==3.10.9 \
     # via
     #   autogluon-core
     #   fastai
-    #   mlflow
 matplotlib-inline==0.2.2 \
     --hash=sha256:8bb3ecbb9a1c34d8206873b579ba1311db58a6e721ea941d16b9a626667ea63a
     # via ipython
 mdurl==0.1.2 \
     --hash=sha256:945211ddc5b51917b928c63b22e99d808b9083a266432d01033305123ff6716b
     # via markdown-it-py
-mlflow==3.16.1 \
-    --hash=sha256:4274584a10abf10bf858ef0d675e92830cc582b5e4277f7866288fe71cc3bc3a
-    # via -r requirements.in
 mlflow-skinny==3.16.1 \
     --hash=sha256:c39973fd88be72053372231e7bb8234cb10fac86b5ad8955e350987dc9ce2044
-    # via mlflow
-mlflow-tracing==3.16.1 \
-    --hash=sha256:e5c7665d0a511fd31d8b44c8eb8ffaddbf79e6f9bd1ed4e33f719685e6936dc4
-    # via mlflow
+    # via -r requirements.in
 mlforecast==0.14.0 \
     --hash=sha256:bb538627cb86c3782c7e7be8b0706f1a6834dffe0fb4801890e839ca13fd195e
     # via autogluon-timeseries
@@ -596,7 +537,6 @@ numpy==2.3.5 \
     #   gluonts
     #   lightgbm
     #   matplotlib
-    #   mlflow
     #   numba
     #   optuna
     #   pandas
@@ -604,7 +544,6 @@ numpy==2.3.5 \
     #   peft
     #   scikit-learn
     #   scipy
-    #   skops
     #   spacy
     #   statsforecast
     #   statsmodels
@@ -622,26 +561,21 @@ oauthlib==3.3.1 \
     # via
     #   python-fasthtml
     #   requests-oauthlib
-opentelemetry-api==1.44.0 \
-    --hash=sha256:b1e0c91a2b18caba1bef91686bfa26bf8157d04c06bd36dc4c782093fe9a70f2
+opentelemetry-api==1.45.0 \
+    --hash=sha256:27455178e17443d07512941ba23d7743452978a08c506966de80012b9e44adc7
     # via
     #   google-api-core
     #   mlflow-skinny
-    #   mlflow-tracing
     #   opentelemetry-sdk
     #   opentelemetry-semantic-conventions
-opentelemetry-proto==1.44.0 \
-    --hash=sha256:4793d7dadde34e2bbad93b696323c56b1e4c23c01e9fb112ce2e3e5c47518acb
-    # via
-    #   mlflow-skinny
-    #   mlflow-tracing
-opentelemetry-sdk==1.44.0 \
-    --hash=sha256:1b7068c20840ea93e14b9986b97ae9d71bf8002c9fe08cb6998f7932097c6954
-    # via
-    #   mlflow-skinny
-    #   mlflow-tracing
-opentelemetry-semantic-conventions==0.65b0 \
-    --hash=sha256:c86476a49cb604effbb77baa7340f231023a5008ee4e45a3872ef620ceb613ca
+opentelemetry-proto==1.45.0 \
+    --hash=sha256:7473c2c6efa9dcd18afdf3c7a24f1d0181b5a24fa41f49c560c1878190fb4759
+    # via mlflow-skinny
+opentelemetry-sdk==1.45.0 \
+    --hash=sha256:aa91727bb8e7b2f5f40e54dfc02bd21bffd977fa6cfc3806d64a8364c799a79e
+    # via mlflow-skinny
+opentelemetry-semantic-conventions==0.66b0 \
+    --hash=sha256:a833aaa68b68fce661cdb341107c6f0c44bc3d3e98902a42a1ac359528959dd6
     # via opentelemetry-sdk
 optuna==5.0.0 \
     --hash=sha256:98ec57145507866f035323e3b4e1423ebeab37e0f2e8ce901586c979e5b32b48
@@ -662,13 +596,11 @@ packaging==26.3 \
     #   lightning-utilities
     #   matplotlib
     #   mlflow-skinny
-    #   mlflow-tracing
     #   mlforecast
     #   optuna
     #   patsy
     #   peft
     #   pytorch-lightning
-    #   skops
     #   spacy
     #   statsmodels
     #   tensorboard
@@ -698,7 +630,6 @@ pandas==2.2.3 \
     #   formulaic
     #   fugue
     #   gluonts
-    #   mlflow
     #   mlforecast
     #   statsforecast
     #   statsmodels
@@ -739,9 +670,6 @@ preshed==3.0.13 \
     # via
     #   spacy
     #   thinc
-prettytable==3.18.0 \
-    --hash=sha256:ef90cf834968ead588b5e970e937419cadda050bf9015d870ddf51298df41415
-    # via skops
 prompt-toolkit==3.0.53 \
     --hash=sha256:dd1f6003f30d03b2ea8d3d9a8ec635c068a4e5c0d35e3a0248e5a58c9892465f
     # via ipython
@@ -769,7 +697,6 @@ protobuf==6.33.6 \
     #   kfp-kubernetes
     #   kfp-pipeline-spec
     #   mlflow-skinny
-    #   mlflow-tracing
     #   opentelemetry-proto
     #   proto-plus
     #   tensorboard
@@ -801,7 +728,6 @@ pyarrow==20.0.0 \
     --hash=sha256:e926e5a7effbf4d2a7fa7cfbb972b8f8aadc55e123b7132ecb57be1d3ef78a7f
     # via
     #   autogluon-common
-    #   mlflow
     #   triad
 pyasn1==0.6.4 \
     --hash=sha256:a1c6555370d74ccf3ca076e09c2b77a823bd9f19943cbf1527cc83cf2205b12f
@@ -818,7 +744,6 @@ pydantic==2.13.5 \
     #   fastapi
     #   gluonts
     #   mlflow-skinny
-    #   mlflow-tracing
     #   spacy
     #   thinc
     #   weasel
@@ -841,7 +766,6 @@ python-dateutil==2.9.0.post0 \
     --hash=sha256:e3d7c7c7054ebe488f9bb1e1f14a22955c9c5e4b1ac4f0cefefa25c2e3a30f4c
     # via
     #   botocore
-    #   graphene
     #   kfp-server-api
     #   kubernetes
     #   matplotlib
@@ -861,8 +785,8 @@ python-multipart==0.0.32 \
 pytorch-lightning==2.6.6 \
     --hash=sha256:01ba9d6ac5e175b4f4c23b68f0d328d409f0842352d8b026d15e5ac8db15173d
     # via lightning
-pytz==2026.3.post1 \
-    --hash=sha256:5a879209aecbc1a499171ae1e0eb1fd9a4b8ba587a2a27dcdc99cae51f082cd8
+pytz==2026.4 \
+    --hash=sha256:f6adb646ba56306a4ab0198d938aa85a952ceab255c6a4f84cb134dfdfcb8e42
     # via pandas
 pyyaml==6.0.3 \
     --hash=sha256:301a160656813f221026e4fd2c85d4111d0b5192c1a80f8db79e1dffbabc6529 \
@@ -895,7 +819,6 @@ requests==2.33.0 \
     #   autogluon-common
     #   autogluon-core
     #   databricks-sdk
-    #   docker
     #   fastai
     #   google-api-core
     #   google-cloud-storage
@@ -939,9 +862,7 @@ scikit-learn==1.7.2 \
     #   autogluon-features
     #   autogluon-tabular
     #   fastai
-    #   mlflow
     #   mlforecast
-    #   skops
 scipy==1.16.3 \
     --hash=sha256:5215107750ed1d115ce9a93a32f4b3686e4e1f6445fdd4c7b26a9561a4bef70d \
     --hash=sha256:84d245c4162852be8f64a49bea4b54c85f7c1c455d2370e988325f716f9eeb35 \
@@ -954,9 +875,7 @@ scipy==1.16.3 \
     #   fastai
     #   formulaic
     #   lightgbm
-    #   mlflow
     #   scikit-learn
-    #   skops
     #   statsforecast
     #   statsmodels
     #   xgboost
@@ -983,17 +902,14 @@ six==1.17.0 \
     #   kubernetes
     #   python-dateutil
     #   triad
-skops==0.15.0 \
-    --hash=sha256:b5b9e4423c2751e4a8f55a8d8039151f2a626f6a9b67d73f5fa21addaf222ec6
-    # via mlflow
 smart-open==8.0.1 \
     --hash=sha256:7b43c1ac764a238a7bdfa0cf1ad52484ecd6fc20197ed18fd7e1706d0e7bb5db
     # via weasel
 smmap==5.0.3 \
     --hash=sha256:89e0ee62108abd4b0848e1ee4d5cd1c090427011e449301eaf55492d136a69a3
     # via gitdb
-soupsieve==2.9.2 \
-    --hash=sha256:b81a181d6c9cd38ad7601c45fd1ffd7c689239e2a2c95632c41c97d2f5cea6e2
+soupsieve==2.10 \
+    --hash=sha256:775ef451cd704b4418b0098792b9e7d171b72b0b143e8ce9361f2fdd6356257c
     # via beautifulsoup4
 spacy==3.8.16 \
     --hash=sha256:0ec6795860034d94e618b8d3798ef441e39145bf81d5eb567baa1275711c1b8e \
@@ -1009,14 +925,13 @@ spacy-legacy==3.0.12 \
 spacy-loggers==1.0.5 \
     --hash=sha256:ac8a0642c9d12d9004d6bc12ce18835e43b9ec8707fc310b6ea5b0892724c109
     # via spacy
-sqlalchemy==2.0.54 \
-    --hash=sha256:24f0ef8bc855a70317b0a8067a1fdccb76a09fbdc237f8a8a28680024b9fef8c \
-    --hash=sha256:58b0f7e33b07d17e37f731643ac8889ceea7a75ff89e7c7facceb57a289b3716 \
-    --hash=sha256:76b24663a36057eff196592eb6af0703a25f3e78a7b092e9e87925eef6271208 \
-    --hash=sha256:d0d5791859895557056da9cd6c4988340b6b48db4f95146c68b7e6ab2ce4ba3d
+sqlalchemy==2.1.1 \
+    --hash=sha256:5f2a533571296a4836782fb6df3ef04c56ce9535df904ac9964a3a22b0317d79 \
+    --hash=sha256:80c2c812f646ca77f80a96f116d7d0be3dbd6ff5bb6d3be0f21defa20eb589c7 \
+    --hash=sha256:bc649f7c4d038077b029755554119332224e972dbddf6569c71a26b39267d71c \
+    --hash=sha256:ee7e8fc5114ec54baac06acd31a58b56ef9a0f8e2f1694b28a38584be6aad8f9
     # via
     #   alembic
-    #   mlflow
     #   optuna
 sqlparse==0.6.0 \
     --hash=sha256:d7bac73822a3e86488179d4095711c7fca4f431cebe5746011eeed2248d781c2
@@ -1033,8 +948,8 @@ srsly==2.5.3 \
 stack-data==0.6.3 \
     --hash=sha256:cbcec9a4322ebcb786dcc5372241e8f70d9fd4b47f2dc13e2fa96cab10a7475e
     # via ipython
-starlette==1.6.0 \
-    --hash=sha256:93f2fe3cf201bf2eda7aa64cc09a24c4005fbd7898d58cf66b792f3f74e2e84b
+starlette==1.7.0 \
+    --hash=sha256:366c835e7929c9793d0b9ba79ba0aba3eb7621036c1d9bd6d2030ef068fe2270
     # via
     #   fastapi
     #   mlflow-skinny
@@ -1058,7 +973,8 @@ tabulate==0.10.0 \
     --hash=sha256:437f1c5d5e558c8178f88d2fdca451d82fe12172a4fadfd91e4c774a6755300f
     # via kfp
 tensorboard==2.20.0 \
-    --hash=sha256:9b98a7de594c91803497691d6b64f03a65d9427933c4c819ad7909301ededfc6
+    --hash=sha256:9b98a7de594c91803497691d6b64f03a65d9427933c4c819ad7909301ededfc6 \
+    --hash=sha256:ca48c8716c3a5c820ddacc287eee15349f1f036c8238bfc99362ca05412f9eb7
     # via autogluon-timeseries
 tensorboard-data-server==0.7.2 \
     --hash=sha256:07cd43eb113b4ce41f77d58550914c744b2af5c9ca4949f9b798af4244697f9d \
@@ -1088,6 +1004,7 @@ toolz==0.12.1 \
     # via gluonts
 torch==2.13.0 \
     --hash=sha256:2a04ad8ab85fbeeac8463915f8e070949a9f98bd7630601af8b6955ee1fe0f4d \
+    --hash=sha256:71282ac1697262d0ae57dbc9b3877d1dfe783414fe38a6b19a8e334927fa9692 \
     --hash=sha256:8a6ea722d77aecdcb3af8daf3d505419160281c81524fd0599dac13bdfa9a0d1 \
     --hash=sha256:97ce14be01501f66257b84875af54124a510869d742163c2cb66e7fdc3bd2bd5 \
     --hash=sha256:cfc35cf3b57b501b890a838bcdc7b7324195e047e92488f1faf9a8c8cbd402a7
@@ -1174,7 +1091,6 @@ typing-extensions==4.16.0 \
     #   fastapi
     #   formulaic
     #   gluonts
-    #   graphene
     #   grpcio
     #   httpx2
     #   huggingface-hub
@@ -1205,7 +1121,6 @@ urllib3==2.7.0 \
     # via
     #   botocore
     #   databricks-sdk
-    #   docker
     #   kfp
     #   kfp-kubernetes
     #   kfp-server-api
@@ -1217,8 +1132,8 @@ utilsforecast==0.2.11 \
     #   autogluon-timeseries
     #   mlforecast
     #   statsforecast
-uvicorn==0.53.0 \
-    --hash=sha256:b6cd1f113e1d2c1b57405f023f82a8c5483588f2007d43d267a1f0083bec2d14
+uvicorn==0.54.0 \
+    --hash=sha256:4f65bb0ffad4be34b2baa5059595b0e099fdc99667a94c6927415ca9491f23d3
     # via
     #   mlflow-skinny
     #   python-fasthtml
@@ -1240,11 +1155,12 @@ watchfiles==1.3.0 \
     --hash=sha256:9f75298cf26f41f62703ddd59648b84b3d44130d80b5612aaaaae698211ae8d3 \
     --hash=sha256:dc677a60142b7c00ad5f3ff175b982bd1f57a6637ef9e445143e04ac3caa502d
     # via uvicorn
-wcwidth==0.8.4 \
-    --hash=sha256:4ee3eeb3c0891f73000435880ad21e27998d3a9e00e8599b90ebe70b61e34f45
-    # via
-    #   prettytable
-    #   prompt-toolkit
+wcwidth==0.9.1 \
+    --hash=sha256:3e98ce516937f11f3ff3d5f1a946dc0401c4b177af2a799b7820ad5520b1da4c \
+    --hash=sha256:a9b2fccbcdba9b0e3b2ab6418b7c243b37af3c4049ca032c6e03bd3c9c997146 \
+    --hash=sha256:c40b7ae2e33db016447d3dce0f74ca1a27c383fbd8d7d668ec4a8e6bb9cf370f \
+    --hash=sha256:e8202c6d7241e8f73a6b8d08af162d2b6f4dda1aba7cce494a57184016126cb7
+    # via prompt-toolkit
 weasel==1.0.0 \
     --hash=sha256:01f13dea70ab2a622d46bef95eec899c86475d19e7af82d0359bc8b8da9fdf4d
     # via spacy
@@ -1259,10 +1175,7 @@ websockets==17.1 \
     # via uvicorn
 werkzeug==3.1.8 \
     --hash=sha256:63fc42f5819161eab08f36995f5173a66fa21f7f18044289a1bad44419786021
-    # via
-    #   flask
-    #   flask-cors
-    #   tensorboard
+    # via tensorboard
 window-ops==0.0.15 \
     --hash=sha256:ae12422d8612252e66f52f80f8c130f66303e4877089255d9a51bbc022e5919e
     # via mlforecast

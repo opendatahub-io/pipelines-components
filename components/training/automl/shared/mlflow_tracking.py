@@ -290,6 +290,17 @@ def parent_mlflow_run(mlflow: Any, config: MlflowConfig, *, fallback_name: str =
     """
     configure_mlflow_client(mlflow, config)
     if config.run_id:
+        # Resuming by run_id alone leaves the client's active experiment at Default (id=0).
+        # Nested ``start_run(..., nested=True)`` then fails with "No Experiment with id=0".
+        if config.experiment_id:
+            try:
+                mlflow.set_experiment(experiment_id=config.experiment_id)
+            except Exception:
+                logger.exception(
+                    "Could not activate MLflow experiment id %r before resuming parent run %s.",
+                    config.experiment_id,
+                    config.run_id,
+                )
         with mlflow.start_run(run_id=config.run_id) as run:
             yield run
         return

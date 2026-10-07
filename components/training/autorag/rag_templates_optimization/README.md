@@ -28,6 +28,9 @@ Runs search-space construction, evaluator setup, and the optimization experiment
 | `input_data_keys` | `Optional[list[str]]` | `None` | Paths to documents dirs within bucket, 1-10 of them. The full list is propagated both to the generated indexing notebook and to the indexing pipeline blueprint, so either route reingests the same corpus. |
 | `component_status` | `dsl.Output[dsl.Artifact]` | `None` | Output artifact containing stage-level progress tracking. |
 | `preset` | `str` | `speed` | Pipeline quality tier. "speed" (default) uses 10 benchmark query threads. "balanced" uses 4 threads (reduced due to larger per-request context). |
+| `pipeline_name` | `str` | `""` | Pipeline identifier, logged to MLflow as a param and tag. |
+| `run_id` | `str` | `""` | KFP run ID (``dsl.PIPELINE_JOB_ID_PLACEHOLDER``), logged to MLflow. |
+| `run_name` | `str` | `""` | KFP run name (``dsl.PIPELINE_JOB_NAME_PLACEHOLDER``). Logged to MLflow, and used to name the fallback experiment/run when the platform supplies no parent run. |
 
 ## Usage Examples 🧪
 
@@ -104,7 +107,7 @@ def example_pipeline(
   - autorag
   - optimization
   - rag-patterns
-- **Last Verified**: 2026-09-15 00:00:00+00:00
+- **Last Verified**: 2026-10-05 00:00:00+00:00
 - **Owners**:
   - No Parent Owners: Yes
   - Approvers:

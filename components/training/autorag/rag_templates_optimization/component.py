@@ -1,3 +1,4 @@
+import shutil
 from pathlib import Path
 from typing import Any, Optional
 
@@ -5,11 +6,32 @@ from kfp import dsl
 from kfp_components.utils.consts import AUTORAG_IMAGE  # pyright: ignore[reportMissingImports]
 
 _AUTORAG_SHARED = Path(__file__).parents[1] / "shared"
+# Staged at import so the executor embed stays two modules: the odh-autorag image does
+# not install ``kfp_components`` (unlike AutoML), KFP allows only one embed path, and
+# embedding all of ``shared/`` (tests included) overflows Argo's 128KiB env offload.
+_KFP_EMBED_DIR = Path(__file__).resolve().parent / ".kfp_embed"
+_KFP_EMBED_MODULES = ("component_status.py", "mlflow_tracking.py")
+
+
+def _stage_kfp_embed() -> str:
+    """Copy only the executor-needed shared modules into the KFP embed directory."""
+    _KFP_EMBED_DIR.mkdir(parents=True, exist_ok=True)
+    keep = set(_KFP_EMBED_MODULES)
+    for existing in _KFP_EMBED_DIR.iterdir():
+        if existing.name in keep:
+            continue
+        if existing.is_dir():
+            shutil.rmtree(existing)
+        else:
+            existing.unlink()
+    for name in _KFP_EMBED_MODULES:
+        shutil.copyfile(_AUTORAG_SHARED / name, _KFP_EMBED_DIR / name)
+    return str(_KFP_EMBED_DIR)
 
 
 @dsl.component(
     base_image=AUTORAG_IMAGE,
-    embedded_artifact_path=str(_AUTORAG_SHARED / "component_status.py"),
+    embedded_artifact_path=_stage_kfp_embed(),
     install_kfp_package=False,
 )
 def rag_templates_optimization(
@@ -29,6 +51,9 @@ def rag_templates_optimization(
     input_data_keys: Optional[list[str]] = None,
     component_status: dsl.Output[dsl.Artifact] = None,
     preset: str = "speed",
+    pipeline_name: str = "",
+    run_id: str = "",
+    run_name: str = "",
 ):
     """RAG Templates Optimization component.
 
@@ -68,17 +93,35 @@ def rag_templates_optimization(
         preset: Pipeline quality tier. "speed" (default) uses 10 benchmark query
             threads. "balanced" uses 4 threads (reduced due to larger per-request
             context).
+        pipeline_name: Pipeline identifier, logged to MLflow as a param and tag.
+        run_id: KFP run ID (``dsl.PIPELINE_JOB_ID_PLACEHOLDER``), logged to MLflow.
+        run_name: KFP run name (``dsl.PIPELINE_JOB_NAME_PLACEHOLDER``). Logged to
+            MLflow, and used to name the fallback experiment/run when the platform
+            supplies no parent run.
+    MLflow logging:
+        Tracking is server-configured, not parameter-driven: it activates only when the
+        platform injects ``KFP_MLFLOW_CONFIG`` into the step (RHOAI supplies the
+        endpoint, workspace, experiment, and parent run). When it is absent, or the
+        ``mlflow`` package is missing from the image, optimization runs unchanged and
+        nothing is logged. When it is present, the parent KFP run is resumed and each
+        RAG pattern gets a nested child run written *as the optimizer evaluates it*,
+        so the experiment fills in live rather than in one batch at the end.
 
     Environment variables (required):
         MAAS_BASE_URL, MAAS_API_KEY for inference. Plus the vector database
         configuration injected from ``db_secret_name``: ``MILVUS_*`` keys
         (at least ``MILVUS_URI``) select Milvus, ``PGVECTOR_*`` keys select
         PGVector.
+
+    Environment variables (optional):
+        KFP_MLFLOW_CONFIG, injected by the platform MLflow integration. See
+        "MLflow logging" above.
     """
     import importlib.util
     import json
     import logging
     import os
+    import sys
     from pathlib import Path
     from zipfile import ZipFile
 
@@ -324,6 +367,37 @@ def rag_templates_optimization(
     inference_max_threads = preset_cfg["inference_max_threads"]
     logging.info("Preset %r: inference_max_threads=%d", preset, inference_max_threads)
 
+    def _load_embedded_module(module_filename: str, module_alias: str) -> Any:
+        """Load one module from the embedded AutoRAG helpers.
+
+        KFP mounts the staged embed as a directory. A single-file mount is also
+        tolerated, for compatibility with embeds carrying only ``component_status.py``.
+        """
+        embedded_root = Path(embedded_artifact.path)
+        if embedded_root.is_file():
+            if embedded_root.name != module_filename:
+                raise FileNotFoundError(f"Embedded artifact {embedded_root} does not provide {module_filename}.")
+            module_path = embedded_root
+        else:
+            module_path = embedded_root / module_filename
+        spec = importlib.util.spec_from_file_location(module_alias, module_path)
+        if spec is None or spec.loader is None:
+            raise ValueError(f"Cannot load embedded module from {module_path}")
+        module = importlib.util.module_from_spec(spec)
+        # Register before exec_module: @dataclass resolves string annotations (these
+        # modules use `from __future__ import annotations`) through sys.modules[__module__],
+        # which raises AttributeError if the module is not there yet.
+        sys.modules[module_alias] = module
+        spec.loader.exec_module(module)
+        return module
+
+    if embedded_artifact is None:
+        from kfp_components.components.training.autorag.shared import (  # pyright: ignore[reportMissingImports]
+            mlflow_tracking as _mlflow_tracking,
+        )
+    else:
+        _mlflow_tracking = _load_embedded_module("mlflow_tracking.py", "_autorag_mlflow_tracking")
+
     if component_status is None:
         from kfp_components.components.training.autorag.shared.component_status import (  # pyright: ignore[reportMissingImports]
             null_component_status_tracker,
@@ -331,17 +405,17 @@ def rag_templates_optimization(
 
         status = null_component_status_tracker()
     else:
-        _embedded_path = Path(embedded_artifact.path)
-        _module_path = _embedded_path if _embedded_path.is_file() else _embedded_path / "component_status.py"
-        _spec = importlib.util.spec_from_file_location("_autorag_component_status", _module_path)
-        if _spec is None or _spec.loader is None:
-            raise ValueError(f"Cannot load embedded module from {_module_path}")
-        _status_module = importlib.util.module_from_spec(_spec)
-        _spec.loader.exec_module(_status_module)
-        status = _status_module.bootstrap_status_tracker(
-            embedded_artifact, component_status, "rag_templates_optimization"
-        )
-    with status:
+        _status_module = _load_embedded_module("component_status.py", "_autorag_component_status")
+        status = _status_module.tracker_from_embedded(embedded_artifact, component_status, "rag_templates_optimization")
+
+    # MLflow logging is best-effort and self-disabling: when the platform injects no
+    # KFP_MLFLOW_CONFIG, run_logger is a no-op and optimization proceeds unchanged.
+    with (
+        status,
+        _mlflow_tracking.experiment_run_logger(
+            run_name=run_name or pipeline_name,
+        ) as run_logger,
+    ):
         if component_status is not None:
             status.set_metadata(display_name="RAG Templates Optimization Status")
             component_status.metadata["display_name"] = "RAG Templates Optimization Status"
@@ -431,7 +505,24 @@ def rag_templates_optimization(
                 fields_to_balance=preset_cfg.get("fields_to_balance"),
             )
 
-            event_handler = KFPEventHandler()
+            run_logger.log_header(
+                pipeline_name=pipeline_name,
+                kfp_run_id=run_id,
+                kfp_run_name=run_name,
+                preset=preset,
+                optimization_metric=f"{optimization_metric.evaluator}:{optimization_metric.name}",
+                max_rag_patterns=max_rag_patterns,
+                active_evaluators=active_evaluators,
+                embedding_models=search_space_raw.get("embedding_model", []),
+                generation_models=search_space_raw.get("foundation_model", []),
+                test_data_key=test_data_key,
+                input_data_bucket_name=input_data_bucket_name,
+                input_data_keys=input_data_keys or [],
+            )
+
+            # Wrapped so every evaluated pattern is mirrored into a nested MLflow child run
+            # the moment ai4rag emits it, rather than in one batch after search() returns.
+            event_handler = _mlflow_tracking.MlflowPatternEventHandler(KFPEventHandler(), run_logger)
 
             rag_exp = AI4RAGExperiment(
                 event_handler=event_handler,
@@ -458,6 +549,10 @@ def rag_templates_optimization(
                 input_data_keys=input_data_keys or [],
                 test_data_key=test_data_key,
                 indexing_pipeline_params=indexing_pipeline_params,
+            )
+            run_logger.log_pattern_artifact_pointers(
+                str(rag_patterns.uri),
+                [str(pattern.get("name", "")) for pattern in patterns],
             )
 
             # Keep the ZIP in the task artifact directory, next to the
@@ -505,6 +600,24 @@ def rag_templates_optimization(
             with open(leaderboard.path, "w", encoding="utf-8") as f:
                 f.write(html_content)
             leaderboard.metadata["display_name"] = "autorag_leaderboard"
+
+        with status.stage("log_mlflow_results"):
+            # Child runs were already written live during search(); this closes out the
+            # parent with job-level aggregates. KFP owns output artifacts in S3, so
+            # MLflow records metrics and metadata only, without copying those files.
+            run_logger.finalize()
+            mlflow_logged, mlflow_tracking_info = run_logger.result()
+            for _key, _value in mlflow_tracking_info.items():
+                rag_patterns.metadata[_key] = _value
+            status.record(
+                "log_mlflow_results",
+                "completed",
+                metrics={
+                    "mlflow_tracking_enabled": run_logger.configured,
+                    "mlflow_logged": mlflow_logged,
+                    **mlflow_tracking_info,
+                },
+            )
 
 
 if __name__ == "__main__":
