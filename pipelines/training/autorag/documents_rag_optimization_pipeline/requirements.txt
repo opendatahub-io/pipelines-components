@@ -5,8 +5,8 @@ accelerate==1.15.0 \
     # via
     #   docling-ibm-models
     #   docling-slim
-ai4rag==0.20.0 \
-    --hash=sha256:4a7132e2e23034057bf6dc8f9137a642ae027b3fe35b70e82c7c9d60d216a625
+ai4rag==0.21.0 \
+    --hash=sha256:8735e1e80685da673c3999236c98c6ace1bfb639c2edbbab975cad3aec960637
     # via -r requirements.in
 aiohappyeyeballs==2.7.1 \
     --hash=sha256:6c06961fde24f3f847939e288b8e6398973752c358a58cdc067115f8fe87a35d
@@ -213,8 +213,8 @@ faker==40.40.0 \
 fastapi==0.142.2 \
     --hash=sha256:e9b99ab80fab51f6f7436d98d6090083baf6c625cc357619b43597078a9d3eab
     # via mlflow-skinny
-filelock==4.0.10 \
-    --hash=sha256:bcb1be2d5a4e6e15abfba0137b7e92195cdffdaed781a1a6c48073894fd7560a
+filelock==4.0.9 \
+    --hash=sha256:df357b7d1be816b2a63d97bdeafc7595a9471c9fa7ae45d22cb5330035d79421
     # via
     #   datasets
     #   huggingface-hub
@@ -401,7 +401,9 @@ kubernetes==36.0.3 \
     # via kfp
 langchain==1.4.3 \
     --hash=sha256:70d0ff49aef8a902888dabbcca13b21ec46d9100aa42581d6bc4d14e662203ed
-    # via ragas
+    # via
+    #   ai4rag
+    #   ragas
 langchain-classic==1.0.8 \
     --hash=sha256:6d8b23864e0792f98b01f806e9aef2730ba5edbb93cfd8bf44c8a8036e6628d2
     # via langchain-community
@@ -425,7 +427,9 @@ langchain-core==1.6.6 \
     #   ragas
 langchain-openai==1.6.7 \
     --hash=sha256:092c1f19ae5a3d6ef651bdce3988d0d0ef6bacdac8d91fa9c7ad7037f45ddd8d
-    # via ragas
+    # via
+    #   ai4rag
+    #   ragas
 langchain-protocol==0.0.19 \
     --hash=sha256:ac3653c4273b6cde3f061569286b704ffaf1e27a9df184fb6ad5af0db0fdf917
     # via

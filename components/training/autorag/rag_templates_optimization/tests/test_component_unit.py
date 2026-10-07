@@ -116,6 +116,14 @@ def _make_ai4rag_mocks() -> SimpleNamespace:
     assets_generator_module.build_leaderboard_html = build_leaderboard_html
     assets_generator_module.generate_notebook_from_template = generate_notebook_from_template
 
+    def _mock_generate_starter_kit(_pattern, output_dir):
+        generated_zip = Path(output_dir) / "starter_kit.zip"
+        generated_zip.write_bytes(b"generated zip")
+        return generated_zip
+
+    assets_generator_module.generate_starter_kit = mock.MagicMock(name="generate_starter_kit")
+    assets_generator_module.generate_starter_kit.side_effect = _mock_generate_starter_kit
+
     maas_client_module = mock.MagicMock()
     maas_client_module.create_maas_client = create_maas_client
 
@@ -170,6 +178,7 @@ def _make_ai4rag_mocks() -> SimpleNamespace:
         get_embedding_models=get_embedding_models,
         build_leaderboard_html=build_leaderboard_html,
         generate_notebook_from_template=generate_notebook_from_template,
+        generate_starter_kit=assets_generator_module.generate_starter_kit,
         create_maas_client=create_maas_client,
         KFPEventHandler=event_handler_cls,
         pandas=pandas_mock,
@@ -182,9 +191,9 @@ def _write_json(path: Path, data) -> None:
         json.dump(data, f)
 
 
-def _pattern_payload(name: str) -> dict:
+def _pattern_payload(name: str, optimization_score: float | None = None) -> dict:
     """Build a pattern payload with the ai4rag ``settings`` shape used for artifact generation."""
-    return {
+    payload = {
         "name": name,
         "settings": {
             "store_binding": {"provider_type": "milvus", "collection_name": f"{name}-collection"},
@@ -192,6 +201,11 @@ def _pattern_payload(name: str) -> dict:
             "chunking": {"method": "recursive", "chunk_size": 512, "chunk_overlap": 64},
         },
     }
+    if optimization_score is not None:
+        payload["evaluation"] = {
+            "metrics": [{"name": "overall_score", "scores": {"mean": optimization_score}, "optimization_metric": True}]
+        }
+    return payload
 
 
 def _artifacts(tmp_path: Path):
@@ -472,11 +486,19 @@ class TestRagTemplatesOptimizationRun:
         search_space_path = _write_search_space_report(tmp_path)
         mocks.KFPEventHandler.return_value.patterns = [
             {
-                "payload": _pattern_payload("pattern_a"),
+                "payload": _pattern_payload("pattern_a", optimization_score=0.9),
                 "evaluation_results": [{"metric": "faithfulness", "score": 0.9}],
+            },
+            {
+                "payload": _pattern_payload("pattern_b", optimization_score=0.95),
+                "evaluation_results": [{"metric": "faithfulness", "score": 0.95}],
             },
         ]
         rag_patterns, leaderboard_html = _artifacts(tmp_path)
+        starter_kit = mock.MagicMock()
+        starter_kit.path = str(tmp_path / "starter_kit" / "starter_kit.zip")
+        starter_kit.uri = "gs://bucket/starter_kit"
+        starter_kit.metadata = {}
 
         with mock.patch.dict("sys.modules", mocks.modules):
             rag_templates_optimization.python_func(
@@ -490,6 +512,7 @@ class TestRagTemplatesOptimizationRun:
                 input_data_secret_name="s3-input-connection",
                 input_data_bucket_name="customer-docs",
                 leaderboard=leaderboard_html,
+                starter_kit=starter_kit,
                 input_data_keys=["data/docs/", "data/manuals/"],
             )
 
@@ -509,6 +532,13 @@ class TestRagTemplatesOptimizationRun:
         pattern_dir = Path(rag_patterns.path) / "pattern_a"
         assert (pattern_dir / "pattern.json").exists()
         assert (pattern_dir / "evaluation_results.json").exists()
+        mocks.generate_starter_kit.assert_called_once()
+        selected_pattern, generated_dir = mocks.generate_starter_kit.call_args.args
+        assert selected_pattern["name"] == "pattern_b"
+        assert generated_dir != str(rag_patterns.path)
+        assert Path(starter_kit.path).read_bytes() == b"generated zip"
+        assert starter_kit.uri == "gs://bucket/starter_kit/starter_kit.zip"
+        assert starter_kit.metadata["display_name"] == "starter_kit.zip"
 
         # The whole list reaches both the indexing blueprint and the notebook.
         pattern_json = json.loads((pattern_dir / "pattern.json").read_text(encoding="utf-8"))
@@ -754,8 +784,8 @@ class TestPresetWarmStartConfiguration:
     @pytest.mark.parametrize("limit", [4, 10])
     @pytest.mark.parametrize("preset", ["speed", "balanced"])
     @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
-    def test_explicit_pattern_limit_caps_output(self, tmp_path, limit, preset):
-        """An explicit limit bounds output even when ai4rag reports extra evaluations."""
+    def test_publishes_all_event_handler_patterns(self, tmp_path, limit, preset):
+        """All patterns published by ai4rag are written to the component outputs."""
         mocks = _make_ai4rag_mocks()
         mocks.KFPEventHandler.return_value.patterns = [
             {"payload": _pattern_payload(f"pattern_{index}"), "evaluation_results": []} for index in range(limit + 1)
@@ -771,5 +801,5 @@ class TestPresetWarmStartConfiguration:
         gam_call_kwargs = mocks.modules["ai4rag.core.hpo.gam_opt"].GAMOptSettings.call_args.kwargs
         assert gam_call_kwargs["max_evals"] == 22
         assert gam_call_kwargs["max_iterations"] == limit
-        assert len(rag_patterns.metadata["metadata"]["patterns"]) == limit
-        assert len(list(Path(rag_patterns.path).glob("*/pattern.json"))) == limit
+        assert len(rag_patterns.metadata["metadata"]["patterns"]) == limit + 1
+        assert len(list(Path(rag_patterns.path).glob("*/pattern.json"))) == limit + 1

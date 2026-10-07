@@ -80,8 +80,8 @@ def rag_templates_optimization(
         input_data_bucket_name: S3 bucket containing input documents.
         leaderboard: Output HTML artifact; the leaderboard table is written to
             leaderboard_html.path (single file).
-        starter_kit: Output ZIP artifact named ``starter_kit.zip``; currently an
-            empty placeholder.
+        starter_kit: Output ZIP artifact containing the generated starter kit for
+            the best-performing RAG pattern.
         component_status: Output artifact containing stage-level progress tracking.
         embedded_artifact: Embedded ``autorag.shared`` helpers injected by KFP at runtime.
         optimization_settings: Additional experiment settings. The
@@ -121,13 +121,15 @@ def rag_templates_optimization(
     import json
     import logging
     import os
+    import shutil
     import sys
+    import tempfile
     from pathlib import Path
     from zipfile import ZipFile
 
     import pandas as pd
     from ai4rag import handler
-    from ai4rag.assets_generator import build_leaderboard_html, generate_notebook_from_template
+    from ai4rag.assets_generator import build_leaderboard_html, generate_notebook_from_template, generate_starter_kit
     from ai4rag.core.experiment.experiment import AI4RAGExperiment
     from ai4rag.core.hpo.gam_opt import GAMOptSettings
     from ai4rag.evaluator import BaseEvaluator, RagasEvaluator, UnitxtEvaluator
@@ -189,6 +191,19 @@ def rag_templates_optimization(
             _logger.info("RAGAS evaluator enabled with model: %s", ragas_model.model_id)
             evaluators.append(RagasEvaluator(model=ragas_model, embedding_model=embedding_models[0]))
         return evaluators
+
+    def _optimization_score(pattern_data: dict) -> float:
+        """Return the mean score of the metric selected for optimization."""
+        evaluation = pattern_data.get("evaluation") or {}
+        metrics = evaluation.get("metrics", []) if isinstance(evaluation, dict) else []
+        for metric in metrics:
+            if not isinstance(metric, dict) or not metric.get("optimization_metric"):
+                continue
+            scores = metric.get("scores") or {}
+            score = scores.get("mean") if isinstance(scores, dict) else None
+            if score is not None:
+                return float(score)
+        return float("-inf")
 
     def _generate_output_artifacts(
         patterns_raw: list[dict],
@@ -544,7 +559,7 @@ def rag_templates_optimization(
             output_dir.mkdir(parents=True, exist_ok=True)
 
             patterns = _generate_output_artifacts(
-                patterns_raw=event_handler.patterns[:max_rag_patterns],
+                patterns_raw=event_handler.patterns,
                 output_dir=output_dir,
                 input_data_keys=input_data_keys or [],
                 test_data_key=test_data_key,
@@ -569,11 +584,14 @@ def rag_templates_optimization(
             starter_kit.uri = f"{artifact_root_uri}/starter_kit/starter_kit.zip"
             starter_kit.set_path(str(starter_kit_path))
 
-            # Keep the output contract available before ai4rag ships its
-            # starter-kit generator. The empty archive is intentionally a
-            # valid ZIP so clients can download it already.
-            with ZipFile(starter_kit_path, "w"):
-                pass
+            if patterns:
+                best_pattern = max(patterns, key=_optimization_score)
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    generated_zip = generate_starter_kit(best_pattern, temp_dir)
+                    shutil.copyfile(generated_zip, starter_kit_path)
+            else:
+                with ZipFile(starter_kit_path, "w"):
+                    pass
             starter_kit.metadata["display_name"] = "starter_kit.zip"
 
             status.record(

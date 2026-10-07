@@ -22,7 +22,7 @@ Runs search-space construction, evaluator setup, and the optimization experiment
 | `input_data_secret_name` | `str` | `None` | Name of the K8s secret with S3 credentials for input data. |
 | `input_data_bucket_name` | `str` | `None` | S3 bucket containing input documents. |
 | `leaderboard` | `dsl.Output[dsl.HTML]` | `None` | Output HTML artifact; the leaderboard table is written to leaderboard_html.path (single file). |
-| `starter_kit` | `dsl.Output[dsl.Artifact]` | `None` | Output ZIP artifact named ``starter_kit.zip``; currently an empty placeholder. |
+| `starter_kit` | `dsl.Output[dsl.Artifact]` | `None` | Output ZIP artifact containing the generated starter kit for the best-performing RAG pattern. |
 | `embedded_artifact` | `dsl.EmbeddedInput[dsl.Dataset]` | `None` | Embedded ``autorag.shared`` helpers injected by KFP at runtime. |
 | `optimization_settings` | `Optional[dict]` | `None` | Additional experiment settings. The ``max_number_of_rag_patterns`` setting (4-10, default 5) limits optimization iterations and published patterns. |
 | `input_data_keys` | `Optional[list[str]]` | `None` | Paths to documents dirs within bucket, 1-10 of them. The full list is propagated both to the generated indexing notebook and to the indexing pipeline blueprint, so either route reingests the same corpus. |
@@ -98,7 +98,7 @@ def example_pipeline(
   - Kubeflow:
     - Name: Pipelines, Version: >=2.15.2
   - External Services:
-    - Name: ai4rag, Version: ~=0.20.0
+    - Name: ai4rag, Version: ~=0.21.0
     - Name: MaaS, Version: >=1.0.0
     - Name: Milvus, Version: >=2.0.0
     - Name: PGVector, Version: >=0.5.0

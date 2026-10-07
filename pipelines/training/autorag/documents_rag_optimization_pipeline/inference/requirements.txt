@@ -1,7 +1,7 @@
 --index-url https://packages.redhat.com/api/pypi/public-rhai/cpu-torch2.13-el9.8-test/simple
 
-ai4rag==0.20.0 \
-    --hash=sha256:4a7132e2e23034057bf6dc8f9137a642ae027b3fe35b70e82c7c9d60d216a625
+ai4rag==0.21.0 \
+    --hash=sha256:8735e1e80685da673c3999236c98c6ace1bfb639c2edbbab975cad3aec960637
     # via -r requirements.in
 aiohappyeyeballs==2.7.1 \
     --hash=sha256:6c06961fde24f3f847939e288b8e6398973752c358a58cdc067115f8fe87a35d
@@ -46,11 +46,11 @@ attrs==26.1.0 \
     #   aiohttp
     #   jsonschema
     #   referencing
-boto3==1.43.107 \
-    --hash=sha256:f4f7cc4953f8e53162b0c3c4b759de495909b0ca27a801e939e9bb49f0ecd14c
+boto3==1.43.108 \
+    --hash=sha256:8580ad46abff2e5f02dd0b03952ea7b10e3bf7f4e21c9b24eeaea0125196fdd9
     # via ai4rag
-botocore==1.43.107 \
-    --hash=sha256:c06ba7511c4d7cff3f007f8d96631b4a74da2748c4b051b719b9d6e9b5ae3b6f
+botocore==1.43.108 \
+    --hash=sha256:9959bc2d0565b49855bd2d15f5be86bab9750a0a19376afe06a304e4e641f18b
     # via
     #   boto3
     #   s3transfer
@@ -245,7 +245,9 @@ jsonschema-specifications==2025.9.1 \
     # via jsonschema
 langchain==1.4.3 \
     --hash=sha256:70d0ff49aef8a902888dabbcca13b21ec46d9100aa42581d6bc4d14e662203ed
-    # via ragas
+    # via
+    #   ai4rag
+    #   ragas
 langchain-classic==1.0.8 \
     --hash=sha256:6d8b23864e0792f98b01f806e9aef2730ba5edbb93cfd8bf44c8a8036e6628d2
     # via langchain-community
@@ -269,14 +271,16 @@ langchain-core==1.6.6 \
     #   ragas
 langchain-openai==1.6.7 \
     --hash=sha256:092c1f19ae5a3d6ef651bdce3988d0d0ef6bacdac8d91fa9c7ad7037f45ddd8d
-    # via ragas
+    # via
+    #   ai4rag
+    #   ragas
 langchain-protocol==0.0.19 \
     --hash=sha256:ac3653c4273b6cde3f061569286b704ffaf1e27a9df184fb6ad5af0db0fdf917
     # via
     #   langchain-core
     #   langgraph-sdk
-langchain-text-splitters==1.1.2 \
-    --hash=sha256:82b9edba079f21a7a831ab873657af04404763f90ca355d6c42e0ea329cbc9d6
+langchain-text-splitters==1.1.3 \
+    --hash=sha256:4429f4a049bdb0f313c930abc1512a81c6b887a3bd27e58229c18d56fc3de9fc
     # via
     #   ai4rag
     #   langchain-classic
@@ -294,8 +298,8 @@ langgraph-prebuilt==1.1.0 \
 langgraph-sdk==0.4.5 \
     --hash=sha256:e5f4a3bd094e5a9dc1e92029ac15b14960e17f05c1ec7103dca155bb2bd9d971
     # via langgraph
-langsmith==0.14.3 \
-    --hash=sha256:fecdb81b269a71e3441028e1fba7e98a6047d1248748b4b705be8cc3f84f20b1
+langsmith==0.14.4 \
+    --hash=sha256:49a5f45574ee8809038142a54049ab5db53866f40d7bb4ade67ee5dc19cddf82
     # via
     #   langchain-classic
     #   langchain-community
@@ -312,11 +316,11 @@ lxml==6.1.3 \
 markdown-it-py==4.2.0 \
     --hash=sha256:1534e7fddd5e71cbeaa7daf3650abf8922447e96aea60b1485eb7a088b73bd02
     # via rich
-markupsafe==3.0.3 \
-    --hash=sha256:354f9a4e1a098dcb1441f4807d03722286a9645559db8b7285415581b6dee6c4 \
-    --hash=sha256:4c8bfc5cbdce23eee468bc1e0a51e5b74650452dff39ace248ff73ddd5c08e93 \
-    --hash=sha256:7b64f30461881dc5363be5dff9fedaceb53a90295632866ddb468feaac8ee001 \
-    --hash=sha256:a0ccff6c5416b0bb464e74d7e86cb67947b371583060c7f945af6b40b5bc1d5d
+markupsafe==3.0.4 \
+    --hash=sha256:2732e9ad81a2dc720f2eda72cf4ad3b56fb0bf9883521b515c9cf4af1e079d29 \
+    --hash=sha256:5903c48a58b73aed097d9bf0ae7cb3ee3c05173fc8d27491a5d67035f3347b72 \
+    --hash=sha256:cce374b320525b49306dce3c5534188d4c08c8be2d69bc8b1d654813e0e4c691 \
+    --hash=sha256:d7a0e73fb7225a400054e5081ae93360a6f12d74585f89ab5206752275e81cbd
     # via jinja2
 marshmallow==3.26.2 \
     --hash=sha256:946d39ca3150f8372de2228bc3b969ecf70b9373a520ce6d284cb264f231c83b
@@ -518,8 +522,8 @@ python-dotenv==1.2.4 \
     # via
     #   pydantic-settings
     #   pymilvus
-python-utils==4.0.1 \
-    --hash=sha256:c4e386bf87693b6f5c5187d8175b056b2898a00e60a3d41eb70f9d1c1bb312f0
+python-utils==4.1.0 \
+    --hash=sha256:e4faec87cc0fd5d165e6aaedfd898215d114352879ba81ea55577b46234d0928
     # via progressbar2
 pytz==2026.4 \
     --hash=sha256:8db66040cfeed1bee696dff20219047d4a20ab6c7685ffc8ca08c9b7ff7dfe52
@@ -634,11 +638,11 @@ sniffio==1.3.1 \
     # via
     #   langsmith
     #   openai
-sqlalchemy==2.1.1 \
-    --hash=sha256:2806d9d413975587c74d68b2c7466bad731626cf42a5041ed825c56cbb3683a2 \
-    --hash=sha256:335be42ec26c2b24e98aa36cc6ba2271ee86e0dbf5991b9df6fba52944585326 \
-    --hash=sha256:471dd6dd65c3133d3c70198de98921debab406655d87577669a4ada20074b97c \
-    --hash=sha256:8ac9aecc0e4bd5c5c4c0ccb31d391327cfe7bd193f76e4d5acb759b93ab311bf
+sqlalchemy==2.1.3 \
+    --hash=sha256:61012543e5302b78a7357c0119dadead73b51e8e878387cb5c213841608dc6b1 \
+    --hash=sha256:6f06e9401ac8c6132ecb80ce392f1f05d22245d2d7146b83ad3132919a152e59 \
+    --hash=sha256:6f903984db7a01a0bba09d1ae5fdc71674c4281d9bc9504970acd80dfd542001 \
+    --hash=sha256:8cf8df38e5679df4a3d840fe6200443a99347026433aa9c2837d359b5993d954
     # via
     #   langchain-classic
     #   langchain-community
