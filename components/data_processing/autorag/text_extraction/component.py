@@ -21,14 +21,17 @@ def text_extraction(
     max_extraction_workers: Optional[int] = None,
     preset: str = "speed",
     ocr_lang: Optional[str] = None,
+    ssl_cert_path: Optional[str] = None,
 ):
     """Text Extraction component.
 
     Thin wrapper that delegates to ``ai4rag.utils.data.text_extraction.extract_text``.
 
-    OCR is always enabled. Docling runs RapidOCR only on pages it flags as needing it,
-    so pages carrying a text layer are read directly and scanned or image-only pages are
-    OCR'd.
+    OCR is enabled when the selected corpus contains a PDF or image. For a PDF
+    page with an embedded text layer, Docling extracts that text directly. For a
+    scanned PDF page or an image without embedded text, Docling uses RapidOCR to
+    recognize the text. Audio and Office formats use their dedicated extraction
+    pipelines without RapidOCR.
 
     The four RapidOCR model paths are pinned explicitly from ``$DOCLING_ARTIFACTS_PATH``
     rather than left to Docling. Docling resolves an unpinned language to PP-OCRv6 and
@@ -60,6 +63,11 @@ def text_extraction(
             languages. In the optimization pipeline this is filled from the language
             AutoRAG detects; for the indexing pipeline pass ``pattern.json``
             ``settings.generation.language.code``.
+        ssl_cert_path: Optional path to a PEM-encoded CA bundle used to verify the S3
+            endpoint. The filename extension is not significant; ``.pem`` and ``.crt``
+            are both common. It overrides ``AWS_CA_BUNDLE`` for this component. A wrong
+            or unreadable bundle fails with an actionable error; TLS verification is
+            never disabled.
     """
     import importlib.util
     import json
@@ -67,6 +75,7 @@ def text_extraction(
     import os
     from pathlib import Path
 
+    from ai4rag.utils.clients.s3 import create_s3_client
     from ai4rag.utils.data.text_extraction import DoclingExtractionConfig, extract_text
 
     logging.basicConfig(level=logging.INFO)
@@ -107,22 +116,6 @@ def text_extraction(
     bundle_name = "chinese" if (ocr_lang or "").strip().lower() in CHINESE_ALIASES else "english"
     logging.info("OCR language %r resolved to the %s RapidOCR bundle", ocr_lang, bundle_name)
 
-    ocr_model_paths = {}
-    docling_artifacts_path = os.environ.get("DOCLING_ARTIFACTS_PATH")
-    if docling_artifacts_path:
-        ocr_root = Path(docling_artifacts_path) / "RapidOcr"
-        resolved = {key: ocr_root / rel for key, rel in RAPIDOCR_BUNDLES[bundle_name].items()}
-        missing = sorted(str(path) for path in resolved.values() if not path.is_file())
-        if missing:
-            raise FileNotFoundError(
-                f"RapidOCR {bundle_name} models are missing under {ocr_root}:\n  - " + "\n  - ".join(missing)
-            )
-        ocr_model_paths = {key: str(path) for key, path in resolved.items()}
-    else:
-        # No baked-in artifacts (e.g. a dev image): let ai4rag and Docling resolve and
-        # download the models themselves.
-        logging.warning("DOCLING_ARTIFACTS_PATH is unset; RapidOCR models will be resolved at runtime.")
-
     if component_status is None:
         from kfp_components.components.training.autorag.shared.component_status import (  # pyright: ignore[reportMissingImports]
             null_component_status_tracker,
@@ -148,13 +141,34 @@ def text_extraction(
                 descriptor = json.load(f)
             documents = descriptor["documents"]
             suffixes = [Path(document["key"]).suffix.lower() for document in documents]
+            do_ocr = any(suffix in LAYOUT_OCR_EXTENSIONS for suffix in suffixes)
+            logging.info("OCR enabled=%s for %d document(s)", do_ocr, len(documents))
+
+            ocr_model_paths = {}
+            docling_artifacts_path = os.environ.get("DOCLING_ARTIFACTS_PATH")
+            if do_ocr and docling_artifacts_path:
+                ocr_root = Path(docling_artifacts_path) / "RapidOcr"
+                resolved = {key: ocr_root / rel for key, rel in RAPIDOCR_BUNDLES[bundle_name].items()}
+                missing = sorted(str(path) for path in resolved.values() if not path.is_file())
+                if missing:
+                    raise FileNotFoundError(
+                        f"RapidOCR {bundle_name} models are missing under {ocr_root}:\n  - " + "\n  - ".join(missing)
+                    )
+                ocr_model_paths = {key: str(path) for key, path in resolved.items()}
+            elif do_ocr:
+                raise ValueError(
+                    "OCR was requested for PDF or image documents, but DOCLING_ARTIFACTS_PATH is not set. "
+                    "Configure it in the workbench environment to the image-baked Docling artifacts bundle."
+                )
+
             candidate_metrics = {
                 "documents_total": len(documents),
                 "layout_candidate_documents": sum(suffix in LAYOUT_OCR_EXTENSIONS for suffix in suffixes),
                 "layout_model": "Docling Layout Heron",
                 "ocr_candidate_documents": sum(suffix in LAYOUT_OCR_EXTENSIONS for suffix in suffixes),
-                "ocr_engine": "RapidOCR",
-                "ocr_language": bundle_name,
+                "ocr_enabled": do_ocr,
+                "ocr_engine": "RapidOCR" if do_ocr else None,
+                "ocr_language": bundle_name if do_ocr else None,
                 "asr_candidate_documents": sum(suffix in ASR_EXTENSIONS for suffix in suffixes),
                 "asr_model": "Whisper Tiny",
             }
@@ -165,24 +179,34 @@ def text_extraction(
 
             docling_config = DoclingExtractionConfig(
                 do_table_structure=do_table_structure,
-                do_ocr=True,
+                do_ocr=do_ocr,
                 ocr_lang=bundle_name,
                 **ocr_model_paths,
             )
 
-            extraction_result = extract_text(
-                documents=documents,
-                bucket=descriptor["bucket"],
-                output_dir=output_dir,
-                s3_endpoint=os.environ.get("AWS_S3_ENDPOINT"),
-                s3_access_key=os.environ.get("AWS_ACCESS_KEY_ID"),
-                s3_secret_key=os.environ.get("AWS_SECRET_ACCESS_KEY"),
-                s3_region=os.environ.get("AWS_DEFAULT_REGION"),
-                error_tolerance=error_tolerance,
-                max_extraction_workers=max_extraction_workers,
-                docling_artifacts_path=os.environ.get("DOCLING_ARTIFACTS_PATH"),
-                docling_config=docling_config,
-            )
+            effective_ssl_cert_path = ssl_cert_path or os.environ.get("AWS_CA_BUNDLE")
+            s3_client = create_s3_client(verify=effective_ssl_cert_path or True) if documents else None
+
+            try:
+                extraction_result = extract_text(
+                    documents=documents,
+                    bucket=descriptor["bucket"],
+                    output_dir=output_dir,
+                    s3_client=s3_client,
+                    error_tolerance=error_tolerance,
+                    max_extraction_workers=max_extraction_workers,
+                    docling_artifacts_path=os.environ.get("DOCLING_ARTIFACTS_PATH"),
+                    docling_config=docling_config,
+                )
+            except RuntimeError as exc:
+                if not any(marker in str(exc) for marker in ("CERTIFICATE_VERIFY_FAILED", "SSL validation failed")):
+                    raise
+                certificate_source = effective_ssl_cert_path or "the system trust bundle"
+                raise RuntimeError(
+                    "S3 TLS certificate validation failed. Verify that ssl_cert_path="
+                    f"{certificate_source!r} is a PEM CA bundle that trusts the S3 endpoint. "
+                    "Do not disable certificate verification."
+                ) from exc
             status.record(
                 "extract_documents",
                 "completed",
