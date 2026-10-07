@@ -134,12 +134,13 @@ def documents_indexing_pipeline(
         secret_key_to_env={
             "MILVUS_URI": "MILVUS_URI",
             "MILVUS_TOKEN": "MILVUS_TOKEN",
-            "MILVUS_SERVER_CERT": "MILVUS_SERVER_CERT",
+            "MILVUS_CA_CERT": "MILVUS_CA_CERT",
             "PGVECTOR_HOST": "PGVECTOR_HOST",
             "PGVECTOR_PORT": "PGVECTOR_PORT",
             "PGVECTOR_DB": "PGVECTOR_DB",
             "PGVECTOR_USER": "PGVECTOR_USER",
             "PGVECTOR_PASSWORD": "PGVECTOR_PASSWORD",
+            "PGVECTOR_CA_CERT": "PGVECTOR_CA_CERT",
         },
         optional=True,
     )
