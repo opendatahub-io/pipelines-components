@@ -213,8 +213,8 @@ faker==40.40.0 \
 fastapi==0.142.2 \
     --hash=sha256:e9b99ab80fab51f6f7436d98d6090083baf6c625cc357619b43597078a9d3eab
     # via mlflow-skinny
-filelock==4.0.9 \
-    --hash=sha256:df357b7d1be816b2a63d97bdeafc7595a9471c9fa7ae45d22cb5330035d79421
+filelock==4.0.10 \
+    --hash=sha256:bcb1be2d5a4e6e15abfba0137b7e92195cdffdaed781a1a6c48073894fd7560a
     # via
     #   datasets
     #   huggingface-hub
@@ -1016,12 +1016,13 @@ sniffio==1.3.1 \
 soupsieve==2.10 \
     --hash=sha256:98ba694d282dd543b019422aa272e7f071bdb80e9c03ae93713c430b9323de75
     # via beautifulsoup4
-sqlalchemy==2.1.3 \
-    --hash=sha256:61012543e5302b78a7357c0119dadead73b51e8e878387cb5c213841608dc6b1 \
-    --hash=sha256:6f06e9401ac8c6132ecb80ce392f1f05d22245d2d7146b83ad3132919a152e59 \
-    --hash=sha256:6f903984db7a01a0bba09d1ae5fdc71674c4281d9bc9504970acd80dfd542001 \
-    --hash=sha256:8cf8df38e5679df4a3d840fe6200443a99347026433aa9c2837d359b5993d954
+sqlalchemy==2.1.1 \
+    --hash=sha256:2806d9d413975587c74d68b2c7466bad731626cf42a5041ed825c56cbb3683a2 \
+    --hash=sha256:335be42ec26c2b24e98aa36cc6ba2271ee86e0dbf5991b9df6fba52944585326 \
+    --hash=sha256:471dd6dd65c3133d3c70198de98921debab406655d87577669a4ada20074b97c \
+    --hash=sha256:8ac9aecc0e4bd5c5c4c0ccb31d391327cfe7bd193f76e4d5acb759b93ab311bf
     # via
+    #   -r requirements.in
     #   langchain-classic
     #   langchain-community
 sqlparse==0.6.0 \

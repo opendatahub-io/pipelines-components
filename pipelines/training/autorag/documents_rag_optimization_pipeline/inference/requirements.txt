@@ -125,8 +125,8 @@ faiss-cpu==1.12.0 \
     --hash=sha256:7490104b1ee98f85e199ff664454fca13d187f27e62820cb51962737c686ae21 \
     --hash=sha256:fc81bc35bb075adb2de9b45fa5052413c1c3e7c0f223912a89e6d91ec1f5a44c
     # via milvus-lite
-filelock==4.0.9 \
-    --hash=sha256:df357b7d1be816b2a63d97bdeafc7595a9471c9fa7ae45d22cb5330035d79421
+filelock==4.0.10 \
+    --hash=sha256:bcb1be2d5a4e6e15abfba0137b7e92195cdffdaed781a1a6c48073894fd7560a
     # via
     #   datasets
     #   huggingface-hub
@@ -525,8 +525,8 @@ python-dotenv==1.2.4 \
 python-utils==4.1.0 \
     --hash=sha256:e4faec87cc0fd5d165e6aaedfd898215d114352879ba81ea55577b46234d0928
     # via progressbar2
-pytz==2026.4 \
-    --hash=sha256:8db66040cfeed1bee696dff20219047d4a20ab6c7685ffc8ca08c9b7ff7dfe52
+pytz==2026.5 \
+    --hash=sha256:16fd4b52bac878d0e56e23092876cbfb78de5b85394f9de9143d7bf1c1fe8e64
     # via
     #   neo4j
     #   pandas
@@ -638,12 +638,13 @@ sniffio==1.3.1 \
     # via
     #   langsmith
     #   openai
-sqlalchemy==2.1.3 \
-    --hash=sha256:61012543e5302b78a7357c0119dadead73b51e8e878387cb5c213841608dc6b1 \
-    --hash=sha256:6f06e9401ac8c6132ecb80ce392f1f05d22245d2d7146b83ad3132919a152e59 \
-    --hash=sha256:6f903984db7a01a0bba09d1ae5fdc71674c4281d9bc9504970acd80dfd542001 \
-    --hash=sha256:8cf8df38e5679df4a3d840fe6200443a99347026433aa9c2837d359b5993d954
+sqlalchemy==2.1.1 \
+    --hash=sha256:2806d9d413975587c74d68b2c7466bad731626cf42a5041ed825c56cbb3683a2 \
+    --hash=sha256:335be42ec26c2b24e98aa36cc6ba2271ee86e0dbf5991b9df6fba52944585326 \
+    --hash=sha256:471dd6dd65c3133d3c70198de98921debab406655d87577669a4ada20074b97c \
+    --hash=sha256:8ac9aecc0e4bd5c5c4c0ccb31d391327cfe7bd193f76e4d5acb759b93ab311bf
     # via
+    #   -r requirements.in
     #   langchain-classic
     #   langchain-community
 tabulate==0.10.0 \
@@ -763,8 +764,8 @@ typing-inspection==0.4.4 \
     # via
     #   pydantic
     #   pydantic-settings
-tzdata==2026.4 \
-    --hash=sha256:8f1403031de5d6c9bfe9a3acbc387061e3c6b31246b5a7d794f6fe59b251ea0a
+tzdata==2026.5 \
+    --hash=sha256:333c339e0d7faeac79097158da067e246e3993179a43f6cb25e4ab43298145cf
     # via pandas
 unitxt==1.26.10 \
     --hash=sha256:a8b876094d4c37d0aded85ebcfd2fbdaa67fe078044c22514446edf921bb65c4
