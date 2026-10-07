@@ -763,8 +763,8 @@ typing-inspection==0.4.4 \
     # via
     #   pydantic
     #   pydantic-settings
-tzdata==2026.5 \
-    --hash=sha256:333c339e0d7faeac79097158da067e246e3993179a43f6cb25e4ab43298145cf
+tzdata==2026.4 \
+    --hash=sha256:8f1403031de5d6c9bfe9a3acbc387061e3c6b31246b5a7d794f6fe59b251ea0a
     # via pandas
 unitxt==1.26.10 \
     --hash=sha256:a8b876094d4c37d0aded85ebcfd2fbdaa67fe078044c22514446edf921bb65c4
