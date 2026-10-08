@@ -148,6 +148,9 @@ packages = [
 "kfp_components.components.training.autorag.shared" = [
     "run_status_templates/pipelines/*.json",
 ]
+"kfp_components.components.training.autorag.rag_templates_optimization" = [
+    "runtime_embed/*.py",
+]
 
 [tool.ruff]
 line-length = 120

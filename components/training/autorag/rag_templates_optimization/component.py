@@ -1,37 +1,18 @@
-import shutil
 from pathlib import Path
 from typing import Any, Optional
 
 from kfp import dsl
 from kfp_components.utils.consts import AUTORAG_IMAGE  # pyright: ignore[reportMissingImports]
 
-_AUTORAG_SHARED = Path(__file__).parents[1] / "shared"
-# Staged at import so the executor embed stays two modules: the odh-autorag image does
-# not install ``kfp_components`` (unlike AutoML), KFP allows only one embed path, and
-# embedding all of ``shared/`` (tests included) overflows Argo's 128KiB env offload.
-_KFP_EMBED_DIR = Path(__file__).resolve().parent / ".kfp_embed"
-_KFP_EMBED_MODULES = ("component_status.py", "mlflow_tracking.py")
-
-
-def _stage_kfp_embed() -> str:
-    """Copy only the executor-needed shared modules into the KFP embed directory."""
-    _KFP_EMBED_DIR.mkdir(parents=True, exist_ok=True)
-    keep = set(_KFP_EMBED_MODULES)
-    for existing in _KFP_EMBED_DIR.iterdir():
-        if existing.name in keep:
-            continue
-        if existing.is_dir():
-            shutil.rmtree(existing)
-        else:
-            existing.unlink()
-    for name in _KFP_EMBED_MODULES:
-        shutil.copyfile(_AUTORAG_SHARED / name, _KFP_EMBED_DIR / name)
-    return str(_KFP_EMBED_DIR)
+# This read-only directory holds only the helpers needed by the executor. It is
+# intentionally committed rather than staged at import time: DSPA compiles managed
+# pipelines from a read-only site-packages installation.
+_KFP_EMBED_DIR = Path(__file__).resolve().parent / "runtime_embed"
 
 
 @dsl.component(
     base_image=AUTORAG_IMAGE,
-    embedded_artifact_path=_stage_kfp_embed(),
+    embedded_artifact_path=str(_KFP_EMBED_DIR),
     install_kfp_package=False,
 )
 def rag_templates_optimization(

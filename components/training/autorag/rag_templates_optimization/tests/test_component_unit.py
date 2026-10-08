@@ -18,6 +18,17 @@ import pytest
 
 from ..component import rag_templates_optimization
 
+
+def test_runtime_embed_matches_shared_helpers():
+    """Keep the read-only KFP embed in sync with its canonical helper modules."""
+    component_dir = Path(__file__).parents[1]
+    shared_dir = component_dir.parent / "shared"
+    runtime_embed_dir = component_dir / "runtime_embed"
+
+    for filename in ("component_status.py", "mlflow_tracking.py"):
+        assert (runtime_embed_dir / filename).read_bytes() == (shared_dir / filename).read_bytes()
+
+
 MOCKED_ENV_VARIABLES = {
     "MAAS_BASE_URL": "https://maas.example.com/v1",
     "MAAS_API_KEY": "test-api-key",
