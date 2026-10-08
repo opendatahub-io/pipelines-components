@@ -1,7 +1,7 @@
---index-url https://console.redhat.com/api/pypi/public-rhai/rhoai/3.6/cpu-ubi9-test/simple
+--index-url https://packages.redhat.com/api/pypi/public-rhai/cpu-torch2.13-el9.8-test/simple
 
-autogluon.tabular[lightgbm,xgboost,tabm,fastai]==1.5.0+rhaiv.7
-autogluon.timeseries==1.5.0+rhaiv.7
+autogluon.tabular[lightgbm,xgboost,tabm,fastai]==1.6.3+rhaiv.1
+autogluon.timeseries==1.6.3+rhaiv.1
 boto3
 mlflow-skinny~=3.16.0
 pandas==2.2.3
