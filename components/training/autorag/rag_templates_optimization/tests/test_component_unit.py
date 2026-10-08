@@ -19,14 +19,17 @@ import pytest
 from ..component import rag_templates_optimization
 
 
-def test_runtime_embed_matches_shared_helpers():
-    """Keep the read-only KFP embed in sync with its canonical helper modules."""
+def test_kfp_embed_uses_shared_runtime_embed():
+    """Executor embed path is the shared runtime_embed directory (no local copies)."""
     component_dir = Path(__file__).parents[1]
-    shared_dir = component_dir.parent / "shared"
-    runtime_embed_dir = component_dir / "runtime_embed"
+    runtime_embed_dir = component_dir.parent / "shared" / "runtime_embed"
+    source = (component_dir / "component.py").read_text(encoding="utf-8")
 
-    for filename in ("component_status.py", "mlflow_tracking.py"):
-        assert (runtime_embed_dir / filename).read_bytes() == (shared_dir / filename).read_bytes()
+    assert 'embedded_artifact_path=str(_AUTORAG_SHARED / "runtime_embed")' in source
+    assert (runtime_embed_dir / "component_status.py").is_file()
+    assert (runtime_embed_dir / "mlflow_tracking.py").is_file()
+    assert "_stage_kfp_embed" not in source
+    assert ".kfp_embed" not in source
 
 
 MOCKED_ENV_VARIABLES = {

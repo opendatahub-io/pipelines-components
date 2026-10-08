@@ -10,7 +10,7 @@ _AUTORAG_SHARED = Path(__file__).parents[1] / "shared"
 
 @dsl.component(
     base_image=AUTORAG_IMAGE,  # noqa: E501
-    embedded_artifact_path=str(_AUTORAG_SHARED / "component_status.py"),
+    embedded_artifact_path=str(_AUTORAG_SHARED / "runtime_embed" / "component_status.py"),
     install_kfp_package=False,
 )
 def search_space_preparation(

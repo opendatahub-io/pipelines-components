@@ -219,7 +219,7 @@ class TestTextExtractionUnitTests:
         )
         output_artifact = SimpleNamespace(path=str(tmp_path / "output"))
         component_status = SimpleNamespace(path=str(tmp_path / "status"), metadata={})
-        embedded_artifact = SimpleNamespace(path=str(_AUTORAG_SHARED))
+        embedded_artifact = SimpleNamespace(path=str(_AUTORAG_SHARED / "runtime_embed"))
 
         with mock.patch.dict("sys.modules", modules):
             text_extraction.python_func(
@@ -259,7 +259,7 @@ class TestTextExtractionUnitTests:
         )
         output_artifact = SimpleNamespace(path=str(tmp_path / "output"))
         component_status = SimpleNamespace(path=str(tmp_path / "status"), metadata={})
-        embedded_artifact = SimpleNamespace(path=str(_AUTORAG_SHARED))
+        embedded_artifact = SimpleNamespace(path=str(_AUTORAG_SHARED / "runtime_embed"))
 
         with mock.patch.dict("sys.modules", modules):
             with pytest.raises(RuntimeError, match="Text extraction failed"):

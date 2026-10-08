@@ -11,8 +11,13 @@ from unittest import mock
 
 
 def autorag_shared_dir() -> Path:
-    """Path to ``components/training/autorag/shared`` embedded in training components."""
+    """Path to ``components/training/autorag/shared``."""
     return Path(__file__).resolve().parent / "shared"
+
+
+def autorag_runtime_embed_dir() -> Path:
+    """Path to the KFP-embedable helper directory under ``shared/runtime_embed``."""
+    return autorag_shared_dir() / "runtime_embed"
 
 
 def wrap_component_python_func(
@@ -25,8 +30,9 @@ def wrap_component_python_func(
     """Inject embedded-artifact and component-status mocks omitted by unit tests."""
     original = component.python_func
     signature = inspect.signature(original)
-    shared_dir = autorag_shared_dir()
-    embed_root = embedded_path or str(shared_dir)
+    # Default to runtime_embed so file-based loads get the real modules, not the
+    # package re-export stubs at shared/{component_status,mlflow_tracking}.py.
+    embed_root = embedded_path or str(autorag_runtime_embed_dir())
 
     def wrapper(*args, **kwargs):
         bound = signature.bind_partial(*args, **kwargs)

@@ -92,6 +92,7 @@ packages = [
     "kfp_components.components.training.autorag.rag_templates_optimization",
     "kfp_components.components.training.autorag.search_space_preparation",
     "kfp_components.components.training.autorag.shared",
+    "kfp_components.components.training.autorag.shared.runtime_embed",
     "kfp_components.components.training.finetuning",
     "kfp_components.components.training.finetuning.lora",
     "kfp_components.components.training.finetuning.lora_grpo",
@@ -147,9 +148,6 @@ packages = [
 ]
 "kfp_components.components.training.autorag.shared" = [
     "run_status_templates/pipelines/*.json",
-]
-"kfp_components.components.training.autorag.rag_templates_optimization" = [
-    "runtime_embed/*.py",
 ]
 
 [tool.ruff]

@@ -5,7 +5,7 @@ The dashboard aggregates component statuses to show overall pipeline progress.
 
 Usage:
     from kfp_components.components.training.autorag.shared.component_status import (
-        component_status_tracker,
+        component_status_tracker,  # re-export; implementation in runtime_embed/
     )
 
     status = component_status_tracker(component_status, "test_data_loader")
