@@ -113,6 +113,9 @@ def _make_ai4rag_mocks() -> SimpleNamespace:
     foundation_model_module = mock.MagicMock()
     foundation_model_module.OpenAIFoundationModel = mock.MagicMock(name="OpenAIFoundationModel")
 
+    simple_rag_module = mock.MagicMock()
+    simple_rag_module.SimpleRAG = mock.MagicMock(name="SimpleRAG")
+
     vector_store_module = mock.MagicMock()
     vector_store_module.get_vector_store_config = get_vector_store_config
 
@@ -166,6 +169,8 @@ def _make_ai4rag_mocks() -> SimpleNamespace:
         "ai4rag.rag.embedding.openai_model": embedding_model_module,
         "ai4rag.rag.foundation_models": mock.MagicMock(),
         "ai4rag.rag.foundation_models.openai_model": foundation_model_module,
+        "ai4rag.rag.template": mock.MagicMock(),
+        "ai4rag.rag.template.simple_rag_template": simple_rag_module,
         "ai4rag.rag.vector_store": vector_store_module,
         "ai4rag.search_space": mock.MagicMock(),
         "ai4rag.search_space.prepare": mock.MagicMock(),
@@ -505,6 +510,7 @@ class TestRagTemplatesOptimizationRun:
             {
                 "payload": _pattern_payload("pattern_a", optimization_score=0.9),
                 "evaluation_results": [{"metric": "faithfulness", "score": 0.9}],
+                "conversations": [{"conversation_id": "case-0000", "question": "What is RAG?"}],
             },
             {
                 "payload": _pattern_payload("pattern_b", optimization_score=0.95),
@@ -550,6 +556,11 @@ class TestRagTemplatesOptimizationRun:
         pattern_dir = Path(rag_patterns.path) / "pattern_a"
         assert (pattern_dir / "pattern.json").exists()
         assert (pattern_dir / "evaluation_results.json").exists()
+        assert (pattern_dir / "conversations.json").exists()
+        assert json.loads((pattern_dir / "conversations.json").read_text(encoding="utf-8")) == [
+            {"conversation_id": "case-0000", "question": "What is RAG?"}
+        ]
+        assert not (Path(rag_patterns.path) / "pattern_b" / "conversations.json").exists()
         mocks.generate_starter_kit.assert_called_once()
         selected_pattern, generated_dir = mocks.generate_starter_kit.call_args.args
         assert selected_pattern["name"] == "pattern_b"

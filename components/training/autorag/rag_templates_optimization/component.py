@@ -288,6 +288,11 @@ def rag_templates_optimization(
             with (patt_dir / "evaluation_results.json").open("w", encoding="utf-8") as f:
                 json.dump(pattern.get("evaluation_results", []), f, indent=2, ensure_ascii=False)
 
+            conversations = pattern.get("conversations")
+            if conversations:
+                with (patt_dir / "conversations.json").open("w", encoding="utf-8") as f:
+                    json.dump(conversations, f, indent=2, ensure_ascii=False)
+
             patterns.append(pattern_data)
 
         return patterns
