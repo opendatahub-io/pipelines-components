@@ -33,6 +33,10 @@ def text_extraction(
     recognize the text. Audio and Office formats use their dedicated extraction
     pipelines without RapidOCR.
 
+    Audio extraction uses the approved local Hugging Face Transformers Whisper model
+    exposed through ``HF_MODEL_DIR``. The component validates the mounted modelcar
+    before starting extraction; ai4rag does not download ASR weights at runtime.
+
     The four RapidOCR model paths are pinned explicitly from ``$DOCLING_ARTIFACTS_PATH``
     rather than left to Docling. Docling resolves an unpinned language to PP-OCRv6 and
     looks for flat filenames directly under ``RapidOcr/``, but the AutoRAG image ships the
@@ -85,6 +89,57 @@ def text_extraction(
     LAYOUT_OCR_EXTENSIONS = {".pdf", ".jpg", ".jpeg", ".png", ".tif", ".tiff"}
     ASR_EXTENSIONS = {".wav", ".mp3", ".m4a", ".aac", ".ogg", ".flac"}
 
+    def _resolve_asr_model_path(has_audio: bool) -> str | None:
+        """Return a complete local Whisper model directory for audio runs."""
+        if not has_audio:
+            return None
+
+        raw_path = os.environ.get("HF_MODEL_DIR")
+        if not raw_path:
+            raise ValueError(
+                "Audio documents were selected, but HF_MODEL_DIR is not set. "
+                "Mount the approved local Whisper modelcar and configure its model directory."
+            )
+
+        model_dir = Path(raw_path).expanduser().resolve()
+        config_path = model_dir / "config.json"
+        if not model_dir.is_dir() or not config_path.is_file():
+            raise FileNotFoundError(
+                f"HF_MODEL_DIR={model_dir} is not a local Transformers model directory containing config.json."
+            )
+
+        try:
+            with config_path.open(encoding="utf-8") as config_file:
+                model_config = json.load(config_file)
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ValueError(f"HF_MODEL_DIR={model_dir} has an invalid config.json.") from exc
+
+        model_type = model_config.get("model_type", "") if isinstance(model_config, dict) else ""
+        if model_type != "whisper":
+            raise ValueError(
+                "Audio extraction supports only Hugging Face Whisper models; "
+                f"HF_MODEL_DIR={model_dir} declares model_type={model_type!r}."
+            )
+
+        required = ("preprocessor_config.json", "tokenizer_config.json")
+        missing = [name for name in required if not (model_dir / name).is_file()]
+        has_weights = any(
+            (model_dir / name).is_file()
+            for name in (
+                "model.safetensors",
+                "pytorch_model.bin",
+                "model.safetensors.index.json",
+                "pytorch_model.bin.index.json",
+            )
+        )
+        if missing or not has_weights:
+            details = missing + ([] if has_weights else ["model weights"])
+            raise FileNotFoundError(
+                f"HF_MODEL_DIR={model_dir} is not a complete local Transformers Whisper model directory. "
+                f"Missing: {', '.join(details)}."
+            )
+        return str(model_dir)
+
     if preset not in VALID_PRESETS:
         raise ValueError(f"preset must be one of {VALID_PRESETS}; got {preset!r}.")
 
@@ -117,8 +172,8 @@ def text_extraction(
     logging.info("OCR language %r resolved to the %s RapidOCR bundle", ocr_lang, bundle_name)
 
     if component_status is None:
-        from kfp_components.components.training.autorag.shared.component_status import (  # pyright: ignore[reportMissingImports]
-            null_component_status_tracker,
+        from kfp_components.components.training.autorag.shared.component_status import (
+            null_component_status_tracker,  # pyright: ignore[reportMissingImports]
         )
 
         status = null_component_status_tracker()
@@ -142,6 +197,8 @@ def text_extraction(
             documents = descriptor["documents"]
             suffixes = [Path(document["key"]).suffix.lower() for document in documents]
             do_ocr = any(suffix in LAYOUT_OCR_EXTENSIONS for suffix in suffixes)
+            asr_candidate_documents = sum(suffix in ASR_EXTENSIONS for suffix in suffixes)
+            asr_model_path = _resolve_asr_model_path(asr_candidate_documents > 0)
             logging.info("OCR enabled=%s for %d document(s)", do_ocr, len(documents))
 
             ocr_model_paths = {}
@@ -169,8 +226,9 @@ def text_extraction(
                 "ocr_enabled": do_ocr,
                 "ocr_engine": "RapidOCR" if do_ocr else None,
                 "ocr_language": bundle_name if do_ocr else None,
-                "asr_candidate_documents": sum(suffix in ASR_EXTENSIONS for suffix in suffixes),
-                "asr_model": "Whisper Tiny",
+                "asr_candidate_documents": asr_candidate_documents,
+                "asr_model": "Approved local Hugging Face Whisper Tiny",
+                "asr_offline": True,
             }
             status.record("extract_documents", "running", metrics=candidate_metrics)
 
@@ -181,6 +239,7 @@ def text_extraction(
                 do_table_structure=do_table_structure,
                 do_ocr=do_ocr,
                 ocr_lang=bundle_name,
+                asr_model_path=asr_model_path,
                 **ocr_model_paths,
             )
 

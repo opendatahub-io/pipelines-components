@@ -11,6 +11,8 @@ Thin wrapper that delegates to ``ai4rag.utils.data.text_extraction.extract_text`
 OCR is enabled when the selected corpus contains a PDF or image. For a PDF page with an embedded text layer, Docling extracts that text directly. For a scanned PDF page or an image without embedded text, Docling uses RapidOCR to recognize the text. Audio and Office formats use their dedicated
 extraction pipelines without RapidOCR.
 
+Audio extraction uses the approved local Hugging Face Transformers Whisper model exposed through ``HF_MODEL_DIR``. The component validates the mounted modelcar before starting extraction; ai4rag does not download ASR weights at runtime.
+
 The four RapidOCR model paths are pinned explicitly from ``$DOCLING_ARTIFACTS_PATH`` rather than left to Docling. Docling resolves an unpinned language to PP-OCRv6 and looks for flat filenames directly under ``RapidOcr/``, but the AutoRAG image ships the PP-OCRv4 bundle in its nested
 ``RapidOcr/onnx/PP-OCRv4/...`` layout, so leaving the paths unset fails with ``FileNotFoundError`` at conversion time. Pinning them makes Docling skip resolution and use the models that are actually present.
 

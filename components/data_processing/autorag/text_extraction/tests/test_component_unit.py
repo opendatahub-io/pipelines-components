@@ -80,6 +80,20 @@ def _make_docling_artifacts(root, bundles=(ENGLISH_BUNDLE, CHINESE_BUNDLE)):
     return root
 
 
+def _make_asr_model(root):
+    """Lay out the minimum approved local Transformers Whisper model tree."""
+    root.mkdir(parents=True, exist_ok=True)
+    for name in (
+        "config.json",
+        "preprocessor_config.json",
+        "tokenizer_config.json",
+        "model.safetensors",
+    ):
+        content = json.dumps({"model_type": "whisper"}) if name == "config.json" else "{}"
+        (root / name).write_text(content, encoding="utf-8")
+    return root
+
+
 def _write_descriptor(tmp_path, descriptor=None):
     """Write a minimal documents_descriptor.json and return its directory artifact."""
     descriptor_dir = tmp_path / "descriptor"
@@ -154,6 +168,7 @@ class TestTextExtractionUnitTests:
         assert config_kwargs["do_table_structure"] is False
         assert config_kwargs["do_ocr"] is True
         assert config_kwargs["ocr_lang"] == "english"
+        assert config_kwargs["asr_model_path"] is None
         assert set(ENGLISH_BUNDLE) <= set(config_kwargs)
         mock_extract.assert_called_once_with(
             documents=[{"key": "docs/a.pdf", "size_bytes": 1000}],
@@ -221,7 +236,11 @@ class TestTextExtractionUnitTests:
         component_status = SimpleNamespace(path=str(tmp_path / "status"), metadata={})
         embedded_artifact = SimpleNamespace(path=str(_AUTORAG_SHARED / "runtime_embed"))
 
-        with mock.patch.dict("sys.modules", modules):
+        asr_model = _make_asr_model(tmp_path / "whisper-tiny")
+        with (
+            mock.patch.dict("os.environ", {"HF_MODEL_DIR": str(asr_model)}),
+            mock.patch.dict("sys.modules", modules),
+        ):
             text_extraction.python_func(
                 documents_descriptor=descriptor_artifact,
                 extracted_text=output_artifact,
@@ -239,7 +258,8 @@ class TestTextExtractionUnitTests:
             "ocr_engine": "RapidOCR",
             "ocr_language": "english",
             "asr_candidate_documents": 2,
-            "asr_model": "Whisper Tiny",
+            "asr_model": "Approved local Hugging Face Whisper Tiny",
+            "asr_offline": True,
             "documents_total": 5,
             "documents_processed": 4,
             "documents_failed": 1,
@@ -261,7 +281,11 @@ class TestTextExtractionUnitTests:
         component_status = SimpleNamespace(path=str(tmp_path / "status"), metadata={})
         embedded_artifact = SimpleNamespace(path=str(_AUTORAG_SHARED / "runtime_embed"))
 
-        with mock.patch.dict("sys.modules", modules):
+        asr_model = _make_asr_model(tmp_path / "whisper-tiny")
+        with (
+            mock.patch.dict("os.environ", {"HF_MODEL_DIR": str(asr_model)}),
+            mock.patch.dict("sys.modules", modules),
+        ):
             with pytest.raises(RuntimeError, match="Text extraction failed"):
                 text_extraction.python_func(
                     documents_descriptor=descriptor_artifact,
@@ -289,7 +313,10 @@ class TestTextExtractionUnitTests:
         output_artifact.path = str(tmp_path / "output")
 
         env = {**MOCKED_ENV_VARIABLES, "DOCLING_ARTIFACTS_PATH": str(artifacts)}
-        with mock.patch.dict("os.environ", env, clear=True), mock.patch.dict("sys.modules", modules):
+        with (
+            mock.patch.dict("os.environ", env, clear=True),
+            mock.patch.dict("sys.modules", modules),
+        ):
             text_extraction.python_func(
                 documents_descriptor=descriptor_artifact,
                 extracted_text=output_artifact,
@@ -507,7 +534,10 @@ class TestTextExtractionUnitTests:
         if root is not None:
             env["DOCLING_ARTIFACTS_PATH"] = str(root)
 
-        with mock.patch.dict("os.environ", env, clear=True), mock.patch.dict("sys.modules", modules):
+        with (
+            mock.patch.dict("os.environ", env, clear=True),
+            mock.patch.dict("sys.modules", modules),
+        ):
             text_extraction.python_func(
                 documents_descriptor=descriptor_artifact,
                 extracted_text=output_artifact,
@@ -549,6 +579,82 @@ class TestTextExtractionUnitTests:
 
         assert mock_docling_config_cls.call_args.kwargs["do_ocr"] is False
 
+    @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
+    def test_audio_requires_approved_local_modelcar(self, tmp_path):
+        """An audio run must reject an unset modelcar path before extraction."""
+        modules, mock_extract, _ = _make_ai4rag_mocks()
+        output_artifact = mock.MagicMock(path=str(tmp_path / "output"))
+
+        with (
+            mock.patch.dict("sys.modules", modules),
+            pytest.raises(ValueError, match="HF_MODEL_DIR"),
+        ):
+            text_extraction.python_func(
+                documents_descriptor=_write_descriptor(tmp_path, {"bucket": "b", "documents": [{"key": "call.mp3"}]}),
+                extracted_text=output_artifact,
+            )
+
+        mock_extract.assert_not_called()
+
+    @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
+    def test_audio_forwards_approved_local_modelcar(self, tmp_path):
+        """A validated audio modelcar path is forwarded to ai4rag configuration."""
+        modules, _, mock_docling_config_cls = _make_ai4rag_mocks()
+        asr_model = _make_asr_model(tmp_path / "whisper-tiny")
+        output_artifact = mock.MagicMock(path=str(tmp_path / "output"))
+
+        with (
+            mock.patch.dict("os.environ", {"HF_MODEL_DIR": str(asr_model)}),
+            mock.patch.dict("sys.modules", modules),
+        ):
+            text_extraction.python_func(
+                documents_descriptor=_write_descriptor(tmp_path, {"bucket": "b", "documents": [{"key": "call.mp3"}]}),
+                extracted_text=output_artifact,
+            )
+
+        assert mock_docling_config_cls.call_args.kwargs["asr_model_path"] == str(asr_model.resolve())
+
+    @pytest.mark.parametrize("model_config", [{}, {"model_type": "wav2vec2"}])
+    @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
+    def test_audio_rejects_non_whisper_modelcar(self, tmp_path, model_config):
+        """Audio preflight rejects modelcars that are not Transformers Whisper models."""
+        modules, mock_extract, _ = _make_ai4rag_mocks()
+        asr_model = _make_asr_model(tmp_path / "not-whisper")
+        (asr_model / "config.json").write_text(json.dumps(model_config), encoding="utf-8")
+        output_artifact = mock.MagicMock(path=str(tmp_path / "output"))
+
+        with (
+            mock.patch.dict("os.environ", {"HF_MODEL_DIR": str(asr_model)}),
+            mock.patch.dict("sys.modules", modules),
+            pytest.raises(ValueError, match="only Hugging Face Whisper models"),
+        ):
+            text_extraction.python_func(
+                documents_descriptor=_write_descriptor(tmp_path, {"bucket": "b", "documents": [{"key": "call.mp3"}]}),
+                extracted_text=output_artifact,
+            )
+
+        mock_extract.assert_not_called()
+
+    @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
+    def test_audio_rejects_invalid_model_config(self, tmp_path):
+        """Audio preflight rejects malformed Transformers model configuration."""
+        modules, mock_extract, _ = _make_ai4rag_mocks()
+        asr_model = _make_asr_model(tmp_path / "invalid-config")
+        (asr_model / "config.json").write_text("not json", encoding="utf-8")
+        output_artifact = mock.MagicMock(path=str(tmp_path / "output"))
+
+        with (
+            mock.patch.dict("os.environ", {"HF_MODEL_DIR": str(asr_model)}),
+            mock.patch.dict("sys.modules", modules),
+            pytest.raises(ValueError, match="invalid config.json"),
+        ):
+            text_extraction.python_func(
+                documents_descriptor=_write_descriptor(tmp_path, {"bucket": "b", "documents": [{"key": "call.mp3"}]}),
+                extracted_text=output_artifact,
+            )
+
+        mock_extract.assert_not_called()
+
     @pytest.mark.parametrize("keys", [["report.docx"], ["recording.mp3"], ["notes.txt", "report.docx"]])
     @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
     def test_non_layout_documents_disable_ocr(self, tmp_path, keys):
@@ -557,7 +663,15 @@ class TestTextExtractionUnitTests:
         descriptor = {"bucket": "b", "documents": [{"key": key} for key in keys]}
         output_artifact = mock.MagicMock(path=str(tmp_path / "output"))
 
-        with mock.patch.dict("sys.modules", modules):
+        env = (
+            {"HF_MODEL_DIR": str(_make_asr_model(tmp_path / "whisper-tiny"))}
+            if any(key.lower().endswith((".wav", ".mp3", ".m4a", ".aac", ".ogg", ".flac")) for key in keys)
+            else {}
+        )
+        with (
+            mock.patch.dict("os.environ", env),
+            mock.patch.dict("sys.modules", modules),
+        ):
             text_extraction.python_func(
                 documents_descriptor=_write_descriptor(tmp_path, descriptor),
                 extracted_text=output_artifact,
@@ -569,7 +683,10 @@ class TestTextExtractionUnitTests:
     def test_mixed_corpus_enables_ocr(self, tmp_path):
         """A corpus containing any non-text or non-Markdown file enables OCR."""
         modules, _, mock_docling_config_cls = _make_ai4rag_mocks()
-        descriptor = {"bucket": "b", "documents": [{"key": "notes.txt"}, {"key": "scan.pdf"}]}
+        descriptor = {
+            "bucket": "b",
+            "documents": [{"key": "notes.txt"}, {"key": "scan.pdf"}],
+        }
         output_artifact = mock.MagicMock(path=str(tmp_path / "output"))
 
         with mock.patch.dict("sys.modules", modules):
@@ -626,7 +743,10 @@ class TestTextExtractionUnitTests:
         output_artifact.path = str(tmp_path / "output")
 
         env = {**MOCKED_ENV_VARIABLES, "DOCLING_ARTIFACTS_PATH": str(empty_artifacts)}
-        with mock.patch.dict("os.environ", env, clear=True), mock.patch.dict("sys.modules", modules):
+        with (
+            mock.patch.dict("os.environ", env, clear=True),
+            mock.patch.dict("sys.modules", modules),
+        ):
             with pytest.raises(FileNotFoundError, match="RapidOCR english models are missing"):
                 text_extraction.python_func(
                     documents_descriptor=_write_descriptor(
@@ -672,7 +792,8 @@ class TestTextExtractionUnitTests:
         descriptor_dir = tmp_path / "descriptor"
         descriptor_dir.mkdir()
         (descriptor_dir / "documents_descriptor.json").write_text(
-            json.dumps({"bucket": "b", "documents": [{"key": "scan.pdf"}]}), encoding="utf-8"
+            json.dumps({"bucket": "b", "documents": [{"key": "scan.pdf"}]}),
+            encoding="utf-8",
         )
 
         descriptor_artifact = mock.MagicMock()
