@@ -19,7 +19,9 @@ _SHARED_DIR = os.path.join(os.path.dirname(__file__), "..", "shared")
 
 @dsl.component(
     base_image="quay.io/opendatahub/odh-th-torch-cpu-py312:odh-3.6-ea.2",
+    install_kfp_package=False,
     packages_to_install=[
+        "kfp==2.17.0",
         "kubernetes",
         "olot",
     ],
@@ -233,7 +235,29 @@ def train_model(
             shm_vol = {"name": "dshm", "emptyDir": {"medium": "Memory"}}
             shm_mount = {"name": "dshm", "mountPath": "/dev/shm"}
             all_vols = [shm_vol] + vols
-            all_mounts = [shm_mount] + vmts
+            # The pipeline task may already mount a PVC at pvc_path through
+            # kubernetes_config. If training_pvc_name is provided, it is the
+            # authoritative PVC for the TrainJob worker. Remove the inherited
+            # mount at this path before adding the user-provided PVC so the
+            # JobSet does not contain duplicate volumeMount entries.
+            if training_pvc_name:
+                inherited_mounts = [
+                    mount
+                    for mount in vmts
+                    if (mount.get("mountPath") if isinstance(mount, dict) else getattr(mount, "mount_path", None))
+                    != pvc_path
+                ]
+                if len(inherited_mounts) != len(vmts):
+                    log.info(
+                        "Replacing inherited PVC mount at %s with training PVC %s",
+                        pvc_path,
+                        training_pvc_name,
+                    )
+                vmts_for_trainjob = inherited_mounts
+            else:
+                vmts_for_trainjob = vmts
+
+            all_mounts = [shm_mount] + vmts_for_trainjob
             if training_pvc_name:
                 all_vols.append({"name": "workspace", "persistentVolumeClaim": {"claimName": training_pvc_name}})
                 all_mounts.append({"name": "workspace", "mountPath": pvc_path})
