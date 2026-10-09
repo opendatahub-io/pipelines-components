@@ -185,6 +185,7 @@ class TestTimeseriesDataLoaderUnitTests:
         """Component exposes a KFP python_func entrypoint."""
         assert callable(timeseries_data_loader)
         assert hasattr(timeseries_data_loader, "python_func")
+        assert "sampling_profile" not in timeseries_data_loader.component_spec.outputs
 
     @mock.patch.dict(os.environ, mocked_env_variables, clear=True)
     def test_component_default_split_outputs(self, tmp_path):
@@ -230,7 +231,7 @@ class TestTimeseriesDataLoaderUnitTests:
         assert sampled_test.uri == "/artifacts/test.parquet"
         assert test_rows[0]["target"] == "80"
 
-        assert result.sample_config["sampling_method"] == "first_n_rows"
+        assert result.sample_config["sampling_method"] == "last_values_per_series"
         assert result.sample_config["total_rows_loaded"] == MIN_VALID_RECORDS
         assert result.split_config["test_size"] == 0.2
         assert result.split_config["selection_train_size"] == 0.3
@@ -240,7 +241,7 @@ class TestTimeseriesDataLoaderUnitTests:
         """Quality accepts the 10 GiB sampling-profile preset."""
         result, sampled_test = _run_loader(tmp_path, _timeseries_csv(), preset="quality")
 
-        assert result.sample_config["sampling_method"] == "first_n_rows"
+        assert result.sample_config["sampling_method"] == "last_values_per_series"
         assert Path(result.models_selection_train_data_path).exists()
         assert Path(sampled_test.path).exists()
 
@@ -345,18 +346,18 @@ class TestTimeseriesDataLoaderUnitTests:
             MockedDataFrame.BYTES_PER_ROW = original_bytes_per_row
 
     @mock.patch.dict(os.environ, mocked_env_variables, clear=True)
-    def test_partial_train_read_does_not_report_sample_cap_reached(self, tmp_path):
-        """A mid-stream train CSV error keeps loaded rows but must not set sample_cap_reached."""
+    def test_partial_train_read_fails_closed(self, tmp_path):
+        """A mid-stream train CSV error fails because the latest observations are unknown."""
         train_csv = _timeseries_csv(n_rows=MIN_VALID_RECORDS + 20)
         mocked_pandas = make_mocked_pandas_module()
         real_read_csv = mocked_pandas.read_csv
 
-        def flaky_read_csv(stream, chunksize=None):
+        def flaky_read_csv(stream, chunksize=None, **kwargs):
             if chunksize is None:
-                return real_read_csv(stream, chunksize=chunksize)
+                return real_read_csv(stream, chunksize=chunksize, **kwargs)
 
             def _chunks():
-                yield from real_read_csv(stream, chunksize=chunksize)
+                yield from real_read_csv(stream, chunksize=chunksize, **kwargs)
                 raise OSError("connection reset by peer")
 
             return _chunks()
@@ -368,7 +369,10 @@ class TestTimeseriesDataLoaderUnitTests:
         component_status.metadata = {}
 
         with _mock_boto3_module(get_object_return={"Body": io.BytesIO(train_csv.encode("utf-8"))}):
-            with mock.patch.dict(sys.modules, {"pandas": mocked_pandas}):
+            with (
+                mock.patch.dict(sys.modules, {"pandas": mocked_pandas}),
+                pytest.raises(ValueError, match="Error reading CSV from S3"),
+            ):
                 timeseries_data_loader.python_func(
                     file_key="train.csv",
                     bucket_name="b",
@@ -382,10 +386,10 @@ class TestTimeseriesDataLoaderUnitTests:
 
         payload = json.loads((Path(component_status.path) / "component_status.json").read_text())
         stages = {stage["id"]: stage for stage in payload["stages"]}
-        assert stages["prepare_data"]["metrics"]["sample_cap_reached"] is False
+        assert stages["prepare_data"]["status"]["state"] == "failed"
 
     @mock.patch.dict(os.environ, mocked_env_variables, clear=True)
-    def test_sample_cap_reached_when_size_limit_stops_read(self, tmp_path):
+    def test_sample_cap_reached_when_history_is_sampled(self, tmp_path):
         """Hitting the preset byte budget sets sample_cap_reached without failing the run."""
         body_stream = io.BytesIO(_timeseries_csv(n_rows=300).encode("utf-8"))
         sampled_test = _make_test_artifact(tmp_path)
@@ -1662,15 +1666,15 @@ class TestUserProvidedTestData:
         real_read_csv = mocked_pandas.read_csv
         read_calls = 0
 
-        def flaky_read_csv(stream, chunksize=None):
+        def flaky_read_csv(stream, chunksize=None, **kwargs):
             """Read the training CSV normally; fail the test CSV after its chunks are read."""
             nonlocal read_calls
             read_calls += 1
             if read_calls == 1 or chunksize is None:
-                return real_read_csv(stream, chunksize=chunksize)
+                return real_read_csv(stream, chunksize=chunksize, **kwargs)
 
             def _chunks():
-                yield from real_read_csv(stream, chunksize=chunksize)
+                yield from real_read_csv(stream, chunksize=chunksize, **kwargs)
                 raise OSError("connection reset by peer")
 
             return _chunks()

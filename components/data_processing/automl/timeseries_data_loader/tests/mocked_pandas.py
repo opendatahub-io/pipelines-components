@@ -254,6 +254,15 @@ class MockedDataFrame:
             return json.dumps(records)
         raise NotImplementedError(f"to_json orient={orient!r} not supported in mock")
 
+    def itertuples(self, index=False, name=None):
+        """Yield tuples with the same simulated memory cost as memory_usage()."""
+
+        class SizedTuple(tuple):
+            def __sizeof__(self):
+                return MockedDataFrame.BYTES_PER_ROW
+
+        return (SizedTuple(row) for row in self._rows)
+
     def groupby(self, by, sort=True):
         """Group rows by one column (``by``); yields ``(key, MockedDataFrame)`` like pandas."""
         return MockedGroupBy(self, by, sort=sort)
@@ -368,7 +377,7 @@ class _IlocIndexer:
         raise TypeError(f"mock iloc does not support {type(key)!r}")
 
 
-def _read_csv_chunks(text_stream, chunksize):
+def _read_csv_chunks(text_stream, chunksize, dtype=None):
     """Parse CSV and yield MockedDataFrame chunks."""
     if hasattr(text_stream, "read"):
         content = text_stream.read()
@@ -387,6 +396,12 @@ def _read_csv_chunks(text_stream, chunksize):
         return
     for start in range(0, len(rows), chunksize):
         chunk_rows = [[_parse_csv_cell(c) for c in row] for row in rows[start : start + chunksize]]
+        if dtype:
+            for index, column in enumerate(header):
+                if dtype.get(column) == "string":
+                    for row, source_row in zip(chunk_rows, rows[start : start + chunksize], strict=True):
+                        if not _cell_is_na(row[index]):
+                            row[index] = source_row[index]
         yield MockedDataFrame(header, chunk_rows)
 
 
@@ -406,7 +421,7 @@ def make_mocked_pandas_module():
     """Build a module suitable for ``sys.modules['pandas']``."""
     mod = types.ModuleType("pandas")
 
-    def to_datetime(arg, errors="coerce", utc=False):
+    def to_datetime(arg, errors="coerce", utc=False, format=None):
         """Parse timestamp column like ``pandas.to_datetime`` (subset)."""
         _ = utc
         if isinstance(arg, MockSeries):
@@ -445,17 +460,17 @@ def make_mocked_pandas_module():
             return MockSeries([v if not _cell_is_na(v) else None for v in arg._values])
         raise TypeError(f"mock to_timedelta not implemented for {type(arg)!r}")
 
-    def _read_csv(stream, chunksize=None):
+    def _read_csv(stream, chunksize=None, dtype=None):
         if chunksize is not None:
-            return _read_csv_chunks(stream, chunksize)
-        chunks = list(_read_csv_chunks(stream, 10000))
+            return _read_csv_chunks(stream, chunksize, dtype=dtype)
+        chunks = list(_read_csv_chunks(stream, 10000, dtype=dtype))
         return _concat(chunks) if chunks else MockedDataFrame([], [])
 
     def _dataframe(*args, **kwargs):
         """Support ``DataFrame(columns=...)`` for empty frames (concat with no parts)."""
         cols = kwargs.get("columns")
         if cols is not None:
-            return MockedDataFrame(list(cols), [])
+            return MockedDataFrame(list(cols), [list(row) for row in args[0]] if args else [])
         return MockedDataFrame([], [])
 
     mod.read_csv = _read_csv
