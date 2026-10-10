@@ -88,6 +88,10 @@ class MockSeries:
         non_null = [v for v in self._values if not _cell_is_na(v)]
         return max(non_null) if non_null else None
 
+    def fillna(self, value):
+        """Replace NA cells with ``value`` (used for timestamp sort keys)."""
+        return MockSeries([value if _cell_is_na(v) else v for v in self._values])
+
     def astype(self, dtype):
         """Type conversion."""
         if dtype is int:
@@ -207,17 +211,38 @@ class MockedDataFrame:
         """Shallow copy of rows."""
         return MockedDataFrame(self._columns, [list(r) for r in self._rows])
 
-    def sort_values(self, by, ascending=True):
+    def sort_values(self, by, ascending=True, na_position="last"):
         """Sort rows lexicographically by the given column name(s)."""
-        _ = ascending
         cols = list(by) if isinstance(by, (list, tuple)) else [by]
         col_indices = [self._columns.index(c) for c in cols]
 
         def sort_key(row):
-            return tuple(row[i] for i in col_indices)
+            parts = []
+            for i in col_indices:
+                value = row[i]
+                na = _cell_is_na(value)
+                if na_position == "first":
+                    parts.append((0 if na else 1, "" if na else value))
+                else:
+                    parts.append((1 if na else 0, "" if na else value))
+            return tuple(parts)
 
-        sorted_rows = sorted(self._rows, key=sort_key)
+        sorted_rows = sorted(self._rows, key=sort_key, reverse=not ascending)
         return MockedDataFrame(self._columns, sorted_rows)
+
+    def drop(self, labels=None, axis=1, columns=None, inplace=False):
+        """Drop columns by name (axis=1); used to strip the temporary timestamp sort key."""
+        _ = axis, inplace
+        cols_to_drop = columns if columns is not None else labels
+        if cols_to_drop is None:
+            return MockedDataFrame(self._columns, [list(r) for r in self._rows])
+        if isinstance(cols_to_drop, str):
+            cols_to_drop = [cols_to_drop]
+        drop_set = set(cols_to_drop)
+        keep_idx = [i for i, col in enumerate(self._columns) if col not in drop_set]
+        new_columns = [self._columns[i] for i in keep_idx]
+        new_rows = [[row[i] for i in keep_idx] for row in self._rows]
+        return MockedDataFrame(new_columns, new_rows)
 
     def reset_index(self, drop=True):
         """No index column in mock; return self."""
@@ -254,9 +279,9 @@ class MockedDataFrame:
             return json.dumps(records)
         raise NotImplementedError(f"to_json orient={orient!r} not supported in mock")
 
-    def groupby(self, by, sort=True):
+    def groupby(self, by, sort=True, dropna=True):
         """Group rows by one column (``by``); yields ``(key, MockedDataFrame)`` like pandas."""
-        return MockedGroupBy(self, by, sort=sort)
+        return MockedGroupBy(self, by, sort=sort, dropna=dropna)
 
     def __getitem__(self, key):
         """Column access (``str``) or boolean row mask (``MockSeries`` of bool)."""
@@ -334,11 +359,12 @@ class MockedDataFrame:
 class MockedGroupBy:
     """Minimal ``DataFrame.groupby`` for a single column."""
 
-    def __init__(self, df, by, sort=True):
-        """Store parent frame, column name, and whether to sort group keys."""
+    def __init__(self, df, by, sort=True, dropna=True):
+        """Store parent frame, column name, sort, and whether to drop NA group keys."""
         self._df = df
         self._by = by
         self._sort = sort
+        self._dropna = dropna
 
     def __iter__(self):
         """Yield ``(group_key, group_df)`` in first-seen key order if ``sort=False``."""
@@ -347,6 +373,8 @@ class MockedGroupBy:
         key_order: list = []
         for row in self._df._rows:
             key = row[col_idx]
+            if self._dropna and _cell_is_na(key):
+                continue
             if key not in groups:
                 key_order.append(key)
                 groups[key] = []

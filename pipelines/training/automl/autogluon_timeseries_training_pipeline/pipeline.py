@@ -96,8 +96,11 @@ def autogluon_timeseries_training_pipeline(
        artifact for dashboards before data loading.
 
     1. **Data loading & splitting** (``timeseries_data_loader``): Loads CSV from S3 (up to 100 MiB
-       for the "speed" preset, up to 1 GiB for "balanced", and up to 10 GiB for "quality"),
-       replaces ``+/-inf`` with NaN (missing targets stay for AutoGluon), requires parseable timestamps
+       for the "speed" preset, up to 1 GiB for "balanced", and up to 10 GiB for "quality") by
+       keeping the most recent rows per series (last-values by parsed timestamp, not the start
+       of the file). The object is streamed in full; the preset bounds retained memory, not
+       download size. Unsorted input is ordered by parsed timestamp. Then replaces ``+/-inf``
+       with NaN (missing targets stay for AutoGluon), requires parseable timestamps
        and non-null ids (or injects ``__synthetic_item_id`` for two-column datasets when ``id_column=""``),
        deduplicates ``(id_column, timestamp_column)``, then applies a two-stage
        **per-series temporal** split on ``id_column`` / ``timestamp_column``:

@@ -35,10 +35,18 @@ def timeseries_data_loader(
 ):
     """Load and split timeseries data from S3 for AutoGluon training.
 
-    This component loads time series data from S3, samples it (up to 100 MiB for the
+    This component loads time series data from S3 and samples it (up to 100 MiB for the
     ``"speed"`` preset, up to 1 GiB for ``"balanced"``, and up to 10 GiB for
-    ``"quality"``),
-    applies light **cleansing** (replace ``+/-inf`` with NaN so AutoGluon can apply its
+    ``"quality"``) by keeping the **most recent rows per series** (last-values by parsed
+    ``timestamp_column``, not the start of the file). The S3 object is streamed in full;
+    the preset bounds retained in-memory size, not download size. Unsorted files are
+    ordered by parsed timestamp, so "latest" is the maximum time per ``id_column`` (or the
+    whole file when ``id_column`` is empty), not the last line in the CSV. Invalid timestamps
+    and null ids fail before any row is evicted. A mid-stream read error is fatal, because the
+    unread tail may contain newer observations. When the cap cannot hold every series after a
+    complete read, series whose newest observation is oldest are dropped first.
+
+    After sampling, the component applies light **cleansing** (replace ``+/-inf`` with NaN so AutoGluon can apply its
     own missing-value logic; require parseable timestamps and non-null ids; drop
     exact duplicate ``(id_column, timestamp_column)`` rows, keep last), then performs a two-stage
     **per-series temporal** split for efficient AutoGluon training:
@@ -76,9 +84,10 @@ def timeseries_data_loader(
         test_data_bucket_name: S3 bucket name for user-provided test dataset (default: empty string).
         test_data_file_key: S3 object key of the user-provided test CSV (default: empty string).
         preset: Training quality tier controlling the sampling size budget. ``"speed"``
-            (default) samples up to 100 MiB; ``"balanced"`` samples up to 1 GiB; and
-            ``"quality"`` samples up to 10 GiB. User-provided test datasets are capped
-            at 50 MiB, 100 MiB, and 1 GiB respectively.
+            (default) retains up to 100 MiB of the latest rows per series; ``"balanced"``
+            retains up to 1 GiB; and ``"quality"`` retains up to 10 GiB. User-provided
+            test datasets use the same last-values policy, capped at 50 MiB, 100 MiB, and
+            1 GiB respectively.
 
     Raises:
         ValueError: If a required parameter is empty or invalid, if only one of the
@@ -231,6 +240,251 @@ def timeseries_data_loader(
                 verify=verify,
             )
 
+        TS_SORT_KEY = "__kfp_ts_sort_key"
+        MAX_SERIES_PROFILE = 50
+        LAST_VALUES_MIN_ROWS = 2
+        SAMPLING_METHOD_LAST_VALUES = "last_n_rows_per_series"
+        UNLABELED_SERIES_KEY = "__all__"
+
+        _fractional_year_logged = False
+
+        def _fmt_ts(value):
+            if value is None:
+                return None
+            iso = getattr(value, "isoformat", None)
+            if callable(iso):
+                try:
+                    return iso()
+                except Exception:  # noqa: BLE001 - profile formatting must never break the run
+                    pass
+            return str(value)
+
+        def _parse_timestamp_series(ts_series, ts_col, log):
+            """Parse timestamps the same way cleansing does. Unparseable values become NA.
+
+            Raises if numeric values are outside the fractional-year range. Does not raise on
+            NA; callers must fail when any value is missing or unparseable so eviction cannot
+            hide invalid input.
+            """
+            nonlocal _fractional_year_logged
+            non_null_ts = ts_series[ts_series.notna()]
+            is_numeric = (
+                bool(pd.to_numeric(non_null_ts, errors="coerce").notna().all()) if len(non_null_ts) > 0 else False
+            )
+            if is_numeric:
+                numeric_ts = pd.to_numeric(ts_series, errors="coerce")
+                non_null_numeric = numeric_ts[numeric_ts.notna()]
+                if len(non_null_numeric) > 0:
+                    min_val = non_null_numeric.min()
+                    max_val = non_null_numeric.max()
+                    if 1800 <= min_val <= 2200 and 1800 <= max_val <= 2200:
+                        if not _fractional_year_logged:
+                            log.info(
+                                "Timestamp column %r contains numeric values in year range [%.2f, %.2f]; "
+                                "treating as fractional years (kept as numeric for sorting).",
+                                ts_col,
+                                min_val,
+                                max_val,
+                            )
+                            _fractional_year_logged = True
+                        return numeric_ts
+                    raise ValueError(
+                        f"Column {ts_col!r} contains numeric values outside the fractional year range "
+                        f"(1800-2200): min={min_val:.2f}, max={max_val:.2f}. "
+                        "If these are Unix timestamps, convert them to ISO date strings upstream. "
+                        "If these are fractional years, ensure values are in a reasonable range."
+                    )
+            parsed = pd.to_datetime(ts_series, errors="coerce", utc=True)
+            if hasattr(parsed, "dt"):
+                parsed = parsed.dt.tz_localize(None)
+            return parsed
+
+        def _raise_if_null_ids(frame, id_col):
+            if id_col and frame[id_col].isna().any():
+                raise ValueError(
+                    f"Column {id_col!r} contains null values. Fix the input data; do not drop rows here, "
+                    "as that can break regular frequency expected by AutoGluon TimeSeries."
+                )
+
+        def _raise_if_unparseable_timestamps(parsed, ts_col):
+            bad_ts = int(parsed.isna().sum())
+            if bad_ts:
+                raise ValueError(
+                    f"Column {ts_col!r} has {bad_ts} value(s) that could not be parsed as datetimes. "
+                    "Fix the input data. Dropping those rows would create irregular series and can break "
+                    "AutoGluon frequency inference (set TimeSeriesPredictor(freq=...) or regularize upstream)."
+                )
+
+        def _drop_sort_key(frame):
+            if TS_SORT_KEY in frame.columns:
+                return frame.drop(columns=[TS_SORT_KEY])
+            return frame
+
+        def _frame_memory(frame):
+            return int(frame.memory_usage(deep=True).sum())
+
+        def _series_memory(series_frames):
+            return sum(_frame_memory(frame) for frame in series_frames.values())
+
+        def _trim_last_values(series_frames, max_size_bytes, allow_drop_series=False):
+            """Bound retained frames to max_size_bytes, keeping latest rows per series.
+
+            During the stream (``allow_drop_series=False``) every series seen so far is kept
+            so a later row can merge onto that series' existing tail. Series whose newest
+            observation is oldest are dropped only after the object has been read completely.
+            """
+            if not series_frames:
+                return
+            total_bytes = _series_memory(series_frames)
+            if total_bytes <= max_size_bytes:
+                return
+
+            total_rows = sum(len(frame) for frame in series_frames.values())
+            n_series = len(series_frames)
+            bytes_per_row = total_bytes / max(total_rows, 1)
+            target_rows = max(int(max_size_bytes / bytes_per_row), 0)
+
+            def _series_recency(item):
+                _sid, frame = item
+                if len(frame) == 0:
+                    return (float("-inf"), str(_sid))
+                return (frame[TS_SORT_KEY].max(), str(_sid))
+
+            if allow_drop_series:
+                min_keep = LAST_VALUES_MIN_ROWS if target_rows >= LAST_VALUES_MIN_ROWS else 1
+                max_series = max(target_rows // min_keep, 1) if target_rows else 0
+                n_keep = min(n_series, max_series)
+            else:
+                # Keep every series, and at least LAST_VALUES_MIN_ROWS when the series has
+                # that many observations, so a later chunk can merge onto a real tail.
+                n_keep = n_series
+
+            ranked = sorted(series_frames.items(), key=_series_recency, reverse=True)
+            if n_keep <= 0:
+                series_frames.clear()
+                return
+            if n_keep < n_series:
+                ranked = ranked[:n_keep]
+
+            if allow_drop_series and target_rows >= n_keep:
+                k = max(target_rows // n_keep, 1)
+                remainder = max(target_rows - k * n_keep, 0)
+            elif not allow_drop_series and target_rows >= n_keep * LAST_VALUES_MIN_ROWS:
+                k = max(target_rows // n_keep, LAST_VALUES_MIN_ROWS)
+                remainder = max(target_rows - k * n_keep, 0)
+            else:
+                k = LAST_VALUES_MIN_ROWS if not allow_drop_series else 1
+                remainder = 0
+
+            trimmed = {}
+            for i, (sid, frame) in enumerate(ranked):
+                keep = k + (1 if i < remainder else 0)
+                keep = max(keep, 1)
+                keep = min(keep, len(frame))
+                trimmed[sid] = frame.tail(keep) if keep < len(frame) else frame
+            series_frames.clear()
+            series_frames.update(trimmed)
+
+            min_len_to_trim = 1 if allow_drop_series else LAST_VALUES_MIN_ROWS
+            while _series_memory(series_frames) > max_size_bytes and series_frames:
+                longest = max(len(frame) for frame in series_frames.values())
+                if longest <= min_len_to_trim:
+                    if not allow_drop_series:
+                        break
+                    oldest_sid = min(series_frames.items(), key=_series_recency)[0]
+                    del series_frames[oldest_sid]
+                    continue
+                candidates = [(sid, frame) for sid, frame in series_frames.items() if len(frame) == longest]
+                sid, frame = min(candidates, key=lambda item: (item[1][TS_SORT_KEY].min(), str(item[0])))
+                series_frames[sid] = frame.iloc[1:]
+                if len(series_frames[sid]) == 0:
+                    del series_frames[sid]
+
+        def _profile_series_id(sid):
+            if sid == UNLABELED_SERIES_KEY:
+                return SYNTHETIC_ITEM_ID_VALUE
+            return str(sid)
+
+        def _build_sampling_profile(series_stats, series_frames):
+            retained_ids = set(series_frames)
+            retained_full = []
+            dropped_full = []
+            for sid, stats in series_stats.items():
+                entry = {
+                    "id": _profile_series_id(sid),
+                    "rows_seen": int(stats["rows_seen"]),
+                    "source_min_timestamp": _fmt_ts(stats["min_ts"]),
+                    "source_max_timestamp": _fmt_ts(stats["max_ts"]),
+                }
+                if sid in retained_ids:
+                    frame = series_frames[sid]
+                    entry["rows_retained"] = int(len(frame))
+                    entry["rows"] = entry["rows_retained"]
+                    entry["min_timestamp"] = _fmt_ts(frame[TS_SORT_KEY].min()) if len(frame) else None
+                    entry["max_timestamp"] = _fmt_ts(frame[TS_SORT_KEY].max()) if len(frame) else None
+                    retained_full.append(entry)
+                else:
+                    entry["rows_retained"] = 0
+                    entry["rows"] = 0
+                    entry["min_timestamp"] = None
+                    entry["max_timestamp"] = None
+                    dropped_full.append(entry)
+            retained_full.sort(key=lambda item: item["id"])
+            dropped_full.sort(key=lambda item: item["id"])
+            n_retained = len(retained_full)
+            n_dropped = len(dropped_full)
+            return {
+                "n_series_seen": len(series_stats),
+                "n_series_retained": n_retained,
+                "n_series_dropped": n_dropped,
+                "retained_full": retained_full,
+                "dropped_full": dropped_full,
+                "series_profile": retained_full[:MAX_SERIES_PROFILE],
+                "series_profile_truncated": n_retained > MAX_SERIES_PROFILE,
+                "dropped_series_profile": dropped_full[:MAX_SERIES_PROFILE],
+                "dropped_series_profile_truncated": n_dropped > MAX_SERIES_PROFILE,
+            }
+
+        def _series_retention_profile(data, id_col, ts_col):
+            """Fallback profile from the retained frame when last-values stats are unavailable."""
+            profiles = []
+            for sid, group in data.groupby(id_col, sort=False, dropna=False):
+                profiles.append(
+                    {
+                        "id": str(sid),
+                        "rows": int(len(group)),
+                        "rows_seen": int(len(group)),
+                        "rows_retained": int(len(group)),
+                        "min_timestamp": _fmt_ts(group[ts_col].min()),
+                        "max_timestamp": _fmt_ts(group[ts_col].max()),
+                        "source_min_timestamp": _fmt_ts(group[ts_col].min()),
+                        "source_max_timestamp": _fmt_ts(group[ts_col].max()),
+                    }
+                )
+            profiles.sort(key=lambda item: item["id"])
+            n_series = len(profiles)
+            return {
+                "n_series_seen": n_series,
+                "n_series_retained": n_series,
+                "n_series_dropped": 0,
+                "retained_full": profiles,
+                "dropped_full": [],
+                "series_profile": profiles[:MAX_SERIES_PROFILE],
+                "series_profile_truncated": n_series > MAX_SERIES_PROFILE,
+                "dropped_series_profile": [],
+                "dropped_series_profile_truncated": False,
+            }
+
+        def _concat_retained_frames(series_frames, chunk_list, sampling_mode):
+            if sampling_mode == "last_values":
+                frames = [_drop_sort_key(frame) for frame in series_frames.values() if len(frame) > 0]
+                if not frames:
+                    return None
+                return pd.concat(frames, ignore_index=True)
+            if not chunk_list:
+                return None
+            return pd.concat(chunk_list, ignore_index=True)
+
         def load_timeseries_data_truncate(
             bucket_name,
             file_key,
@@ -238,17 +492,32 @@ def timeseries_data_loader(
             chunk_size,
             truncation_report=None,
             fail_on_partial_read: bool = False,
+            id_column: str = "",
+            timestamp_column: str = "",
         ):
-            """Load time series CSV from S3, truncating to max_size_bytes while preserving order.
+            """Load time series CSV from S3, retaining the latest rows per series within max_size_bytes.
+
+            The object is streamed in full. During the read, every series keeps a bounded tail so a
+            later row can merge onto history already seen for that id. After a complete read, if
+            the budget still cannot hold every series, series whose newest observation is oldest
+            are dropped. "Latest" is determined by parsed ``timestamp_column`` values, not file
+            order. Each chunk is validated (parseable timestamps; non-null ids when ``id_column``
+            is set) before any eviction. A mid-stream read error is fatal for last-values sampling
+            because the unread tail may contain newer observations. When ``timestamp_column`` (or
+            ``id_column``, if set) is missing, the loader falls back to a bounded head read so
+            later validation can report the missing columns.
 
             When ``truncation_report`` is a dict:
-            - ``"cap_reached"`` is True only when the size limit stopped the read (including the
-              conservative case where accumulated rows hit exactly ``max_size_bytes``).
+            - ``"cap_reached"`` is True when the size limit forced rows to be discarded
+              (including the conservative case where accumulated rows hit exactly
+              ``max_size_bytes``).
             - ``"truncated"`` is True when the returned frame may be incomplete for any reason
-              (cap exhaustion or mid-stream read error with partial recovery).
+              (cap eviction or mid-stream read error with partial recovery on the head fallback).
+            - ``"sampling_profile"`` records per-series rows seen vs retained and time ranges.
 
-            When ``fail_on_partial_read`` is True, a mid-stream error is fatal. If no rows were
-            read, an empty dataframe is returned so the caller can report an empty test dataset.
+            When ``fail_on_partial_read`` is True, a mid-stream error is fatal. Last-values
+            sampling also treats a mid-stream error as fatal. If no rows were read, an empty
+            dataframe is returned so the caller can report an empty test dataset.
             """
             from botocore.exceptions import SSLError
 
@@ -266,6 +535,9 @@ def timeseries_data_loader(
             text_stream = io.TextIOWrapper(response["Body"], encoding="utf-8")
 
             chunk_list = []
+            series_frames = {}
+            series_stats = {}
+            sampling_mode = None
             accumulated_size = 0
             total_rows_read = 0
 
@@ -278,34 +550,91 @@ def timeseries_data_loader(
                 if truncation_report is not None:
                     truncation_report["truncated"] = True
 
+            def _update_series_stats(sid, group):
+                n = len(group)
+                if n == 0:
+                    return
+                tmin = group[TS_SORT_KEY].min()
+                tmax = group[TS_SORT_KEY].max()
+                prev = series_stats.get(sid)
+                if prev is None:
+                    series_stats[sid] = {"rows_seen": n, "min_ts": tmin, "max_ts": tmax}
+                    return
+                prev["rows_seen"] += n
+                if tmin is not None and (prev["min_ts"] is None or tmin < prev["min_ts"]):
+                    prev["min_ts"] = tmin
+                if tmax is not None and (prev["max_ts"] is None or tmax > prev["max_ts"]):
+                    prev["max_ts"] = tmax
+
+            def _ingest_last_values_chunk(chunk_df):
+                work = chunk_df.copy()
+                _raise_if_null_ids(work, id_column)
+                parsed = _parse_timestamp_series(work[timestamp_column], timestamp_column, logger)
+                _raise_if_unparseable_timestamps(parsed, timestamp_column)
+                work[TS_SORT_KEY] = parsed
+                if id_column:
+                    groups = work.groupby(id_column, sort=False, dropna=False)
+                else:
+                    groups = ((UNLABELED_SERIES_KEY, work),)
+                for sid, group in groups:
+                    group = group.sort_values(by=TS_SORT_KEY, na_position="first")
+                    _update_series_stats(sid, group)
+                    if sid in series_frames:
+                        merged = pd.concat([series_frames[sid], group], ignore_index=True)
+                        merged = merged.sort_values(by=TS_SORT_KEY, na_position="first")
+                        series_frames[sid] = merged
+                    else:
+                        series_frames[sid] = group
+                if _series_memory(series_frames) > max_size_bytes:
+                    _trim_last_values(series_frames, max_size_bytes, allow_drop_series=False)
+                    _mark_cap_reached()
+
+            def _ingest_head_chunk(chunk_df):
+                nonlocal accumulated_size, total_rows_read
+                chunk_memory = chunk_df.memory_usage(deep=True).sum()
+                if accumulated_size + chunk_memory > max_size_bytes:
+                    _mark_cap_reached()
+                    remaining_bytes = max_size_bytes - accumulated_size
+                    if remaining_bytes <= 0:
+                        return False
+                    bytes_per_row = chunk_memory / len(chunk_df) if len(chunk_df) > 0 else 0
+                    if bytes_per_row > 0:
+                        rows_to_take = int(remaining_bytes / bytes_per_row)
+                        if rows_to_take > 0:
+                            chunk_df = chunk_df.head(rows_to_take)
+                            chunk_list.append(chunk_df)
+                            total_rows_read += len(chunk_df)
+                            accumulated_size += chunk_df.memory_usage(deep=True).sum()
+                    return False
+                chunk_list.append(chunk_df)
+                accumulated_size += chunk_memory
+                total_rows_read += len(chunk_df)
+                if accumulated_size >= max_size_bytes:
+                    _mark_cap_reached()
+                    return False
+                return True
+
             try:
                 for chunk_df in pd.read_csv(text_stream, chunksize=chunk_size):
-                    chunk_memory = chunk_df.memory_usage(deep=True).sum()
-
-                    if accumulated_size + chunk_memory > max_size_bytes:
-                        _mark_cap_reached()
-                        remaining_bytes = max_size_bytes - accumulated_size
-                        if remaining_bytes <= 0:
-                            break
-                        bytes_per_row = chunk_memory / len(chunk_df) if len(chunk_df) > 0 else 0
-                        if bytes_per_row > 0:
-                            rows_to_take = int(remaining_bytes / bytes_per_row)
-                            if rows_to_take > 0:
-                                chunk_df = chunk_df.head(rows_to_take)
-                                chunk_list.append(chunk_df)
-                                total_rows_read += len(chunk_df)
+                    if sampling_mode is None:
+                        cols = set(chunk_df.columns)
+                        can_last_values = bool(timestamp_column) and timestamp_column in cols
+                        if id_column and id_column not in cols:
+                            can_last_values = False
+                        sampling_mode = "last_values" if can_last_values else "head"
+                    total_rows_read += len(chunk_df) if sampling_mode == "last_values" else 0
+                    if sampling_mode == "last_values":
+                        _ingest_last_values_chunk(chunk_df)
+                        continue
+                    if not _ingest_head_chunk(chunk_df):
                         break
 
-                    chunk_list.append(chunk_df)
-                    accumulated_size += chunk_memory
-                    total_rows_read += len(chunk_df)
-
-                    if accumulated_size >= max_size_bytes:
-                        _mark_cap_reached()
-                        break
-
+            except ValueError:
+                raise
             except Exception as e:
-                if not chunk_list or fail_on_partial_read:
+                last_values_incomplete = sampling_mode == "last_values"
+                has_rows = bool(series_frames) if sampling_mode == "last_values" else bool(chunk_list)
+                if last_values_incomplete or not has_rows or fail_on_partial_read:
                     raise ValueError(f"Error reading CSV from S3: {str(e)}") from e
                 logger.warning(
                     "Partial CSV read from s3://%s/%s, keeping the %s row(s) read so far: %s",
@@ -316,7 +645,15 @@ def timeseries_data_loader(
                 )
                 _mark_partial_read()
 
-            if not chunk_list:
+            if sampling_mode == "last_values":
+                if _series_memory(series_frames) > max_size_bytes:
+                    _trim_last_values(series_frames, max_size_bytes, allow_drop_series=True)
+                    _mark_cap_reached()
+                if truncation_report is not None:
+                    truncation_report["sampling_profile"] = _build_sampling_profile(series_stats, series_frames)
+
+            retained = _concat_retained_frames(series_frames, chunk_list, sampling_mode)
+            if retained is None:
                 if fail_on_partial_read:
                     # A header-only CSV yields no chunks at all, so the header is gone
                     # too. Return an empty frame and let the caller report it as an
@@ -324,12 +661,16 @@ def timeseries_data_loader(
                     return pd.DataFrame()
                 raise ValueError("No data was loaded from S3. The file may be empty or inaccessible.")
 
+            if sampling_mode == "last_values":
+                accumulated_size = _series_memory(series_frames)
             logger.debug(
-                "S3 chunk read: %s rows (~%.2f MiB)",
+                "S3 chunk read: %s rows (~%.2f MiB, sampling_mode=%s, retained=%s)",
                 total_rows_read,
                 accumulated_size / (1024**2),
+                sampling_mode,
+                len(retained),
             )
-            return pd.concat(chunk_list, ignore_index=True)
+            return retained
 
         def _clean_timeseries_dataframe(data, id_col, ts_col, log):
             """Prepare panel data without dropping rows for missing targets (AutoGluon handles NaNs).
@@ -348,66 +689,9 @@ def timeseries_data_loader(
                 return data
 
             out = data.replace([float("inf"), float("-inf")], float("nan"))
-
-            # Detect and handle numeric fractional year timestamps
-            ts_series = out[ts_col]
-            non_null_ts = ts_series[ts_series.notna()]
-
-            # Check if all non-null timestamps are numeric
-            is_numeric = pd.to_numeric(non_null_ts, errors="coerce").notna().all() if len(non_null_ts) > 0 else False
-
-            if is_numeric:
-                # Convert to numeric
-                numeric_ts = pd.to_numeric(ts_series, errors="coerce")
-                non_null_numeric = numeric_ts[numeric_ts.notna()]
-
-                # Check if values look like fractional years (reasonable year range: 1800-2200)
-                if len(non_null_numeric) > 0:
-                    min_val = non_null_numeric.min()
-                    max_val = non_null_numeric.max()
-
-                    if 1800 <= min_val <= 2200 and 1800 <= max_val <= 2200:
-                        # Treat as fractional years - keep as numeric for sorting
-                        # AutoGluon will handle conversion when loading the data
-                        log.info(
-                            "Timestamp column %r contains numeric values in year range [%.2f, %.2f]; "
-                            "treating as fractional years (kept as numeric for sorting).",
-                            ts_col,
-                            min_val,
-                            max_val,
-                        )
-                        out[ts_col] = numeric_ts
-                    else:
-                        # Numeric but not in year range - likely Unix timestamps or invalid
-                        raise ValueError(
-                            f"Column {ts_col!r} contains numeric values outside the fractional year range "
-                            f"(1800-2200): min={min_val:.2f}, max={max_val:.2f}. "
-                            "If these are Unix timestamps, convert them to ISO date strings upstream. "
-                            "If these are fractional years, ensure values are in a reasonable range."
-                        )
-                else:
-                    # All nulls, let pd.to_datetime handle it
-                    out[ts_col] = pd.to_datetime(out[ts_col], errors="coerce", utc=True).dt.tz_localize(None)
-            else:
-                # Not all numeric - use standard datetime parsing.
-                # utc=True normalizes tz-aware strings (e.g. ISO 8601 with Z suffix) to UTC
-                # before tz_localize(None) strips timezone info, producing tz-naive datetime64[ns].
-                # This prevents pandas from writing tz-aware strings to CSV that AutoGluon
-                # cannot read back as datetime64 via TimeSeriesDataFrame.from_data_frame().
-                out[ts_col] = pd.to_datetime(out[ts_col], errors="coerce", utc=True).dt.tz_localize(None)
-
-            if out[id_col].isna().any():
-                raise ValueError(
-                    f"Column {id_col!r} contains null values. Fix the input data; do not drop rows here, "
-                    "as that can break regular frequency expected by AutoGluon TimeSeries."
-                )
-            bad_ts = int(out[ts_col].isna().sum())
-            if bad_ts:
-                raise ValueError(
-                    f"Column {ts_col!r} has {bad_ts} value(s) that could not be parsed as datetimes. "
-                    "Fix the input data. Dropping those rows would create irregular series and can break "
-                    "AutoGluon frequency inference (set TimeSeriesPredictor(freq=...) or regularize upstream)."
-                )
+            out[ts_col] = _parse_timestamp_series(out[ts_col], ts_col, log)
+            _raise_if_null_ids(out, id_col)
+            _raise_if_unparseable_timestamps(out[ts_col], ts_col)
 
             # Sort by (id, timestamp) BEFORE deduplication so that keep="last" means
             # "keep the last row in chronological order" (after sorting), not "keep the last row in file order".
@@ -436,6 +720,7 @@ def timeseries_data_loader(
             "running",
             metrics={"source": f"s3://{bucket_name}/{file_key}"},
         )
+        requested_id_column = id_column
         sampling_report = {}
         df = load_timeseries_data_truncate(
             bucket_name,
@@ -443,6 +728,8 @@ def timeseries_data_loader(
             MAX_SIZE_BYTES,
             PANDAS_CHUNK_SIZE,
             truncation_report=sampling_report,
+            id_column=requested_id_column,
+            timestamp_column=timestamp_column,
         )
 
         # Reject collision with reserved synthetic-ID column (CWE-20)
@@ -511,6 +798,27 @@ def timeseries_data_loader(
                 "Provide a larger dataset or fix invalid timestamps, null ids, and duplicate keys."
             )
 
+        retention_profile = sampling_report.get("sampling_profile") or _series_retention_profile(
+            df, id_column, timestamp_column
+        )
+        status_dir = Path(component_status.path)
+        status_dir.mkdir(parents=True, exist_ok=True)
+        (status_dir / "series_sampling_profile.json").write_text(
+            json.dumps(
+                {
+                    "n_series_seen": retention_profile["n_series_seen"],
+                    "n_series_retained": retention_profile["n_series_retained"],
+                    "n_series_dropped": retention_profile["n_series_dropped"],
+                    "retained": retention_profile.get("retained_full", retention_profile["series_profile"]),
+                    "dropped": retention_profile.get(
+                        "dropped_full",
+                        retention_profile.get("dropped_series_profile", []),
+                    ),
+                },
+                default=str,
+            ),
+            encoding="utf-8",
+        )
         status.record(
             "prepare_data",
             "completed",
@@ -520,8 +828,15 @@ def timeseries_data_loader(
                 "sampled_in_memory_bytes": int(df.memory_usage(deep=True).sum()),
                 "sample_cap_bytes": MAX_SIZE_BYTES,
                 "sample_cap_reached": bool(sampling_report.get("cap_reached")),
-                "sampling_method": "first_n_rows",
+                "sampling_method": SAMPLING_METHOD_LAST_VALUES,
                 "preset": preset,
+                "n_series_seen": retention_profile["n_series_seen"],
+                "n_series_retained": retention_profile["n_series_retained"],
+                "n_series_dropped": retention_profile["n_series_dropped"],
+                "series_profile": retention_profile["series_profile"],
+                "series_profile_truncated": retention_profile["series_profile_truncated"],
+                "dropped_series_profile": retention_profile["dropped_series_profile"],
+                "dropped_series_profile_truncated": retention_profile["dropped_series_profile_truncated"],
             },
         )
         status.record("split_and_export", "started")
@@ -573,6 +888,8 @@ def timeseries_data_loader(
                     PANDAS_CHUNK_SIZE,
                     truncation_report=truncation_report,
                     fail_on_partial_read=True,
+                    id_column=requested_id_column,
+                    timestamp_column=timestamp_column,
                 )
             except Exception as e:
                 raise test_data_load_error(test_data_source, e) from e
@@ -774,7 +1091,14 @@ def timeseries_data_loader(
         else:
             sample_rows = sample_tail.to_json(orient="records")
 
-        sample_config = {"sampling_method": "first_n_rows", "total_rows_loaded": len(df), "sampled_rows": len(df)}
+        sample_config = {
+            "sampling_method": SAMPLING_METHOD_LAST_VALUES,
+            "total_rows_loaded": len(df),
+            "sampled_rows": len(df),
+            "n_series_seen": retention_profile["n_series_seen"],
+            "n_series_retained": retention_profile["n_series_retained"],
+            "n_series_dropped": retention_profile["n_series_dropped"],
+        }
 
         logger.info(
             "Timeseries loader: %s rows from s3://%s/%s; split selection=%s extra=%s test=%s",

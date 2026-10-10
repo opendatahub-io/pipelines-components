@@ -6,10 +6,13 @@
 
 Load and split timeseries data from S3 for AutoGluon training.
 
-This component loads time series data from S3, samples it (up to 100 MiB for the ``"speed"`` preset, up to 1 GiB for ``"balanced"``, and up to 10 GiB for ``"quality"``), applies light **cleansing** (replace ``+/-inf`` with NaN so AutoGluon can apply its own missing-value logic; require parseable
-timestamps and non-null ids; drop exact duplicate ``(id_column, timestamp_column)`` rows, keep last), then performs a two-stage **per-series temporal** split for efficient AutoGluon training: 1. Primary split (default 80/20): for each distinct ``id_column`` value, the earliest (1 - test_size)
-fraction of rows by ``timestamp_column`` goes to the train portion and the remainder to the test set (so every series with at least two rows contributes holdout data; single-row series stay in train only). 2. Secondary split (default 30/70 of each series' train rows): early segment to
-selection-train, later segment to extra-train.
+This component loads time series data from S3 and samples it (up to 100 MiB for the ``"speed"`` preset, up to 1 GiB for ``"balanced"``, and up to 10 GiB for ``"quality"``) by keeping the **most recent rows per series** (last-values by parsed ``timestamp_column``, not the start of the file). The S3
+object is streamed in full; the preset bounds retained in-memory size, not download size. Unsorted files are ordered by parsed timestamp, so "latest" is the maximum time per ``id_column`` (or the whole file when ``id_column`` is empty), not the last line in the CSV. Invalid timestamps and null ids
+fail before any row is evicted. A mid-stream read error is fatal, because the unread tail may contain newer observations. When the cap cannot hold every series after a complete read, series whose newest observation is oldest are dropped first.
+
+After sampling, the component applies light **cleansing** (replace ``+/-inf`` with NaN so AutoGluon can apply its own missing-value logic; require parseable timestamps and non-null ids; drop exact duplicate ``(id_column, timestamp_column)`` rows, keep last), then performs a two-stage **per-series
+temporal** split for efficient AutoGluon training: 1. Primary split (default 80/20): for each distinct ``id_column`` value, the earliest (1 - test_size) fraction of rows by ``timestamp_column`` goes to the train portion and the remainder to the test set (so every series with at least two rows
+contributes holdout data; single-row series stay in train only). 2. Secondary split (default 30/70 of each series' train rows): early segment to selection-train, later segment to extra-train.
 
 The test set is written to an S3 artifact, while train Parquet files (selection-train and extra-train, Snappy-compressed) are written to the PVC workspace for sharing across pipeline steps.
 
@@ -32,7 +35,7 @@ After cleansing, at least **100** valid records must remain; otherwise the compo
 | `known_covariates_names` | `Optional[List[str]]` | `None` | Covariate columns known in advance downstream (default: none). Only used to fail fast when a user-provided test dataset omits one of them. |
 | `test_data_bucket_name` | `str` | `""` | S3 bucket name for user-provided test dataset (default: empty string). |
 | `test_data_file_key` | `str` | `""` | S3 object key of the user-provided test CSV (default: empty string). |
-| `preset` | `str` | `speed` | Training quality tier controlling the sampling size budget. ``"speed"`` (default) samples up to 100 MiB; ``"balanced"`` samples up to 1 GiB; and ``"quality"`` samples up to 10 GiB. User-provided test datasets are capped at 50 MiB, 100 MiB, and 1 GiB respectively. |
+| `preset` | `str` | `speed` | Training quality tier controlling the sampling size budget. ``"speed"`` (default) retains up to 100 MiB of the latest rows per series; ``"balanced"`` retains up to 1 GiB; and ``"quality"`` retains up to 10 GiB. User-provided test datasets use the same last-values policy, capped at 50 MiB, 100 MiB, and 1 GiB respectively. |
 
 ## Outputs 📤
 
@@ -94,7 +97,7 @@ def example_pipeline(
   - timeseries
   - automl
   - data-loading
-- **Last Verified**: 2026-05-22 00:00:00+00:00
+- **Last Verified**: 2026-10-05 00:00:00+00:00
 - **Owners**:
   - No Parent Owners: Yes
   - Approvers:
@@ -106,6 +109,24 @@ def example_pipeline(
     - DorotaDR
 
 <!-- custom-content -->
+
+### Sampling under the size cap
+
+When a CSV is larger than the preset in-memory budget, the loader **streams the whole
+object** and keeps the **latest observations per ``id_column``** (parsed
+``timestamp_column``), not the first N rows of the file. Unsorted files are treated the
+same as chronological files: "latest" is maximum timestamp per series. Each chunk is
+validated before eviction, so an invalid timestamp or null id cannot disappear just
+because it would not have been retained. A mid-stream read error fails the run: without
+the rest of the object the loader cannot prove those rows are the latest.
+
+During the read, every series keeps a bounded tail so a later row for the same id can
+merge onto history already seen. After a complete read, if even a short tail of every
+series cannot fit, series whose newest timestamp is oldest are dropped first.
+``prepare_data`` status metrics record ``sampling_method=last_n_rows_per_series``,
+``n_series_seen`` / ``n_series_retained`` / ``n_series_dropped``, and bounded retained
+and dropped profiles (50 entries each). The complete per-series profile is written next
+to ``component_status.json`` as ``series_sampling_profile.json``.
 
 ### Component status artifact
 
