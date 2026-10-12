@@ -47,8 +47,9 @@ def autogluon_models_training(
     ``refit_full`` call. Lightweight post-refit work (predict, evaluate, confusion
     matrix (via evaluate_predictions detailed_report), classification curves, notebook
     generation) runs concurrently across all top-N models via ``ThreadPoolExecutor``.
-    Permutation feature importance runs sequentially because it can hold substantial
-    batched prediction data in memory. The deployment clone (``set_model_best`` +
+    Permutation feature importance runs sequentially for wide tables because it can
+    hold substantial batched prediction data in memory; narrower tables run it
+    concurrently. The deployment clone (``set_model_best`` +
     ``clone_for_deployment``) is serialized afterward because it mutates predictor
     state. All artifacts are written under a single output artifact so the pipeline
     does not require a ParallelFor loop. Each model directory contains a ``model.json``

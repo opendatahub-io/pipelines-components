@@ -1226,8 +1226,7 @@ class TestAutogluonModelsTrainingUnitTests:
             "max_memory_ratio": 0.02,
         }
         assert (
-            mock_predictor_clone.feature_importance.call_args_list[1].kwargs["model"]
-            == "NeuralNetFastAI_BAG_L1_FULL"
+            mock_predictor_clone.feature_importance.call_args_list[1].kwargs["model"] == "NeuralNetFastAI_BAG_L1_FULL"
         )
 
     @mock.patch("shutil.rmtree")

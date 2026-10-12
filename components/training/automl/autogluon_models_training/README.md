@@ -8,9 +8,10 @@ Train AutoGluon models, select the top N, and refit each on the full dataset.
 
 Expects pre-cleaned Parquet data from the tabular data loader (infinite values replaced, duplicates removed, missing labels dropped). Reads train/test/extra-train Parquet files and validates that the label column exists in each dataset.
 
-This component combines the model selection and full-refit stages into a single step. It trains a TabularPredictor on sampled data, ranks all models on the test set, then refits each of the top N models on the full training data in a single ``refit_full`` call. Post-refit work (predict, evaluate,
-feature importance, confusion matrix (via evaluate_predictions detailed_report), classification curves, notebook generation) runs concurrently across all top-N models via ``ThreadPoolExecutor``. The deployment clone (``set_model_best`` + ``clone_for_deployment``) is serialized afterward because it
-mutates predictor state. All artifacts are written under a single output artifact so the pipeline does not require a ParallelFor loop. Each model directory contains a ``model.json`` file with model metadata (name, location, metrics).
+This component combines the model selection and full-refit stages into a single step. It trains a TabularPredictor on sampled data, ranks all models on the test set, then refits each of the top N models on the full training data in a single ``refit_full`` call. Lightweight post-refit work (predict,
+evaluate, confusion matrix (via evaluate_predictions detailed_report), classification curves, notebook generation) runs concurrently across all top-N models via ``ThreadPoolExecutor``. Permutation feature importance runs sequentially for wide tables because it can hold substantial batched prediction
+data in memory; narrower tables run it concurrently. The deployment clone (``set_model_best`` + ``clone_for_deployment``) is serialized afterward because it mutates predictor state. All artifacts are written under a single output artifact so the pipeline does not require a ParallelFor loop. Each
+model directory contains a ``model.json`` file with model metadata (name, location, metrics).
 
 ## Inputs 📥
 
