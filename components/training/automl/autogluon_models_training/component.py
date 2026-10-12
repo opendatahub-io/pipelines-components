@@ -44,10 +44,11 @@ def autogluon_models_training(
     This component combines the model selection and full-refit stages into a single
     step. It trains a TabularPredictor on sampled data, ranks all models on the test
     set, then refits each of the top N models on the full training data in a single
-    ``refit_full`` call. Post-refit work (predict, evaluate, feature importance,
-    confusion matrix (via evaluate_predictions detailed_report), classification curves,
-    notebook generation) runs concurrently across all top-N models
-    via ``ThreadPoolExecutor``. The deployment clone (``set_model_best`` +
+    ``refit_full`` call. Lightweight post-refit work (predict, evaluate, confusion
+    matrix (via evaluate_predictions detailed_report), classification curves, notebook
+    generation) runs concurrently across all top-N models via ``ThreadPoolExecutor``.
+    Permutation feature importance runs sequentially because it can hold substantial
+    batched prediction data in memory. The deployment clone (``set_model_best`` +
     ``clone_for_deployment``) is serialized afterward because it mutates predictor
     state. All artifacts are written under a single output artifact so the pipeline
     does not require a ParallelFor loop. Each model directory contains a ``model.json``
@@ -151,6 +152,13 @@ def autogluon_models_training(
         # for its larger data and time budgets.
         "quality": {"num_bag_folds": 8, "num_stack_levels": 1},
     }
+    # One shuffle set always runs to completion, so each selected model is scored
+    # on its own. Restrict AutoGluon's feature-importance batching to 2% of
+    # available memory as a second peak-memory guard.
+    FEATURE_IMPORTANCE_SUBSAMPLE_SIZE = 2000
+    FEATURE_IMPORTANCE_SHUFFLE_SETS = 1
+    FEATURE_IMPORTANCE_MAX_MEMORY_RATIO = 0.02
+    FEATURE_IMPORTANCE_SEQUENTIAL_FEATURE_THRESHOLD = 100
     TOP_N_MAX = 10
 
     # Input parameters validation
@@ -692,13 +700,39 @@ def autogluon_models_training(
                     return _build_binary_curves_json(y_true_series, proba_df, positive_class)
                 return _build_multiclass_curves_json(y_true_series, proba_df)
 
+            def _write_feature_importance(model_name_full: str) -> None:
+                """Write permutation importance for one model. Not safe to run concurrently."""
+                metrics_path = Path(models_artifact.path) / model_name_full / "metrics"
+                metrics_path.mkdir(parents=True, exist_ok=True)
+                subsample_size = FEATURE_IMPORTANCE_SUBSAMPLE_SIZE
+                importance_kwargs: dict[str, Any] = {
+                    "model": model_name_full,
+                    "subsample_size": subsample_size,
+                    "num_shuffle_sets": FEATURE_IMPORTANCE_SHUFFLE_SETS,
+                    "max_memory_ratio": FEATURE_IMPORTANCE_MAX_MEMORY_RATIO,
+                }
+                logger.info(
+                    "Computing feature importance for model=%s with up to %d input features "
+                    "(AutoGluon excludes unused features), "
+                    "subsample_size=%d, num_shuffle_sets=%d, max_memory_ratio=%.2f.",
+                    model_name_full,
+                    len(test_data_df.columns) - 1,
+                    subsample_size,
+                    FEATURE_IMPORTANCE_SHUFFLE_SETS,
+                    FEATURE_IMPORTANCE_MAX_MEMORY_RATIO,
+                )
+                feature_importance = predictor_clone.feature_importance(test_data_df, **importance_kwargs)
+                with (metrics_path / "feature_importance.json").open("w") as f:
+                    json.dump(feature_importance.to_dict(), f)
+
             def _process_model(model_name_full: str) -> tuple[str, dict]:
                 """Compute metrics and write metric files + notebook for one refitted model.
 
                 Safe to run concurrently across models: only reads from the shared predictor
                 and test data, and writes to isolated per-model directories under
                 models_artifact.path. Does NOT call set_model_best / clone_for_deployment,
-                which mutate predictor state and must stay sequential.
+                which mutate predictor state and must stay sequential. Permutation feature
+                importance is written afterward, one model at a time.
 
                 Returns (model_name_full, eval_results).
                 """
@@ -720,16 +754,11 @@ def autogluon_models_training(
                     eval_results = predictor_clone.evaluate_predictions(y_true=y_true, y_pred=predictions)
                     confusion_matrix_dict = None
 
-                feature_importance = predictor_clone.feature_importance(
-                    test_data_df, model=model_name_full, subsample_size=2000
-                )
                 metrics_for_json = _scalar_eval_metrics(eval_results)
 
                 (output_path / "metrics").mkdir(parents=True, exist_ok=True)
                 with (output_path / "metrics" / "metrics.json").open("w") as f:
                     json.dump(metrics_for_json, f)
-                with (output_path / "metrics" / "feature_importance.json").open("w") as f:
-                    json.dump(feature_importance.to_dict(), f)
 
                 if confusion_matrix_dict is not None:
                     with (output_path / "metrics" / "confusion_matrix.json").open("w") as f:
@@ -772,6 +801,19 @@ def autogluon_models_training(
             with ThreadPoolExecutor(max_workers=len(model_names_full)) as executor:
                 futures = [executor.submit(_process_model, name) for name in model_names_full]
                 eval_results_by_model = dict(f.result() for f in futures)
+
+            # Permutation importance predicts once per feature. Parallel runs of bagged
+            # models on wide tables exceed the pod memory limit, while narrower tables
+            # benefit from processing the selected models concurrently.
+            feature_count = len(test_data_df.columns) - 1
+            if feature_count > FEATURE_IMPORTANCE_SEQUENTIAL_FEATURE_THRESHOLD and len(model_names_full) > 1:
+                for model_name_full in model_names_full:
+                    _write_feature_importance(model_name_full)
+            else:
+                with ThreadPoolExecutor(max_workers=len(model_names_full)) as executor:
+                    futures = [executor.submit(_write_feature_importance, name) for name in model_names_full]
+                    for future in futures:
+                        future.result()
 
             # Phase B: clone for deployment - sequential because set_model_best mutates predictor state.
             for model_name_full in model_names_full:

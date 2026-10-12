@@ -2,6 +2,7 @@
 
 import json
 import sys
+import threading
 from contextlib import contextmanager
 from pathlib import Path
 from unittest import mock
@@ -407,13 +408,21 @@ class TestAutogluonModelsTrainingUnitTests:
         # evaluate_predictions called per model (not evaluate())
         assert mock_predictor_clone.evaluate_predictions.call_count == 2
 
-        # feature_importance called per model with model= and subsample_size=2000
+        # feature_importance called per model, one shuffle set, after metrics
         assert mock_predictor_clone.feature_importance.call_count == 2
         mock_predictor_clone.feature_importance.assert_any_call(
-            mock_test_df, model="LightGBM_BAG_L1_FULL", subsample_size=2000
+            mock_test_df,
+            model="LightGBM_BAG_L1_FULL",
+            subsample_size=2000,
+            num_shuffle_sets=1,
+            max_memory_ratio=0.02,
         )
         mock_predictor_clone.feature_importance.assert_any_call(
-            mock_test_df, model="NeuralNetFastAI_BAG_L1_FULL", subsample_size=2000
+            mock_test_df,
+            model="NeuralNetFastAI_BAG_L1_FULL",
+            subsample_size=2000,
+            num_shuffle_sets=1,
+            max_memory_ratio=0.02,
         )
 
         # set_model_best called per model before clone_for_deployment
@@ -571,6 +580,7 @@ class TestAutogluonModelsTrainingUnitTests:
             label_column="target",
             task_type="regression",
             top_n=1,
+            preset="balanced",
             train_data_path="/tmp/train.parquet",
             test_data=mock.MagicMock(path="/tmp/test.parquet"),
             workspace_path=workspace_path,
@@ -579,7 +589,6 @@ class TestAutogluonModelsTrainingUnitTests:
             sample_row=SAMPLE_ROW,
             models_artifact=mock_models_artifact,
             html_artifact=_make_html_artifact(tmp_path),
-            preset="balanced",
             experiment_notebook=_make_experiment_notebook_artifact(tmp_path),
             component_status=_make_component_status_artifact(tmp_path),
         )
@@ -1088,11 +1097,10 @@ class TestAutogluonModelsTrainingUnitTests:
     @mock.patch("pandas.read_parquet")
     @mock.patch("autogluon.tabular.TabularPredictor")
     def test_operations_called_in_correct_order(self, mock_predictor_class, mock_read_parquet, mock_rmtree, tmp_path):
-        """Verify call order for a single model: fit → clone → refit_full → Phase A (predict → evaluate → fi) → Phase B (set_model_best → clone_for_deployment) → rmtree.
+        """Verify call order for a single model: fit → clone → refit_full → Phase A (predict → evaluate) → feature importance → Phase B (set_model_best → clone_for_deployment) → rmtree.
 
-        Phase A (metrics + notebook) runs via ThreadPoolExecutor across models, but within
-        a single model's _process_model the calls are always sequential: predict first, then
-        evaluate_predictions, then feature_importance.  Phase B always follows Phase A.
+        Phase A (metrics + notebook) runs via ThreadPoolExecutor across models. Permutation
+        feature importance follows Phase A, one model at a time. Phase B always follows that.
         """  # noqa: E501
         call_order = []
         mock_predictor = mock.MagicMock()
@@ -1109,7 +1117,7 @@ class TestAutogluonModelsTrainingUnitTests:
             call_order.append("evaluate_predictions"),
             {"r2": 0.9},
         )[1]
-        mock_predictor_clone.feature_importance.side_effect = lambda df, model, subsample_size: (
+        mock_predictor_clone.feature_importance.side_effect = lambda *args, **kwargs: (
             call_order.append("feature_importance"),
             mock.MagicMock(to_dict=lambda: {"f": 0.1}),
         )[1]
@@ -1159,6 +1167,68 @@ class TestAutogluonModelsTrainingUnitTests:
         assert call_order[6] == "set_model_best"
         assert call_order[7] == "clone_for_deployment"
         assert call_order[-1] == "rmtree"
+
+    @mock.patch("shutil.rmtree")
+    @mock.patch("pandas.read_parquet")
+    @mock.patch("autogluon.tabular.TabularPredictor")
+    def test_feature_importance_for_wide_tables_runs_sequentially(
+        self, mock_predictor_class, mock_read_parquet, mock_rmtree, tmp_path
+    ):
+        """Wide tables calculate importances serially to limit peak memory."""
+        mock_predictor = mock.MagicMock()
+        mock_predictor_clone = mock.MagicMock()
+        mock_predictor_class.return_value.fit.return_value = mock_predictor
+        mock_predictor.clone.return_value = mock_predictor_clone
+        feature_importance_threads = []
+        mock_predictor_clone.feature_importance.side_effect = lambda *args, **kwargs: (
+            feature_importance_threads.append(threading.current_thread().name),
+            mock.MagicMock(to_dict=lambda: {"f0": 0.1}),
+        )[1]
+        mock_predictor.problem_type = "regression"
+        mock_predictor.label = "target"
+        mock_predictor.eval_metric = "r2"
+        _mock_leaderboard_top_models(mock_predictor, ["LightGBM_BAG_L1", "NeuralNetFastAI_BAG_L1"])
+        wide_columns = tuple(f"f{index}" for index in range(250))
+        test_df = _mock_parquet_frame(feature_cols=wide_columns)
+        mock_read_parquet.side_effect = [_mock_parquet_frame(), test_df]
+
+        workspace_path = str(tmp_path / "ws")
+        Path(workspace_path).mkdir()
+        models_output_dir = str(tmp_path / "out")
+        Path(models_output_dir).mkdir()
+        mock_models_artifact = mock.MagicMock()
+        mock_models_artifact.path = models_output_dir
+        mock_models_artifact.metadata = {}
+
+        autogluon_models_training.python_func(
+            label_column="target",
+            task_type="regression",
+            top_n=2,
+            preset="balanced",
+            train_data_path="/tmp/train.parquet",
+            test_data=mock.MagicMock(path="/tmp/test.parquet"),
+            workspace_path=workspace_path,
+            pipeline_name=PIPELINE_NAME,
+            run_id=RUN_ID,
+            sample_row=SAMPLE_ROW,
+            models_artifact=mock_models_artifact,
+            experiment_notebook=_make_experiment_notebook_artifact(tmp_path),
+            component_status=_make_component_status_artifact(tmp_path),
+            html_artifact=_make_html_artifact(tmp_path),
+        )
+
+        assert mock_predictor_clone.feature_importance.call_count == 2
+        assert feature_importance_threads == [threading.current_thread().name] * 2
+        assert mock_predictor_clone.feature_importance.call_args_list[0].kwargs == {
+            "model": "LightGBM_BAG_L1_FULL",
+            "subsample_size": 2000,
+            "num_shuffle_sets": 1,
+            "max_memory_ratio": 0.02,
+        }
+        assert (
+            mock_predictor_clone.feature_importance.call_args_list[1].kwargs["model"]
+            == "NeuralNetFastAI_BAG_L1_FULL"
+        )
 
     @mock.patch("shutil.rmtree")
     @mock.patch("pandas.read_parquet")
