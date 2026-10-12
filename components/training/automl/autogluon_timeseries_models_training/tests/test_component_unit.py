@@ -222,6 +222,13 @@ class TestTimeseriesModelsTrainingUnitTests:
         assert result.model_config["prediction_length"] == 24
         assert result.model_config["presets"] == "speed"
         assert result.model_config["time_limit"] == 600
+        assert mock_predictor.fit.call_args.kwargs["presets"] == "medium_quality"
+        excluded_model_types = ["Chronos", "Toto", "Chronos2", "Toto2"]
+        assert mock_predictor.fit.call_args.kwargs["excluded_model_types"] == excluded_model_types
+        assert all(
+            call.kwargs["excluded_model_types"] == excluded_model_types
+            for call in mock_refit_predictor.fit.call_args_list
+        )
         assert result.model_config["refit_time_limit_per_model"] == 300
         assert result.model_config["known_covariates_names"] == []
         assert result.model_config["num_models_trained"] == 3
@@ -258,7 +265,7 @@ class TestTimeseriesModelsTrainingUnitTests:
         mock_read_parquet,
         mock_artifacts,  # noqa: F811
     ):
-        """Balanced preset uses medium_quality and 60-minute time limit."""
+        """Balanced preset uses high_quality and 60-minute time limit."""
         models_artifact, extra_train_path, html_artifact, experiment_notebook = mock_artifacts
 
         mock_predictor = mock.MagicMock()
@@ -298,7 +305,7 @@ class TestTimeseriesModelsTrainingUnitTests:
         )
 
         fit_call = mock_predictor.fit.call_args
-        assert fit_call[1]["presets"] == "medium_quality"
+        assert fit_call[1]["presets"] == "high_quality"
         assert fit_call[1]["time_limit"] == 60 * 60
         assert result.model_config["presets"] == "balanced"
         assert result.model_config["time_limit"] == 60 * 60

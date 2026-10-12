@@ -79,8 +79,9 @@ def autogluon_timeseries_models_training(
         split_config: Optional split config stored in artifact metadata.
         prediction_length: Forecast horizon (number of timesteps).
         known_covariates_names: Optional list of known covariate column names.
-        preset: Training quality tier. ``"speed"`` (default), ``"balanced"``, or
-            ``"quality"`` (two-hour selection budget with AutoGluon ``best_quality``).
+        preset: Training quality tier. ``"speed"`` (default, AutoGluon ``medium_quality``),
+            ``"balanced"`` (AutoGluon ``high_quality``), or ``"quality"`` (two-hour
+            selection budget with AutoGluon ``best_quality``).
         eval_metric: Metric for model ranking (e.g. ``"mean_absolute_scaled_error"``,
             ``"weighted_quantile_loss"``). Defaults to ``"mean_absolute_scaled_error"``.
             Legacy uppercase acronyms (e.g. ``"MASE"``) are accepted and normalized to snake_case.
@@ -129,8 +130,12 @@ def autogluon_timeseries_models_training(
         component_status.metadata["display_name"] = "Timeseries Models Training Status"
         TOP_N_MAX = 7
         VALID_PRESETS = {"speed", "balanced", "quality"}
-        PRESET_AG_NAMES = {"speed": "fast_training", "balanced": "medium_quality", "quality": "best_quality"}
+        # high_quality uses the best_quality model set with one validation window.
+        # best_quality adds multi-window backtests.
+        PRESET_AG_NAMES = {"speed": "medium_quality", "balanced": "high_quality", "quality": "best_quality"}
         PRESET_TIME_LIMITS = {"speed": 10 * 60, "balanced": 60 * 60, "quality": 120 * 60}
+        # Pretrained foundation models. Toto2 is a distinct AutoGluon 1.6 model and is not covered by Toto.
+        EXCLUDED_MODEL_TYPES = ["Chronos", "Toto", "Chronos2", "Toto2"]
 
         # Normalize eval_metric to snake_case; accept legacy uppercase acronyms (e.g. "MASE") for back-compat.
         _acronym_to_snake = {acronym: snake for snake, acronym in METRIC_ALIASES.items()}
@@ -245,8 +250,7 @@ def autogluon_timeseries_models_training(
                 train_data=train_ts,
                 presets=PRESET_AG_NAMES[preset],
                 time_limit=time_limit,
-                # exclude deep learning models pretrained on large time series datasets
-                excluded_model_types=["Chronos", "Toto", "Chronos2"],
+                excluded_model_types=EXCLUDED_MODEL_TYPES,
             )
         except Exception as e:
             logger.error(f"Training failed: {str(e)}")
@@ -478,7 +482,7 @@ def autogluon_timeseries_models_training(
                         train_data=full_train_ts_df,
                         **additional_fit_params,
                         time_limit=refit_time_limit,
-                        excluded_model_types=["Chronos", "Chronos2", "Toto"],
+                        excluded_model_types=EXCLUDED_MODEL_TYPES,
                     )
                     total_fit_time_seconds += time.perf_counter() - refit_start_time
                     metrics = predictor_refit.evaluate(test_ts, metrics=list(AVAILABLE_METRICS.keys()))

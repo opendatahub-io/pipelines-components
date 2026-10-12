@@ -52,6 +52,16 @@ class TestSerialization:
         # All values positive (natural error form)
         assert all(v > 0 for v in normalized.values())
 
+    def test_filter_finite_metrics_normalizes_autogluon_1_6_losses(self):
+        """MAEB, WAPEB, and MQL are restored to positive losses; signed BIAS is unchanged."""
+        assert filter_finite_metrics({"MAEB": -1.5, "WAPEB": -0.2, "MQL": -0.8, "BIAS": 0.4}) == {
+            "MAEB": 1.5,
+            "WAPEB": 0.2,
+            "MQL": 0.8,
+            "BIAS": 0.4,
+        }
+        assert filter_finite_metrics({"BIAS": -0.3}) == {"BIAS": -0.3}
+
     def test_back_testing_normalizes_autogluon_signs(self):
         """back_testing.json converts AutoGluon negated error metrics to natural positive form."""
         raw_autogluon = {"MASE": -0.42, "MAPE": -5.0, "RMSE": -10.5}
