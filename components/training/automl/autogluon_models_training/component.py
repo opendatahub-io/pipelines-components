@@ -701,6 +701,21 @@ def autogluon_models_training(
                     return _build_binary_curves_json(y_true_series, proba_df, positive_class)
                 return _build_multiclass_curves_json(y_true_series, proba_df)
 
+            def _json_safe_value(value: Any) -> Any:
+                """Replace non-finite floats so the payload is strict JSON."""
+                if isinstance(value, dict):
+                    return {key: _json_safe_value(item) for key, item in value.items()}
+                if isinstance(value, list):
+                    return [_json_safe_value(item) for item in value]
+                if isinstance(value, bool):
+                    return value
+                if isinstance(value, (int, np.integer)):
+                    return int(value)
+                if isinstance(value, (float, np.floating)):
+                    number = float(value)
+                    return number if math.isfinite(number) else None
+                return value
+
             def _write_feature_importance(model_name_full: str) -> None:
                 """Write permutation importance for one model. Not safe to run concurrently."""
                 metrics_path = Path(models_artifact.path) / model_name_full / "metrics"
@@ -724,7 +739,7 @@ def autogluon_models_training(
                 )
                 feature_importance = predictor_clone.feature_importance(test_data_df, **importance_kwargs)
                 with (metrics_path / "feature_importance.json").open("w") as f:
-                    json.dump(feature_importance.to_dict(), f)
+                    json.dump(_json_safe_value(feature_importance.to_dict()), f, allow_nan=False)
 
             def _process_model(model_name_full: str) -> tuple[str, dict]:
                 """Compute metrics and write metric files + notebook for one refitted model.

@@ -1229,6 +1229,62 @@ class TestAutogluonModelsTrainingUnitTests:
             mock_predictor_clone.feature_importance.call_args_list[1].kwargs["model"] == "NeuralNetFastAI_BAG_L1_FULL"
         )
 
+    @mock.patch("pandas.read_parquet")
+    @mock.patch("autogluon.tabular.TabularPredictor")
+    def test_feature_importance_json_replaces_non_finite_values(
+        self, mock_predictor_class, mock_read_parquet, tmp_path
+    ):
+        """One shuffle set leaves variance undefined; the artifact must stay strict JSON."""
+        mock_predictor = mock.MagicMock()
+        mock_predictor_clone = mock.MagicMock()
+        mock_predictor_class.return_value.fit.return_value = mock_predictor
+        mock_predictor.clone.return_value = mock_predictor_clone
+        mock_predictor.problem_type = "regression"
+        mock_predictor.label = "target"
+        mock_predictor.eval_metric = "r2"
+        _mock_leaderboard_top_models(mock_predictor, ["LightGBM_BAG_L1"])
+        mock_predictor_clone.evaluate_predictions.return_value = {"r2": 0.9}
+        mock_predictor_clone.predict.return_value = mock.MagicMock()
+        mock_predictor_clone.feature_importance.return_value = mock.MagicMock(
+            to_dict=lambda: {
+                "importance": {"f0": 0.2, "f1": -0.1},
+                "stddev": {"f0": float("nan"), "f1": float("nan")},
+                "p_value": {"f0": float("nan"), "f1": float("inf")},
+                "n": {"f0": 1, "f1": 1},
+                "p99_high": {"f0": float("nan"), "f1": float("nan")},
+                "p99_low": {"f0": float("-inf"), "f1": float("nan")},
+            }
+        )
+        mock_read_parquet.side_effect = [_mock_parquet_frame(), _mock_parquet_frame(), _mock_parquet_frame()]
+
+        workspace_path = str(tmp_path / "ws")
+        Path(workspace_path).mkdir()
+        models_output_dir = str(tmp_path / "out")
+        Path(models_output_dir).mkdir()
+        mock_models_artifact = mock.MagicMock()
+        mock_models_artifact.path = models_output_dir
+        mock_models_artifact.metadata = {}
+        mock_test_data = mock.MagicMock()
+        mock_test_data.path = "/tmp/test.parquet"
+
+        autogluon_models_training.python_func(
+            **_base_call_kwargs(workspace_path, mock_models_artifact, mock_test_data, tmp_path),
+        )
+
+        importance_path = Path(models_output_dir) / "LightGBM_BAG_L1_FULL" / "metrics" / "feature_importance.json"
+        raw = importance_path.read_text(encoding="utf-8")
+
+        def _reject_nonstandard_json(constant: str) -> None:
+            raise ValueError(constant)
+
+        payload = json.loads(raw, parse_constant=_reject_nonstandard_json)
+        assert payload["importance"] == {"f0": 0.2, "f1": -0.1}
+        assert payload["n"] == {"f0": 1, "f1": 1}
+        assert payload["stddev"] == {"f0": None, "f1": None}
+        assert payload["p_value"] == {"f0": None, "f1": None}
+        assert payload["p99_high"] == {"f0": None, "f1": None}
+        assert payload["p99_low"] == {"f0": None, "f1": None}
+
     @mock.patch("shutil.rmtree")
     @mock.patch("pandas.read_parquet")
     @mock.patch("autogluon.tabular.TabularPredictor")
