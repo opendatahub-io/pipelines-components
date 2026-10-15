@@ -1,0 +1,160 @@
+"""Unit tests for the prepare_grpo_dataset component."""
+
+import io
+import json
+from unittest import mock
+
+from ..component import prepare_grpo_dataset
+
+
+def _raw_tool_call_row():
+    return {
+        "question": "What is the weather in Boston?",
+        "available_tools": [
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_weather",
+                    "description": "Get the weather.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"city": {"type": "string"}},
+                        "required": ["city"],
+                    },
+                },
+            }
+        ],
+        "messages": [
+            {"role": "system", "content": "You call tools."},
+            {"role": "user", "content": "What is the weather in Boston?"},
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {
+                            "name": "get_weather",
+                            "arguments": '{"city":"Boston"}',
+                        },
+                    }
+                ],
+            },
+        ],
+    }
+
+
+def _run_component(tmp_path, dataset_rows):
+    input_path = tmp_path / "input.jsonl"
+    input_path.write_text("\n".join(json.dumps(row) for row in dataset_rows) + "\n")
+    with mock.patch("datasets.load_dataset", return_value=iter(dataset_rows)) as load_dataset:
+        result = prepare_grpo_dataset.python_func(
+            dataset_uri=str(input_path),
+            pvc_mount_path=str(tmp_path / "pvc"),
+        )
+    return result, load_dataset
+
+
+def test_component_has_expected_interface():
+    """Expose the preparer inputs and dynamic resolver outputs."""
+    assert callable(prepare_grpo_dataset)
+    assert hasattr(prepare_grpo_dataset, "python_func")
+    assert "dataset_uri" in prepare_grpo_dataset.component_spec.inputs
+    assert "pvc_mount_path" in prepare_grpo_dataset.component_spec.inputs
+    assert "resolved_data_path" in prepare_grpo_dataset.component_spec.outputs
+    assert "resolved_data_config" in prepare_grpo_dataset.component_spec.outputs
+    assert "use_hf_direct" in prepare_grpo_dataset.component_spec.outputs
+
+
+def test_huggingface_reference_is_not_materialized(tmp_path):
+    """Keep HF references direct and avoid creating a PVC cache."""
+    result = prepare_grpo_dataset.python_func(
+        dataset_uri="hf://Agent-Ark/Toucan-1.5M:Qwen3",
+        pvc_mount_path=str(tmp_path / "pvc"),
+        dataset_config="ignored",
+    )
+
+    assert result == ("Agent-Ark/Toucan-1.5M", "Qwen3", True)
+    assert not (tmp_path / "pvc").exists()
+
+
+def test_local_rows_are_normalized_without_sampling_or_splitting(tmp_path):
+    """Normalize all supplied local rows without component-side sampling."""
+    result, load_dataset = _run_component(tmp_path, [_raw_tool_call_row()])
+
+    normalized_path, config, use_hf_direct = result
+    with open(normalized_path, encoding="utf-8") as normalized_file:
+        normalized = [json.loads(line) for line in normalized_file]
+
+    assert config == ""
+    assert use_hf_direct is False
+    assert len(normalized) == 1
+    assert normalized[0]["target_tool_name"] == "get_weather"
+    assert normalized[0]["target_arguments"] == {"city": "Boston"}
+    assert normalized[0]["tools"][0]["type"] == "function"
+    load_dataset.assert_called_once()
+    assert load_dataset.call_args.kwargs["streaming"] is True
+
+
+def test_local_jsonl_uses_the_datasets_reader(tmp_path):
+    """Read a real local JSONL source before applying GRPO normalization."""
+    input_path = tmp_path / "input.jsonl"
+    input_path.write_text(json.dumps(_raw_tool_call_row()) + "\n")
+
+    result = prepare_grpo_dataset.python_func(
+        dataset_uri=str(input_path),
+        pvc_mount_path=str(tmp_path / "pvc"),
+    )
+
+    with open(result[0], encoding="utf-8") as normalized_file:
+        normalized = [json.loads(line) for line in normalized_file]
+    assert len(normalized) == 1
+    assert normalized[0]["target_tool_name"] == "get_weather"
+
+
+def test_existing_canonical_rows_are_preserved(tmp_path):
+    """Keep already-canonical rows usable by the Training Hub loader."""
+    row = {
+        "question": "What is the weather in Boston?",
+        "tools": [
+            {
+                "name": "get_weather",
+                "description": "Get the weather.",
+                "parameters": {"type": "object", "properties": {}},
+            }
+        ],
+        "target_tool_name": "get_weather",
+        "target_arguments": {"city": "Boston"},
+    }
+    result, _ = _run_component(tmp_path, [row])
+    with open(result[0], encoding="utf-8") as normalized_file:
+        normalized = [json.loads(line) for line in normalized_file]
+
+    assert normalized[0]["target_tool_name"] == "get_weather"
+    assert normalized[0]["tools"][0]["function"]["name"] == "get_weather"
+
+
+def test_invalid_rows_are_skipped_and_reported(tmp_path):
+    """Skip malformed rows while retaining valid tool-call examples."""
+    bad_row = {"question": "missing tool target"}
+    result, _ = _run_component(tmp_path, [bad_row, _raw_tool_call_row()])
+    with open(result[0], encoding="utf-8") as normalized_file:
+        normalized = [json.loads(line) for line in normalized_file]
+
+    assert len(normalized) == 1
+    assert result[2] is False
+
+
+def test_http_source_is_downloaded_to_pvc(tmp_path):
+    """Download an HTTP JSONL resource into the shared PVC cache."""
+    row = _raw_tool_call_row()
+    with mock.patch("urllib.request.urlopen", return_value=io.BytesIO(json.dumps(row).encode())) as urlopen:
+        with mock.patch("datasets.load_dataset", return_value=iter([row])):
+            result = prepare_grpo_dataset.python_func(
+                dataset_uri="https://example.test/data.jsonl",
+                pvc_mount_path=str(tmp_path / "pvc"),
+            )
+
+    assert result[2] is False
+    assert urlopen.called
