@@ -9,6 +9,8 @@ Serve a verifier and Eagle3 draft model through one vLLM endpoint.
 The verifier and draft directories must already exist on ``model_cache_pvc``. KServe mounts the PVC root at ``/mnt/models``. The draft directory should contain the speculator checkpoint's ``config.json`` and weights. vLLM receives an Eagle3 ``--speculative-config`` that points to the draft path
 under that root; the verifier is the primary ``--model``.
 
+The component waits for the requested predictor configuration to finish rolling out and for KServe readiness. Updates release an old replica before allocating replacement GPU resources, so single-replica updates have downtime. Rollout and endpoint publication share a 30-minute timeout.
+
 ## Inputs 📥
 
 | Parameter | Type | Default | Description |
@@ -19,7 +21,7 @@ under that root; the verifier is the primary ``--model``.
 | `verifier_model_dir` | `str` | `None` | Relative PVC directory containing the verifier model. |
 | `draft_model_dir` | `str` | `None` | Relative PVC directory containing the draft checkpoint. |
 | `runtime_image` | `str` | `registry.redhat.io/rhaii-fast/vllm-cuda-rhel9@sha256:e310f71b5f9424783982e81d8dc4cba657c3e98f17f8512b827d9fa499ac82a3` | vLLM CUDA image supporting Eagle3 speculative decoding. |
-| `hardware_profile_name` | `str` | `gpu-profile` | RHOAI HardwareProfile name, or empty to skip lookup. |
+| `hardware_profile_name` | `str` | `gpu-profile` | Existing RHOAI HardwareProfile name in ``redhat-ods-applications``, or empty to skip lookup and remove an old profile reference. A missing requested profile is an error. |
 | `min_replicas` | `int` | `1` | Minimum number of predictor replicas. |
 | `max_replicas` | `int` | `1` | Maximum number of predictor replicas. |
 | `gpu_count` | `int` | `1` | GPUs per predictor; also used as verifier vLLM tensor parallel size. |
@@ -34,7 +36,7 @@ under that root; the verifier is the primary ``--model``.
 | `max_num_seqs` | `int` | `16` | Maximum concurrent sequences in the vLLM scheduler. |
 | `trust_remote_code` | `bool` | `False` | Pass ``--trust-remote-code`` for the draft checkpoint. |
 | `enable_auth` | `bool` | `False` | Enable RHOAI authentication for the exposed endpoint. |
-| `enable_external_route` | `bool` | `False` | Create an OpenShift Route so the endpoint is reachable outside the cluster. Requires a one-time RBAC setup — see ``rbac.yaml`` in this component's directory. When ``False`` (the default) the internal cluster-local URL is returned, which is usable from any pod in the cluster or via ``oc port-forward``. |
+| `enable_external_route` | `bool` | `False` | Request external visibility and wait for the platform-managed OpenShift Route to be admitted with the requested authentication settings. No Route write permissions are needed. When ``False`` (the default), request cluster-local visibility and return the internal cluster URL. |
 
 ## Outputs 📤
 
@@ -117,5 +119,52 @@ This endpoint authentication is separate from Kubernetes authentication used by 
 uses its in-cluster ServiceAccount to create and watch the `ServingRuntime` and `InferenceService` resources. The
 predictor itself has `automountServiceAccountToken` disabled and does not use that ServiceAccount to authenticate
 model requests.
+
+## Routing and Permissions
+
+The component sets `networking.kserve.io/visibility` to `exposed` when
+`enable_external_route=True`, or `cluster-local` otherwise. RHOAI's model
+controller owns the external Route; the component never creates or patches it.
+For external access, the component waits for a host and matching router admission,
+the predictor backend, and the requested authentication configuration: `http` with
+edge TLS when authentication is disabled, or `https` with reencrypt TLS when
+authentication is enabled. It returns `https://<route-host>/v1`.
+
+For internal access, the component waits for the InferenceService's cluster address
+and appends `/v1`. Missing or invalid addresses are retried; an old external URL
+is never used as a fallback.
+
+The pipeline ServiceAccount needs read/create/patch access to `ServingRuntime` and
+`InferenceService` resources, `get` access to `deployments.apps`, and, for external
+access, `get` access to `routes.route.openshift.io`. Reading a requested
+HardwareProfile also requires `get` access in `redhat-ods-applications`. The standard
+RHOAI pipeline-runner role already includes Deployment and Route reads; custom
+ServiceAccounts must provide the equivalent permissions. No additional Route write
+Role or RoleBinding is required.
+
+## HardwareProfile Selection
+
+`hardware_profile_name` must identify an existing HardwareProfile in
+`redhat-ods-applications`. A missing requested profile fails before serving resource
+writes. Set `hardware_profile_name=""` to explicitly opt out; this skips the lookup
+and removes any previous HardwareProfile annotations when updating an endpoint.
+Explicit CPU, memory, and GPU resource inputs still apply when opting out.
+
+## Updates and Readiness
+
+The component uses a stable configuration hash propagated to the predictor pod
+template. This includes runtime-only changes, such as the image, draft checkpoint,
+and speculative token count. It also checks the deployed container's image,
+command, and rendered arguments, since the controller can observe the service's
+new hash before its separate runtime cache catches up. It waits until the
+Deployment has observed its latest generation, all desired replicas are updated
+and available, no old replicas remain, and the InferenceService reports
+`Ready=True`. Identical reruns retain the hash and do not force a new rollout.
+
+Updates use `maxSurge=0` and `maxUnavailable=1` so a replacement can reuse GPU
+capacity released by an old replica. **Single-replica updates have downtime** while
+the replacement starts and loads the models. Rollout and endpoint publication share
+one 30-minute deadline. A controller-reported rollout failure or timeout includes
+diagnostic `oc describe` commands.
 
 The vLLM reference is [EAGLE Draft Models](https://docs.vllm.ai/en/stable/features/speculative_decoding/eagle/).

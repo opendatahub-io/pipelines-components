@@ -53,6 +53,11 @@ def speculative_decoding_serving(
     an Eagle3 ``--speculative-config`` that points to the draft path under that
     root; the verifier is the primary ``--model``.
 
+    The component waits for the requested predictor configuration to finish
+    rolling out and for KServe readiness. Updates release an old replica before
+    allocating replacement GPU resources, so single-replica updates have downtime.
+    Rollout and endpoint publication share a 30-minute timeout.
+
     Args:
         namespace: Namespace in which to create the KServe resources.
         endpoint_name: DNS-compatible InferenceService name.
@@ -60,7 +65,9 @@ def speculative_decoding_serving(
         verifier_model_dir: Relative PVC directory containing the verifier model.
         draft_model_dir: Relative PVC directory containing the draft checkpoint.
         runtime_image: vLLM CUDA image supporting Eagle3 speculative decoding.
-        hardware_profile_name: RHOAI HardwareProfile name, or empty to skip lookup.
+        hardware_profile_name: Existing RHOAI HardwareProfile name in
+            ``redhat-ods-applications``, or empty to skip lookup and remove an old
+            profile reference. A missing requested profile is an error.
         min_replicas: Minimum number of predictor replicas.
         max_replicas: Maximum number of predictor replicas.
         gpu_count: GPUs per predictor; also used as verifier vLLM tensor parallel size.
@@ -75,16 +82,18 @@ def speculative_decoding_serving(
         max_num_seqs: Maximum concurrent sequences in the vLLM scheduler.
         trust_remote_code: Pass ``--trust-remote-code`` for the draft checkpoint.
         enable_auth: Enable RHOAI authentication for the exposed endpoint.
-        enable_external_route: Create an OpenShift Route so the endpoint is reachable
-            outside the cluster. Requires a one-time RBAC setup — see ``rbac.yaml`` in
-            this component's directory. When ``False`` (the default) the internal
-            cluster-local URL is returned, which is usable from any pod in the cluster
-            or via ``oc port-forward``.
+        enable_external_route: Request external visibility and wait for the
+            platform-managed OpenShift Route to be admitted with the requested
+            authentication settings. No Route write permissions are needed. When
+            ``False`` (the default), request cluster-local visibility and return
+            the internal cluster URL.
 
     Returns:
         The OpenAI-compatible ``/v1`` endpoint URL (external HTTPS Route URL when
         ``enable_external_route=True``, internal cluster URL otherwise).
     """
+    import copy
+    import hashlib
     import json
     import re
     import time
@@ -134,8 +143,14 @@ def speculative_decoding_serving(
 
     config.load_incluster_config()
     custom_api = kclient.CustomObjectsApi()
+    apps_api = kclient.AppsV1Api()
 
     _hp_namespace = "redhat-ods-applications"
+    hp_annotation_keys = (
+        "opendatahub.io/hardware-profile-name",
+        "opendatahub.io/hardware-profile-namespace",
+        "opendatahub.io/hardware-profile-resource-version",
+    )
     hp_resource_version = ""
     if hardware_profile_name:
         try:
@@ -151,7 +166,10 @@ def speculative_decoding_serving(
         except kclient.rest.ApiException as error:
             if error.status != 404:
                 raise
-            print(f"HardwareProfile '{hardware_profile_name}' not found, proceeding without it.")
+            raise ValueError(
+                f"HardwareProfile '{hardware_profile_name}' was not found in namespace '{_hp_namespace}'. "
+                'Use an existing profile or set hardware_profile_name="" to skip the HardwareProfile.'
+            ) from error
 
     model_root = "/mnt/models"
     verifier_model_path = f"{model_root}/{verifier_model_dir}"
@@ -229,7 +247,7 @@ def speculative_decoding_serving(
 
     def upsert_custom_object(group: str, version: str, plural: str, name: str, body: dict) -> None:
         try:
-            custom_api.get_namespaced_custom_object(
+            existing = custom_api.get_namespaced_custom_object(
                 group=group,
                 version=version,
                 namespace=namespace,
@@ -248,13 +266,20 @@ def speculative_decoding_serving(
             )
             print(f"Created {plural} '{name}'.")
         else:
+            patch_body = copy.deepcopy(body)
+            if plural == "inferenceservices":
+                existing_annotations = existing.get("metadata", {}).get("annotations", {}) or {}
+                desired_annotations = patch_body["metadata"]["annotations"]
+                for key in hp_annotation_keys:
+                    if key in existing_annotations and key not in desired_annotations:
+                        desired_annotations[key] = None
             custom_api.patch_namespaced_custom_object(
                 group=group,
                 version=version,
                 namespace=namespace,
                 plural=plural,
                 name=name,
-                body=body,
+                body=patch_body,
             )
             print(f"Updated {plural} '{name}'.")
 
@@ -298,6 +323,7 @@ def speculative_decoding_serving(
             "labels": {
                 "opendatahub.io/dashboard": "true",
                 "opendatahub.io/genai-asset": "true",
+                "networking.kserve.io/visibility": "exposed" if enable_external_route else "cluster-local",
             },
         },
         "spec": {
@@ -305,7 +331,10 @@ def speculative_decoding_serving(
                 "minReplicas": min_replicas,
                 "maxReplicas": max_replicas,
                 "automountServiceAccountToken": False,
-                "deploymentStrategy": {"type": "RollingUpdate"},
+                "deploymentStrategy": {
+                    "type": "RollingUpdate",
+                    "rollingUpdate": {"maxSurge": 0, "maxUnavailable": 1},
+                },
                 "model": {
                     "modelFormat": {"name": "vLLM"},
                     "name": "",
@@ -317,6 +346,19 @@ def speculative_decoding_serving(
         },
     }
 
+    # Runtime-only changes must also change the predictor pod template. KServe
+    # propagates predictor annotations to the Deployment template; a stable hash
+    # links its completed rollout to this configuration without restarting reruns.
+    config_hash_annotation = "pipelines.kubeflow.org/serving-config-hash"
+    desired_config = {
+        "runtime": serving_runtime["spec"],
+        "predictor": isvc["spec"]["predictor"],
+        "annotations": isvc_annotations,
+        "visibility": isvc["metadata"]["labels"]["networking.kserve.io/visibility"],
+    }
+    config_hash = hashlib.sha256(json.dumps(desired_config, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    isvc["spec"]["predictor"]["annotations"] = {config_hash_annotation: config_hash}
+
     upsert_custom_object(
         group="serving.kserve.io",
         version="v1beta1",
@@ -325,88 +367,146 @@ def speculative_decoding_serving(
         body=isvc,
     )
 
-    print("Waiting for InferenceService to become ready...")
-    for _ in range(60):
-        obj = custom_api.get_namespaced_custom_object(
-            group="serving.kserve.io",
-            version="v1beta1",
-            namespace=namespace,
-            plural="inferenceservices",
-            name=endpoint_name,
+    def read_custom_object(group: str, version: str, plural: str) -> dict:
+        try:
+            return custom_api.get_namespaced_custom_object(
+                group=group,
+                version=version,
+                namespace=namespace,
+                plural=plural,
+                name=endpoint_name,
+            )
+        except kclient.rest.ApiException as error:
+            if error.status == 404:
+                return {}
+            if error.status == 403:
+                raise RuntimeError(
+                    f"Permission denied reading '{endpoint_name}' in namespace '{namespace}'. "
+                    f"The pipeline ServiceAccount needs get permission for {plural}.{group}."
+                ) from error
+            raise
+
+    predictor_name = f"{endpoint_name}-predictor"
+    runtime_container = serving_runtime["spec"]["containers"][0]
+    expected_args = [arg.replace("{{.Name}}", endpoint_name) for arg in runtime_args]
+    deadline = time.monotonic() + 30 * 60
+    last_status = "waiting for predictor Deployment"
+    print("Waiting for the requested predictor rollout and InferenceService readiness...")
+    while time.monotonic() < deadline:
+        obj = read_custom_object("serving.kserve.io", "v1beta1", "inferenceservices")
+        isvc_status = obj.get("status", {}) or {}
+        conditions = isvc_status.get("conditions", []) or []
+        isvc_ready = any(
+            condition.get("type") == "Ready" and condition.get("status") == "True" for condition in conditions
         )
-        conditions = obj.get("status", {}).get("conditions", [])
-        if any(condition.get("type") == "Ready" and condition.get("status") == "True" for condition in conditions):
-            if enable_external_route:
-                predictor_svc = f"{endpoint_name}-predictor"
-                route_body = {
-                    "apiVersion": "route.openshift.io/v1",
-                    "kind": "Route",
-                    "metadata": {
-                        "name": endpoint_name,
-                        "namespace": namespace,
-                        "labels": {
-                            "opendatahub.io/dashboard": "true",
-                            "serving.kserve.io/inferenceservice": endpoint_name,
-                        },
-                    },
-                    "spec": {
-                        "to": {"kind": "Service", "name": predictor_svc, "weight": 100},
-                        "port": {"targetPort": "http"},
-                        "tls": {
-                            "termination": "edge",
-                            "insecureEdgeTerminationPolicy": "Redirect",
-                        },
-                        "wildcardPolicy": "None",
-                    },
-                }
-                try:
-                    upsert_custom_object(
-                        group="route.openshift.io",
-                        version="v1",
-                        plural="routes",
-                        name=endpoint_name,
-                        body=route_body,
-                    )
-                    route = custom_api.get_namespaced_custom_object(
-                        group="route.openshift.io",
-                        version="v1",
-                        namespace=namespace,
-                        plural="routes",
-                        name=endpoint_name,
-                    )
-                except kclient.rest.ApiException as exc:
-                    if exc.status == 403:
+        deployment = None
+        try:
+            deployment = apps_api.read_namespaced_deployment(name=predictor_name, namespace=namespace)
+        except kclient.rest.ApiException as error:
+            if error.status == 403:
+                raise RuntimeError(
+                    f"Permission denied reading Deployment '{predictor_name}' in namespace '{namespace}'. "
+                    "The pipeline ServiceAccount needs get permission for deployments.apps."
+                ) from error
+            if error.status != 404:
+                raise
+
+        rollout_ready = False
+        last_status = f"predictor Deployment not yet published; InferenceService Ready={isvc_ready}"
+        if deployment is not None and deployment.spec is not None and deployment.status is not None:
+            template_metadata = deployment.spec.template.metadata
+            template_annotations = (template_metadata.annotations or {}) if template_metadata else {}
+            matches_config = template_annotations.get(config_hash_annotation) == config_hash
+            template_spec = deployment.spec.template.spec
+            container = (
+                next((item for item in (template_spec.containers or []) if item.name == "kserve-container"), None)
+                if template_spec
+                else None
+            )
+            # KServe may observe the new ISVC hash before its separate runtime cache
+            # catches up. Require the rendered container configuration as well.
+            matches_runtime = (
+                container is not None
+                and container.image == runtime_image
+                and container.command == runtime_container["command"]
+                and container.args == expected_args
+            )
+            generation = deployment.metadata.generation or 0
+            status = deployment.status
+            observed = generation > 0 and (status.observed_generation or 0) >= generation
+            desired_replicas = deployment.spec.replicas or 0
+            last_status = (
+                f"predictor config matches={matches_config}, runtime matches={matches_runtime}, "
+                f"generation={generation}, observedGeneration={status.observed_generation}, "
+                f"replicas={status.replicas}, updated={status.updated_replicas}, "
+                f"available={status.available_replicas}, desired={desired_replicas}; "
+                f"InferenceService Ready={isvc_ready}"
+            )
+            if matches_config and matches_runtime and observed:
+                for condition in status.conditions or []:
+                    if (
+                        condition.type == "Progressing"
+                        and condition.status == "False"
+                        and condition.reason == "ProgressDeadlineExceeded"
+                    ):
                         raise RuntimeError(
-                            f"Permission denied creating Route '{endpoint_name}' in "
-                            f"namespace '{namespace}'. The pipeline-runner-dspa service "
-                            "account lacks permission to manage routes.route.openshift.io "
-                            "by default. Apply the one-time RBAC setup before retrying:\n\n"
-                            f"  NAMESPACE={namespace}\n"
-                            '  sed "s/<NAMESPACE>/$NAMESPACE/g" \\\n'
-                            "    components/deployment/speculative_decoding_serving/"
-                            "rbac.yaml | oc apply -f -\n\n"
-                            "See the Prerequisites section of the component README for details."
-                        ) from exc
-                    raise
-                host = route.get("spec", {}).get("host", "")
-                if not host:
-                    raise RuntimeError(f"Route '{endpoint_name}' was created but has no host assigned")
-                endpoint = f"https://{host}/v1"
-                print(f"InferenceService ready (external route): {endpoint}")
-                return endpoint
+                            f"Predictor Deployment '{predictor_name}' failed its requested rollout: "
+                            f"{condition.message or condition.reason}. "
+                            f"Inspect with: oc describe deployment {predictor_name} -n {namespace}"
+                        )
+                rollout_ready = (
+                    desired_replicas > 0
+                    and (status.updated_replicas or 0) == desired_replicas
+                    and (status.available_replicas or 0) >= desired_replicas
+                    and (status.replicas or 0) == desired_replicas
+                )
 
-            status = obj.get("status", {})
-            url = status.get("url") or status.get("address", {}).get("url", "")
-            if not url:
-                raise RuntimeError(f"InferenceService '{endpoint_name}' is Ready but did not publish a URL")
-            parsed = urlparse(url.strip())
-            endpoint = f"{parsed.scheme}://{parsed.netloc}/v1"
-            print(f"InferenceService ready: {endpoint}")
-            return endpoint
+        if rollout_ready and isvc_ready:
+            if enable_external_route:
+                route = read_custom_object("route.openshift.io", "v1", "routes")
+                route_spec = route.get("spec", {}) or {}
+                host = route_spec.get("host", "")
+                admitted = any(
+                    ingress.get("host") == host
+                    and any(
+                        condition.get("type") == "Admitted" and condition.get("status") == "True"
+                        for condition in ingress.get("conditions", []) or []
+                    )
+                    for ingress in (route.get("status", {}) or {}).get("ingress", []) or []
+                )
+                expected_port = "https" if enable_auth else "http"
+                expected_tls = "reencrypt" if enable_auth else "edge"
+                route_matches = (
+                    route_spec.get("to", {}).get("name") == predictor_name
+                    and route_spec.get("port", {}).get("targetPort") == expected_port
+                    and route_spec.get("tls", {}).get("termination") == expected_tls
+                )
+                if host and admitted and route_matches:
+                    endpoint = f"https://{host}/v1"
+                    print(f"InferenceService ready (external route): {endpoint}")
+                    return endpoint
+                last_status = (
+                    f"waiting for platform Route '{endpoint_name}': host={host!r}, admitted={admitted}, "
+                    f"backend/auth configuration matches={route_matches} "
+                    f"(expected {predictor_name}, {expected_port}, {expected_tls})"
+                )
+            else:
+                url = (isvc_status.get("address", {}) or {}).get("url", "")
+                parsed = urlparse(url.strip()) if url else None
+                if parsed and parsed.scheme and parsed.netloc:
+                    endpoint = f"{parsed.scheme}://{parsed.netloc}/v1"
+                    print(f"InferenceService ready: {endpoint}")
+                    return endpoint
+                last_status = "predictor rollout complete; waiting for InferenceService internal URL publication"
 
-        time.sleep(30)
+        time.sleep(min(30, max(0, deadline - time.monotonic())))
 
-    raise TimeoutError(f"InferenceService '{endpoint_name}' did not become ready within 30 minutes.")
+    route_diagnostic = f"; oc describe route {endpoint_name} -n {namespace}" if enable_external_route else ""
+    raise TimeoutError(
+        f"InferenceService '{endpoint_name}' did not become ready within 30 minutes. Last status: {last_status}. "
+        f"Inspect with: oc describe inferenceservice {endpoint_name} -n {namespace}; "
+        f"oc describe deployment {predictor_name} -n {namespace}{route_diagnostic}"
+    )
 
 
 if __name__ == "__main__":
