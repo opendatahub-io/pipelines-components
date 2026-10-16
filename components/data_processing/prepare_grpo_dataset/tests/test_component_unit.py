@@ -141,12 +141,29 @@ def test_existing_canonical_rows_are_preserved(tmp_path):
 def test_invalid_rows_are_skipped_and_reported(tmp_path):
     """Skip malformed rows while retaining valid tool-call examples."""
     bad_row = {"question": "missing tool target"}
-    result, _ = _run_component(tmp_path, [bad_row, _raw_tool_call_row()])
+    result, _ = _run_component(tmp_path, [bad_row, *([_raw_tool_call_row()] * 10)])
     with open(result[0], encoding="utf-8") as normalized_file:
         normalized = [json.loads(line) for line in normalized_file]
 
-    assert len(normalized) == 1
+    assert len(normalized) == 10
     assert result[2] is False
+
+
+def test_too_many_invalid_rows_fail(tmp_path):
+    """Fail instead of silently training on a mostly invalid dataset."""
+    with pytest.raises(ValueError, match="too many invalid GRPO rows"):
+        _run_component(tmp_path, [{"question": "missing tool target"}, _raw_tool_call_row()])
+
+
+def test_unexpected_normalization_errors_propagate(tmp_path):
+    """Do not classify implementation errors as invalid dataset rows."""
+
+    class BrokenRow(dict):
+        def get(self, *args, **kwargs):
+            raise TypeError("normalizer bug")
+
+    with pytest.raises(TypeError, match="normalizer bug"):
+        _run_component(tmp_path, [BrokenRow()])
 
 
 def test_http_source_is_downloaded_to_pvc(tmp_path):

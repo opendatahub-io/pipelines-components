@@ -31,7 +31,10 @@ def prepare_grpo_dataset(
 
     Private S3 sources use ``AWS_ACCESS_KEY_ID`` and
     ``AWS_SECRET_ACCESS_KEY``. ``AWS_S3_ENDPOINT`` and
-    ``AWS_DEFAULT_REGION`` are optional for S3-compatible services.
+    ``AWS_DEFAULT_REGION`` are optional for S3-compatible services. The
+    consuming pipeline should inject these variables from its RHOAI
+    Connection Secret with ``kfp.kubernetes.use_secret_as_env``. The secret
+    name is a pipeline-task setting, not a component runtime input.
 
     See the Training Hub GRPO loader contract:
     https://github.com/Red-Hat-AI-Innovation-Team/training_hub/blob/main/src/training_hub/algorithms/lora_grpo.py
@@ -40,7 +43,8 @@ def prepare_grpo_dataset(
     ``target_tool_name``, ``target_arguments``, and an optional
     ``system_prompt``. Multi-turn rows retain ``messages`` and are normalized
     to modern OpenAI ``tool_calls``/``tool`` messages so Training Hub can
-    decompose them.
+    decompose them. Malformed rows are skipped only when they raise an expected
+    ``ValueError``; the component fails if more than 10% of rows are invalid.
 
     Args:
         dataset_uri: Hugging Face URI/repository ID, ``s3://`` object,
@@ -375,21 +379,31 @@ def prepare_grpo_dataset(
     written = 0
     skipped = 0
     first_errors = []
+    max_invalid_row_ratio = 0.10
     with temporary_path.open("w", encoding="utf-8") as output:
         for row_index, row in enumerate(dataset):
             try:
                 normalized_row = _canonicalize_row(row, row_index)
-            except (TypeError, ValueError, KeyError, json.JSONDecodeError) as exc:
+            except ValueError as exc:
                 skipped += 1
                 if len(first_errors) < 5:
                     first_errors.append(f"row {row_index}: {exc}")
                 continue
             output.write(json.dumps(normalized_row, ensure_ascii=False) + "\n")
             written += 1
+    total_rows = written + skipped
     if written == 0:
         temporary_path.unlink(missing_ok=True)
         details = "; ".join(first_errors) or "no readable rows"
         raise ValueError(f"no valid GRPO tool-call rows were found ({details})")
+    if skipped / total_rows > max_invalid_row_ratio:
+        temporary_path.unlink(missing_ok=True)
+        details = "; ".join(first_errors)
+        raise ValueError(
+            f"too many invalid GRPO rows: skipped {skipped} of {total_rows} "
+            f"({skipped / total_rows:.1%}); maximum allowed is "
+            f"{max_invalid_row_ratio:.1%}. {details}"
+        )
     os.replace(temporary_path, normalized_path)
     print(f"Normalized {written} rows to the shared PVC; skipped {skipped} invalid rows")
     if first_errors:

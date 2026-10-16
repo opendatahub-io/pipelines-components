@@ -11,9 +11,47 @@ the data; Training Hub owns ``n_train`` and ``n_val``.
 
 Private S3 sources use ``AWS_ACCESS_KEY_ID`` and ``AWS_SECRET_ACCESS_KEY``. ``AWS_S3_ENDPOINT`` and ``AWS_DEFAULT_REGION`` are optional for S3-compatible services.
 
+### S3 credentials in a pipeline 🔐
+
+RHOAI users should create an object-storage Connection in their Data Science
+Project. The Connection creates the Kubernetes Secret used by the pipeline.
+At pipeline-authoring time, inject that Secret into the task with
+``kfp.kubernetes.use_secret_as_env``:
+
+```python
+from kfp import kubernetes
+
+dataset_task = prepare_grpo_dataset(
+    dataset_uri=dataset_uri,
+    pvc_mount_path="/mnt/pipeline",
+)
+kubernetes.use_secret_as_env(
+    task=dataset_task,
+    secret_name=data_connection_name,
+    secret_key_to_env={
+        "AWS_ACCESS_KEY_ID": "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY": "AWS_SECRET_ACCESS_KEY",
+        "AWS_S3_ENDPOINT": "AWS_S3_ENDPOINT",
+        "AWS_DEFAULT_REGION": "AWS_DEFAULT_REGION",
+    },
+    optional=True,
+)
+```
+
+Here, ``data_connection_name`` is the name of the Kubernetes Secret created
+for the Connection. The component intentionally does not expose this as a
+component input: ``use_secret_as_env`` configures the compiled KFP task, while
+the component itself only consumes the resulting environment variables. For
+an S3 URI, provide the Connection Secret or configure an equivalent workload
+identity/default AWS credential chain.
+
 See the Training Hub GRPO loader contract: https://github.com/Red-Hat-AI-Innovation-Team/training_hub/blob/main/src/training_hub/algorithms/lora_grpo.py
 
 The local canonical single-turn format is ``question``, ``tools``, ``target_tool_name``, ``target_arguments``, and an optional ``system_prompt``. Multi-turn rows retain ``messages`` and are normalized to modern OpenAI ``tool_calls``/``tool`` messages so Training Hub can decompose them.
+
+Malformed rows that fail expected validation are skipped. The component fails
+when more than 10% of the input rows are invalid, or when no valid rows remain.
+Unexpected implementation errors are not treated as row validation failures.
 
 ## Inputs 📥
 
