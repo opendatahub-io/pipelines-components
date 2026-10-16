@@ -1,8 +1,816 @@
---index-url https://pypi.org/simple
+--index-url https://packages.redhat.com/api/pypi/public-rhai/cpu-torch2.13-el9.8-test/simple
 
-# Minimal placeholder dependencies for odh-autorag-inference
-# TODO: Add actual inference dependencies once deployment implementation is complete
-
-# Core AutoRAG inference dependencies (placeholder versions)
-ai4rag>=0.14.0
-
+ai4rag==0.23.0 \
+    --hash=sha256:99be9c65af9e2c90854a48f7f51c788f1fbd832063de5b2b3a611a6169e8ea4f
+    # via -r requirements.in
+aiohappyeyeballs==2.7.1 \
+    --hash=sha256:6c06961fde24f3f847939e288b8e6398973752c358a58cdc067115f8fe87a35d
+    # via aiohttp
+aiohttp==3.14.5 \
+    --hash=sha256:29a202546033449413394eec897b7c5d78c3d2a1f8f04eefe7ef0a612541b2db \
+    --hash=sha256:4ab516f59c99f77b64159925a070e08952b919aef99d8ead02755639f2a6de7b \
+    --hash=sha256:95553d712c656ca0764d77fe09cd4a19da99dcc9f3c4209e0fc3093c8a7a7075 \
+    --hash=sha256:acdbb632b7d57d1882e12fe2a0ddc9bc021a2dee01e3c1163a75e495c175298c
+    # via
+    #   fsspec
+    #   instructor
+    #   langchain-community
+aiosignal==1.4.0 \
+    --hash=sha256:b26e9244ccbbf6c905df882014bf4f5c8b6922f697b1761e86450c1346592c07
+    # via aiohttp
+annotated-doc==0.0.5 \
+    --hash=sha256:6060b21cc31c7caecc01f9b833fe49d81294c14e1fcc80362546126939167155
+    # via typer
+annotated-types==0.8.0 \
+    --hash=sha256:20c363a73ef38607a829a6697a8d43dfb355b71bdd2d3f2fe03e0a4f5c53b7be
+    # via pydantic
+anyio==4.15.1 \
+    --hash=sha256:1f6751f9810365d0ba4a86133a026db60c1f7f4054925e5ca6ee9b78a69cd748
+    # via
+    #   httpx
+    #   httpx2
+    #   langsmith
+    #   openai
+appdirs==1.4.4 \
+    --hash=sha256:75ca3ec031f13969bb0817c7280570345180f778dae67560ededfefd8918f77e
+    # via ragas
+asyncpg==0.32.0 \
+    --hash=sha256:2e1d4179a21d192d2aca645a7a57b8b0d58c5aa03e30da540e2dda36c7a5243e \
+    --hash=sha256:3a6b2cb173d21e8dce05aabcfb51899726a519c9054feab0d82ea8ef6675b4e6 \
+    --hash=sha256:a98b3200f8494267e472a9c995755d4e507d33bee6705f7fdc5d54f266241504 \
+    --hash=sha256:b7fb9b46873cc2615ae8b97d02a32db43c8ded9325904f6aea0ec19f0cfe812f
+    # via ai4rag
+attrs==26.1.0 \
+    --hash=sha256:f2ac9d9129b0cef2fdf5859ac82adab26cc17475ea99701bf8934afa4db157d8
+    # via
+    #   aiohttp
+    #   jsonschema
+    #   referencing
+boto3==1.43.111 \
+    --hash=sha256:091594bb910e2cceaa24ff93f7ea20515d2b952ce371f733d985bb71407191ea
+    # via ai4rag
+botocore==1.43.111 \
+    --hash=sha256:bd27b51aec2a7b7298779d1a59e7790ee6111a2659d5ec90124ecb0f13999a1a
+    # via
+    #   boto3
+    #   s3transfer
+cachetools==7.2.1 \
+    --hash=sha256:92791823fb4aedc5f6a1bced0b98ceff34077915bedc46b17efb5570e3c0d5ba
+    # via pymilvus
+certifi==2026.7.22 \
+    --hash=sha256:e5fe15bb588e1de8f8caef013fbcf10c5e61c7f2a96ecba518df6c4d9acbdd7b
+    # via
+    #   docling-slim
+    #   httpcore
+    #   httpx
+    #   langchain-openai
+    #   requests
+charset-normalizer==3.5.2 \
+    --hash=sha256:90955d1179ab190ee1c9a9670cd36cd19077b6d0ff565c4a8a086a6dfe258174
+    # via requests
+click==8.5.0 \
+    --hash=sha256:858e592c4a1bdf1453cda018d442df83b8fb40707cfc39aa442869a3b0680dd8
+    # via
+    #   huggingface-hub
+    #   instructor
+cloudpickle==3.1.2 \
+    --hash=sha256:61e739b078e5be0694878bb530e91781a5de84833e6ed4f20c24efa275631ab9
+    # via joblib
+dataclasses-json==0.6.7 \
+    --hash=sha256:2b6dbf6190a132695ca5e6c78e8a090059ecb184ea7bf547bafbe2de3aaaf015
+    # via langchain-community
+datasets==5.1.0 \
+    --hash=sha256:d434a1e57a0698114a3d39299d085943d0c376868e4a8558f76f89822a538475
+    # via
+    #   evaluate
+    #   ragas
+    #   unitxt
+defusedxml==0.7.1 \
+    --hash=sha256:f0df5a6bb3f3bc85596668ed85141d72b65bde258167f1bdb693cac929691fc0
+    # via docling-core
+dill==0.4.1 \
+    --hash=sha256:d7c6e083084c144e25b3db984a8255658c3b5937ca9a7e7a6bc7d0deee09336a
+    # via
+    #   datasets
+    #   evaluate
+    #   multiprocess
+diskcache==5.6.3 \
+    --hash=sha256:3c5516a64ee8f1f1ce1ec4337b4bc4e4df11529277f68ac693cc357dc72189ee
+    # via
+    #   ragas
+    #   unitxt
+distro==1.9.0 \
+    --hash=sha256:683556d8f500bcf962c012ddf7e526b7beea6e010df5e0d9f056bec0b4b835de
+    # via
+    #   langsmith
+    #   openai
+doclang==0.7.3 \
+    --hash=sha256:a56a9bfed43292ff9e7148d13d62f635039648acef3cb1cb46d59a91d502c2a5
+    # via docling-core
+docling-core==2.101.1 \
+    --hash=sha256:2980a34641f867e10a92b70aa58d53f2671b48100b36858471b1ed97316b1340
+    # via docling-slim
+docling-slim==2.121.0 \
+    --hash=sha256:284e9f76765a61eede0b280d182cd2755ffd4af646766483cf2dfa4be4ec1490
+    # via ai4rag
+docstring-parser==0.18.0 \
+    --hash=sha256:670b98f396abd42e66b2c76f5920ead3a09350476a00cde57ae97b86c84bb220
+    # via instructor
+evaluate==0.4.6 \
+    --hash=sha256:bebf8656d5cb4e05626b12044dec859a669cd8c4ef79276d447be33d2da86df6
+    # via unitxt
+faiss-cpu==1.12.0 \
+    --hash=sha256:38b9ab769f3be71dc520f7603ed3b5f89d3f091480bedc110cefea2239439308 \
+    --hash=sha256:6dd926430e434f9085ad443e87e43641e3dba840d165d9e7b5a877c1818072b7 \
+    --hash=sha256:7490104b1ee98f85e199ff664454fca13d187f27e62820cb51962737c686ae21 \
+    --hash=sha256:fc81bc35bb075adb2de9b45fa5052413c1c3e7c0f223912a89e6d91ec1f5a44c
+    # via milvus-lite
+filelock==4.1.1 \
+    --hash=sha256:7e255ba3e40934fd94abbed6809d6067ebbc7f7ff5e2521684558b66b403578d
+    # via
+    #   datasets
+    #   huggingface-hub
+filetype==1.2.0 \
+    --hash=sha256:0d22ed8948c80b3d8d671b6db05f4e31bdec877553c225d618967fb1d38a8fe7
+    # via docling-slim
+frozenlist==1.8.0 \
+    --hash=sha256:0587167d1466b423985fa29ab853c521248684cb316bf7f95ea4a30d541638aa \
+    --hash=sha256:3b732efa0871a39f0dc8591f59fee9467a3d6676933a024efd979a5d00bb2fab \
+    --hash=sha256:712214e38d96867f2da5ceac6a1c6cb5652e01e4f398f63c1bffdfe7262c4edb \
+    --hash=sha256:c324ccd09f5a78025c7d4b3af24bb906bb911c9d8d84d06f443932018676c365
+    # via
+    #   aiohttp
+    #   aiosignal
+fsspec==2026.7.0 \
+    --hash=sha256:9eae1a64a2ddbb4c42b91603b09ef7548af05b90495bfc3d950383129186551c
+    # via
+    #   datasets
+    #   evaluate
+    #   huggingface-hub
+    #   neo4j-graphrag
+grpcio==1.84.0 \
+    --hash=sha256:2f2684261301273500b9ccac71c35b6c79b4eeee84cb75be41070391dab4202a \
+    --hash=sha256:5eacf1a43c95efeea9cbb7bcb7a7731dbc310a8625c5dd97d82cec674b3bdd1c \
+    --hash=sha256:6967c0cd37070c800eaf0af83ad14a9013697dcd6bdb674eac79adb83dea5c62 \
+    --hash=sha256:e278f2e85fb69cb1904303c5d79019a25c82bc6a3895885135b4568efc0b7295
+    # via
+    #   milvus-lite
+    #   pymilvus
+h11==0.16.0 \
+    --hash=sha256:5909426ffeaf28506962b9a6c1bc923f6a00865dc35f6168dabe9a5d65267ed4
+    # via
+    #   httpcore
+    #   httpcore2
+hf-xet==1.7.0 \
+    --hash=sha256:34aa84458ea1603938db899bf34afff6cf332b61338d970c27e6f01b768e0164 \
+    --hash=sha256:6068f19615394ff08cceda850bffc3ce531b8ef7f7f0b0bff0a2e43b5c58d8f4 \
+    --hash=sha256:85327a4e1d595e16b6a13892cc8596bb672b278666e186b9b9c0ceed87b6267b \
+    --hash=sha256:b375f31c0422c0ad9c3d5c051fcba4c21bdcbf8358901bef5bf85da987170cc5
+    # via huggingface-hub
+httpcore==1.0.9 \
+    --hash=sha256:b59e28c75717c4fcae87682302106837ff0b75ed1c598445cf21e50068bea322
+    # via httpx
+httpcore2==2.13.1 \
+    --hash=sha256:8236a2f2ec1691e209a4217c61740491480a4d8773ed104031e6da030b1fd410
+    # via httpx2
+httpx==0.28.1 \
+    --hash=sha256:be1d92ea099c115bb7171e2efc5f89a2269886f986c9185144861c675e116220
+    # via
+    #   langchain-core
+    #   langgraph-sdk
+    #   openai
+httpx-sse==0.4.3 \
+    --hash=sha256:9f990cc13082ab50e3570028593abf85ff0d27f4e2be24d964a732ed0d49cd9e
+    # via langchain-community
+httpx2==2.13.1 \
+    --hash=sha256:84e4e36dcb2ba0c2bceed60363b2a794ea4ec015e1e4f1b5d67f3ffc1b212e56
+    # via
+    #   huggingface-hub
+    #   langsmith
+huggingface-hub==2.2.0 \
+    --hash=sha256:c172cb1178ad913061008f8867c3001c4f33e2ce7f15f534f7a7481b617bca8f
+    # via
+    #   datasets
+    #   evaluate
+    #   tokenizers
+    #   transformers
+idna==3.20 \
+    --hash=sha256:bb67d9126ac16582e40e6422145eb4cc85d14aa0d378422c78e20ed8dff0ef57
+    # via
+    #   anyio
+    #   httpx
+    #   httpx2
+    #   instructor
+    #   requests
+    #   yarl
+instructor==1.17.0 \
+    --hash=sha256:7d3e3607162683c6561eb8827bea33549ffef4aba2649c51df00d6d1fef9574a
+    # via ragas
+jinja2==3.1.6 \
+    --hash=sha256:f3610ab9c1e7c93cb3b1ee55afb34bc4cf3115954444b2b1bd8846d5d08ea9f1
+    # via instructor
+jiter==0.14.0 \
+    --hash=sha256:59d54d1a63cbaecda065e566980ff6ef95a1ba89cbd902882ff73b8b5d8b3525 \
+    --hash=sha256:769f3bb1bc9a2b04909afb1999fb5e5278359b9186fd02abf643e2e2604786f4 \
+    --hash=sha256:b63a12dd314f93e39622333c256d8e9dd1b8cf906f9331dbea1a4d64b02ccb30 \
+    --hash=sha256:d2cee8fd3e3bbe44dee44fc759b53cff87db96924c21a4acd721bf95f182b7a6
+    # via
+    #   instructor
+    #   openai
+jmespath==1.1.0 \
+    --hash=sha256:6586d1eae0ee70b9146554755f80858520de0044db25fe6d5bb7daa487ed6fcb
+    # via
+    #   boto3
+    #   botocore
+joblib==1.6.0 \
+    --hash=sha256:53e5065c037fa756f073f98ba71a66861260e8efbdd0131ea1b6d4c78a088ce0
+    # via scikit-learn
+json-repair==0.64.0 \
+    --hash=sha256:3f9f8bd6609413fa6350985c01ff74d3215144472e7dba39da1a88675c3266bc
+    # via neo4j-graphrag
+jsonpatch==1.35 \
+    --hash=sha256:84bf67e0dfd18d930f1d10b7b0b904fec87ff528804bc1e9e2e1009bfec3a910
+    # via langchain-core
+jsonpointer==3.2.1 \
+    --hash=sha256:e08372d975f636d96346dabe4d9df63e321636da31d23e0bd0b1a3f6c4cfa5a6
+    # via jsonpatch
+jsonref==1.1.0 \
+    --hash=sha256:0083f53bae4b8961c2e588d08db77dc20fc43513886c645c8cd5fb6ff433d579
+    # via docling-core
+jsonschema==4.26.0 \
+    --hash=sha256:75147fff44127f10012be008a9e16e857d3ac7671aa8a80c61e8995cd149e811
+    # via docling-core
+jsonschema-specifications==2025.9.1 \
+    --hash=sha256:b7e8d9e31ac4eb1d0534fc8f53ea4688bee48820dfc9d07b7ad71ef0c274cfae
+    # via jsonschema
+langchain==1.4.4 \
+    --hash=sha256:c029a7de7a6afdc32fa6a2ebd3f6a492a9471261eb52410867803f69cea0a9e7
+    # via
+    #   ai4rag
+    #   ragas
+langchain-classic==1.0.8 \
+    --hash=sha256:6d8b23864e0792f98b01f806e9aef2730ba5edbb93cfd8bf44c8a8036e6628d2
+    # via langchain-community
+langchain-community==0.4.1 \
+    --hash=sha256:1ef2a1ddb5af909df56665a5431d7e8793d5be5707a0b2f756d262294f0c477f
+    # via
+    #   ai4rag
+    #   ragas
+langchain-core==1.6.9 \
+    --hash=sha256:1e4b6659c690c8ea9e79cd757a529c1460044318c79d862b10eb163c4fe23ac1
+    # via
+    #   langchain
+    #   langchain-classic
+    #   langchain-community
+    #   langchain-openai
+    #   langchain-text-splitters
+    #   langgraph
+    #   langgraph-checkpoint
+    #   langgraph-prebuilt
+    #   langgraph-sdk
+    #   ragas
+langchain-openai==1.7.0 \
+    --hash=sha256:adc559ab80c75397e785112009bacecbb3c4a622fda7401379de32af67ba790d
+    # via
+    #   ai4rag
+    #   ragas
+langchain-protocol==0.0.19 \
+    --hash=sha256:ac3653c4273b6cde3f061569286b704ffaf1e27a9df184fb6ad5af0db0fdf917
+    # via
+    #   langchain-core
+    #   langgraph-sdk
+langchain-text-splitters==1.1.3 \
+    --hash=sha256:4429f4a049bdb0f313c930abc1512a81c6b887a3bd27e58229c18d56fc3de9fc
+    # via
+    #   ai4rag
+    #   langchain-classic
+langgraph==1.2.14 \
+    --hash=sha256:bbb7fec1ee319085639011279961b9fd1f2eae309eddf96ef813e9754c49ad6e
+    # via langchain
+langgraph-checkpoint==4.2.0 \
+    --hash=sha256:e47daf6477a4fb309154b7b5c5b1691fa816c8781496cbe9067d6e279da81a59
+    # via
+    #   langgraph
+    #   langgraph-prebuilt
+langgraph-prebuilt==1.1.0 \
+    --hash=sha256:aa52e1c5c2d317643260bffabbf2d91312a04b9d545230b2ad43cc1b7de1f128
+    # via langgraph
+langgraph-sdk==0.4.6 \
+    --hash=sha256:7bc36b11535488001d2575bbbfd73b7011448eed235b19695be50f0a95d3246e
+    # via langgraph
+langsmith==0.14.7 \
+    --hash=sha256:0bcf1a8afc5c694981685303805350c9279c0fe758171ccb97ac20834cfcebcb
+    # via
+    #   langchain-classic
+    #   langchain-community
+    #   langchain-core
+latex2mathml==3.81.1 \
+    --hash=sha256:b10fa48790fc216098e1ea107b8e1997bb078005f4ace111be6c6360d8109498
+    # via docling-core
+lxml==6.1.3 \
+    --hash=sha256:4e85cc5673f5ee570701494330145a375f73b7217bf68d2f8fbdad20fdf4d740 \
+    --hash=sha256:92bd11d99fae57f1ba05c1583f9bbc288a29e6c87dc5ba7a92fe8a8fbd7f4a1f \
+    --hash=sha256:a08208ef197730781c8715a3a202a3dc89e087b893aa8154cdd43d95d1bc2c91 \
+    --hash=sha256:a0e7507e9c6b0ff1187df722ad5982f4e0b9b7daacbabd44650ca02b13b03cf7
+    # via doclang
+markdown-it-py==4.2.0 \
+    --hash=sha256:1534e7fddd5e71cbeaa7daf3650abf8922447e96aea60b1485eb7a088b73bd02
+    # via rich
+markupsafe==3.0.4 \
+    --hash=sha256:2732e9ad81a2dc720f2eda72cf4ad3b56fb0bf9883521b515c9cf4af1e079d29 \
+    --hash=sha256:5903c48a58b73aed097d9bf0ae7cb3ee3c05173fc8d27491a5d67035f3347b72 \
+    --hash=sha256:cce374b320525b49306dce3c5534188d4c08c8be2d69bc8b1d654813e0e4c691 \
+    --hash=sha256:d7a0e73fb7225a400054e5081ae93360a6f12d74585f89ab5206752275e81cbd
+    # via jinja2
+marshmallow==3.26.2 \
+    --hash=sha256:946d39ca3150f8372de2228bc3b969ecf70b9373a520ce6d284cb264f231c83b
+    # via dataclasses-json
+mdurl==0.1.2 \
+    --hash=sha256:8f201a35189614c10f7c6b10fde1724b6bbcfba586b454c00c3c400c92c3ecd0
+    # via markdown-it-py
+milvus-lite==3.2.1 \
+    --hash=sha256:0ad51708a520e02c01bca97a3fff6e76649379fad22924f9f64a6d9981f22cca
+    # via pymilvus
+mpire==2.10.2 \
+    --hash=sha256:7e4cd3d5ce92d5eddc4326fe73b6e74ae8f55c2d46ad5f74e79efbf7e7c9b26b
+    # via semchunk
+multidict==7.1.0 \
+    --hash=sha256:0f67d16d681cea28beafaf43aecca938dd62a7cd055346dfeb1d7c41da26c55e \
+    --hash=sha256:356c0be815e51133727b894c2df62506897772252603c906480352181a54081c \
+    --hash=sha256:bfcb4b862fd6950f5bb0cb87bc5029ce4d809bc0f8fa01caaefc911ad93aeb75 \
+    --hash=sha256:f93932a918fee969d9c4039895a569f8b3a12a9b54280f7715caa91347ac67d8
+    # via
+    #   aiohttp
+    #   yarl
+multiprocess==0.70.16 \
+    --hash=sha256:15930e23ae04b910aee1b3dcbefa702abfd31f376a1c12159064b7b09cdb0788
+    # via
+    #   ai4rag
+    #   datasets
+    #   evaluate
+    #   mpire
+mypy-extensions==1.1.0 \
+    --hash=sha256:0072ccf30691ffb91307fd0b01cb276d11eaefaff1934466c05651eec9beb97a
+    # via typing-inspect
+neo4j==6.3.1 \
+    --hash=sha256:e54c81255369712fac3ffad336247e17bf1dd5839e9509592cfb4fae5be1bb6b
+    # via
+    #   ai4rag
+    #   neo4j-graphrag
+neo4j-graphrag==1.22.0 \
+    --hash=sha256:b43a6a6697c842752ae6b510c77dfdad797d11249915822335397aec8bd9495f
+    # via ai4rag
+nest-asyncio==1.6.0 \
+    --hash=sha256:37feb3b1d516f4a9321a62fd1466b5823e7b4b20483ad7e73a364b9f203e97c2
+    # via
+    #   ai4rag
+    #   ragas
+networkx==3.7 \
+    --hash=sha256:5b06f4e25ff08aca746965dca04ee81f4573b6e975cb361e91780728522d0766
+    # via ragas
+numpy==2.5.4 \
+    --hash=sha256:1bd31d9750050ea27f63805aaab1b7d7b307b4d79d23b369302b2b18f9120a44 \
+    --hash=sha256:21caef82c4423dd3a3520207d0bdd227e77575893380c391f17020e1ad64fec3 \
+    --hash=sha256:610e6e13c175bf446e03f0ce8035c72fe95848414eb4016594ec3bcfab26f284 \
+    --hash=sha256:c079a0e49c7cde6e696d6c2a936070d02caea5c5059cd2ed6f512994c1b05cdc
+    # via
+    #   datasets
+    #   evaluate
+    #   faiss-cpu
+    #   langchain-community
+    #   milvus-lite
+    #   neo4j-graphrag
+    #   pandas
+    #   pygam
+    #   ragas
+    #   scikit-learn
+    #   scikit-network
+    #   scipy
+    #   transformers
+openai==2.53.0 \
+    --hash=sha256:781ee0a067abb323ba473a4d9d872583919b960d6f4fc37e59d6efd9074868b2
+    # via
+    #   ai4rag
+    #   instructor
+    #   langchain-openai
+    #   ragas
+orjson==3.13.0 \
+    --hash=sha256:96ae3f4fcf90ca2769e197942928704791a9fe6390b9cf20361a3f3491a5f5d5 \
+    --hash=sha256:99e16a0bec5ac996a90a57435e499621f0df36411b70ebe50ccab0ce95b6a1f7 \
+    --hash=sha256:9aff125c3245ecf7340190d33303a59007a9ad38e4ea84b0e57fed79e7a3f9f5 \
+    --hash=sha256:d22c5a97019e6dffd760ca1857b2a3baadff3696f87e804a19cb28872b2dae2a
+    # via
+    #   langgraph-sdk
+    #   langsmith
+    #   pymilvus
+ormsgpack==1.12.2 \
+    --hash=sha256:24a8629a54c10e1e0b5baf0c71cfc3adb723ab8664090f482698a9695c1e2633 \
+    --hash=sha256:2d15dc64a09a49f7885aad35762b6fe66646ed534ddec2b31426cf4aeb6308d9 \
+    --hash=sha256:e7b392b136db2ed9bbf044b1a7509458dd3c413d4ce15ca199cf918205d28318 \
+    --hash=sha256:f30b282043110f45b9a7bde649c53c4f550392bf5053801047f29787b8b72c93
+    # via langgraph-checkpoint
+packaging==26.3 \
+    --hash=sha256:4351cc62d6fddd97665746370cd5d662b3ecf6b18de686db4d704acbedda7a15
+    # via
+    #   datasets
+    #   evaluate
+    #   faiss-cpu
+    #   huggingface-hub
+    #   langchain-core
+    #   langsmith
+    #   marshmallow
+    #   transformers
+pandas==2.2.3 \
+    --hash=sha256:0a9088b12261623df80b87d41d02df23316b12f9b1e2467fe06b41219c9ea6b3 \
+    --hash=sha256:80135c6c47772c7153d5494a065e755117504b331df8e928b932357543d3d496 \
+    --hash=sha256:d7217ff8bce874bac3fc3fb2073798e832e098d3a610ac9fe5fa6ff970cc30d0 \
+    --hash=sha256:e076874bd2ed1c090a3aae2abd354c9172358f7aaddee99ce336ac75933e9c66
+    # via
+    #   ai4rag
+    #   datasets
+    #   docling-core
+    #   evaluate
+    #   pymilvus
+pgvector==0.5.1 \
+    --hash=sha256:0ff34d0b0c09ccc8c0f2c6ad6eddeca1845ea5fb1dff066dc9b79dcd18e767ba
+    # via ai4rag
+pillow==12.3.0 \
+    --hash=sha256:1a0a9514845420416a5639546ec99f12047e71608aa97a91f89546327bed17ef \
+    --hash=sha256:92abc4f847f9f2f6fccd2f19567589ce8c7200b3f4751d1e1d66f21287086e1b \
+    --hash=sha256:ac494d6d751d8e14603d1b7529c74e6ab924718e9acb6d03bdf18ce419ceb717 \
+    --hash=sha256:c945f479bc2de2c2329bd78e6ee8b730843f8148f1534f791e5990d7b3f1e308
+    # via
+    #   docling-core
+    #   ragas
+pluggy==1.6.0 \
+    --hash=sha256:16677849f19621201a96485c72a92dcceada6cc8d7dbb9e2f7424b8e8d4cbfe3
+    # via docling-slim
+progressbar2==4.6.0 \
+    --hash=sha256:3b5a1a78e7f53f288ce6d706b152b53ac75f5bd4df35601faa6e60096a83b3e4
+    # via pygam
+propcache==0.5.4 \
+    --hash=sha256:5221ad0242906a2af1cbe1390712d0787e49baebad464c58777076a5f020398f \
+    --hash=sha256:af063bfdf5d59db346915782f4755557999e127d8d77dd30c1ff2a230e6f5da8 \
+    --hash=sha256:c802c9ec4cac51ab35506c5aec5c9118faf4fccb89bdbfe5cfc2dcdc5cb72a5e \
+    --hash=sha256:c9d102a19412c2e9fa97f0cc4f303978ed0246244735dacebffbb57ff507a79e
+    # via
+    #   aiohttp
+    #   yarl
+protobuf==7.36.2 \
+    --hash=sha256:3fee511340c9a579857117a5a374e44ab03ed794b0c6e48849d33238b86c4624 \
+    --hash=sha256:4ed66504e59ee1f2391d40babeb7a162c281ed6f1bb8759e9439051f80fec268 \
+    --hash=sha256:b9bd00e502ad24d8e8be000584b07e30e5bd8eb56d249fd3e910a1f32db5a42f \
+    --hash=sha256:fa55ac78125affffd0093a5494254b852d1d9d4d54d1c77cbc63c0f6ea7b0b5a
+    # via pymilvus
+pyarrow==26.0.0 \
+    --hash=sha256:163d42abbdd9e2a051659d18c23a79f4815148e9a8ad1adc23614bd786d76df0 \
+    --hash=sha256:1fa4d870e0c347925fd2320f3ca65675a435338e246649ba716860c5a6080dab \
+    --hash=sha256:3e2ddec0f7641461375d94eee18cc66db1adc3bd29a88e9fa09e3bc74e799f2d \
+    --hash=sha256:6ae49646670ed7fc285d2fa768585ee60f2ec9c7844273c6e21f46e05f2d7cf5
+    # via
+    #   datasets
+    #   milvus-lite
+pydantic==2.11.10 \
+    --hash=sha256:919a938875b2cb8006dc0ddfe45be6d21fa93b475e96fbca7191c60d34979ba3
+    # via
+    #   ai4rag
+    #   docling-core
+    #   docling-slim
+    #   instructor
+    #   langchain
+    #   langchain-classic
+    #   langchain-core
+    #   langgraph
+    #   langsmith
+    #   neo4j-graphrag
+    #   openai
+    #   pydantic-settings
+    #   ragas
+pydantic-core==2.33.2 \
+    --hash=sha256:3e8f1e1083048180aa4d408e57cd2452fc761f3bab6b9f6b173a659248bc443a \
+    --hash=sha256:47bd896822a92cefd4a3d3fa279cef4650ef255f12b56d23a6196bc7115cbc2e \
+    --hash=sha256:b3370b102df71202438ecc68fe36b8798a950aca5a6689616064dbbf1b8f4fdd \
+    --hash=sha256:e7e87fa64f77e00c625022fabb9b12c18a3897801774946531ef1946a19aef90
+    # via
+    #   instructor
+    #   pydantic
+pydantic-settings==2.15.0 \
+    --hash=sha256:488290ad93091edfc1eeaf22a609a7762e4b57bd46362a614772287df3b2b328
+    # via
+    #   docling-core
+    #   docling-slim
+    #   langchain-community
+pygam==0.12.0 \
+    --hash=sha256:1a71d674252eedad7cec6b6d4ce7eadcd5a1901d9aa310c35cc2ebd9ff57c1dc
+    # via ai4rag
+pygments==2.21.0 \
+    --hash=sha256:6c00fcce5ee73d4c60c6741b93e15f99bc21a3e9c38d278215a3d874feeec550
+    # via
+    #   mpire
+    #   rich
+pymilvus==3.0.2 \
+    --hash=sha256:a8baae29646e0b6cafa11509b6288e79b0a15584315121f860e42b04d57e0fe5
+    # via ai4rag
+pypdf==6.20.0 \
+    --hash=sha256:15107ef2fb674eeecead7e3157af9e7b92da492eb43c4fcf0cb474b5e11cc523
+    # via neo4j-graphrag
+python-dateutil==2.9.0.post0 \
+    --hash=sha256:21ac874bb106a90ff80ef341dd135141d989618b441d0e51a82f32fb075b6b4c
+    # via
+    #   botocore
+    #   pandas
+python-dotenv==1.2.4 \
+    --hash=sha256:9aced3d11822fc2dbb9db1bffc1decd0564c838f3dff136992e1aa883baf9561
+    # via
+    #   pydantic-settings
+    #   pymilvus
+python-utils==4.1.1 \
+    --hash=sha256:f863afb7150f12fbc7498d785c671092f058d04818f960f25a99584358b56981
+    # via progressbar2
+pytz==2026.5 \
+    --hash=sha256:16fd4b52bac878d0e56e23092876cbfb78de5b85394f9de9143d7bf1c1fe8e64
+    # via
+    #   neo4j
+    #   pandas
+pyyaml==6.0.3 \
+    --hash=sha256:098744412b0c4bd8dc58605244251273cb2d78e76a21cd6969d927a9e0dc998d \
+    --hash=sha256:41724f293a440cee7a33953bb32d22ed72e31de54a3173b423556a86f6fb5b28 \
+    --hash=sha256:7722fec06c9d43d2e3941a6aa18c2292ec0753b3e22255380f30e0dbf53f8b32 \
+    --hash=sha256:dc5d2526c3efc28a4f3573f51f9ba9c52a0eea7b571b3142b6952056aa279dcf
+    # via
+    #   datasets
+    #   docling-core
+    #   huggingface-hub
+    #   langchain-classic
+    #   langchain-community
+    #   langchain-core
+    #   neo4j-graphrag
+    #   transformers
+ragas==0.4.3 \
+    --hash=sha256:3e10049a79292b4507e948ab29d25918bac5a0e7c23d9307499eef988dc031c5
+    # via ai4rag
+referencing==0.37.0 \
+    --hash=sha256:4685ef55bf2b588041511c2da78baf592391aabbc86a4b58d60f9891b2c7a113
+    # via
+    #   jsonschema
+    #   jsonschema-specifications
+regex==2026.9.29 \
+    --hash=sha256:1f419422ad82912a48b938a46666fd3a0bae5c82afeda1124842436b87f64feb \
+    --hash=sha256:973c3093ee9b5d6a4557103ccb4ea708a8219b81d31a5fc8284965aa43ebf5a8 \
+    --hash=sha256:ae01ec680aebcdb804d6cd76cbf3ef5818723e96f94986bb8ff7079dcc2168da \
+    --hash=sha256:e062cf3592a72eab3025fa4526900b933cd13d65243e5b9c3d24114eb92dd8e8
+    # via
+    #   instructor
+    #   tiktoken
+    #   transformers
+requests==2.34.2 \
+    --hash=sha256:9cda5eb390499b4264a44d85e3287e9e0632c7c1d7edfb8cd26b0d0379de4ba2
+    # via
+    #   docling-core
+    #   docling-slim
+    #   evaluate
+    #   instructor
+    #   langchain-classic
+    #   langchain-community
+    #   langsmith
+    #   pymilvus
+    #   requests-toolbelt
+    #   tiktoken
+requests-toolbelt==1.0.0 \
+    --hash=sha256:bc2622748ae3d9110f8b0357d58d742cd86180e31b85b696dea70a13b5208c93
+    # via langsmith
+rich==14.3.4 \
+    --hash=sha256:39b2124646b54d926ccf24e4ee7f092c84bd6dde577fdd7ef1f3d6be2d092102
+    # via
+    #   instructor
+    #   ragas
+    #   typer
+rpds-py==2026.9.1 \
+    --hash=sha256:5b831dd8841a3fbe043267d3e39e36f000383a8a3389361c5b7fc998bd00e231 \
+    --hash=sha256:5bab0bbd4cc2fdb9a698d5295aad48dc988e1607b5fbbf3e9090208d3a995044 \
+    --hash=sha256:a5a7ba76c6c0b6e2cb5090fcfe5e6a01dff0c275a53386f474563457867bdf1f \
+    --hash=sha256:f7cfec7304886cab35bbcec6539eaefd8a84af1b1e4bb97e387fe947116009aa
+    # via
+    #   jsonschema
+    #   referencing
+s3transfer==0.19.2 \
+    --hash=sha256:4616a09fbe2d4c80fec9ab4556c09950d491fd201772c8ee70591f30ff53ba68
+    # via boto3
+safetensors==0.8.0 \
+    --hash=sha256:57639bd76c4c5023b1c5579645e22109ab3ab35da4ec9e4903c14efe37d3bbd5 \
+    --hash=sha256:660c9ee5c07e141c3ae758380e6be18b3a32cc32681c0cee4a72d0a1185b0f57 \
+    --hash=sha256:6f080b504861c814e998a05600fbfdb47d64d78e41cd377388e70c149196ffc2 \
+    --hash=sha256:7d081efe5a5a4e2b7f8f59bc30622001e8659d04be85834c8c0939f1cf5ee897
+    # via transformers
+scikit-learn==1.8.0 \
+    --hash=sha256:3e72a68245bc1a2ec6be661fcafb45860b6b09b7ee71187955722703f9546bbf \
+    --hash=sha256:9526cbbaedfe0c6d86c5947a74a2d7290fbabfdc78b265dc029cb1d689186ce3 \
+    --hash=sha256:acd6b17a78b7132587b8a954656bad753d6d95dfc2fd4e59c685a596b19b83ab \
+    --hash=sha256:ebf0b09410ef6e057d72d6fde0d11aba9d0435ca4a41f6908c680a8cea722f41
+    # via ai4rag
+scikit-network==0.33.5 \
+    --hash=sha256:069be5d0786e6c94fec9a24fb3658c9c7bbb8296f7a3cd507a1489e2c6ba75aa \
+    --hash=sha256:66d5efc5891ca3e99f76665ac7e262ecb4e5cde47feb060bf2456b1a33e600f2 \
+    --hash=sha256:a3d7bcef21432f43570e8f166d1b57bb5a4132d4367fc54afaa60b75a344d007 \
+    --hash=sha256:c6974a60cd7e80ccbaeca26e1e43fe5aaacbafe66ac3e255e83256d1601d77b9
+    # via ragas
+scipy==1.16.3 \
+    --hash=sha256:4e296dd5ba5e69aa25c4fbc867fdf5b9eec067042329e9e5035ff2caf4338df3 \
+    --hash=sha256:931abadef321d715557acf5a082be60abd885d60b01043d7838c0dbc1cce3b2c \
+    --hash=sha256:c8d8a55c25be2c848526962ccc73c77f4c092380d48eb5d855944700eff6ef2c \
+    --hash=sha256:ef5e576c145a68768703dda260b9cb6f69b60bf14d669fe66d9b6dcf9469cd54
+    # via
+    #   neo4j-graphrag
+    #   pygam
+    #   scikit-learn
+    #   scikit-network
+    #   unitxt
+semchunk==3.2.5 \
+    --hash=sha256:75ed88c9d83e6ea53d3504a3dd2297fffca6fb1dd02cdd72a777cd0f3a48f45c
+    # via docling-core
+shellingham==1.5.4 \
+    --hash=sha256:0e2366f8b5acbbe47a4bb23cfd4e6d23f83c8bbd1b2ae840b87854d95916943d
+    # via typer
+six==1.17.0 \
+    --hash=sha256:d0fea194c3813bd785de9ec350864656a5566f5be278f314794963f831649051
+    # via python-dateutil
+sniffio==1.3.1 \
+    --hash=sha256:9555de26e08b8b92348ba58da34d1000e8788871a58c50f475e3d6a3b74aec58
+    # via
+    #   langsmith
+    #   openai
+sqlalchemy==2.1.4 \
+    --hash=sha256:665648cb1fcb0ac3a50c7d4b3a02f05b88cb53bcd19221cc5317b0c290ee3ac9 \
+    --hash=sha256:8a2b1c36c5aca800441fec3f37677b5cca43130c1578bbf0d7850a20d1944fb1 \
+    --hash=sha256:c41cea031e8a24d1e8e16a593cce44b7b456e60cb62fe452a0ce62c6640e2fd3 \
+    --hash=sha256:ceaecc0e45b958dba92fe0e481dcea0fd4449d6291d7b95e02b8f0fcf2d3ecc8
+    # via
+    #   langchain-classic
+    #   langchain-community
+tabulate==0.10.0 \
+    --hash=sha256:22ebd5d78937d9212287603eb3ba77a5f76e915a11d62b7131cc86be6d1c2788
+    # via docling-core
+tenacity==9.2.1 \
+    --hash=sha256:d3835cb416be242069efc2bc9ee82ab21d548745bb11a0f6b5f49a0b3a68ddca
+    # via
+    #   instructor
+    #   langchain-community
+    #   langchain-core
+    #   neo4j-graphrag
+threadpoolctl==3.7.0 \
+    --hash=sha256:2d7bfbff745d1b29e660e2de3de315b0f3aac2ab97740d33dbb828b69cbf87b1
+    # via scikit-learn
+tiktoken==0.14.0 \
+    --hash=sha256:8ba3d931d993919909d9bc1cb0a1a432f678a2de5c3ff2901aa12cf170e08212 \
+    --hash=sha256:9fb0f952ad3f2a67cfc7682bcb4211c0dba4134daa833875e90a420ff874e4ce \
+    --hash=sha256:bbad00c3ce56bc7e404343a59ff8398a6dd7c7100ce961e3913f948dfbdd508d \
+    --hash=sha256:ce40e21c7b5ac5b9b610e3effbd7dd9e2f6fef7732134e2416c3df9a8162cbd5
+    # via
+    #   langchain-openai
+    #   ragas
+tokenizers==0.23.3 \
+    --hash=sha256:3cd1a69083ec76002eb66b13bf7592ac323046d5b8e0c9b01dd38902f24ab220 \
+    --hash=sha256:4f2ed2a09e519fd167a4eb65978ab88b0c13b43d276becac8a7d5c526704781a \
+    --hash=sha256:5785aae9436e1f0b0e5bd25b939729d798c9ffbea69ae6b3e34875632a7f23d6 \
+    --hash=sha256:6e91ecfb4cb94e45b46f9311a90cc6002cc9545f2fc6564d6b1ac51cfcd5e8db
+    # via transformers
+tqdm==4.70.1 \
+    --hash=sha256:3a5758ef148f07ea4a5f62214371fd035c44d0ddf4e2403555003aaeb2499370
+    # via
+    #   datasets
+    #   docling-slim
+    #   evaluate
+    #   huggingface-hub
+    #   mpire
+    #   openai
+    #   ragas
+    #   semchunk
+    #   transformers
+transformers==5.19.0 \
+    --hash=sha256:dc0f7fb08eb4dc584c4152a99219f3aa118391a48d0ba64bcfcbd2834c9c1894
+    # via docling-core
+tree-sitter==0.26.0 \
+    --hash=sha256:0d5e2705f562bdb9c85a8ec74876ed9d3575e170ee6bdc07900acae192714644 \
+    --hash=sha256:1c5df2d9473f6def364b755014b6d49c7aabbcf278ad63d0ca8335ffbf4fe624 \
+    --hash=sha256:a5c48d35fdab723e3f072ae5d8280847893a677abc2795b04b1329b46f3dabfa \
+    --hash=sha256:a805a6b69ab5988233bb7d274de678c7a2d8d9d83fbb686cace3a542d1f452ec
+    # via docling-core
+tree-sitter-c==0.24.2 \
+    --hash=sha256:176d3b3f9f42427a60f9957f9afd488eb6ebbb9c0ab1ed7d818fb5b2833c93a7 \
+    --hash=sha256:4ad5b4036f16ed4b556529d1edcf36ba80f54f8386c010896fe9ae8492f3f590 \
+    --hash=sha256:4b245a2c4c6714661771d8649c814c108ffff4facc0621cb020d86089b80942e \
+    --hash=sha256:60f50157bb8c19fbf901d203d01d4e4ca8d6a4bf3ed3592f65d94bb4d824ff37
+    # via docling-core
+tree-sitter-javascript==0.25.0 \
+    --hash=sha256:4418723571be03c640491cfdf3d4fe5b555121566b62bfc9fbd4653f136fe30f \
+    --hash=sha256:50beedf03acbb341def1cb436210b7e59dcf0bd3a4b5021de172e6cdb09fd2d4 \
+    --hash=sha256:6faa5b660c103f47bad846857f941c596046a37fe5f742bef559b8df892602c0 \
+    --hash=sha256:cfde3d6b5bbb6a24f37a50d72bad1844792926603714c2a61e049422342769dd
+    # via docling-core
+tree-sitter-python==0.25.0 \
+    --hash=sha256:2c277cef85a105ccac32e05adef9dbb8cd371dc18533a524600391469508a4fe \
+    --hash=sha256:6bf354cceb345a2118c7bec7fe178000a50f6c54495083f6a514cbcbb0c7df01 \
+    --hash=sha256:e115c22649988928371026d793bc02ef52addcd5bd48da58c4d0c650065448d0 \
+    --hash=sha256:f138ae7fc061c52841cf9f535719fb42ff9e53b24961a68b1bd52f3c1175ed1e
+    # via docling-core
+tree-sitter-typescript==0.23.2 \
+    --hash=sha256:1eeaa2018dd7fee721f8312f44797f043d9eb7e0fdc939436dea325a35e657f5 \
+    --hash=sha256:9a9f6a097e2d887aa00e353dbe68169198856ac9259449f66dd8f3986de72d9f \
+    --hash=sha256:dab1ec90cb31e96ee7cb517dff9419b68ca564cfde6921000d3783742d78daf7 \
+    --hash=sha256:f837a791389ec223aaf3cbc262175dd02621a3e340dc7f0986a6a958c4578669
+    # via docling-core
+truststore==0.10.4 \
+    --hash=sha256:cbf83825848c4b8866369a7f75e30594fbe6b0846afdb8af888c9d8363e2d0be
+    # via
+    #   httpcore2
+    #   httpx2
+typer==0.26.8 \
+    --hash=sha256:f0883b5fd7fa955da8faf138bbad7c10f089fa1a0e8c1337a2ab1571eebbe821
+    # via
+    #   doclang
+    #   docling-core
+    #   instructor
+    #   ragas
+    #   transformers
+types-pyyaml==6.0.12.20260906 \
+    --hash=sha256:04e3af1f5aed349f9cdd8bbecefad3e1bde88daa0419125f39df92b2fab1d3bd
+    # via neo4j-graphrag
+typing-extensions==4.16.0 \
+    --hash=sha256:cb0d89f2664e5ae94b951d7e2e51d22607d5c78d2867763243f13e2b7c5f3a54
+    # via
+    #   aiohttp
+    #   aiosignal
+    #   anyio
+    #   docling-core
+    #   grpcio
+    #   httpx2
+    #   huggingface-hub
+    #   langchain-core
+    #   langchain-protocol
+    #   langsmith
+    #   openai
+    #   pydantic
+    #   pydantic-core
+    #   python-utils
+    #   referencing
+    #   sqlalchemy
+    #   typing-inspect
+    #   typing-inspection
+typing-inspect==0.9.0 \
+    --hash=sha256:2d2b49b894042000e4b51a8a76e9ba5eb00e723861a0f417cc858103310fc356
+    # via dataclasses-json
+typing-inspection==0.4.4 \
+    --hash=sha256:b6eb66af055e575c1a9d77cce4dbc972399c9de3fbcacdae65e35d03c25a6cee
+    # via
+    #   pydantic
+    #   pydantic-settings
+tzdata==2026.5 \
+    --hash=sha256:333c339e0d7faeac79097158da067e246e3993179a43f6cb25e4ab43298145cf
+    # via pandas
+unitxt==1.26.10 \
+    --hash=sha256:a8b876094d4c37d0aded85ebcfd2fbdaa67fe078044c22514446edf921bb65c4
+    # via ai4rag
+urllib3==2.8.0 \
+    --hash=sha256:82ee533e8a49f8239e310d9926b4330470208f844e7a0fa6e1da2001185cc1b7
+    # via
+    #   botocore
+    #   instructor
+    #   requests
+uuid-utils==0.17.1 \
+    --hash=sha256:068de8b61597f5087fc39ada6b70f8e2f6e29de06c7f2f772409fdd9b19d4fb7 \
+    --hash=sha256:97428fcde132b114fb80e0264c046d660aa7fd3c5888a8b48d64f1d08e5e126a \
+    --hash=sha256:b8c15c9af06023c350501b17ae668b400145bd312b7d8ad88a80a67388c00a97 \
+    --hash=sha256:f0482e8b4e484f63c121133bfb314a268f4343b4511eec609bb2b3176f3049f7
+    # via
+    #   langchain-core
+    #   langsmith
+websockets==16.1.1 \
+    --hash=sha256:704ced258792f510cb146068766849b4fd08bd3f24a310c4d2627cc351771277 \
+    --hash=sha256:865defb8a0da3ca7e7f1e14186328b8ca26740f899707f36f86aeb3edc97d528 \
+    --hash=sha256:bee988dbeee6f220b15b9143db8fe1640349445ae67fed5841fe159ff31c4109 \
+    --hash=sha256:ced1c50f7a27ccc88b90e92dd0db2ce6e14ed125d2b6bbff112bc3a97f00d4e5
+    # via
+    #   langgraph-sdk
+    #   langsmith
+xxhash==4.0.1 \
+    --hash=sha256:03dbe51aa4d57f2a7464e388211f0e5f8f81c3e5dfdb83fcd1cdff5dc3e59b42 \
+    --hash=sha256:877a0a513e6397dfd1608c81904e9c0834092deace67434dbd8196487323f7df \
+    --hash=sha256:cf548cffd908fd95f07975472aeacf7b31cfb673cf9ed1c3c2bdab66485984e7 \
+    --hash=sha256:e925b4b9e88d391893f7ece3df4ddc801db89932cb49a2f1b77660a24a59ce31
+    # via
+    #   datasets
+    #   evaluate
+    #   langgraph
+    #   langsmith
+yarl==1.25.1 \
+    --hash=sha256:069576fa26443978d5d7744f48a5ae0a192945f00f75cc8941a631d98f7de0c3 \
+    --hash=sha256:21b8b5af63bb30900eb537d3f8503feb761bbb8216af40e4bd377e949b185b7c \
+    --hash=sha256:4bab4682e60b3f10095bcf98d0545c0e1156480db48cc84f8a0f77774678f5c8 \
+    --hash=sha256:7ed7a23a71123c566393068331379494d1a90d84ce3702b8ca78c8a679b2acd2
+    # via aiohttp
+zstandard==0.25.0 \
+    --hash=sha256:7a6269e04ae9d86d74e6893f3abc027ce7ec4a25803122e67fb19746921f8db2 \
+    --hash=sha256:92d3b37a325a245a3fc786a1a11032953b3dfeca4913c77e6648a6299d295718 \
+    --hash=sha256:93ecfcca909d0e47d47a1fb4937665faadc11ba0ff1dbd66839252a2e0f1afab \
+    --hash=sha256:d88b8b1f2b73a5792fa31fd72b84dad3020c63a966e6b1e0cb52972be8803bdf
+    # via langsmith

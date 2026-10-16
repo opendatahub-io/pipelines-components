@@ -7,9 +7,9 @@ dependencies:
       version: '>=2.15.2'
   external_services:
     - name: ai4rag
-      version: "~=0.15.0"
+      version: "~=0.23.0"
 tags:
   - training
   - autorag
   - optimization
-lastVerified: 2026-09-08T00:00:00Z
+lastVerified: 2026-10-15T00:00:00Z

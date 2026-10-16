@@ -20,6 +20,7 @@ def autogluon_models_training(
     sample_row: str,
     models_artifact: dsl.Output[dsl.Model],
     html_artifact: dsl.Output[dsl.HTML],
+    experiment_notebook: dsl.Output[dsl.Artifact],
     component_status: dsl.Output[dsl.Artifact],
     sampling_config: Optional[dict] = None,
     split_config: Optional[dict] = None,
@@ -27,20 +28,28 @@ def autogluon_models_training(
     positive_class: str = "",
     preset: str = "speed",
     eval_metric: str = "",
+    run_name: str = "",
+    test_data_bucket_name: str = "",
+    test_data_file_key: str = "",
+    train_data_secret_name: str = "",
+    train_data_bucket_name: str = "",
+    train_data_file_key: str = "",
 ) -> NamedTuple("outputs", eval_metric=str, best_model_name=str):
     """Train AutoGluon models, select the top N, and refit each on the full dataset.
 
-    Expects pre-cleaned CSV data from the tabular data loader (infinite values replaced,
-    duplicates removed, missing labels dropped). Reads train/test/extra-train CSVs and
+    Expects pre-cleaned Parquet data from the tabular data loader (infinite values replaced,
+    duplicates removed, missing labels dropped). Reads train/test/extra-train Parquet files and
     validates that the label column exists in each dataset.
 
     This component combines the model selection and full-refit stages into a single
     step. It trains a TabularPredictor on sampled data, ranks all models on the test
     set, then refits each of the top N models on the full training data in a single
-    ``refit_full`` call. Post-refit work (predict, evaluate, feature importance,
-    confusion matrix (via evaluate_predictions detailed_report), classification curves,
-    notebook generation) runs concurrently across all top-N models
-    via ``ThreadPoolExecutor``. The deployment clone (``set_model_best`` +
+    ``refit_full`` call. Lightweight post-refit work (predict, evaluate, confusion
+    matrix (via evaluate_predictions detailed_report), classification curves, notebook
+    generation) runs concurrently across all top-N models via ``ThreadPoolExecutor``.
+    Permutation feature importance runs sequentially for wide tables because it can
+    hold substantial batched prediction data in memory; narrower tables run it
+    concurrently. The deployment clone (``set_model_best`` +
     ``clone_for_deployment``) is serialized afterward because it mutates predictor
     state. All artifacts are written under a single output artifact so the pipeline
     does not require a ParallelFor loop. Each model directory contains a ``model.json``
@@ -50,26 +59,44 @@ def autogluon_models_training(
         label_column: Target/label column name in train and test datasets.
         task_type: ML task type: ``"binary"``, ``"multiclass"``, or ``"regression"``.
         top_n: Number of top models to select and refit (1-10).
-        train_data_path: Path to the selection-train CSV on the PVC workspace.
-        test_data: Dataset artifact (CSV) used for leaderboard ranking and evaluation.
+        train_data_path: Path to the selection-train Parquet file on the PVC workspace.
+        test_data: Dataset artifact (Parquet) used for leaderboard ranking and evaluation.
         workspace_path: PVC workspace directory; predictor saved at ``workspace_path/autogluon_predictor``.
         pipeline_name: Pipeline run name; last dash-segment stripped for the notebook.
         run_id: Pipeline run ID written into the generated notebook.
         sample_row: JSON array of row dicts for the notebook example input; label column is stripped.
+        train_data_secret_name: Kubernetes secret name for S3 credentials used by the pipeline.
+        train_data_bucket_name: S3 bucket containing the training dataset.
+        train_data_file_key: S3 object key for the training dataset.
         models_artifact: Output Model artifact containing all refitted model subdirectories.
         html_artifact: Output HTML artifact containing the ranked leaderboard page.
+        experiment_notebook: Output artifact containing the run-level experiment launcher notebook.
         component_status: Output artifact containing stage-level progress tracking for this component.
         sampling_config: Data sampling config stored in artifact metadata.
         split_config: Data split config stored in artifact metadata.
-        extra_train_data_path: Optional path to extra training CSV passed to ``refit_full``.
+        extra_train_data_path: Optional path to extra training Parquet file passed to ``refit_full``.
         positive_class: Label value for the positive class in **binary** classification
             (e.g. ``"1"`` or ``"yes"``). Passed to ``TabularPredictor`` when set.
             Empty string (default) lets AutoGluon infer the positive class when ``fit`` runs.
             Ignored for ``multiclass`` and ``regression``.
-        preset: Training quality tier. ``"speed"`` (default) or ``"balanced"``
-            (may run more than 2x longer).
+        preset: Training quality tier. ``"speed"`` (45-minute selection budget, default),
+            ``"balanced"`` (180-minute selection budget), or ``"quality"`` (six-hour
+            selection budget with AutoGluon ``best_quality``, the broad ``zeroshot`` portfolio,
+            and bagging/stacking).
         eval_metric: Metric for model ranking (e.g. ``"r2"``, ``"accuracy"``). Defaults
             to ``"r2"`` for regression and ``"accuracy"`` otherwise.
+        run_name: Per-execution MLflow run name recorded as a tag on child runs. Falls
+            back to ``pipeline_name`` when empty.
+        test_data_bucket_name: Optional S3 bucket for user-provided external test data.
+        test_data_file_key: Optional S3 object key for user-provided external test data.
+
+    MLflow logging:
+        When the platform injects ``KFP_MLFLOW_CONFIG``, results are logged to MLflow
+        incrementally: the parent run is opened before ``fit()`` (so a live-progress
+        callback streams each candidate's validation score during the search), each
+        refitted model becomes a nested child run as it is processed, and parent
+        aggregates plus best-model registration are finalized at the end. All MLflow work
+        is best-effort and never fails training.
 
     Returns:
         NamedTuple with ``eval_metric`` (the metric used for ranking, e.g. ``"r2"`` or ``"accuracy"``)
@@ -79,14 +106,16 @@ def autogluon_models_training(
         TypeError: If any required string parameter is empty or configs have wrong types.
         ValueError: If ``task_type`` is invalid, ``top_n`` is out of range, ``sample_row``
             is not a JSON list, ``problem_type`` is unsupported for notebook generation,
-            label column not found in CSV, or train/test data is empty.
+            label column not found in the data, or train/test data is empty.
         FileNotFoundError: If train/test data or predictor paths cannot be found.
     """  # noqa: E501
     import json
     import logging
     import math
     import shutil
+    import time
     from concurrent.futures import ThreadPoolExecutor
+    from copy import deepcopy
     from pathlib import Path
     from typing import (
         Any,
@@ -97,11 +126,40 @@ def autogluon_models_training(
     import pandas as pd
     from autogluon.core.metrics import METRICS
     from autogluon.tabular import TabularPredictor
+    from autogluon.tabular.configs.hyperparameter_configs import get_hyperparameter_config
 
     VALID_TASK_TYPES = {"binary", "multiclass", "regression"}
-    VALID_PRESETS = {"speed", "balanced"}
-    PRESET_TIME_LIMITS = {"speed": 45 * 60, "balanced": 90 * 60}
-    PRESET_AG_NAMES = {"speed": "good_quality", "balanced": "high_quality"}
+    VALID_PRESETS = {"speed", "balanced", "quality"}
+    PRESET_TIME_LIMITS = {"speed": 45 * 60, "balanced": 180 * 60, "quality": 360 * 60}
+    PRESET_AG_NAMES = {"speed": "good_quality", "balanced": "high_quality", "quality": "best_quality"}
+    # Quality must use the same broad portfolio as balanced. ``default`` overrides
+    # best_quality's normal portfolio with a much smaller candidate set and causes a
+    # quality run to finish early despite its larger resource/time budget.
+    PRESET_HYPERPARAMETERS = {"speed": "light", "balanced": "zeroshot", "quality": "zeroshot"}
+    # Keep AutoGluon's scheduler and every model family within the resources reserved
+    # by the pipeline for each tier. memory_limit is expressed in GiB by AutoGluon.
+    PRESET_NUM_CPUS = {"speed": 4, "balanced": 8, "quality": 16}
+    PRESET_MEMORY_LIMITS_GB = {"speed": 16, "balanced": 32, "quality": 64}
+    PRESET_EXCLUDED_MODEL_TYPES = {
+        "speed": ["CAT"],
+        "balanced": ["CAT"],
+        # Drop memory-heavy neighbors; keep tree models from the light portfolio.
+        "quality": ["CAT", "KNN"],
+    }
+    PRESET_FIT_KWARGS = {
+        "speed": {},
+        "balanced": {},
+        # Match balanced's eight folds so quality does not trade ensemble stability
+        # for its larger data and time budgets.
+        "quality": {"num_bag_folds": 8, "num_stack_levels": 1},
+    }
+    # One shuffle set always runs to completion, so each selected model is scored
+    # on its own. Restrict AutoGluon's feature-importance batching to 2% of
+    # available memory as a second peak-memory guard.
+    FEATURE_IMPORTANCE_SUBSAMPLE_SIZE = 2000
+    FEATURE_IMPORTANCE_SHUFFLE_SETS = 1
+    FEATURE_IMPORTANCE_MAX_MEMORY_RATIO = 0.02
+    FEATURE_IMPORTANCE_SEQUENTIAL_FEATURE_THRESHOLD = 100
     TOP_N_MAX = 10
 
     # Input parameters validation
@@ -171,35 +229,35 @@ def autogluon_models_training(
 
         # 1. models selection stage
 
-        train_data_df = pd.read_csv(train_data_path)
+        train_data_df = pd.read_parquet(train_data_path)
         if label_column not in train_data_df.columns:
             raise ValueError(
-                f"Label column {label_column!r} not found in train CSV. "
+                f"Label column {label_column!r} not found in train data. "
                 f"Available columns: {list(train_data_df.columns)}"
             )
         if train_data_df.empty:
-            raise ValueError("Training CSV is empty. Ensure the data loader produced valid training data.")
+            raise ValueError("Training data is empty. Ensure the data loader produced valid training data.")
 
-        test_data_df = pd.read_csv(test_data.path)
+        test_data_df = pd.read_parquet(test_data.path)
         if label_column not in test_data_df.columns:
             raise ValueError(
-                f"Label column {label_column!r} not found in test CSV. Available columns: {list(test_data_df.columns)}"
+                f"Label column {label_column!r} not found in test data. Available columns: {list(test_data_df.columns)}"
             )
         if test_data_df.empty:
-            raise ValueError("Test CSV is empty. Ensure the data loader produced valid test data.")
+            raise ValueError("Test data is empty. Ensure the data loader produced valid test data.")
         if not eval_metric:
             eval_metric = "r2" if task_type == "regression" else "accuracy"
 
         extra_train_df = None
         if extra_train_data_path.strip():
-            extra_train_df = pd.read_csv(extra_train_data_path)
+            extra_train_df = pd.read_parquet(extra_train_data_path)
             if label_column not in extra_train_df.columns:
                 raise ValueError(
-                    f"Label column {label_column!r} not found in extra-train CSV. "
+                    f"Label column {label_column!r} not found in extra-train data. "
                     f"Available columns: {list(extra_train_df.columns)}"
                 )
             if extra_train_df.empty:
-                logger.warning("Extra train CSV is empty; passing train_data_extra=None to refit_full.")
+                logger.warning("Extra train data is empty; passing train_data_extra=None to refit_full.")
                 extra_train_df = None
 
         coerced_positive_class = _coerce_positive_class(positive_class)
@@ -228,553 +286,763 @@ def autogluon_models_training(
                 "classes ['abc', 'def'] -> positive_class='def')."
             )
 
-        status.record("model_selection", "started")
-        time_limit = PRESET_TIME_LIMITS[preset]
-        predictor = TabularPredictor(**predictor_init_kwargs).fit(
-            train_data=train_data_df,
-            presets=PRESET_AG_NAMES[preset],
-            # Pipeline handles refit explicitly via refit_full(); disable AutoGluon's built-in refit
-            # to prevent double-refit and incorrect model selection.
-            refit_full=False,
-            set_best_to_refit_full=False,
-            # Required so refit_full() can access bag fold models after fit().
-            save_bag_folds=True,
-            time_limit=time_limit,
-            # exclude CatBoost models
-            excluded_model_types=["CAT"],
+        # Open the MLflow parent run around the whole training so results are logged
+        # incrementally (one child run per model) and a live-progress callback can stream
+        # each candidate's validation score during fit(). Best-effort: a disabled logger
+        # is a no-op. Entered via ExitStack to avoid re-indenting the large training body;
+        # closed just before status recording below.
+        from contextlib import ExitStack
+
+        from kfp_components.components.training.automl.shared.mlflow_tracking import (
+            experiment_run_logger,
         )
 
-        # Select top N models
-        leaderboard = predictor.leaderboard(test_data_df)
-        logger.info("Leaderboard:\n\n %s", leaderboard.head(top_n).to_string())
-        top_models = leaderboard.head(top_n)["model"].values.tolist()
-        status.record(
-            "model_selection",
-            "completed",
-            metrics={"top_n": top_n, "selected_models": top_models},
-        )
+        # Fall back to the pipeline name when no per-run name was provided, so the parent
+        # MLflow run (and its experiment, on the create path) is named instead of anonymous.
+        effective_run_name = run_name or pipeline_name
 
-        model_config = {
-            "preset": preset,
-            "eval_metric": eval_metric,
-            "time_limit": time_limit,
-        }
+        mlflow_stack = ExitStack()
+        try:
+            run_logger = mlflow_stack.enter_context(
+                experiment_run_logger(
+                    task_type=task_type,
+                    eval_metric=eval_metric,
+                    run_name=effective_run_name,
+                )
+            )
+            # Non-secret dataset identity for the parent run; credentials stay in the K8s secret.
+            dataset_uri = f"s3://{train_data_bucket_name}/{train_data_file_key}" if train_data_bucket_name else ""
+            test_dataset_uri = f"s3://{test_data_bucket_name}/{test_data_file_key}" if test_data_bucket_name else ""
+            run_logger.log_header(
+                pipeline_name=pipeline_name,
+                kfp_run_id=run_id,
+                kfp_run_name=effective_run_name,
+                preset=preset,
+                top_n=top_n,
+                data_config={"sampling_config": sampling_config, "split_config": split_config},
+                dataset_uri=dataset_uri,
+                test_dataset_uri=test_dataset_uri,
+            )
+            progress_callback = run_logger.build_progress_callback()
 
-        def retrieve_pipeline_name(name: str) -> str:
-            """Strip the last dash-separated segment (run id / suffix) from a pipeline name."""
-            if not name:
-                return name
-            name = name.rstrip("-")
-            if "-" not in name:
-                return name
-            tokens = name.split("-")
-            return "-".join(tokens[:-1]) if len(tokens) > 1 else tokens[0]
+            status.record("model_selection", "started")
+            time_limit = PRESET_TIME_LIMITS[preset]
+            num_cpus = PRESET_NUM_CPUS[preset]
+            memory_limit = PRESET_MEMORY_LIMITS_GB[preset]
+            hyperparameter_config = PRESET_HYPERPARAMETERS[preset]
+            hyperparameters = deepcopy(
+                get_hyperparameter_config(hyperparameter_config)
+                if isinstance(hyperparameter_config, str)
+                else hyperparameter_config
+            )
+            logger.info("Limiting AutoGluon to %d CPUs and %d GiB of memory.", num_cpus, memory_limit)
+            # Accumulates only the model-fitting call durations (selection fit + refit) for the
+            # parent metric, excluding selection, cloning, evaluation, notebook and logging overhead.
+            total_fit_time_seconds = 0.0
+            fit_start_time = time.perf_counter()
+            fit_kwargs = {
+                "train_data": train_data_df,
+                "presets": PRESET_AG_NAMES[preset],
+                "hyperparameters": hyperparameters,
+                # Pipeline handles refit explicitly via refit_full(); disable AutoGluon's built-in refit
+                # to prevent double-refit and incorrect model selection.
+                "refit_full": False,
+                "set_best_to_refit_full": False,
+                # Required so refit_full() can access bag fold models after fit().
+                "save_bag_folds": True,
+                "time_limit": time_limit,
+                "num_cpus": num_cpus,
+                "memory_limit": memory_limit,
+                # exclude CatBoost models
+                "excluded_model_types": PRESET_EXCLUDED_MODEL_TYPES[preset],
+                # Streams live candidate validation scores to the MLflow parent run; omitted when
+                # tracking is disabled or the callback API is unavailable.
+                "callbacks": [progress_callback] if progress_callback else None,
+            }
+            fit_kwargs.update(PRESET_FIT_KWARGS[preset])
+            predictor = TabularPredictor(**predictor_init_kwargs).fit(**fit_kwargs)
+            total_fit_time_seconds += time.perf_counter() - fit_start_time
 
-        pipeline_name_trimmed = retrieve_pipeline_name(pipeline_name)
+            # Select top N models
+            leaderboard = predictor.leaderboard(test_data_df)
+            logger.info("Leaderboard:\n\n %s", leaderboard.head(top_n).to_string())
+            top_models = leaderboard.head(top_n)["model"].values.tolist()
+            # The live-progress callback creates a nested run for every candidate trained during
+            # fit() (all bagged base models included); now that the leaderboard is known, drop the
+            # runs for models outside the top-N so the MLflow experiment only shows the finalists.
+            run_logger.prune_live_child_runs(top_models)
+            status.record(
+                "model_selection",
+                "completed",
+                metrics={"top_n": top_n, "selected_models": top_models},
+            )
 
-        # Strip label column from sample row -- same for all models
-        sample_row_formatted = [
-            {col: value for col, value in row.items() if col != predictor.label} for row in sample_row_list
-        ]
+            model_config = {
+                "preset": preset,
+                "eval_metric": eval_metric,
+                "time_limit": time_limit,
+            }
 
-        problem_type = predictor.problem_type
-        match problem_type:
-            case "regression":
-                notebook_file = "regression_notebook.ipynb"
-            case "binary" | "multiclass":
-                notebook_file = "classification_notebook.ipynb"
-            case _:
-                raise ValueError(f"Invalid problem type: {problem_type}")
+            def retrieve_pipeline_name(name: str) -> str:
+                """Strip the last dash-separated segment (run id / suffix) from a pipeline name."""
+                if not name:
+                    return name
+                name = name.rstrip("-")
+                if "-" not in name:
+                    return name
+                tokens = name.split("-")
+                return "-".join(tokens[:-1]) if len(tokens) > 1 else tokens[0]
 
-        model_names_full = [m + "_FULL" for m in top_models]
+            pipeline_name_trimmed = retrieve_pipeline_name(pipeline_name)
 
-        # 2. models refit stage
+            # Strip label column from sample row -- same for all models
+            sample_row_formatted = [
+                {col: value for col, value in row.items() if col != predictor.label} for row in sample_row_list
+            ]
 
-        # Clone once to PVC (same filesystem as predictor_path) to avoid S3 FUSE file-dropping
-        # during shutil.copytree inside predictor.clone().
-        work_path = predictor_path.parent / "refit_work"
-        predictor_clone = predictor.clone(path=work_path, return_clone=True, dirs_exist_ok=True)
-
-        # Refit all top models in a single call:  AutoGluon resolves stacking dependencies internally.
-        status.record("refit_and_evaluate", "started")
-        predictor_clone.refit_full(model=top_models, train_data_extra=extra_train_df)
-
-        def replace_placeholder_in_notebook(notebook, replacements):
-            for cell in notebook.get("cells", []):
-                if cell.get("cell_type") != "code":
-                    continue
-                new_source = []
-                for line in cell.get("source", []):
-                    for placeholder, value in replacements.items():
-                        line = line.replace(placeholder, value)
-                    new_source.append(line)
-                cell["source"] = new_source
-            return notebook
-
-        def _scalar_eval_metrics(eval_results: dict) -> dict:
-            """Keep only finite scalar scores for metrics.json (KFP-safe)."""
-            metrics = {}
-            for key, value in eval_results.items():
-                if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
-                    continue
-                if hasattr(value, "item"):
-                    value = float(value)
-                    if math.isnan(value) or math.isinf(value):
-                        continue
-                if isinstance(value, (int, float)):
-                    metrics[key] = value
-            return metrics
-
-        def _confusion_matrix_to_dict(confusion_matrix_res) -> dict | None:
-            if confusion_matrix_res is None:
-                return None
-            if hasattr(confusion_matrix_res, "to_dict"):
-                return confusion_matrix_res.to_dict()
-            if isinstance(confusion_matrix_res, dict):
-                return confusion_matrix_res
-            raise TypeError(f"Unexpected confusion_matrix type: {type(confusion_matrix_res)!r}")
-
-        _AG_TYPE_TO_DATATYPE: dict[str, str] = {
-            "bool": "boolean",
-            "boolean": "boolean",
-        }
-
-        def _ag_type_to_datatype(ag_type: str) -> str:
-            t = ag_type.lower()
-            match t:
-                case _ if t in _AG_TYPE_TO_DATATYPE:
-                    return _AG_TYPE_TO_DATATYPE[t]
-                case _ if "int" in t:
-                    return "integer"
-                case _ if "float" in t:
-                    return "number"
+            problem_type = predictor.problem_type
+            match problem_type:
+                case "regression":
+                    notebook_file = "regression_notebook.ipynb"
+                case "binary" | "multiclass":
+                    notebook_file = "classification_notebook.ipynb"
                 case _:
-                    return "string"
+                    raise ValueError(f"Invalid problem type: {problem_type}")
 
-        def _build_tabular_inference_block(pred) -> dict[str, Any] | None:
-            try:
-                # features() / feature_metadata_in describe original predict-time
-                # columns. feature_metadata is post-FE and can omit or rename them.
-                features = pred.features()
-                type_map = pred.feature_metadata_in.type_map_raw
-            except Exception as e:
-                logger.warning("Could not read predictor features/metadata; skipping inference block: %s", e)
-                return None
+            model_names_full = [m + "_FULL" for m in top_models]
 
-            fields = []
-            sample_row: dict[str, list[str]] = {}
-            for feat in features:
-                dt = _ag_type_to_datatype(type_map.get(feat, "object"))
-                # shape [-1] = variable batch size for this feature's value list.
-                # Matches KServe AutoGluonServer v1 columnar instances and v2 per-feature
-                # tensor metadata (shape [batch]). Do not treat -1 as a user placeholder.
-                fields.append({"name": feat, "datatype": dt, "shape": [-1], "role": "feature", "required": True})
-                sample_row[feat] = [f"<{dt}>"]
+            # 2. models refit stage
 
-            return {
-                "input_data_schema": {
-                    "protocol": "v1_json",
-                    "instances": {"required": True, "fields": fields},
-                },
-                "sample_payload": {"instances": [sample_row]},
+            # Clone once to PVC (same filesystem as predictor_path) to avoid S3 FUSE file-dropping
+            # during shutil.copytree inside predictor.clone().
+            work_path = predictor_path.parent / "refit_work"
+            predictor_clone = predictor.clone(path=work_path, return_clone=True, dirs_exist_ok=True)
+
+            # Refit all top models in a single call:  AutoGluon resolves stacking dependencies internally.
+            status.record("refit_and_evaluate", "started")
+            refit_start_time = time.perf_counter()
+            predictor_clone.refit_full(model=top_models, train_data_extra=extra_train_df, num_cpus=num_cpus)
+            total_fit_time_seconds += time.perf_counter() - refit_start_time
+
+            def replace_placeholder_in_notebook(notebook, replacements):
+                for cell in notebook.get("cells", []):
+                    if cell.get("cell_type") != "code":
+                        continue
+                    new_source = []
+                    for line in cell.get("source", []):
+                        for placeholder, value in replacements.items():
+                            line = line.replace(placeholder, value)
+                        new_source.append(line)
+                    cell["source"] = new_source
+                return notebook
+
+            def _scalar_eval_metrics(eval_results: dict) -> dict:
+                """Keep only finite scalar scores for metrics.json (KFP-safe)."""
+                metrics = {}
+                for key, value in eval_results.items():
+                    if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
+                        continue
+                    if hasattr(value, "item"):
+                        value = float(value)
+                        if math.isnan(value) or math.isinf(value):
+                            continue
+                    if isinstance(value, (int, float)):
+                        metrics[key] = value
+                return metrics
+
+            def _confusion_matrix_to_dict(confusion_matrix_res) -> dict | None:
+                if confusion_matrix_res is None:
+                    return None
+                if hasattr(confusion_matrix_res, "to_dict"):
+                    return confusion_matrix_res.to_dict()
+                if isinstance(confusion_matrix_res, dict):
+                    return confusion_matrix_res
+                raise TypeError(f"Unexpected confusion_matrix type: {type(confusion_matrix_res)!r}")
+
+            _AG_TYPE_TO_DATATYPE: dict[str, str] = {
+                "bool": "boolean",
+                "boolean": "boolean",
             }
 
-        def _serialize_curve_array(values: Any) -> list[float]:
-            return [float(v) for v in np.asarray(values).tolist()]
+            def _ag_type_to_datatype(ag_type: str) -> str:
+                t = ag_type.lower()
+                match t:
+                    case _ if t in _AG_TYPE_TO_DATATYPE:
+                        return _AG_TYPE_TO_DATATYPE[t]
+                    case _ if "int" in t:
+                        return "integer"
+                    case _ if "float" in t:
+                        return "number"
+                    case _:
+                        return "string"
 
-        def _serialize_curve_thresholds(values: Any) -> list[float | str]:
-            serialized: list[float | str] = []
-            for value in np.asarray(values).tolist():
-                if isinstance(value, (float, np.floating)) and np.isposinf(value):
-                    serialized.append("inf")
-                elif isinstance(value, (float, np.floating)) and np.isneginf(value):
-                    serialized.append("-inf")
-                else:
-                    serialized.append(float(value))
-            return serialized
-
-        def _binarize_labels(y_true, positive_label: Any) -> np.ndarray:
-            import pandas as pd
-
-            labels = y_true if isinstance(y_true, pd.Series) else pd.Series(y_true)
-            return (labels == positive_label).astype(int).to_numpy()
-
-        def _resolve_positive_column(classes: list[Any], positive_class: Any | None) -> Any:
-            if positive_class is not None and positive_class in classes:
-                return positive_class
-            if len(classes) == 2:
-                logger.warning(
-                    "positive_class not specified for binary classification; defaulting to %r as positive class "
-                    "(available classes: %r). Set positive_class explicitly for clarity.",
-                    classes[1],
-                    classes,
-                )
-                return classes[1]
-            raise ValueError(
-                f"Cannot resolve positive class from proba columns {classes!r}; "
-                f"pass positive_class explicitly (got {positive_class!r})."
-            )
-
-        def _roc_curve_block(y_true_binary: np.ndarray, y_score: np.ndarray) -> dict[str, Any]:
-            import math
-
-            from sklearn.metrics import roc_auc_score, roc_curve
-
-            fpr, tpr, thresholds = roc_curve(y_true_binary, y_score)
-            auc = float(roc_auc_score(y_true_binary, y_score))
-
-            if math.isnan(auc):
-                raise ValueError(
-                    "Cannot compute ROC AUC: only one class present in test data. "
-                    "ROC curves require both positive and negative examples."
-                )
-
-            return {
-                "auc": auc,
-                "fpr": _serialize_curve_array(fpr),
-                "tpr": _serialize_curve_array(tpr),
-                "thresholds": _serialize_curve_thresholds(thresholds),
-            }
-
-        def _pr_curve_block(
-            y_true_binary: np.ndarray, y_score: np.ndarray, baseline_precision: float
-        ) -> dict[str, Any]:
-            import math
-
-            from sklearn.metrics import average_precision_score, precision_recall_curve
-
-            precision, recall, thresholds = precision_recall_curve(y_true_binary, y_score)
-            average_precision = float(average_precision_score(y_true_binary, y_score))
-
-            if math.isnan(average_precision):
-                raise ValueError(
-                    "Cannot compute precision-recall curve: only one class present in test data. "
-                    "Precision-recall curves require both positive and negative examples."
-                )
-
-            return {
-                "average_precision": average_precision,
-                "precision": _serialize_curve_array(precision),
-                "recall": _serialize_curve_array(recall),
-                "thresholds": _serialize_curve_array(thresholds),
-                "baseline_precision": baseline_precision,
-            }
-
-        def _macro_weighted_curve_metric(values: list[float], weights: list[int]) -> float:
-            if not values:
-                return 0.0
-            if sum(weights) == 0:
-                return float(np.mean(values))
-            return float(np.average(values, weights=weights))
-
-        def _build_binary_curves_json(y_true, proba_df, positive_class: Any | None) -> dict[str, Any]:
-            classes = list(proba_df.columns)
-            positive_label = _resolve_positive_column(classes, positive_class)
-            y_true_binary = _binarize_labels(y_true, positive_label)
-            y_score = proba_df[positive_label].to_numpy()
-            num_positive = int(y_true_binary.sum())
-            num_samples = len(y_true_binary)
-            roc_block = _roc_curve_block(y_true_binary, y_score)
-            roc_block["support"] = num_positive
-            pr_block = _pr_curve_block(
-                y_true_binary,
-                y_score,
-                baseline_precision=num_positive / num_samples if num_samples else 0.0,
-            )
-            pr_block["support"] = num_positive
-            return {
-                "task_type": "binary",
-                "positive_class": positive_label.item() if hasattr(positive_label, "item") else positive_label,
-                "num_samples": num_samples,
-                "num_positive": num_positive,
-                "num_negative": num_samples - num_positive,
-                "roc_curve": roc_block,
-                "precision_recall_curve": pr_block,
-            }
-
-        def _build_multiclass_curves_json(y_true, proba_df) -> dict[str, Any]:
-            classes = list(proba_df.columns)
-            num_samples = len(y_true)
-            per_class_roc: dict[str, dict[str, Any]] = {}
-            per_class_pr: dict[str, dict[str, Any]] = {}
-            roc_aucs: list[float] = []
-            ap_scores: list[float] = []
-            weights: list[int] = []
-            skipped_classes: list[str] = []
-
-            for label in classes:
-                key = str(label.item() if hasattr(label, "item") else label)
-                y_true_binary = _binarize_labels(y_true, label)
-                support = int(y_true_binary.sum())
-                y_score = proba_df[label].to_numpy()
+            def _build_tabular_inference_block(pred) -> dict[str, Any] | None:
                 try:
-                    roc = _roc_curve_block(y_true_binary, y_score)
-                    roc["support"] = support
-                    per_class_roc[key] = roc
-                    roc_aucs.append(roc["auc"])
-                    pr = _pr_curve_block(
-                        y_true_binary,
-                        y_score,
-                        baseline_precision=support / num_samples if num_samples else 0.0,
-                    )
-                    per_class_pr[key] = pr
-                    ap_scores.append(pr["average_precision"])
-                    weights.append(support)
-                except ValueError as e:
-                    logger.warning(
-                        "Skipping ROC/PR curves for class %r: %s",
-                        key,
-                        e,
-                    )
-                    skipped_classes.append(key)
+                    # features() / feature_metadata_in describe original predict-time
+                    # columns. feature_metadata is post-FE and can omit or rename them.
+                    features = pred.features()
+                    type_map = pred.feature_metadata_in.type_map_raw
+                except Exception as e:
+                    logger.warning("Could not read predictor features/metadata; skipping inference block: %s", e)
+                    return None
 
-            if not per_class_roc:
-                raise ValueError(
-                    "Cannot compute multiclass curves: no class had both positive and negative "
-                    f"examples in test data (skipped: {skipped_classes})."
-                )
+                fields = []
+                sample_row: dict[str, list[str]] = {}
+                for feat in features:
+                    dt = _ag_type_to_datatype(type_map.get(feat, "object"))
+                    # shape [-1] = variable batch size for this feature's value list.
+                    # Matches KServe AutoGluonServer v1 columnar instances and v2 per-feature
+                    # tensor metadata (shape [batch]). Do not treat -1 as a user placeholder.
+                    fields.append({"name": feat, "datatype": dt, "shape": [-1], "role": "feature", "required": True})
+                    sample_row[feat] = [f"<{dt}>"]
 
-            serializable_classes = [c.item() if hasattr(c, "item") else c for c in classes]
-
-            payload: dict[str, Any] = {
-                "task_type": "multiclass",
-                "strategy": "ovr",
-                "num_classes": len(classes),
-                "classes": serializable_classes,
-                "num_samples": num_samples,
-                "roc_curve": {
-                    "auc_macro": float(np.mean(roc_aucs)),
-                    "auc_weighted": _macro_weighted_curve_metric(roc_aucs, weights),
-                    "per_class": per_class_roc,
-                },
-                "precision_recall_curve": {
-                    "average_precision_macro": float(np.mean(ap_scores)),
-                    "average_precision_weighted": _macro_weighted_curve_metric(ap_scores, weights),
-                    "per_class": per_class_pr,
-                },
-            }
-            if skipped_classes:
-                payload["skipped_classes"] = skipped_classes
-            return payload
-
-        def build_curves_json(
-            y_true,
-            y_proba,
-            curves_task_type: str,
-            positive_class: Any | None = None,
-        ) -> dict[str, Any]:
-            """Build curves.json for binary or multiclass classification."""
-            import pandas as pd
-
-            if curves_task_type not in {"binary", "multiclass"}:
-                raise ValueError(f"task_type must be 'binary' or 'multiclass'; got {curves_task_type!r}.")
-
-            y_true_series = pd.Series(y_true)
-            proba_df = y_proba if hasattr(y_proba, "columns") else pd.DataFrame(y_proba)
-
-            if curves_task_type == "binary":
-                return _build_binary_curves_json(y_true_series, proba_df, positive_class)
-            return _build_multiclass_curves_json(y_true_series, proba_df)
-
-        def _process_model(model_name_full: str) -> tuple[str, dict]:
-            """Compute metrics and write metric files + notebook for one refitted model.
-
-            Safe to run concurrently across models: only reads from the shared predictor
-            and test data, and writes to isolated per-model directories under
-            models_artifact.path. Does NOT call set_model_best / clone_for_deployment,
-            which mutate predictor state and must stay sequential.
-
-            Returns (model_name_full, eval_results).
-            """
-            output_path = Path(models_artifact.path) / model_name_full
-            y_true = test_data_df[predictor.label]
-
-            if problem_type in {"binary", "multiclass"}:
-                y_proba = predictor_clone.predict_proba(test_data_df, model=model_name_full)
-                eval_results = predictor_clone.evaluate_predictions(
-                    y_true=y_true,
-                    y_pred=y_proba,
-                    detailed_report=True,
-                )
-                confusion_matrix_dict = _confusion_matrix_to_dict(eval_results.pop("confusion_matrix", None))
-                eval_results.pop("classification_report", None)
-            else:
-                y_proba = None
-                predictions = predictor_clone.predict(test_data_df, model=model_name_full)
-                eval_results = predictor_clone.evaluate_predictions(y_true=y_true, y_pred=predictions)
-                confusion_matrix_dict = None
-
-            feature_importance = predictor_clone.feature_importance(
-                test_data_df, model=model_name_full, subsample_size=2000
-            )
-            metrics_for_json = _scalar_eval_metrics(eval_results)
-
-            (output_path / "metrics").mkdir(parents=True, exist_ok=True)
-            with (output_path / "metrics" / "metrics.json").open("w") as f:
-                json.dump(metrics_for_json, f)
-            with (output_path / "metrics" / "feature_importance.json").open("w") as f:
-                json.dump(feature_importance.to_dict(), f)
-
-            if confusion_matrix_dict is not None:
-                with (output_path / "metrics" / "confusion_matrix.json").open("w") as f:
-                    json.dump(confusion_matrix_dict, f)
-
-            if y_proba is not None:
-                try:
-                    curves_payload = build_curves_json(
-                        y_true=y_true,
-                        y_proba=y_proba,
-                        curves_task_type=problem_type,
-                        positive_class=getattr(predictor_clone, "positive_class", None),
-                    )
-                    with (output_path / "metrics" / "curves.json").open("w") as f:
-                        json.dump(curves_payload, f)
-                except ValueError as e:
-                    logger.warning(
-                        "Could not generate curves.json for model %r: %s. Skipping curve generation.",
-                        model_name_full,
-                        str(e),
-                    )
-
-            with (shared_automl_dir() / "notebook_templates" / notebook_file).open("r", encoding="utf-8") as f:
-                notebook = json.load(f)
-            replacements = {
-                "<REPLACE_RUN_ID>": run_id,
-                "<REPLACE_PIPELINE_NAME>": pipeline_name_trimmed,
-                "<REPLACE_MODEL_NAME>": model_name_full,
-                "<REPLACE_SAMPLE_ROW>": str(sample_row_formatted),
-            }
-            notebook = replace_placeholder_in_notebook(notebook, replacements)
-            notebook_path = output_path / "notebooks"
-            notebook_path.mkdir(parents=True, exist_ok=True)
-            with (notebook_path / "automl_predictor_notebook.ipynb").open("w", encoding="utf-8") as f:
-                json.dump(notebook, f)
-
-            return model_name_full, metrics_for_json
-
-        # Phase A: metrics + notebooks - all models run concurrently.
-        with ThreadPoolExecutor(max_workers=len(model_names_full)) as executor:
-            futures = [executor.submit(_process_model, name) for name in model_names_full]
-            eval_results_by_model = dict(f.result() for f in futures)
-
-        # Phase B: clone for deployment - sequential because set_model_best mutates predictor state.
-        for model_name_full in model_names_full:
-            output_path = Path(models_artifact.path) / model_name_full
-            predictor_clone.set_model_best(model=model_name_full, save_trainer=True)
-            predictor_clone.clone_for_deployment(path=output_path / "predictor", dirs_exist_ok=True)
-
-        shutil.rmtree(work_path, ignore_errors=True)
-
-        # Build ordered models_metadata (preserves top-N ranking order).
-        inference_block = _build_tabular_inference_block(predictor_clone)
-        models_metadata = []
-        for model_name_full in model_names_full:
-            eval_results = eval_results_by_model[model_name_full]
-            model_metadata = {
-                "name": model_name_full,
-                "location": {
-                    "model_directory": model_name_full,
-                    "predictor": str(Path(model_name_full) / "predictor"),
-                    "notebook": str(Path(model_name_full) / "notebooks" / "automl_predictor_notebook.ipynb"),
-                    "metrics": str(Path(model_name_full) / "metrics"),
-                },
-                "metrics": {
-                    "test_data": eval_results,
-                },
-            }
-            if inference_block is not None:
-                model_metadata["inference"] = inference_block
-            models_metadata.append(model_metadata)
-            with (Path(models_artifact.path) / model_name_full / "model.json").open("w", encoding="utf-8") as f:
-                json.dump(model_metadata, f, indent=2)
-
-        status.record(
-            "refit_and_evaluate",
-            "completed",
-            metrics={"model_count": len(model_names_full), "eval_metric": str(predictor.eval_metric)},
-        )
-
-        # Phase C: leaderboard generation - uses eval_results_by_model already in memory
-        status.record("build_leaderboard", "started")
-
-        import importlib.resources
-
-        from kfp_components.components.training.automl.shared.leaderboard_utils import (
-            _build_leaderboard_html,
-            _build_leaderboard_table,
-            _format_metric_value,
-        )
-
-        base_uri = models_artifact.uri.rstrip("/")
-        leaderboard_rows = []
-        for model_name_full in model_names_full:
-            model_uri = f"{base_uri}/{model_name_full}"
-            leaderboard_rows.append(
-                {
-                    "model": model_name_full,
-                    **eval_results_by_model[model_name_full],
-                    "notebook": f"{model_uri}/notebooks/automl_predictor_notebook.ipynb",
-                    "predictor": f"{model_uri}/predictor",
+                return {
+                    "input_data_schema": {
+                        "protocol": "v1_json",
+                        "instances": {"required": True, "fields": fields},
+                    },
+                    "sample_payload": {"instances": [sample_row]},
                 }
+
+            def _serialize_curve_array(values: Any) -> list[float]:
+                return [float(v) for v in np.asarray(values).tolist()]
+
+            def _serialize_curve_thresholds(values: Any) -> list[float | str]:
+                serialized: list[float | str] = []
+                for value in np.asarray(values).tolist():
+                    if isinstance(value, (float, np.floating)) and np.isposinf(value):
+                        serialized.append("inf")
+                    elif isinstance(value, (float, np.floating)) and np.isneginf(value):
+                        serialized.append("-inf")
+                    else:
+                        serialized.append(float(value))
+                return serialized
+
+            def _binarize_labels(y_true, positive_label: Any) -> np.ndarray:
+                import pandas as pd
+
+                labels = y_true if isinstance(y_true, pd.Series) else pd.Series(y_true)
+                return (labels == positive_label).astype(int).to_numpy()
+
+            def _resolve_positive_column(classes: list[Any], positive_class: Any | None) -> Any:
+                if positive_class is not None and positive_class in classes:
+                    return positive_class
+                if len(classes) == 2:
+                    logger.warning(
+                        "positive_class not specified for binary classification; defaulting to %r as positive class "
+                        "(available classes: %r). Set positive_class explicitly for clarity.",
+                        classes[1],
+                        classes,
+                    )
+                    return classes[1]
+                raise ValueError(
+                    f"Cannot resolve positive class from proba columns {classes!r}; "
+                    f"pass positive_class explicitly (got {positive_class!r})."
+                )
+
+            def _roc_curve_block(y_true_binary: np.ndarray, y_score: np.ndarray) -> dict[str, Any]:
+                import math
+
+                from sklearn.metrics import roc_auc_score, roc_curve
+
+                fpr, tpr, thresholds = roc_curve(y_true_binary, y_score)
+                auc = float(roc_auc_score(y_true_binary, y_score))
+
+                if math.isnan(auc):
+                    raise ValueError(
+                        "Cannot compute ROC AUC: only one class present in test data. "
+                        "ROC curves require both positive and negative examples."
+                    )
+
+                return {
+                    "auc": auc,
+                    "fpr": _serialize_curve_array(fpr),
+                    "tpr": _serialize_curve_array(tpr),
+                    "thresholds": _serialize_curve_thresholds(thresholds),
+                }
+
+            def _pr_curve_block(
+                y_true_binary: np.ndarray, y_score: np.ndarray, baseline_precision: float
+            ) -> dict[str, Any]:
+                import math
+
+                from sklearn.metrics import average_precision_score, precision_recall_curve
+
+                precision, recall, thresholds = precision_recall_curve(y_true_binary, y_score)
+                average_precision = float(average_precision_score(y_true_binary, y_score))
+
+                if math.isnan(average_precision):
+                    raise ValueError(
+                        "Cannot compute precision-recall curve: only one class present in test data. "
+                        "Precision-recall curves require both positive and negative examples."
+                    )
+
+                return {
+                    "average_precision": average_precision,
+                    "precision": _serialize_curve_array(precision),
+                    "recall": _serialize_curve_array(recall),
+                    "thresholds": _serialize_curve_array(thresholds),
+                    "baseline_precision": baseline_precision,
+                }
+
+            def _macro_weighted_curve_metric(values: list[float], weights: list[int]) -> float:
+                if not values:
+                    return 0.0
+                if sum(weights) == 0:
+                    return float(np.mean(values))
+                return float(np.average(values, weights=weights))
+
+            def _build_binary_curves_json(y_true, proba_df, positive_class: Any | None) -> dict[str, Any]:
+                classes = list(proba_df.columns)
+                positive_label = _resolve_positive_column(classes, positive_class)
+                y_true_binary = _binarize_labels(y_true, positive_label)
+                y_score = proba_df[positive_label].to_numpy()
+                num_positive = int(y_true_binary.sum())
+                num_samples = len(y_true_binary)
+                roc_block = _roc_curve_block(y_true_binary, y_score)
+                roc_block["support"] = num_positive
+                pr_block = _pr_curve_block(
+                    y_true_binary,
+                    y_score,
+                    baseline_precision=num_positive / num_samples if num_samples else 0.0,
+                )
+                pr_block["support"] = num_positive
+                return {
+                    "task_type": "binary",
+                    "positive_class": positive_label.item() if hasattr(positive_label, "item") else positive_label,
+                    "num_samples": num_samples,
+                    "num_positive": num_positive,
+                    "num_negative": num_samples - num_positive,
+                    "roc_curve": roc_block,
+                    "precision_recall_curve": pr_block,
+                }
+
+            def _build_multiclass_curves_json(y_true, proba_df) -> dict[str, Any]:
+                classes = list(proba_df.columns)
+                num_samples = len(y_true)
+                per_class_roc: dict[str, dict[str, Any]] = {}
+                per_class_pr: dict[str, dict[str, Any]] = {}
+                roc_aucs: list[float] = []
+                ap_scores: list[float] = []
+                weights: list[int] = []
+                skipped_classes: list[str] = []
+
+                for label in classes:
+                    key = str(label.item() if hasattr(label, "item") else label)
+                    y_true_binary = _binarize_labels(y_true, label)
+                    support = int(y_true_binary.sum())
+                    y_score = proba_df[label].to_numpy()
+                    try:
+                        roc = _roc_curve_block(y_true_binary, y_score)
+                        roc["support"] = support
+                        per_class_roc[key] = roc
+                        roc_aucs.append(roc["auc"])
+                        pr = _pr_curve_block(
+                            y_true_binary,
+                            y_score,
+                            baseline_precision=support / num_samples if num_samples else 0.0,
+                        )
+                        per_class_pr[key] = pr
+                        ap_scores.append(pr["average_precision"])
+                        weights.append(support)
+                    except ValueError as e:
+                        logger.warning(
+                            "Skipping ROC/PR curves for class %r: %s",
+                            key,
+                            e,
+                        )
+                        skipped_classes.append(key)
+
+                if not per_class_roc:
+                    raise ValueError(
+                        "Cannot compute multiclass curves: no class had both positive and negative "
+                        f"examples in test data (skipped: {skipped_classes})."
+                    )
+
+                serializable_classes = [c.item() if hasattr(c, "item") else c for c in classes]
+
+                payload: dict[str, Any] = {
+                    "task_type": "multiclass",
+                    "strategy": "ovr",
+                    "num_classes": len(classes),
+                    "classes": serializable_classes,
+                    "num_samples": num_samples,
+                    "roc_curve": {
+                        "auc_macro": float(np.mean(roc_aucs)),
+                        "auc_weighted": _macro_weighted_curve_metric(roc_aucs, weights),
+                        "per_class": per_class_roc,
+                    },
+                    "precision_recall_curve": {
+                        "average_precision_macro": float(np.mean(ap_scores)),
+                        "average_precision_weighted": _macro_weighted_curve_metric(ap_scores, weights),
+                        "per_class": per_class_pr,
+                    },
+                }
+                if skipped_classes:
+                    payload["skipped_classes"] = skipped_classes
+                return payload
+
+            def build_curves_json(
+                y_true,
+                y_proba,
+                curves_task_type: str,
+                positive_class: Any | None = None,
+            ) -> dict[str, Any]:
+                """Build curves.json for binary or multiclass classification."""
+                import pandas as pd
+
+                if curves_task_type not in {"binary", "multiclass"}:
+                    raise ValueError(f"task_type must be 'binary' or 'multiclass'; got {curves_task_type!r}.")
+
+                y_true_series = pd.Series(y_true)
+                proba_df = y_proba if hasattr(y_proba, "columns") else pd.DataFrame(y_proba)
+
+                if curves_task_type == "binary":
+                    return _build_binary_curves_json(y_true_series, proba_df, positive_class)
+                return _build_multiclass_curves_json(y_true_series, proba_df)
+
+            def _json_safe_value(value: Any) -> Any:
+                """Replace non-finite floats so the payload is strict JSON."""
+                if isinstance(value, dict):
+                    return {key: _json_safe_value(item) for key, item in value.items()}
+                if isinstance(value, list):
+                    return [_json_safe_value(item) for item in value]
+                if isinstance(value, bool):
+                    return value
+                if isinstance(value, (int, np.integer)):
+                    return int(value)
+                if isinstance(value, (float, np.floating)):
+                    number = float(value)
+                    return number if math.isfinite(number) else None
+                return value
+
+            def _write_feature_importance(model_name_full: str) -> None:
+                """Write permutation importance for one model. Not safe to run concurrently."""
+                metrics_path = Path(models_artifact.path) / model_name_full / "metrics"
+                metrics_path.mkdir(parents=True, exist_ok=True)
+                subsample_size = FEATURE_IMPORTANCE_SUBSAMPLE_SIZE
+                importance_kwargs: dict[str, Any] = {
+                    "model": model_name_full,
+                    "subsample_size": subsample_size,
+                    "num_shuffle_sets": FEATURE_IMPORTANCE_SHUFFLE_SETS,
+                    "include_confidence_band": FEATURE_IMPORTANCE_SHUFFLE_SETS > 1,
+                    "max_memory_ratio": FEATURE_IMPORTANCE_MAX_MEMORY_RATIO,
+                }
+                logger.info(
+                    "Computing feature importance for model=%s with up to %d input features "
+                    "(AutoGluon excludes unused features), "
+                    "subsample_size=%d, num_shuffle_sets=%d, max_memory_ratio=%.2f.",
+                    model_name_full,
+                    len(test_data_df.columns) - 1,
+                    subsample_size,
+                    FEATURE_IMPORTANCE_SHUFFLE_SETS,
+                    FEATURE_IMPORTANCE_MAX_MEMORY_RATIO,
+                )
+                feature_importance = predictor_clone.feature_importance(test_data_df, **importance_kwargs)
+                feature_importance_payload = _json_safe_value(feature_importance.to_dict())
+                if FEATURE_IMPORTANCE_SHUFFLE_SETS == 1:
+                    importance = feature_importance_payload.get("importance", feature_importance_payload)
+                    feature_importance_payload = {"importance": importance}
+                with (metrics_path / "feature_importance.json").open("w") as f:
+                    json.dump(feature_importance_payload, f, allow_nan=False)
+
+            def _process_model(model_name_full: str) -> tuple[str, dict]:
+                """Compute metrics and write metric files + notebook for one refitted model.
+
+                Safe to run concurrently across models: only reads from the shared predictor
+                and test data, and writes to isolated per-model directories under
+                models_artifact.path. Does NOT call set_model_best / clone_for_deployment,
+                which mutate predictor state and must stay sequential. Permutation feature
+                importance is written afterward, one model at a time.
+
+                Returns (model_name_full, eval_results).
+                """
+                output_path = Path(models_artifact.path) / model_name_full
+                y_true = test_data_df[predictor.label]
+
+                if problem_type in {"binary", "multiclass"}:
+                    y_proba = predictor_clone.predict_proba(test_data_df, model=model_name_full)
+                    eval_results = predictor_clone.evaluate_predictions(
+                        y_true=y_true,
+                        y_pred=y_proba,
+                        detailed_report=True,
+                    )
+                    confusion_matrix_dict = _confusion_matrix_to_dict(eval_results.pop("confusion_matrix", None))
+                    eval_results.pop("classification_report", None)
+                else:
+                    y_proba = None
+                    predictions = predictor_clone.predict(test_data_df, model=model_name_full)
+                    eval_results = predictor_clone.evaluate_predictions(y_true=y_true, y_pred=predictions)
+                    confusion_matrix_dict = None
+
+                metrics_for_json = _scalar_eval_metrics(eval_results)
+
+                (output_path / "metrics").mkdir(parents=True, exist_ok=True)
+                with (output_path / "metrics" / "metrics.json").open("w") as f:
+                    json.dump(metrics_for_json, f)
+
+                if confusion_matrix_dict is not None:
+                    with (output_path / "metrics" / "confusion_matrix.json").open("w") as f:
+                        json.dump(confusion_matrix_dict, f)
+
+                if y_proba is not None:
+                    try:
+                        curves_payload = build_curves_json(
+                            y_true=y_true,
+                            y_proba=y_proba,
+                            curves_task_type=problem_type,
+                            positive_class=getattr(predictor_clone, "positive_class", None),
+                        )
+                        with (output_path / "metrics" / "curves.json").open("w") as f:
+                            json.dump(curves_payload, f)
+                    except ValueError as e:
+                        logger.warning(
+                            "Could not generate curves.json for model %r: %s. Skipping curve generation.",
+                            model_name_full,
+                            str(e),
+                        )
+
+                with (shared_automl_dir() / "notebook_templates" / notebook_file).open("r", encoding="utf-8") as f:
+                    notebook = json.load(f)
+                replacements = {
+                    "<REPLACE_RUN_ID>": run_id,
+                    "<REPLACE_PIPELINE_NAME>": pipeline_name_trimmed,
+                    "<REPLACE_MODEL_NAME>": model_name_full,
+                    "<REPLACE_SAMPLE_ROW>": str(sample_row_formatted),
+                }
+                notebook = replace_placeholder_in_notebook(notebook, replacements)
+                notebook_path = output_path / "notebooks"
+                notebook_path.mkdir(parents=True, exist_ok=True)
+                with (notebook_path / "automl_predictor_notebook.ipynb").open("w", encoding="utf-8") as f:
+                    json.dump(notebook, f)
+
+                return model_name_full, metrics_for_json
+
+            # Phase A: metrics + notebooks - all models run concurrently.
+            with ThreadPoolExecutor(max_workers=len(model_names_full)) as executor:
+                futures = [executor.submit(_process_model, name) for name in model_names_full]
+                eval_results_by_model = dict(f.result() for f in futures)
+
+            # Permutation importance predicts once per feature. Parallel runs of bagged
+            # models on wide tables exceed the pod memory limit, while narrower tables
+            # benefit from processing the selected models concurrently.
+            feature_count = len(test_data_df.columns) - 1
+            if feature_count > FEATURE_IMPORTANCE_SEQUENTIAL_FEATURE_THRESHOLD and len(model_names_full) > 1:
+                for model_name_full in model_names_full:
+                    _write_feature_importance(model_name_full)
+            else:
+                with ThreadPoolExecutor(max_workers=len(model_names_full)) as executor:
+                    futures = [executor.submit(_write_feature_importance, name) for name in model_names_full]
+                    for future in futures:
+                        future.result()
+
+            # Phase B: clone for deployment - sequential because set_model_best mutates predictor state.
+            for model_name_full in model_names_full:
+                output_path = Path(models_artifact.path) / model_name_full
+                predictor_clone.set_model_best(model=model_name_full, save_trainer=True)
+                predictor_clone.clone_for_deployment(path=output_path / "predictor", dirs_exist_ok=True)
+
+            shutil.rmtree(work_path, ignore_errors=True)
+
+            # Build ordered models_metadata (preserves top-N ranking order).
+            inference_block = _build_tabular_inference_block(predictor_clone)
+
+            models_metadata = []
+            for model_name_full in model_names_full:
+                eval_results = eval_results_by_model[model_name_full]
+                model_metadata = {
+                    "name": model_name_full,
+                    "location": {
+                        "model_directory": model_name_full,
+                        "predictor": str(Path(model_name_full) / "predictor"),
+                        "notebook": str(Path(model_name_full) / "notebooks" / "automl_predictor_notebook.ipynb"),
+                        "metrics": str(Path(model_name_full) / "metrics"),
+                    },
+                    "metrics": {
+                        "test_data": eval_results,
+                    },
+                }
+                if inference_block is not None:
+                    model_metadata["inference"] = inference_block
+                models_metadata.append(model_metadata)
+                with (Path(models_artifact.path) / model_name_full / "model.json").open("w", encoding="utf-8") as f:
+                    json.dump(model_metadata, f, indent=2)
+
+                # Log this model to MLflow as a nested child run as soon as it is finalized, so
+                # the experiment updates live. Kept sequential (out of the ThreadPoolExecutor
+                # above) because the MLflow fluent API is not thread-safe.
+                try:
+                    run_logger.log_model(
+                        model_name=model_name_full,
+                        model_uri=f"{models_artifact.uri.rstrip('/')}/{model_name_full}",
+                        metrics={"test_data": eval_results},
+                    )
+                except Exception:
+                    logger.exception("MLflow logging failed for model %s; continuing.", model_name_full)
+
+            status.record(
+                "refit_and_evaluate",
+                "completed",
+                metrics={"model_count": len(model_names_full), "eval_metric": str(predictor.eval_metric)},
             )
 
-        # AutoGluon evaluate_predictions() uses higher-is-better sign convention for all metrics;
-        # error metrics (RMSE, MAE, log_loss) are returned negated, so descending sort is always correct.
-        # Sort on raw (unrounded) values so close scores cannot flip rank after rounding.
-        if not leaderboard_rows:
-            raise RuntimeError("Leaderboard rows are empty; no models available for ranking.")
-        leaderboard_df = pd.DataFrame(leaderboard_rows)
-        if eval_metric in leaderboard_rows[0]:
-            leaderboard_df = leaderboard_df.sort_values(by=eval_metric, ascending=False, na_position="last")
-        else:
-            logger.warning(
-                "eval_metric '%s' not found in row keys %s; preserving refit order.",
-                eval_metric,
-                list(leaderboard_rows[0].keys()),
+            # Phase C: leaderboard generation - uses eval_results_by_model already in memory
+            status.record("build_leaderboard", "started")
+
+            import importlib.resources
+
+            from kfp_components.components.training.automl.shared.leaderboard_utils import (
+                _build_leaderboard_html,
+                _build_leaderboard_table,
+                _format_metric_value,
             )
-        n = len(leaderboard_df)
-        best_model_name = str(leaderboard_df.iloc[0]["model"])
-        leaderboard_df.index = pd.RangeIndex(start=1, stop=n + 1, name="rank")
-        _metric_cols = [c for c in leaderboard_df.columns if c not in ("model", "notebook", "predictor")]
-        leaderboard_df[_metric_cols] = leaderboard_df[_metric_cols].map(_format_metric_value)
-        html_table = _build_leaderboard_table(leaderboard_df)
 
-        _template_ref = (
-            importlib.resources.files("kfp_components.components.training.automl.shared")
-            / "leaderboard_html_template.html"
-        )
-        with importlib.resources.as_file(_template_ref) as template_path:
-            html_content = _build_leaderboard_html(
-                template_path=template_path,
-                table_html=html_table,
-                eval_metric=eval_metric,
-                best_model_name=best_model_name,
-                num_models=n,
+            base_uri = models_artifact.uri.rstrip("/")
+            leaderboard_rows = []
+            for model_name_full in model_names_full:
+                model_uri = f"{base_uri}/{model_name_full}"
+                leaderboard_rows.append(
+                    {
+                        "model": model_name_full,
+                        **eval_results_by_model[model_name_full],
+                        "notebook": f"{model_uri}/notebooks/automl_predictor_notebook.ipynb",
+                        "predictor": f"{model_uri}/predictor",
+                    }
+                )
+
+            # AutoGluon evaluate_predictions() uses higher-is-better sign convention for all metrics;
+            # error metrics (RMSE, MAE, log_loss) are returned negated, so descending sort is always correct.
+            # Sort on raw (unrounded) values so close scores cannot flip rank after rounding.
+            if not leaderboard_rows:
+                raise RuntimeError("Leaderboard rows are empty; no models available for ranking.")
+            leaderboard_df = pd.DataFrame(leaderboard_rows)
+            if eval_metric in leaderboard_rows[0]:
+                leaderboard_df = leaderboard_df.sort_values(by=eval_metric, ascending=False, na_position="last")
+            else:
+                logger.warning(
+                    "eval_metric '%s' not found in row keys %s; preserving refit order.",
+                    eval_metric,
+                    list(leaderboard_rows[0].keys()),
+                )
+            n = len(leaderboard_df)
+            best_model_name = str(leaderboard_df.iloc[0]["model"])
+            leaderboard_df.index = pd.RangeIndex(start=1, stop=n + 1, name="rank")
+            _metric_cols = [c for c in leaderboard_df.columns if c not in ("model", "notebook", "predictor")]
+            leaderboard_df[_metric_cols] = leaderboard_df[_metric_cols].map(_format_metric_value)
+            html_table = _build_leaderboard_table(leaderboard_df)
+
+            _template_ref = (
+                importlib.resources.files("kfp_components.components.training.automl.shared")
+                / "leaderboard_html_template.html"
             )
-        with open(html_artifact.path, "w", encoding="utf-8") as f:
-            f.write(html_content)
+            with importlib.resources.as_file(_template_ref) as template_path:
+                html_content = _build_leaderboard_html(
+                    template_path=template_path,
+                    table_html=html_table,
+                    eval_metric=eval_metric,
+                    best_model_name=best_model_name,
+                    num_models=n,
+                )
+            with open(html_artifact.path, "w", encoding="utf-8") as f:
+                f.write(html_content)
 
-        html_artifact.metadata["data"] = leaderboard_df.to_json(orient="records")
-        html_artifact.metadata["display_name"] = "automl_leaderboard"
-        status.record(
-            "build_leaderboard",
-            "completed",
-            metrics={"best_model": best_model_name, "model_count": n},
-        )
+            html_artifact.metadata["data"] = leaderboard_df.to_json(orient="records")
+            html_artifact.metadata["display_name"] = "automl_leaderboard"
+            status.record(
+                "build_leaderboard",
+                "completed",
+                metrics={"best_model": best_model_name, "model_count": n},
+            )
 
-        # Serialize as a JSON string and parse back in downstream components.
-        models_artifact.metadata["model_names"] = json.dumps(model_names_full)
-        models_artifact.metadata["context"] = {
-            "data_config": {
-                "sampling_config": sampling_config,
-                "split_config": split_config,
-            },
-            "task_type": problem_type,
-            "label_column": predictor.label,
-            "model_config": model_config,
-            "best_model_name": best_model_name,
-            "models": models_metadata,
-        }
+            # Generate the run-level experiment launcher notebook. Best-effort.
+            from kfp_components.components.training.automl.shared.experiment_notebook_utils import (
+                TabularExperimentNotebookConfig,
+                tabular_experiment_notebook_replacements,
+                write_experiment_notebook,
+            )
+
+            try:
+                experiment_notebook_config = TabularExperimentNotebookConfig(
+                    train_data_secret_name=train_data_secret_name,
+                    train_data_bucket_name=train_data_bucket_name,
+                    train_data_file_key=train_data_file_key,
+                    test_data_bucket_name=test_data_bucket_name,
+                    test_data_file_key=test_data_file_key,
+                    label_column=label_column,
+                    task_type=task_type,
+                    top_n=top_n,
+                    positive_class=positive_class,
+                    eval_metric=eval_metric,
+                    preset=preset,
+                )
+                write_experiment_notebook(
+                    output_dir=Path(experiment_notebook.path),
+                    kind="tabular",
+                    include_user_test_data=experiment_notebook_config.include_user_test_data,
+                    replacements=tabular_experiment_notebook_replacements(experiment_notebook_config),
+                )
+                experiment_notebook.metadata["display_name"] = "automl_experiment_notebook"
+            except Exception as notebook_exc:
+                logger.warning("Could not generate experiment notebook: %s", notebook_exc)
+
+            # Log parent aggregates + leaderboard, then close the MLflow parent run.
+            # Best-effort: never fails the training step.
+            status.record("log_mlflow_results", "started")
+            run_logger.finalize(
+                total_fit_time_seconds=total_fit_time_seconds,
+            )
+            logged_to_mlflow, mlflow_tracking_info = run_logger.result()
+            mlflow_stack.close()
+            if logged_to_mlflow:
+                for key, value in mlflow_tracking_info.items():
+                    component_status.metadata[key] = value
+                status.record(
+                    "log_mlflow_results",
+                    "completed",
+                    message={"level": "info", "text": "Logged run results to MLflow."},
+                )
+            elif run_logger.configured:
+                # MLflow was injected but every write was swallowed (server unreachable, auth
+                # rejected, ...). Report the failure instead of claiming success; the stage
+                # still completes because tracking is best-effort and training itself is fine.
+                for key, value in mlflow_tracking_info.items():
+                    component_status.metadata[key] = value
+                reason = mlflow_tracking_info.get("mlflow_tracking_error", "no MLflow write succeeded")
+                status.record(
+                    "log_mlflow_results",
+                    "completed",
+                    message={
+                        "level": "warning",
+                        "text": f"MLflow tracking is configured but no results were logged: {reason}",
+                    },
+                )
+            else:
+                # No MLflow config injected (KFP_MLFLOW_CONFIG absent): tracking is disabled.
+                # The stage still completes so the component reports done; the message records
+                # that nothing was logged.
+                status.record(
+                    "log_mlflow_results",
+                    "completed",
+                    message={"level": "info", "text": "MLflow tracking disabled; no results logged."},
+                )
+
+            # Serialize as a JSON string and parse back in downstream components.
+            models_artifact.metadata["model_names"] = json.dumps(model_names_full)
+            models_artifact.metadata["context"] = {
+                "data_config": {
+                    "sampling_config": sampling_config,
+                    "split_config": split_config,
+                },
+                "task_type": problem_type,
+                "label_column": predictor.label,
+                "model_config": model_config,
+                "best_model_name": best_model_name,
+                "models": models_metadata,
+            }
+        finally:
+            # Always end the MLflow parent run, even if training or artifact
+            # processing raised, so it never leaks in RUNNING state (idempotent).
+            mlflow_stack.close()
 
     return NamedTuple("outputs", eval_metric=str, best_model_name=str)(
         eval_metric=eval_metric,

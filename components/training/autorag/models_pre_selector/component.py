@@ -9,7 +9,7 @@ _AUTORAG_SHARED = Path(__file__).parents[1] / "shared"
 
 @dsl.component(
     base_image=AUTORAG_IMAGE,  # noqa: E501
-    embedded_artifact_path=str(_AUTORAG_SHARED / "component_status.py"),
+    embedded_artifact_path=str(_AUTORAG_SHARED / "runtime_embed" / "component_status.py"),
     install_kfp_package=False,
 )
 def models_pre_selector(
@@ -58,10 +58,6 @@ def models_pre_selector(
     import logging
     import os
     from pathlib import Path
-
-    from ai4rag.utils.compat import ensure_sqlite3
-
-    ensure_sqlite3()
 
     from ai4rag.core.experiment.mps import ModelsPreSelector
     from ai4rag.search_space.prepare import SearchSpaceReport

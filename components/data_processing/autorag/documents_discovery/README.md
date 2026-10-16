@@ -6,14 +6,15 @@
 
 Documents discovery component with optional benchmark test data loading.
 
-Discovers input documents in S3 and optionally downloads benchmark test data for document-prioritised sampling. When ``test_data_bucket_name`` is provided, the component first downloads and samples the benchmark JSON, then uses the referenced document IDs to prioritise discovery.
+Discovers input documents in S3 and optionally downloads benchmark test data for document-prioritised sampling. When ``test_data_bucket_name`` is provided, the component first downloads and samples the benchmark JSON, then uses the referenced document keys to prioritise discovery and to validate
+that every referenced document was actually ingested.
 
 ## Inputs 📥
 
 | Parameter | Type | Default | Description |
 | --------- | ---- | ------- | ----------- |
 | `input_data_bucket_name` | `str` | `None` | S3 (or compatible) bucket containing input documents. |
-| `input_data_path` | `str` | `""` | Path to folder with input documents within the bucket. |
+| `input_data_keys` | `list[str]` | `[]` | Paths to folders with input documents within the bucket, 1-10 of them. All of them are discovered and merged into a single corpus deduplicated by object key, so overlapping folders are safe and the size cap applies to the whole corpus. Leave empty to discover the whole bucket.  More than 10 folders raises a ``ValueError``. |
 | `test_data_bucket_name` | `str` | `""` | S3 bucket containing the test data file.  Leave empty to skip test data loading (e.g. for the indexing pipeline). |
 | `test_data_path_key` | `str` | `""` | S3 object key to the JSON test data file. |
 | `benchmark_sample_size` | `int` | `25` | Maximum number of benchmark records to keep. When the dataset exceeds this limit, a reproducible random sample is drawn (seed 42). Set to 0 to disable sampling. |
@@ -36,7 +37,7 @@ from kfp_components.components.data_processing.autorag.documents_discovery impor
 @dsl.pipeline(name="documents-discovery-example")
 def example_pipeline(
     input_data_bucket_name: str = "my-bucket",
-    input_data_path: str = "documents/",
+    input_data_keys: list[str] = ["documents/"],
     sampling_enabled: bool = True,
     sampling_max_size: float = 1,
 ):
@@ -44,13 +45,14 @@ def example_pipeline(
 
     Args:
         input_data_bucket_name: S3 bucket containing input documents.
-        input_data_path: Path prefix within the bucket.
+        input_data_keys: Up to ten path prefixes within the bucket; all are merged
+            into one deduplicated corpus.
         sampling_enabled: Whether to enable sampling.
         sampling_max_size: Maximum sample size in GB.
     """
     documents_discovery(
         input_data_bucket_name=input_data_bucket_name,
-        input_data_path=input_data_path,
+        input_data_keys=input_data_keys,
         sampling_enabled=sampling_enabled,
         sampling_max_size=sampling_max_size,
     )
@@ -66,12 +68,12 @@ def example_pipeline(
     - Name: Pipelines, Version: >=2.15.2
   - External Services:
     - Name: RHOAI Connections API, Version: >=1.0.0
-    - Name: ai4rag, Version: ~=0.15.0
+    - Name: ai4rag, Version: ~=0.23.0
 - **Tags**:
   - data-processing
   - autorag
   - documents-sampling
-- **Last Verified**: 2026-09-08 00:00:00+00:00
+- **Last Verified**: 2026-10-15 00:00:00+00:00
 - **Owners**:
   - No Parent Owners: Yes
   - Approvers:

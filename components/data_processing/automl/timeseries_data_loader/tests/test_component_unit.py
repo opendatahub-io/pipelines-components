@@ -76,10 +76,11 @@ def _mock_boto3_and_pandas(get_object_return=None, get_object_side_effect=None):
             yield mock_s3
 
 
-def _make_test_artifact(tmp_path, name="sampled_test.csv"):
+def _make_test_artifact(tmp_path, name="sampled_test.parquet"):
     """Create a simple artifact-like object for sampled_test_dataset."""
     art = mock.MagicMock()
     art.path = str(tmp_path / name)
+    art.uri = "/artifacts/test"
     return art
 
 
@@ -147,7 +148,7 @@ def _two_column_timeseries_csv(n_rows=MIN_VALID_RECORDS):
     return "\n".join(lines) + "\n"
 
 
-def _run_loader(tmp_path, csv_body, selection_train_size=0.3, id_column="item_id"):
+def _run_loader(tmp_path, csv_body, selection_train_size=0.3, id_column="item_id", preset="speed"):
     """Execute ``python_func`` with mocked S3/pandas; return paths and ``sample_config``."""
     sampled_test = _make_test_artifact(tmp_path)
     with _mock_boto3_and_pandas(get_object_return={"Body": io.BytesIO(csv_body.encode("utf-8"))}):
@@ -160,6 +161,7 @@ def _run_loader(tmp_path, csv_body, selection_train_size=0.3, id_column="item_id
             timestamp_column="timestamp",
             sampled_test_dataset=sampled_test,
             selection_train_size=selection_train_size,
+            preset=preset,
         )
     return result, sampled_test
 
@@ -190,7 +192,12 @@ class TestTimeseriesDataLoaderUnitTests:
         body_stream = io.BytesIO(_timeseries_csv().encode("utf-8"))
         sampled_test = _make_test_artifact(tmp_path)
 
-        with _mock_boto3_and_pandas(get_object_return={"Body": body_stream}) as mock_s3:
+        with (
+            _mock_boto3_and_pandas(get_object_return={"Body": body_stream}) as mock_s3,
+            mock.patch.object(
+                MockedDataFrame, "to_parquet", autospec=True, side_effect=MockedDataFrame.to_parquet
+            ) as mock_to_parquet,
+        ):
             result = timeseries_data_loader.python_func(
                 file_key="timeseries/train.csv",
                 bucket_name="my-bucket",
@@ -203,6 +210,10 @@ class TestTimeseriesDataLoaderUnitTests:
 
             mock_s3.get_object.assert_called_once_with(Bucket="my-bucket", Key="timeseries/train.csv")
 
+        # Parquet is actually written (not just filenames ending in .parquet with CSV
+        # content underneath): one call each for test, selection-train, extra-train.
+        assert mock_to_parquet.call_count == 3
+
         selection_rows = _read_csv_rows(result.models_selection_train_data_path)
         extra_rows = _read_csv_rows(result.extra_train_data_path)
         test_rows = _read_csv_rows(sampled_test.path)
@@ -212,12 +223,26 @@ class TestTimeseriesDataLoaderUnitTests:
         assert len(test_rows) == 20
         assert selection_rows[0]["target"] == "0"
         assert extra_rows[0]["target"] == "24"
+
+        # Train/test splits are written as Parquet, not CSV (RHOAIENG-96416).
+        assert result.models_selection_train_data_path.endswith(".parquet")
+        assert result.extra_train_data_path.endswith(".parquet")
+        assert sampled_test.uri == "/artifacts/test.parquet"
         assert test_rows[0]["target"] == "80"
 
         assert result.sample_config["sampling_method"] == "first_n_rows"
         assert result.sample_config["total_rows_loaded"] == MIN_VALID_RECORDS
         assert result.split_config["test_size"] == 0.2
         assert result.split_config["selection_train_size"] == 0.3
+
+    @mock.patch.dict(os.environ, mocked_env_variables, clear=True)
+    def test_quality_preset_loads_valid_data(self, tmp_path):
+        """Quality accepts the 10 GiB sampling-profile preset."""
+        result, sampled_test = _run_loader(tmp_path, _timeseries_csv(), preset="quality")
+
+        assert result.sample_config["sampling_method"] == "first_n_rows"
+        assert Path(result.models_selection_train_data_path).exists()
+        assert Path(sampled_test.path).exists()
 
     @mock.patch.dict(os.environ, mocked_env_variables, clear=True)
     def test_per_series_split_each_id_gets_holdout(self, tmp_path):
@@ -303,7 +328,7 @@ class TestTimeseriesDataLoaderUnitTests:
 
         original_bytes_per_row = MockedDataFrame.BYTES_PER_ROW
         try:
-            # 3 rows * 60 MB/row = 180 MB, so truncation should keep only 1 row under 100 MB.
+            # 3 rows * 60 MiB/row = 180 MiB, so truncation should keep only 1 row under 100 MiB.
             MockedDataFrame.BYTES_PER_ROW = 60_000_000
             with _mock_boto3_and_pandas(get_object_return={"Body": body_stream}):
                 with pytest.raises(ValueError, match="at least 100"):
@@ -318,6 +343,77 @@ class TestTimeseriesDataLoaderUnitTests:
                     )
         finally:
             MockedDataFrame.BYTES_PER_ROW = original_bytes_per_row
+
+    @mock.patch.dict(os.environ, mocked_env_variables, clear=True)
+    def test_partial_train_read_does_not_report_sample_cap_reached(self, tmp_path):
+        """A mid-stream train CSV error keeps loaded rows but must not set sample_cap_reached."""
+        train_csv = _timeseries_csv(n_rows=MIN_VALID_RECORDS + 20)
+        mocked_pandas = make_mocked_pandas_module()
+        real_read_csv = mocked_pandas.read_csv
+
+        def flaky_read_csv(stream, chunksize=None):
+            if chunksize is None:
+                return real_read_csv(stream, chunksize=chunksize)
+
+            def _chunks():
+                yield from real_read_csv(stream, chunksize=chunksize)
+                raise OSError("connection reset by peer")
+
+            return _chunks()
+
+        mocked_pandas.read_csv = flaky_read_csv
+        sampled_test = _make_test_artifact(tmp_path)
+        component_status = mock.MagicMock()
+        component_status.path = str(tmp_path / "component_status")
+        component_status.metadata = {}
+
+        with _mock_boto3_module(get_object_return={"Body": io.BytesIO(train_csv.encode("utf-8"))}):
+            with mock.patch.dict(sys.modules, {"pandas": mocked_pandas}):
+                timeseries_data_loader.python_func(
+                    file_key="train.csv",
+                    bucket_name="b",
+                    workspace_path=str(tmp_path),
+                    target="target",
+                    id_column="item_id",
+                    timestamp_column="timestamp",
+                    sampled_test_dataset=sampled_test,
+                    component_status=component_status,
+                )
+
+        payload = json.loads((Path(component_status.path) / "component_status.json").read_text())
+        stages = {stage["id"]: stage for stage in payload["stages"]}
+        assert stages["prepare_data"]["metrics"]["sample_cap_reached"] is False
+
+    @mock.patch.dict(os.environ, mocked_env_variables, clear=True)
+    def test_sample_cap_reached_when_size_limit_stops_read(self, tmp_path):
+        """Hitting the preset byte budget sets sample_cap_reached without failing the run."""
+        body_stream = io.BytesIO(_timeseries_csv(n_rows=300).encode("utf-8"))
+        sampled_test = _make_test_artifact(tmp_path)
+        component_status = mock.MagicMock()
+        component_status.path = str(tmp_path / "component_status")
+        component_status.metadata = {}
+
+        original_bytes_per_row = MockedDataFrame.BYTES_PER_ROW
+        try:
+            # 800 KiB/row → speed's 100 MiB budget keeps ~131 rows (>= MIN_VALID_RECORDS).
+            MockedDataFrame.BYTES_PER_ROW = 800_000
+            with _mock_boto3_and_pandas(get_object_return={"Body": body_stream}):
+                timeseries_data_loader.python_func(
+                    file_key="timeseries/train.csv",
+                    bucket_name="my-bucket",
+                    workspace_path=str(tmp_path),
+                    target="target",
+                    id_column="item_id",
+                    timestamp_column="timestamp",
+                    sampled_test_dataset=sampled_test,
+                    component_status=component_status,
+                )
+        finally:
+            MockedDataFrame.BYTES_PER_ROW = original_bytes_per_row
+
+        payload = json.loads((Path(component_status.path) / "component_status.json").read_text())
+        stages = {stage["id"]: stage for stage in payload["stages"]}
+        assert stages["prepare_data"]["metrics"]["sample_cap_reached"] is True
 
     @mock.patch.dict(os.environ, mocked_env_variables, clear=True)
     def test_no_data_rows_raises(self, tmp_path):
@@ -1174,7 +1270,7 @@ class TestUserProvidedTestData:
 
     @mock.patch.dict(os.environ, mocked_env_variables, clear=True)
     def test_user_provided_test_data_truncation_warns_and_is_recorded(self, tmp_path, caplog):
-        """A test dataset over the 50 MB load limit is truncated with a WARNING and a status flag.
+        """A test dataset over the speed preset's 50 MiB limit is truncated with a WARNING and a status flag.
 
         BYTES_PER_ROW is inflated only on the second S3 call (test data fetch) so the
         training data loads normally (default 100 bytes/row, no sampling truncation).
@@ -1189,7 +1285,7 @@ class TestUserProvidedTestData:
             call_count += 1
             if call_count == 1:
                 return {"Body": io.BytesIO(train_csv.encode("utf-8"))}
-            # 20 MB per row: exceeds the 50 MB test-data cap after two rows, so the reader
+            # 20 MiB per row: exceeds the 50 MiB test-data cap after two rows, so the reader
             # stops early and reports the truncation. Two rows, not one, so the surviving
             # series still clears the prediction_length horizon check.
             MockedDataFrame.BYTES_PER_ROW = 20_000_000

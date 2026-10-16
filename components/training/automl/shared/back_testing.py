@@ -47,6 +47,10 @@ _LOWER_IS_BETTER = frozenset(
         "root_mean_squared_scaled_error",
         "WAPE",
         "weighted_absolute_percentage_error",
+        # AutoGluon 1.6 losses. BIAS is a signed diagnostic and stays unflipped.
+        "MAEB",
+        "WAPEB",
+        "MQL",
     }
 )
 

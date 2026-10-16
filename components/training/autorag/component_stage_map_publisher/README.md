@@ -6,7 +6,8 @@
 
 Publish the component-to-stage map for dashboard consumption.
 
-Reads the static JSON template from the embedded artifact (``run_status_templates/pipelines/``) and publishes it as a KFP artifact. Dashboards use this map to show expected components, stages, and steps before pipeline execution begins.
+Reads the static JSON template from the embedded artifact (``run_status_templates/pipelines/``) and publishes it as a KFP artifact. Dashboards use this map to show expected components, stages, and steps before pipeline execution begins. An ``mlflow`` block is added from the platform-injected
+``KFP_MLFLOW_CONFIG``, so the dashboard can deep-link the run into the MLflow UI (``tracking_enabled: false`` when the platform integration is off).
 
 ## Inputs 📥
 
@@ -33,7 +34,7 @@ Reads the static JSON template from the embedded artifact (``run_status_template
 - **Tags**:
   - autorag
   - run-status
-- **Last Verified**: 2026-08-24 00:00:00+00:00
+- **Last Verified**: 2026-10-05 00:00:00+00:00
 - **Owners**:
   - Approvers:
     - LukaszCmielowski

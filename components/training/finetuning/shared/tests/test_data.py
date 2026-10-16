@@ -15,6 +15,7 @@ from ..data import (
     _get_oci_auth,
     _skopeo_copy,
     download_oci_model,
+    normalize_hf_dataset_uri,
     prepare_jsonl,
     resolve_dataset,
 )
@@ -38,6 +39,28 @@ def _create_tar(path, members):
             info = tarfile.TarInfo(name=name)
             info.size = len(data)
             tf.addfile(info, io.BytesIO(data))
+
+
+class TestNormalizeHFDatasetURI:
+    """Tests for direct Training Hub Hugging Face inputs."""
+
+    def test_splits_scheme_and_config(self):
+        """Split the pipeline URI into repository and config arguments."""
+        assert normalize_hf_dataset_uri("hf://Agent-Ark/Toucan-1.5M:Qwen3", "") == (
+            "Agent-Ark/Toucan-1.5M",
+            "Qwen3",
+        )
+
+    def test_preserves_config_for_dataset_without_suffix(self):
+        """Keep the configured subset when the URI has no suffix."""
+        assert normalize_hf_dataset_uri("hf://org/dataset", "train") == ("org/dataset", "train")
+
+    def test_preserves_non_huggingface_path(self):
+        """Leave local paths unchanged for the materialized data path."""
+        assert normalize_hf_dataset_uri("/mnt/pipeline/datasets/train.jsonl", "Qwen3") == (
+            "/mnt/pipeline/datasets/train.jsonl",
+            "Qwen3",
+        )
 
 
 class TestExtractTar:

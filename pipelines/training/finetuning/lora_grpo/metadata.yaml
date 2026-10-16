@@ -1,0 +1,36 @@
+---
+name: lora_grpo_pipeline
+stability: alpha
+dependencies:
+  kubeflow:
+    - name: Pipelines
+      version: '>=2.15.2'
+    - name: Trainer
+      version: '>=0.1.0'
+  external_services:
+    - name: HuggingFace Datasets
+      version: ">=2.14.0"
+    - name: Kubernetes
+      version: ">=1.28.0"
+    - name: Training Hub
+      version: ">=0.9.2"
+    - name: ART (OpenPipe)
+      version: ">=0.1.0"
+    - name: Model Registry
+      version: ">=0.3.4"
+    - name: KServe
+      version: ">=0.11.0"
+tags:
+  - training
+  - fine_tuning
+  - grpo
+  - lora
+  - peft
+  - rlvr
+  - reinforcement_learning
+  - tool_calling
+  - llm
+  - pipeline
+lastVerified: 2026-09-18T00:00:00Z
+links:
+  documentation: https://github.com/kubeflow/trainer

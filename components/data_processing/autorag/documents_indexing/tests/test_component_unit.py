@@ -71,11 +71,14 @@ def _make_ai4rag_mocks():
         "ai4rag.rag.embedding.openai_model": _make_module_mock(
             OpenAIEmbeddingModel=mock_OpenAIEmbeddingModel, OpenAIEmbeddingParams=mock_OpenAIEmbeddingParams
         ),
+        "ai4rag.rag.foundation_models": mock.MagicMock(),
+        "ai4rag.rag.foundation_models.openai_model": _make_module_mock(
+            OpenAIFoundationModel=mock.MagicMock(name="OpenAIFoundationModel")
+        ),
         "ai4rag.rag.vector_store": _make_module_mock(
             get_vector_store=mock_get_vector_store, get_vector_store_config=mock_get_vector_store_config
         ),
         "ai4rag.utils": mock.MagicMock(),
-        "ai4rag.utils.compat": _make_module_mock(ensure_sqlite3=mock.MagicMock(name="ensure_sqlite3")),
         "ai4rag.utils.constants": _make_module_mock(ChunkingConstraints=mock_ChunkingConstraints),
         "docling_core": mock.MagicMock(),
         "docling_core.types": mock.MagicMock(),
@@ -88,6 +91,7 @@ def _make_ai4rag_mocks():
         "LangChainChunker": mock_LangChainChunker,
         "OpenAIEmbeddingModel": mock_OpenAIEmbeddingModel,
         "OpenAIEmbeddingParams": mock_OpenAIEmbeddingParams,
+        "OpenAIFoundationModel": modules["ai4rag.rag.foundation_models.openai_model"].OpenAIFoundationModel,
         "get_vector_store": mock_get_vector_store,
         "get_vector_store_config": mock_get_vector_store_config,
         "vector_store": mock_store,
@@ -98,11 +102,17 @@ def _make_ai4rag_mocks():
 
 
 def _make_extracted_text(tmp_path, filenames=None):
-    """Create a mock extracted_text artifact with optional JSON files."""
+    """Create a mock extracted_text artifact with optional JSON files.
+
+    Names may contain ``/`` to place a file under a nested prefix, mirroring how
+    text extraction preserves the source S3 key of each document.
+    """
     extracted_dir = tmp_path / "extracted"
     extracted_dir.mkdir()
     for name in filenames or []:
-        (extracted_dir / name).write_text("{}")
+        target = extracted_dir / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("{}")
     artifact = mock.MagicMock()
     artifact.path = str(extracted_dir)
     return artifact
@@ -247,7 +257,11 @@ class TestDocumentsIndexingValidation:
     def test_missing_vector_db_env_raises_value_error(self, tmp_path):
         """Absent MILVUS_*/PGVECTOR_* env vars raise a descriptive ValueError."""
         modules, mocks = _make_ai4rag_mocks()
-        maas_only = {"MAAS_BASE_URL": "https://maas.example.com/v1", "MAAS_API_KEY": "test-api-key"}
+        maas_only = {
+            "MAAS_BASE_URL": "https://maas.example.com/v1",
+            "MAAS_API_KEY": "test-api-key",
+            "NEO4J_HOME": "/opt/neo4j",
+        }
         with mock.patch.dict("os.environ", maas_only, clear=True):
             with mock.patch.dict("sys.modules", modules):
                 with pytest.raises(ValueError, match="No vector database configuration found"):
@@ -289,6 +303,23 @@ class TestDocumentsIndexingProcessing:
         mocks["LangChainChunker"].return_value.split_documents.return_value = []
         _call_component(tmp_path, modules, mocks, filenames=["a.json"])
         mocks["get_vector_store_config"].assert_called_once_with("pgvector")
+
+    @mock.patch.dict(
+        "os.environ",
+        {
+            "MAAS_BASE_URL": "https://maas.example.com/v1",
+            "MAAS_API_KEY": "test-api-key",
+            "NEO4J_URI": "neo4j://neo4j.example.com:7687",
+            "NEO4J_PASSWORD": "s3cr3t",
+        },
+        clear=True,
+    )
+    def test_neo4j_provider_detected_from_env(self, tmp_path):
+        """NEO4J_* env vars select the neo4j backend when no MILVUS_* or PGVECTOR_* keys are set."""
+        modules, mocks = _make_ai4rag_mocks()
+        mocks["LangChainChunker"].return_value.split_documents.return_value = []
+        _call_component(tmp_path, modules, mocks, filenames=["a.json"])
+        mocks["get_vector_store_config"].assert_called_once_with("neo4j")
 
     @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
     def test_recursive_chunker_selected(self, tmp_path):
@@ -352,6 +383,59 @@ class TestDocumentsIndexingProcessing:
         assert "settings" in data
 
     @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
+    def test_discovers_documents_under_nested_prefix(self, tmp_path):
+        """Documents written under a nested prefix are indexed, not skipped.
+
+        Text extraction preserves each document's source S3 key, so a nested
+        ``input_data_keys`` prefix produces nested output.  A non-recursive listing
+        silently found nothing here and reported a successful empty index
+        """
+        modules, mocks = _make_ai4rag_mocks()
+        mocks["DoclingDocument"].load_from_json.return_value = mock.MagicMock()
+        mocks["LangChainChunker"].return_value.split_documents.return_value = [mock.MagicMock()]
+
+        _call_component(
+            tmp_path,
+            modules,
+            mocks,
+            filenames=[
+                "datasets/rag/rh_summit_2026/documents/a.md.json",
+                "datasets/rag/rh_summit_2026/documents/b.md.json",
+            ],
+        )
+
+        data = json.loads((tmp_path / "indexing_report.json").read_text())
+        assert data["total_documents"] == 2
+        assert data["completed"] == 2
+        assert mocks["DoclingDocument"].load_from_json.call_count == 2
+
+    @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
+    def test_indexes_nested_and_top_level_documents_together(self, tmp_path):
+        """Recursion picks up nested documents without dropping top-level ones."""
+        modules, mocks = _make_ai4rag_mocks()
+        mocks["DoclingDocument"].load_from_json.return_value = mock.MagicMock()
+        mocks["LangChainChunker"].return_value.split_documents.return_value = [mock.MagicMock()]
+
+        _call_component(tmp_path, modules, mocks, filenames=["top.json", "deep/nested/inner.json"])
+
+        data = json.loads((tmp_path / "indexing_report.json").read_text())
+        assert data["total_documents"] == 2
+        assert {e["file"] for e in data["documents"]} == {"top.json", "inner.json"}
+
+    @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
+    def test_failed_nested_document_is_reported(self, tmp_path):
+        """A nested document that fails to load is recorded as failed, not skipped silently."""
+        modules, mocks = _make_ai4rag_mocks()
+        mocks["DoclingDocument"].load_from_json.side_effect = ValueError("corrupt")
+
+        _call_component(tmp_path, modules, mocks, filenames=["deep/nested/bad.json"])
+
+        data = json.loads((tmp_path / "indexing_report.json").read_text())
+        assert data["total_documents"] == 1
+        assert data["failed"] == 1
+        assert data["documents"][0]["file"] == "bad.json"
+
+    @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
     def test_get_vector_store_receives_collection_name(self, tmp_path):
         """collection_name is forwarded to get_vector_store."""
         modules, mocks = _make_ai4rag_mocks()
@@ -366,6 +450,85 @@ class TestDocumentsIndexingProcessing:
         _call_component(tmp_path, modules, mocks, filenames=["a.json"], collection_name=None)
         call_kwargs = mocks["get_vector_store"].call_args.kwargs
         assert call_kwargs["collection_name"] is None
+
+    @mock.patch.dict(
+        "os.environ",
+        {
+            "MAAS_BASE_URL": "https://maas.example.com/v1",
+            "MAAS_API_KEY": "test-api-key",
+            "NEO4J_URI": "neo4j://host:7687",
+            "NEO4J_PASSWORD": "secret",
+        },
+        clear=True,
+    )
+    def test_neo4j_gets_foundation_model_for_graph_indexing(self, tmp_path):
+        """A graph-mode blueprint rebuilds Neo4j entities with its selected model."""
+        modules, mocks = _make_ai4rag_mocks()
+        _call_component(
+            tmp_path,
+            modules,
+            mocks,
+            filenames=["a.json"],
+            foundation_model_id="fm-0",
+            foundation_model_params={"temperature": 0.3, "max_completion_tokens": 1024},
+            graph_extraction_config={"mode": "constrained"},
+        )
+
+        assert mocks["get_vector_store"].call_args.kwargs["kg_extraction_config"] == {"mode": "constrained"}
+
+        mocks["OpenAIFoundationModel"].assert_called_once_with(
+            client=mocks["create_maas_client"].return_value,
+            model_id="fm-0",
+            params={"temperature": 0.3, "max_completion_tokens": 1024},
+        )
+        assert (
+            mocks["get_vector_store"].call_args.kwargs["foundation_model"]
+            is mocks["OpenAIFoundationModel"].return_value
+        )
+
+    @mock.patch.dict(
+        "os.environ",
+        {
+            "MAAS_BASE_URL": "https://maas.example.com/v1",
+            "MAAS_API_KEY": "test-api-key",
+            "NEO4J_URI": "neo4j://host:7687",
+            "NEO4J_PASSWORD": "secret",
+        },
+        clear=True,
+    )
+    def test_neo4j_graph_extraction_requires_foundation_model(self, tmp_path):
+        """Configured Neo4j graph extraction cannot silently run without an LLM."""
+        modules, mocks = _make_ai4rag_mocks()
+
+        with pytest.raises(ValueError, match="foundation_model_id is required.*graph_extraction_config"):
+            _call_component(
+                tmp_path,
+                modules,
+                mocks,
+                filenames=["a.json"],
+                graph_extraction_config={"mode": "constrained"},
+            )
+
+        mocks["OpenAIFoundationModel"].assert_not_called()
+        mocks["get_vector_store"].assert_not_called()
+
+    @mock.patch.dict(
+        "os.environ",
+        {
+            "MAAS_BASE_URL": "https://maas.example.com/v1",
+            "MAAS_API_KEY": "test-api-key",
+            "NEO4J_URI": "neo4j://host:7687",
+            "NEO4J_PASSWORD": "secret",
+        },
+        clear=True,
+    )
+    def test_neo4j_vector_indexing_allows_no_foundation_model(self, tmp_path):
+        """Vector-only Neo4j indexing remains valid without graph extraction settings."""
+        modules, mocks = _make_ai4rag_mocks()
+        _call_component(tmp_path, modules, mocks, filenames=["a.json"])
+
+        mocks["OpenAIFoundationModel"].assert_not_called()
+        assert mocks["get_vector_store"].call_args.kwargs["foundation_model"] is None
 
     @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
     def test_default_parameters(self, tmp_path):
@@ -505,8 +668,8 @@ class TestDocumentsIndexingReport:
 
         assert "settings" in data
         settings = data["settings"]
-        assert settings["vector_store_binding"]["provider_type"] == "milvus"
-        assert settings["vector_store_binding"]["collection_name"] == "vs_auto_generated"
+        assert settings["store_binding"]["provider_type"] == "milvus"
+        assert settings["store_binding"]["collection_name"] == "vs_auto_generated"
         assert settings["chunking"]["method"] == "recursive"
         assert settings["chunking"]["chunk_size"] == 256
         assert settings["chunking"]["chunk_overlap"] == 64
@@ -524,8 +687,8 @@ class TestDocumentsIndexingReport:
         report_path = tmp_path / "indexing_report.json"
         data = json.loads(report_path.read_text())
         assert "settings" in data
-        assert data["settings"]["vector_store_binding"]["provider_type"] == "milvus"
-        assert data["settings"]["vector_store_binding"]["collection_name"] is None
+        assert data["settings"]["store_binding"]["provider_type"] == "milvus"
+        assert data["settings"]["store_binding"]["collection_name"] is None
         assert data["settings"]["chunking"]["method"] == "recursive"
 
     @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)

@@ -11,5 +11,5 @@ This directory contains components in the **Data Processing** category:
 
 ## Subcategories
 
-- [Automl](./automl/README.md)
-- [Autorag](./autorag/README.md)
+- [AutoML](./automl/README.md)
+- [AutoRAG](./autorag/README.md)

@@ -9,7 +9,7 @@ _AUTORAG_SHARED = Path(__file__).parents[3] / "training" / "autorag" / "shared"
 
 @dsl.component(
     base_image=AUTORAG_IMAGE,  # noqa: E501
-    embedded_artifact_path=str(_AUTORAG_SHARED / "component_status.py"),
+    embedded_artifact_path=str(_AUTORAG_SHARED / "runtime_embed" / "component_status.py"),
     install_kfp_package=False,
 )
 def text_extraction(
@@ -20,17 +20,39 @@ def text_extraction(
     error_tolerance: Optional[float] = None,
     max_extraction_workers: Optional[int] = None,
     preset: str = "speed",
+    ocr_lang: Optional[str] = None,
+    ssl_cert_path: Optional[str] = None,
 ):
     """Text Extraction component.
 
     Thin wrapper that delegates to ``ai4rag.utils.data.text_extraction.extract_text``.
 
+    OCR is enabled when the selected corpus contains a PDF or image. For a PDF
+    page with an embedded text layer, Docling extracts that text directly. For a
+    scanned PDF page or an image without embedded text, Docling uses RapidOCR to
+    recognize the text. Audio and Office formats use their dedicated extraction
+    pipelines without RapidOCR.
+
+    Audio extraction uses the approved local Hugging Face Transformers Whisper model
+    exposed through ``HF_MODEL_DIR``. The component validates the mounted modelcar
+    before starting extraction; ai4rag does not download ASR weights at runtime.
+
+    The four RapidOCR model paths are pinned explicitly from ``$DOCLING_ARTIFACTS_PATH``
+    rather than left to Docling. Docling resolves an unpinned language to PP-OCRv6 and
+    looks for flat filenames directly under ``RapidOcr/``, but the AutoRAG image ships the
+    PP-OCRv4 bundle in its nested ``RapidOcr/onnx/PP-OCRv4/...`` layout, so leaving the
+    paths unset fails with ``FileNotFoundError`` at conversion time. Pinning them makes
+    Docling skip resolution and use the models that are actually present.
+
     Args:
         documents_descriptor: Input artifact containing
             documents_descriptor.json with bucket, prefix, and documents list.
+            Each document entry's ``key`` also names the extracted document,
+            so the prefix is not passed on separately.
         extracted_text: Output artifact directory where DoclingDocument JSON files
             will be written.
-        component_status: Output artifact containing stage-level progress tracking.
+        component_status: Output artifact containing stage-level progress tracking,
+            extraction outcomes, and configured-engine candidate counts.
         embedded_artifact: Embedded ``autorag.shared`` helpers injected by KFP at runtime.
         error_tolerance: Fraction of documents (0.0-1.0) allowed to fail without
             raising an error. None (the default) means zero tolerance.
@@ -38,6 +60,18 @@ def text_extraction(
             extraction. Defaults to 4. Set to None to use all available CPU cores.
         preset: Pipeline quality tier. "speed" (default) disables Docling table
             structure parsing. "balanced" enables TableFormer table reconstruction.
+        ocr_lang: Language of the document text, used only to pick the RapidOCR model
+            bundle. Accepts a language name or ISO 639-1 code. Chinese ("chinese", "zh",
+            "ch") selects the Chinese bundle; everything else, including None (the
+            default), selects the English bundle, which covers all Latin-script
+            languages. In the optimization pipeline this is filled from the language
+            AutoRAG detects; for the indexing pipeline pass ``pattern.json``
+            ``settings.generation.language.code``.
+        ssl_cert_path: Optional path to a PEM-encoded CA bundle used to verify the S3
+            endpoint. The filename extension is not significant; ``.pem`` and ``.crt``
+            are both common. It overrides ``AWS_CA_BUNDLE`` for this component. A wrong
+            or unreadable bundle fails with an actionable error; TLS verification is
+            never disabled.
     """
     import importlib.util
     import json
@@ -45,12 +79,66 @@ def text_extraction(
     import os
     from pathlib import Path
 
+    from ai4rag.utils.clients.s3 import create_s3_client
     from ai4rag.utils.data.text_extraction import DoclingExtractionConfig, extract_text
 
     logging.basicConfig(level=logging.INFO)
 
     VALID_PRESETS = {"speed", "balanced"}
     PRESET_DO_TABLE_STRUCTURE = {"speed": False, "balanced": True}
+    LAYOUT_OCR_EXTENSIONS = {".pdf", ".jpg", ".jpeg", ".png", ".tif", ".tiff"}
+    ASR_EXTENSIONS = {".wav", ".mp3", ".m4a", ".aac", ".ogg", ".flac"}
+
+    def _resolve_asr_model_path(has_audio: bool) -> str | None:
+        """Return a complete local Whisper model directory for audio runs."""
+        if not has_audio:
+            return None
+
+        raw_path = os.environ.get("HF_MODEL_DIR")
+        if not raw_path:
+            raise ValueError(
+                "Audio documents were selected, but HF_MODEL_DIR is not set. "
+                "Mount the approved local Whisper modelcar and configure its model directory."
+            )
+
+        model_dir = Path(raw_path).expanduser().resolve()
+        config_path = model_dir / "config.json"
+        if not model_dir.is_dir() or not config_path.is_file():
+            raise FileNotFoundError(
+                f"HF_MODEL_DIR={model_dir} is not a local Transformers model directory containing config.json."
+            )
+
+        try:
+            with config_path.open(encoding="utf-8") as config_file:
+                model_config = json.load(config_file)
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ValueError(f"HF_MODEL_DIR={model_dir} has an invalid config.json.") from exc
+
+        model_type = model_config.get("model_type", "") if isinstance(model_config, dict) else ""
+        if model_type != "whisper":
+            raise ValueError(
+                "Audio extraction supports only Hugging Face Whisper models; "
+                f"HF_MODEL_DIR={model_dir} declares model_type={model_type!r}."
+            )
+
+        required = ("preprocessor_config.json", "tokenizer_config.json")
+        missing = [name for name in required if not (model_dir / name).is_file()]
+        has_weights = any(
+            (model_dir / name).is_file()
+            for name in (
+                "model.safetensors",
+                "pytorch_model.bin",
+                "model.safetensors.index.json",
+                "pytorch_model.bin.index.json",
+            )
+        )
+        if missing or not has_weights:
+            details = missing + ([] if has_weights else ["model weights"])
+            raise FileNotFoundError(
+                f"HF_MODEL_DIR={model_dir} is not a complete local Transformers Whisper model directory. "
+                f"Missing: {', '.join(details)}."
+            )
+        return str(model_dir)
 
     if preset not in VALID_PRESETS:
         raise ValueError(f"preset must be one of {VALID_PRESETS}; got {preset!r}.")
@@ -58,9 +146,34 @@ def text_extraction(
     do_table_structure = PRESET_DO_TABLE_STRUCTURE[preset]
     logging.info("Preset %r: do_table_structure=%s", preset, do_table_structure)
 
+    # Paths are relative to $DOCLING_ARTIFACTS_PATH/RapidOcr/ and mirror the on-disk
+    # layout of the RHAI OGX modelcar baked into the AutoRAG image. The classifier is
+    # script-agnostic, so both bundles share it.
+    RAPIDOCR_BUNDLES = {
+        "english": {
+            "ocr_det_model_path": "onnx/PP-OCRv4/det/en_PP-OCRv3_det_mobile.onnx",
+            "ocr_cls_model_path": "onnx/PP-OCRv4/cls/ch_ppocr_mobile_v2.0_cls_mobile.onnx",
+            "ocr_rec_model_path": "onnx/PP-OCRv4/rec/en_PP-OCRv4_rec_mobile.onnx",
+            "ocr_rec_keys_path": "paddle/PP-OCRv4/rec/en_PP-OCRv4_rec_mobile/en_dict.txt",
+        },
+        "chinese": {
+            "ocr_det_model_path": "onnx/PP-OCRv4/det/ch_PP-OCRv4_det_mobile.onnx",
+            "ocr_cls_model_path": "onnx/PP-OCRv4/cls/ch_ppocr_mobile_v2.0_cls_mobile.onnx",
+            "ocr_rec_model_path": "onnx/PP-OCRv4/rec/ch_PP-OCRv4_rec_mobile.onnx",
+            "ocr_rec_keys_path": "paddle/PP-OCRv4/rec/ch_PP-OCRv4_rec_mobile/ppocr_keys_v1.txt",
+        },
+    }
+    CHINESE_ALIASES = {"chinese", "ch", "zh", "zho", "chi", "zh-cn", "zh-tw"}
+
+    # Only Chinese has a dedicated bundle; every other language, detected or not, is
+    # served by the English models, which cover all Latin scripts. Anything unrecognised
+    # therefore degrades to English rather than failing the run.
+    bundle_name = "chinese" if (ocr_lang or "").strip().lower() in CHINESE_ALIASES else "english"
+    logging.info("OCR language %r resolved to the %s RapidOCR bundle", ocr_lang, bundle_name)
+
     if component_status is None:
-        from kfp_components.components.training.autorag.shared.component_status import (  # pyright: ignore[reportMissingImports]
-            null_component_status_tracker,
+        from kfp_components.components.training.autorag.shared.component_status import (
+            null_component_status_tracker,  # pyright: ignore[reportMissingImports]
         )
 
         status = null_component_status_tracker()
@@ -81,26 +194,86 @@ def text_extraction(
             descriptor_path = Path(documents_descriptor.path) / "documents_descriptor.json"
             with open(descriptor_path, "r", encoding="utf-8") as f:
                 descriptor = json.load(f)
+            documents = descriptor["documents"]
+            suffixes = [Path(document["key"]).suffix.lower() for document in documents]
+            do_ocr = any(suffix in LAYOUT_OCR_EXTENSIONS for suffix in suffixes)
+            asr_candidate_documents = sum(suffix in ASR_EXTENSIONS for suffix in suffixes)
+            asr_model_path = _resolve_asr_model_path(asr_candidate_documents > 0)
+            logging.info("OCR enabled=%s for %d document(s)", do_ocr, len(documents))
+
+            ocr_model_paths = {}
+            docling_artifacts_path = os.environ.get("DOCLING_ARTIFACTS_PATH")
+            if do_ocr and docling_artifacts_path:
+                ocr_root = Path(docling_artifacts_path) / "RapidOcr"
+                resolved = {key: ocr_root / rel for key, rel in RAPIDOCR_BUNDLES[bundle_name].items()}
+                missing = sorted(str(path) for path in resolved.values() if not path.is_file())
+                if missing:
+                    raise FileNotFoundError(
+                        f"RapidOCR {bundle_name} models are missing under {ocr_root}:\n  - " + "\n  - ".join(missing)
+                    )
+                ocr_model_paths = {key: str(path) for key, path in resolved.items()}
+            elif do_ocr:
+                raise ValueError(
+                    "OCR was requested for PDF or image documents, but DOCLING_ARTIFACTS_PATH is not set. "
+                    "Configure it in the workbench environment to the image-baked Docling artifacts bundle."
+                )
+
+            candidate_metrics = {
+                "documents_total": len(documents),
+                "layout_candidate_documents": sum(suffix in LAYOUT_OCR_EXTENSIONS for suffix in suffixes),
+                "layout_model": "Docling Layout Heron",
+                "ocr_candidate_documents": sum(suffix in LAYOUT_OCR_EXTENSIONS for suffix in suffixes),
+                "ocr_enabled": do_ocr,
+                "ocr_engine": "RapidOCR" if do_ocr else None,
+                "ocr_language": bundle_name if do_ocr else None,
+                "asr_candidate_documents": asr_candidate_documents,
+                "asr_model": "Approved local Hugging Face Whisper Tiny",
+                "asr_offline": True,
+            }
+            status.record("extract_documents", "running", metrics=candidate_metrics)
 
             output_dir = Path(extracted_text.path)
             output_dir.mkdir(parents=True, exist_ok=True)
 
-            config = DoclingExtractionConfig(
+            docling_config = DoclingExtractionConfig(
                 do_table_structure=do_table_structure,
+                do_ocr=do_ocr,
+                ocr_lang=bundle_name,
+                asr_model_path=asr_model_path,
+                **ocr_model_paths,
             )
 
-            extract_text(
-                documents=descriptor["documents"],
-                bucket=descriptor["bucket"],
-                output_dir=output_dir,
-                s3_endpoint=os.environ.get("AWS_S3_ENDPOINT"),
-                s3_access_key=os.environ.get("AWS_ACCESS_KEY_ID"),
-                s3_secret_key=os.environ.get("AWS_SECRET_ACCESS_KEY"),
-                s3_region=os.environ.get("AWS_DEFAULT_REGION"),
-                error_tolerance=error_tolerance,
-                max_extraction_workers=max_extraction_workers,
-                docling_artifacts_path=os.environ.get("DOCLING_ARTIFACTS_PATH"),
-                docling_config=config,
+            effective_ssl_cert_path = ssl_cert_path or os.environ.get("AWS_CA_BUNDLE")
+            s3_client = create_s3_client(verify=effective_ssl_cert_path or True) if documents else None
+
+            try:
+                extraction_result = extract_text(
+                    documents=documents,
+                    bucket=descriptor["bucket"],
+                    output_dir=output_dir,
+                    s3_client=s3_client,
+                    error_tolerance=error_tolerance,
+                    max_extraction_workers=max_extraction_workers,
+                    docling_artifacts_path=os.environ.get("DOCLING_ARTIFACTS_PATH"),
+                    docling_config=docling_config,
+                )
+            except RuntimeError as exc:
+                if not any(marker in str(exc) for marker in ("CERTIFICATE_VERIFY_FAILED", "SSL validation failed")):
+                    raise
+                certificate_source = effective_ssl_cert_path or "the system trust bundle"
+                raise RuntimeError(
+                    "S3 TLS certificate validation failed. Verify that ssl_cert_path="
+                    f"{certificate_source!r} is a PEM CA bundle that trusts the S3 endpoint. "
+                    "Do not disable certificate verification."
+                ) from exc
+            status.record(
+                "extract_documents",
+                "completed",
+                metrics={
+                    "documents_total": extraction_result.total_documents,
+                    "documents_processed": extraction_result.processed_count,
+                    "documents_failed": extraction_result.error_count,
+                },
             )
 
 

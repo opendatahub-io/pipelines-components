@@ -1,0 +1,20 @@
+---
+name: speculator_online
+stability: alpha
+dependencies:
+  kubeflow:
+    - name: Pipelines
+      version: '>=2.15.2'
+    - name: Trainer
+      version: '>=0.1.0'
+  external_services:
+    - name: Kubernetes
+      version: ">=1.28.0"
+tags:
+  - training
+  - speculator
+  - speculative_decoding
+  - online_training
+lastVerified: 2026-09-10T00:00:00Z
+links:
+  documentation: https://github.com/kubeflow/trainer

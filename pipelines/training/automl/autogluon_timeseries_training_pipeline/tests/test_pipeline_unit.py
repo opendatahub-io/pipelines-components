@@ -1,6 +1,5 @@
 """Tests for the autogluon_timeseries_training_pipeline pipeline."""
 
-import json
 import tempfile
 from pathlib import Path
 
@@ -15,7 +14,6 @@ from ..pipeline import autogluon_timeseries_training_pipeline
 _EXPECTED_ROOT_DAG_TASK_IDS = (
     "condition-branches-1",
     "publish-component-stage-map",
-    "timeseries-data-loader",
 )
 
 
@@ -147,6 +145,26 @@ class TestAutogluonTimeseriesTrainingPipelineUnitTests:
         assert "componentInputParameter: preset" in content
         assert "condition-branches-1" in content
 
+    def test_compiled_pipeline_wires_mlflow_inputs_to_training(self):
+        """MLflow inputs are forwarded into the training task.
+
+        The training task now logs to MLflow; the standalone mlflow-logger step no longer exists.
+        """
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as tmp_file:
+            tmp_path = tmp_file.name
+        try:
+            compiler.Compiler().compile(
+                pipeline_func=autogluon_timeseries_training_pipeline,
+                package_path=tmp_path,
+            )
+            content = Path(tmp_path).read_text(encoding="utf-8")
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
+
+        assert "automl-mlflow-logger" not in content
+        assert "exec-autogluon-timeseries-models-training:" in content
+        assert "exec-autogluon-timeseries-models-training-2:" in content
+
     def test_compiled_pipeline_declares_speed_and_balanced_resource_tiers(self):
         """Speed and balanced preset branches request different training CPU/memory."""
         from kfp_components.utils.pipeline_task_resources import (
@@ -190,8 +208,8 @@ class TestAutogluonTimeseriesTrainingPipelineUnitTests:
         assert "componentInputParameter: test_data_bucket_name" in content
         assert "componentInputParameter: test_data_file_key" in content
 
-    def test_compiled_pipeline_uses_single_train_secret_mount(self):
-        """Train secret is mounted once; test data reuses AWS_* via component fallback."""
+    def test_compiled_pipeline_uses_conditional_train_secret_mounts(self):
+        """Each conditional loader mounts the shared train secret."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as tmp_file:
             tmp_path = tmp_file.name
         try:
@@ -205,152 +223,6 @@ class TestAutogluonTimeseriesTrainingPipelineUnitTests:
 
         assert "condition-1" not in content
         assert "TEST_DATA_AWS_ACCESS_KEY_ID" not in content
-        train_secret_block = content.split("envVar: AWS_ACCESS_KEY_ID", 1)[1]
-        assert "optional: true" in train_secret_block[:500]
-        assert "componentInputParameter: train_data_secret_name" in train_secret_block[:500]
-
-
-class TestTimeseriesTestConfigs:
-    """Unit tests for test_configs.json loading (integration configs live in autox-ci)."""
-
-    def test_load_configs_rejects_blank_eval_metric(self, tmp_path):
-        """Blank eval_metric values fail at config load time."""
-        from . import test_configs
-
-        bad = tmp_path / "configs.json"
-        bad.write_text(
-            json.dumps(
-                [
-                    {
-                        "id": "cfg-1",
-                        "dataset_path": "data/timeseries_sales.csv",
-                        "target": "target",
-                        "id_column": "item_id",
-                        "timestamp_column": "timestamp",
-                        "known_covariates_names": ["promo"],
-                        "prediction_length": 2,
-                        "top_n": 2,
-                        "tags": [],
-                        "eval_metric": "   ",
-                    }
-                ]
-            ),
-            encoding="utf-8",
-        )
-        with pytest.raises(ValueError, match=r"test_configs\.json\[0\] 'eval_metric'"):
-            test_configs._load_configs(bad)
-
-    def test_load_configs_rejects_non_string_eval_metric(self, tmp_path):
-        """Non-string eval_metric values fail at config load time."""
-        from . import test_configs
-
-        bad = tmp_path / "configs.json"
-        bad.write_text(
-            json.dumps(
-                [
-                    {
-                        "id": "cfg-1",
-                        "dataset_path": "data/timeseries_sales.csv",
-                        "target": "target",
-                        "id_column": "item_id",
-                        "timestamp_column": "timestamp",
-                        "known_covariates_names": ["promo"],
-                        "prediction_length": 2,
-                        "top_n": 2,
-                        "tags": [],
-                        "eval_metric": 123,
-                    }
-                ]
-            ),
-            encoding="utf-8",
-        )
-        with pytest.raises(ValueError, match=r"test_configs\.json\[0\] 'eval_metric'"):
-            test_configs._load_configs(bad)
-
-    def test_load_configs_accepts_valid_eval_metric(self, tmp_path):
-        """Valid eval_metric is stripped and forwarded through pipeline arguments."""
-        from . import test_configs
-
-        path = tmp_path / "configs.json"
-        path.write_text(
-            json.dumps(
-                [
-                    {
-                        "id": "cfg-1",
-                        "dataset_path": "data/timeseries_sales.csv",
-                        "target": "target",
-                        "id_column": "item_id",
-                        "timestamp_column": "timestamp",
-                        "known_covariates_names": ["promo"],
-                        "prediction_length": 2,
-                        "top_n": 2,
-                        "tags": [],
-                        "eval_metric": " WQL ",
-                    }
-                ]
-            ),
-            encoding="utf-8",
-        )
-        loaded = test_configs._load_configs(path)
-        assert len(loaded) == 1
-        assert loaded[0].eval_metric == "WQL"
-        args = loaded[0].get_pipeline_arguments("bucket", "key", "secret")
-        assert args["eval_metric"] == "WQL"
-
-    def test_load_configs_absent_known_covariates_uses_pipeline_default(self, tmp_path):
-        """When known_covariates_names is absent from JSON, pipeline arguments omit the key so the
-        pipeline default ([]) applies — this exercises the bug path fixed in RHOAIENG-71419.
-        """  # noqa: D205
-        from . import test_configs
-
-        path = tmp_path / "configs.json"
-        path.write_text(
-            json.dumps(
-                [
-                    {
-                        "id": "cfg-no-covariates",
-                        "dataset_path": "data/timeseries_sales.csv",
-                        "target": "target",
-                        "id_column": "item_id",
-                        "timestamp_column": "timestamp",
-                        "prediction_length": 2,
-                        "top_n": 2,
-                        "tags": [],
-                    }
-                ]
-            ),
-            encoding="utf-8",
-        )
-        loaded = test_configs._load_configs(path)
-        assert len(loaded) == 1
-        assert loaded[0].known_covariates_names is None
-        args = loaded[0].get_pipeline_arguments("bucket", "key", "secret")
-        assert "known_covariates_names" not in args
-
-    def test_load_configs_explicit_known_covariates_included_in_args(self, tmp_path):
-        """When known_covariates_names is provided in JSON, it is forwarded into pipeline arguments."""
-        from . import test_configs
-
-        path = tmp_path / "configs.json"
-        path.write_text(
-            json.dumps(
-                [
-                    {
-                        "id": "cfg-with-covariates",
-                        "dataset_path": "data/timeseries_sales.csv",
-                        "target": "target",
-                        "id_column": "item_id",
-                        "timestamp_column": "timestamp",
-                        "known_covariates_names": ["promo", "holiday"],
-                        "prediction_length": 2,
-                        "top_n": 2,
-                        "tags": [],
-                    }
-                ]
-            ),
-            encoding="utf-8",
-        )
-        loaded = test_configs._load_configs(path)
-        assert loaded[0].known_covariates_names == ["promo", "holiday"]
-        args = loaded[0].get_pipeline_arguments("bucket", "key", "secret")
-        assert args["known_covariates_names"] == ["promo", "holiday"]
+        assert content.count("envVar: AWS_ACCESS_KEY_ID") == 3
+        assert "optional: true" in content
+        assert "pipelinechannel--train_data_secret_name" in content

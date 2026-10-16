@@ -13,7 +13,6 @@ requires-python = ">=3.11"
 dependencies = [
     "kfp>=2.16.1",
     "kfp-kubernetes>=2.16.1",
-    "protobuf<6.32"
 ]
 
 [project.optional-dependencies]
@@ -42,13 +41,6 @@ test = [
     # Required for pipeline validation (validate_examples, validate_base_images)
     "kfp-kubernetes",
     "jsonschema",
-]
-# Dependencies for AutoGluon pipeline integration tests (RHOAI + S3 + KFP)
-test_automl = [
-    "kfp-components[test]",
-    "boto3",
-    "kubernetes",
-    "python-dotenv",
 ]
 # Local development (extends test with additional tools)
 dev = ["kfp-components[lint]", "kfp-components[test]"]
@@ -87,6 +79,7 @@ packages = [
     "kfp_components.components.evaluation",
     "kfp_components.components.evaluation.evalhub",
     "kfp_components.components.evaluation.evalhub.kserve",
+    "kfp_components.components.evaluation.grpo_eval",
     "kfp_components.components.evaluation.lm_eval",
     "kfp_components.components.training",
     "kfp_components.components.training.automl",
@@ -100,8 +93,10 @@ packages = [
     "kfp_components.components.training.autorag.rag_templates_optimization",
     "kfp_components.components.training.autorag.search_space_preparation",
     "kfp_components.components.training.autorag.shared",
+    "kfp_components.components.training.autorag.shared.runtime_embed",
     "kfp_components.components.training.finetuning",
     "kfp_components.components.training.finetuning.lora",
+    "kfp_components.components.training.finetuning.lora_grpo",
     "kfp_components.components.training.finetuning.osft",
     "kfp_components.components.training.finetuning.sft",
     "kfp_components.components.training.finetuning.shared",
@@ -205,9 +200,6 @@ testpaths = ["scripts"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
-markers = [
-    "integration: marks test as integration/functional/e2e (requires RHOAI cluster and .env config).",
-]
 # Don't search these directories
 norecursedirs = [
     ".git",

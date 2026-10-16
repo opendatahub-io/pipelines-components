@@ -1,0 +1,3 @@
+--index-url https://packages.redhat.com/api/pypi/public-rhai/cpu-torch2.13-el9.8-test/simple
+
+ai4rag==0.23.0

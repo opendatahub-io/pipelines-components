@@ -19,11 +19,14 @@ def documents_indexing(
     indexing_report_html: dsl.Output[dsl.HTML],
     embedded_artifact: dsl.EmbeddedInput[dsl.Dataset] = None,
     embedding_params: Optional[dict] = None,
+    foundation_model_id: Optional[str] = None,
+    foundation_model_params: Optional[dict] = None,
     chunking_method: str = "recursive",
     chunk_size: int = 1024,
     chunk_overlap: int = 0,
     batch_size: int = 20,
     collection_name: Optional[str] = None,
+    graph_extraction_config: Optional[dict] = None,
 ):
     """Chunk, embed, and index extracted documents into a vector store.
 
@@ -32,9 +35,9 @@ def documents_indexing(
     resulting vectors into the configured vector store.  Documents are
     processed in batches to bound memory consumption.
 
-    The vector store backend (Milvus or PGVector) is resolved at runtime from
-    the environment injected by the vector-database secret: ``MILVUS_*`` keys
-    select Milvus, ``PGVECTOR_*`` keys select PGVector.
+    The vector store backend (Milvus, PGVector, or Neo4j) is resolved at runtime
+    from the environment injected by the vector-database secret: ``MILVUS_*`` keys
+    select Milvus, ``PGVECTOR_*`` keys select PGVector, ``NEO4J_*`` keys select Neo4j.
 
     Individual document failures (corrupt JSON, chunking errors) are
     recorded in the indexing report and skipped — they do not abort the
@@ -44,7 +47,8 @@ def documents_indexing(
     Args:
         embedding_model_id: Embedding model ID served by MaaS.
         extracted_text: Input artifact (directory) containing DoclingDocument
-            JSON files from text extraction.
+            JSON files from text extraction.  Searched recursively, since
+            extraction preserves the nested source key of each document.
         indexing_report: Output artifact containing ``indexing_report.json``
             with per-document indexing status and pipeline settings.
         indexing_report_html: Output HTML artifact containing a styled rendering of
@@ -54,6 +58,14 @@ def documents_indexing(
         embedding_params: Optional parameters forwarded to
             :class:`OpenAIEmbeddingParams` (e.g. ``embedding_dimension``,
             ``context_length``).
+        foundation_model_id: Optional generation model ID used to extract entities
+            when indexing into Neo4j. Set this from a graph-mode optimized pattern
+            to reproduce its knowledge graph; ignored by other vector stores.
+        foundation_model_params: Optional generation parameters (for example,
+            ``temperature`` and ``max_completion_tokens``) used with
+            ``foundation_model_id`` for Neo4j entity extraction. Set this from a
+            graph-mode optimized pattern to reproduce its knowledge graph; ignored
+            by other vector stores.
         chunking_method: Chunking strategy: ``"recursive"`` (LangChain) or
             ``"hybrid"`` (Docling structure-aware).
         chunk_size: Maximum chunk size in tokens (128--2048).
@@ -63,14 +75,18 @@ def documents_indexing(
             Controls peak memory usage, not API payload sizes. Defaults to
             ``20``; ``0`` processes all documents in a single batch.
         collection_name: Vector store collection to reuse (matches
-            ``pattern.json`` ``settings.vector_store_binding.collection_name``).
+            ``pattern.json`` ``settings.store_binding.collection_name``).
             Omit to create a new collection.
+        graph_extraction_config: Neo4j graph-extraction settings from an optimized
+            pattern. Requires ``foundation_model_id`` when indexing into Neo4j;
+            ignored by other vector stores.
 
     Environment variables (required):
         MAAS_BASE_URL, MAAS_API_KEY for inference. Plus the vector database
         configuration injected from the vector-database secret: ``MILVUS_*``
         keys (at least ``MILVUS_URI``) select Milvus, ``PGVECTOR_*`` keys
-        select PGVector.
+        select PGVector, ``NEO4J_*`` keys (at least ``NEO4J_URI`` and
+        ``NEO4J_PASSWORD``) select Neo4j.
     """
     import html as html_mod
     import json
@@ -79,12 +95,9 @@ def documents_indexing(
     from dataclasses import asdict
     from pathlib import Path
 
-    from ai4rag.utils.compat import ensure_sqlite3
-
-    ensure_sqlite3()
-
     from ai4rag.rag.chunking import DoclingChunker, LangChainChunker
     from ai4rag.rag.embedding.openai_model import OpenAIEmbeddingModel, OpenAIEmbeddingParams
+    from ai4rag.rag.foundation_models.openai_model import OpenAIFoundationModel
     from ai4rag.rag.vector_store import get_vector_store, get_vector_store_config
     from ai4rag.utils.clients import create_maas_client
     from ai4rag.utils.constants import ChunkingConstraints
@@ -126,23 +139,35 @@ def documents_indexing(
         api_key=os.environ["MAAS_API_KEY"],
     )
 
-    if any(k.startswith("MILVUS") for k in os.environ):
+    if "MILVUS_URI" in os.environ:
         provider = "milvus"
-    elif any(k.startswith("PGVECTOR") for k in os.environ):
+    elif "PGVECTOR_HOST" in os.environ:
         provider = "pgvector"
+    elif "NEO4J_URI" in os.environ:
+        provider = "neo4j"
     else:
         raise ValueError(
-            "No vector database configuration found. Expected MILVUS_* or PGVECTOR_* "
+            "No vector database configuration found. Expected MILVUS_*, PGVECTOR_*, or NEO4J_* "
             "environment variables injected from the vector-database secret."
         )
 
     vector_store_config = get_vector_store_config(provider)
     _logger.info("Detected %s database provider from secret.", provider)
 
+    if (
+        provider == "neo4j"
+        and graph_extraction_config is not None
+        and not (isinstance(foundation_model_id, str) and foundation_model_id.strip())
+    ):
+        raise ValueError("foundation_model_id is required for Neo4j indexing when graph_extraction_config is supplied.")
+
     params = OpenAIEmbeddingParams(**(embedding_params or {}))
 
+    # Text extraction preserves the source S3 key, so documents discovered under a
+    # nested ``input_data_keys`` prefix land in subdirectories here.  Recurse to match
+    # ai4rag's own ``load_docling_documents`` semantics.
     base = Path(extracted_text.path)
-    paths = sorted(p for p in base.iterdir() if p.is_file() and p.suffix.lower() == ".json")
+    paths = sorted(p for p in base.rglob("*") if p.is_file() and p.suffix.lower() == ".json")
     total_documents = len(paths)
     _logger.info("Found %d documents to index", total_documents)
 
@@ -208,7 +233,7 @@ def documents_indexing(
             )
 
         # --- Build settings grid fragment ---
-        vsb = settings.get("vector_store_binding", {})
+        vsb = settings.get("store_binding", {})
         chk = settings.get("chunking", {})
         emb = settings.get("embedding", {})
         emb_params = emb.get("embedding_params", {})
@@ -286,7 +311,7 @@ def documents_indexing(
     if total_documents == 0:
         _logger.warning("No documents found in %s", extracted_text.path)
         settings = {
-            "vector_store_binding": {
+            "store_binding": {
                 "provider_type": provider,
                 "collection_name": collection_name,
             },
@@ -317,6 +342,13 @@ def documents_indexing(
         chunker = LangChainChunker(method=chunking_method, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
 
     embedding_model = OpenAIEmbeddingModel(client=maas_client, model_id=embedding_model_id, params=params)
+    foundation_model = None
+    if provider == "neo4j" and foundation_model_id:
+        foundation_model = OpenAIFoundationModel(
+            client=maas_client,
+            model_id=foundation_model_id,
+            params=foundation_model_params,
+        )
 
     effective_batch_size = batch_size if batch_size > 0 else total_documents
     total_chunks = 0
@@ -326,9 +358,12 @@ def documents_indexing(
         embedding_model=embedding_model,
         config=vector_store_config,
         collection_name=collection_name,
+        foundation_model=foundation_model,
+        # Translate the public input to ai4rag's internal keyword.
+        kg_extraction_config=graph_extraction_config,
     ) as vector_store:
         settings = {
-            "vector_store_binding": {
+            "store_binding": {
                 "provider_type": provider,
                 "collection_name": vector_store.collection_name,
             },

@@ -27,6 +27,8 @@ Creates a vLLM NVIDIA GPU ServingRuntime and InferenceService matching the RHOAI
 | `cpu_limits` | `str` | `2` | CPU limits for the predictor pod. |
 | `memory_limits` | `str` | `8Gi` | Memory limits for the predictor pod. |
 | `force_recreate` | `bool` | `False` | If True, delete and recreate the InferenceService (causes downtime). If False (default), patch in place. |
+| `genai_use_case` | `str` | `""` | Tasks performed by the deployed model, shown as the Use case field in the RHOAI Model deployment details page. Examples include chat, multimodal, and natural language processing. Leave empty to omit the annotation. |
+| `tokenizer_mode` | `str` | `auto` | vLLM tokenizer mode. Supported values are ``auto`` (use the fast tokenizer when available), ``slow`` (force the HuggingFace slow tokenizer), and ``mistral`` (use the ``mistral_common`` tokenizer). |
 
 ## Outputs 📤
 

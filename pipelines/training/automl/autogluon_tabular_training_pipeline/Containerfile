@@ -1,4 +1,4 @@
-ARG BASE_IMAGE="quay.io/aipcc/base-images/cpu:3.5.0"
+ARG BASE_IMAGE="quay.io/aipcc/base-images/cpu-el9.8:3.6.0"
 
 ## Build stage: build a kfp-components wheel from the local source tree
 FROM ${BASE_IMAGE} AS builder
@@ -12,6 +12,9 @@ RUN pip install --no-cache-dir setuptools==80.10.2 && \
     pip wheel --no-deps --no-build-isolation -w /tmp/dist /tmp/kfp-src/
 
 FROM ${BASE_IMAGE}
+
+# Prevent FastAI exports from capturing Ray's safe_print as their logger.
+ENV RAY_TQDM_PATCH_PRINT=0
 
 COPY --from=builder /tmp/dist/kfp_components-*.whl /tmp/
 RUN pip install --no-cache-dir --no-deps /tmp/kfp_components-*.whl

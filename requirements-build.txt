@@ -1,10 +1,10 @@
---index-url https://console.redhat.com/api/pypi/public-rhai/rhoai/3.5/cpu-ubi9/simple
+--index-url https://packages.redhat.com/api/pypi/public-rhai/cpu-torch2.13-el9.8-test/simple
 
-packaging==26.2 \
-    --hash=sha256:7c418e01ce14b2bfd2cbf95e6d0a2b1278b711cd84527100f02b0966f08cc4a5
-pip==26.1.2 \
-    --hash=sha256:876e532f77a384303bd24023c41b56cb66c4c4b1961fea4aafc14498714b426c
-setuptools==83.0.0 \
-    --hash=sha256:dc49212ee796886410290db24cc02bdefa4eabe840828a172cf4cf942fbae0ae
-wheel==0.47.0 \
-    --hash=sha256:4d257e492750accebd41145b357afd5d5799dac67883bd6b8a2a5de8131da9fd
+packaging==26.3 \
+    --hash=sha256:4351cc62d6fddd97665746370cd5d662b3ecf6b18de686db4d704acbedda7a15
+pip==26.2.1 \
+    --hash=sha256:8af708c57f9184350014a29925c07b6541c9e5b5de90a36d8693320dea7720d4
+setuptools==84.0.0 \
+    --hash=sha256:54551c2da1e47baf2c91b9c2ff07d616ae51cbc1c6c65e5f73103a826824c954
+wheel==0.48.0 \
+    --hash=sha256:c6d4bd2d0224ddba5b3b3d773566bffe64b9be5cf956be3e5223757ffa6e16f1

@@ -22,6 +22,7 @@ def timeseries_data_loader(
     known_covariates_names: Optional[List[str]] = None,
     test_data_bucket_name: str = "",
     test_data_file_key: str = "",
+    preset: str = "speed",
 ) -> NamedTuple(
     "outputs",
     sample_config=dict,
@@ -34,7 +35,9 @@ def timeseries_data_loader(
 ):
     """Load and split timeseries data from S3 for AutoGluon training.
 
-    This component loads time series data from S3, samples it (up to 100 MB),
+    This component loads time series data from S3, samples it (up to 100 MiB for the
+    ``"speed"`` preset, up to 1 GiB for ``"balanced"``, and up to 10 GiB for
+    ``"quality"``),
     applies light **cleansing** (replace ``+/-inf`` with NaN so AutoGluon can apply its
     own missing-value logic; require parseable timestamps and non-null ids; drop
     exact duplicate ``(id_column, timestamp_column)`` rows, keep last), then performs a two-stage
@@ -46,8 +49,9 @@ def timeseries_data_loader(
     2. Secondary split (default 30/70 of each series' train rows): early segment to
        selection-train, later segment to extra-train.
 
-    The test set is written to S3 artifact, while train CSVs are written
-    to the PVC workspace for sharing across pipeline steps.
+    The test set is written to an S3 artifact, while train Parquet files (selection-train
+    and extra-train, Snappy-compressed) are written to the PVC workspace for sharing across
+    pipeline steps.
 
     After cleansing, at least **100** valid records must remain; otherwise the component
     fails with a clear error so downstream AutoGluon training does not run on datasets too
@@ -56,7 +60,7 @@ def timeseries_data_loader(
     Args:
         file_key: S3 object key of the CSV file containing time series data.
         bucket_name: S3 bucket name containing the file.
-        workspace_path: PVC workspace directory where train CSVs will be written.
+        workspace_path: PVC workspace directory where train Parquet files will be written.
         target: Name of the target column to forecast.
         id_column: Name of the column identifying each time series (item_id). Pass an empty
             string ("") for single-series two-column datasets (timestamp + target only);
@@ -71,6 +75,10 @@ def timeseries_data_loader(
             Only used to fail fast when a user-provided test dataset omits one of them.
         test_data_bucket_name: S3 bucket name for user-provided test dataset (default: empty string).
         test_data_file_key: S3 object key of the user-provided test CSV (default: empty string).
+        preset: Training quality tier controlling the sampling size budget. ``"speed"``
+            (default) samples up to 100 MiB; ``"balanced"`` samples up to 1 GiB; and
+            ``"quality"`` samples up to 10 GiB. User-provided test datasets are capped
+            at 50 MiB, 100 MiB, and 1 GiB respectively.
 
     Raises:
         ValueError: If a required parameter is empty or invalid, if only one of the
@@ -93,7 +101,30 @@ def timeseries_data_loader(
 
     logger = logging.getLogger(__name__)
 
+    def _log_dataset_stats(name, df):
+        """Log the size of a dataframe: rows, columns, and in-memory bytes.
+
+        ``memory_usage(deep=True)`` reports the pandas in-memory footprint, which
+        differs from the on-disk CSV size; it is the figure that matters for the
+        sampling budget and the pod memory limit.
+        """
+        try:
+            n_rows = len(df)
+            n_cols = df.shape[1] if hasattr(df, "shape") else len(df.columns)
+            n_bytes = int(df.memory_usage(deep=True).sum())
+            logger.info(
+                "Dataset stats [%s]: rows=%s, columns=%s, size=%s bytes (%.2f MiB)",
+                name,
+                n_rows,
+                n_cols,
+                n_bytes,
+                n_bytes / (1024**2),
+            )
+        except Exception as e:  # noqa: BLE001 - stats logging must never break the run
+            logger.debug("Could not compute dataset stats for %s: %s", name, e)
+
     from kfp_components.components.training.automl.shared.component_status import ComponentStatusTracker
+    from kfp_components.components.training.automl.shared.parquet_utils import stringify_mixed_object_columns
     from kfp_components.components.training.automl.shared.user_test_data import (
         raise_if_test_data_empty,
         report_test_data_truncation,
@@ -104,11 +135,28 @@ def timeseries_data_loader(
         validate_test_data_params,
     )
 
-    MAX_SIZE_BYTES = 100 * 1024 * 1024  # 100 MB
-    TEST_DATA_MAX_SIZE_BYTES = 50 * 1024 * 1024  # 50 MB — smaller cap for user-provided holdout sets
+    VALID_PRESETS = {"speed", "balanced", "quality"}
+    # Sampling budget per quality tier: "speed" stays small for fast runs,
+    # "balanced" allows the default supported dataset size, while
+    # "quality" is sized for the higher-memory training profile.
+    PRESET_MAX_SIZE_BYTES = {
+        "speed": 100 * 1024 * 1024,  # 100 MiB
+        "balanced": 1024 * 1024 * 1024,  # 1 GiB
+        "quality": 10 * 1024 * 1024 * 1024,  # 10 GiB
+    }
+    PRESET_TEST_DATA_MAX_SIZE_BYTES = {
+        "speed": 50 * 1024 * 1024,  # 50 MiB
+        "balanced": 100 * 1024 * 1024,  # 100 MiB
+        "quality": 1024 * 1024 * 1024,  # 1 GiB
+    }
     MIN_VALID_RECORDS_AFTER_CLEANSING = 100
     PANDAS_CHUNK_SIZE = 10000  # Rows per batch for streaming read
     DEFAULT_TEST_SIZE = 0.2
+
+    if preset not in VALID_PRESETS:
+        raise ValueError(f"preset must be one of {sorted(VALID_PRESETS)}; got {preset!r}.")
+    MAX_SIZE_BYTES = PRESET_MAX_SIZE_BYTES[preset]
+    TEST_DATA_MAX_SIZE_BYTES = PRESET_TEST_DATA_MAX_SIZE_BYTES[preset]
 
     SYNTHETIC_ITEM_ID_COLUMN = "__synthetic_item_id"
     SYNTHETIC_ITEM_ID_VALUE = "item_0"
@@ -162,6 +210,13 @@ def timeseries_data_loader(
         component_status.metadata["display_name"] = "Timeseries Data Loader Status"
         status.record("prepare_data", "started")
 
+        logger.info(
+            "Sampling size budget: preset=%s, max_size=%s bytes (%.0f MiB)",
+            preset,
+            MAX_SIZE_BYTES,
+            MAX_SIZE_BYTES / (1024**2),
+        )
+
         def get_s3_client(verify=True):
             """Create and return an S3 client using credentials from environment variables."""
             credentials = resolve_s3_env_credentials()
@@ -186,10 +241,11 @@ def timeseries_data_loader(
         ):
             """Load time series CSV from S3, truncating to max_size_bytes while preserving order.
 
-            When ``truncation_report`` is a dict, its ``"truncated"`` key is set to True if the
-            size limit stopped the read before the stream was exhausted. The signal is
-            conservative: a stream whose rows add up to exactly ``max_size_bytes`` is also
-            reported, since the read stops without proving no rows follow.
+            When ``truncation_report`` is a dict:
+            - ``"cap_reached"`` is True only when the size limit stopped the read (including the
+              conservative case where accumulated rows hit exactly ``max_size_bytes``).
+            - ``"truncated"`` is True when the returned frame may be incomplete for any reason
+              (cap exhaustion or mid-stream read error with partial recovery).
 
             When ``fail_on_partial_read`` is True, a mid-stream error is fatal. If no rows were
             read, an empty dataframe is returned so the caller can report an empty test dataset.
@@ -213,7 +269,12 @@ def timeseries_data_loader(
             accumulated_size = 0
             total_rows_read = 0
 
-            def _mark_truncated():
+            def _mark_cap_reached():
+                if truncation_report is not None:
+                    truncation_report["truncated"] = True
+                    truncation_report["cap_reached"] = True
+
+            def _mark_partial_read():
                 if truncation_report is not None:
                     truncation_report["truncated"] = True
 
@@ -222,7 +283,7 @@ def timeseries_data_loader(
                     chunk_memory = chunk_df.memory_usage(deep=True).sum()
 
                     if accumulated_size + chunk_memory > max_size_bytes:
-                        _mark_truncated()
+                        _mark_cap_reached()
                         remaining_bytes = max_size_bytes - accumulated_size
                         if remaining_bytes <= 0:
                             break
@@ -240,7 +301,7 @@ def timeseries_data_loader(
                     total_rows_read += len(chunk_df)
 
                     if accumulated_size >= max_size_bytes:
-                        _mark_truncated()
+                        _mark_cap_reached()
                         break
 
             except Exception as e:
@@ -253,7 +314,7 @@ def timeseries_data_loader(
                     total_rows_read,
                     e,
                 )
-                _mark_truncated()
+                _mark_partial_read()
 
             if not chunk_list:
                 if fail_on_partial_read:
@@ -264,7 +325,7 @@ def timeseries_data_loader(
                 raise ValueError("No data was loaded from S3. The file may be empty or inaccessible.")
 
             logger.debug(
-                "S3 chunk read: %s rows (~%.2f MB)",
+                "S3 chunk read: %s rows (~%.2f MiB)",
                 total_rows_read,
                 accumulated_size / (1024**2),
             )
@@ -375,7 +436,14 @@ def timeseries_data_loader(
             "running",
             metrics={"source": f"s3://{bucket_name}/{file_key}"},
         )
-        df = load_timeseries_data_truncate(bucket_name, file_key, MAX_SIZE_BYTES, PANDAS_CHUNK_SIZE)
+        sampling_report = {}
+        df = load_timeseries_data_truncate(
+            bucket_name,
+            file_key,
+            MAX_SIZE_BYTES,
+            PANDAS_CHUNK_SIZE,
+            truncation_report=sampling_report,
+        )
 
         # Reject collision with reserved synthetic-ID column (CWE-20)
         # Check if any user-specified column uses the reserved name before we try to inject it.
@@ -432,6 +500,8 @@ def timeseries_data_loader(
             )
 
         df = _clean_timeseries_dataframe(df, id_column, timestamp_column, logger)
+        stringify_mixed_object_columns(df)
+        _log_dataset_stats("loaded (after cleansing)", df)
 
         n_valid = len(df)
         if n_valid < MIN_VALID_RECORDS_AFTER_CLEANSING:
@@ -441,8 +511,23 @@ def timeseries_data_loader(
                 "Provide a larger dataset or fix invalid timestamps, null ids, and duplicate keys."
             )
 
-        status.record("prepare_data", "completed", metrics={"rows": n_valid})
+        status.record(
+            "prepare_data",
+            "completed",
+            metrics={
+                "rows": n_valid,
+                "sampled_rows": n_valid,
+                "sampled_in_memory_bytes": int(df.memory_usage(deep=True).sum()),
+                "sample_cap_bytes": MAX_SIZE_BYTES,
+                "sample_cap_reached": bool(sampling_report.get("cap_reached")),
+                "sampling_method": "first_n_rows",
+                "preset": preset,
+            },
+        )
         status.record("split_and_export", "started")
+
+        if not sampled_test_dataset.uri or not sampled_test_dataset.uri.endswith(".parquet"):
+            sampled_test_dataset.uri = (sampled_test_dataset.uri or "sampled_test_dataset") + ".parquet"
 
         # Create workspace datasets directory (use validated resolved path)
         datasets_dir = workspace_path_resolved / "datasets"
@@ -572,7 +657,8 @@ def timeseries_data_loader(
                 )
 
             # Write user test data to artifact
-            user_test_df.to_csv(sampled_test_dataset.path, index=False)
+            stringify_mixed_object_columns(user_test_df)
+            user_test_df.to_parquet(sampled_test_dataset.path, index=False)
 
             # Skip primary temporal split -- use ALL data for secondary split
             selection_parts = []
@@ -632,13 +718,13 @@ def timeseries_data_loader(
             if len(selection_train_df) == 0:
                 raise ValueError(
                     "Secondary split produced an empty selection-train dataset; "
-                    "models_selection_train_dataset.csv would be empty and downstream training would fail. "
+                    "models_selection_train_dataset.parquet would be empty and downstream training would fail. "
                     "Increase rows per time series and/or selection_train_size, or reduce test_size so "
                     "each series has enough train rows for the selection segment."
                 )
 
             # Save test dataset to artifact
-            test_df.to_csv(sampled_test_dataset.path, index=False)
+            test_df.to_parquet(sampled_test_dataset.path, index=False)
 
             test_data_for_sample = test_df
 
@@ -647,15 +733,28 @@ def timeseries_data_loader(
                 "selection_train_size": selection_train_size,
             }
 
-        # Common post-split: write selection-train and extra-train CSVs to workspace
-        selection_path = datasets_dir / "models_selection_train_dataset.csv"
-        extra_path = datasets_dir / "extra_train_dataset.csv"
-        selection_train_df.to_csv(selection_path, index=False)
-        extra_train_df.to_csv(extra_path, index=False)
+        _log_dataset_stats("split: selection_train", selection_train_df)
+        _log_dataset_stats("split: extra_train", extra_train_df)
+        _log_dataset_stats(
+            "split: test (user-provided)" if has_user_test_data else "split: test",
+            test_data_for_sample,
+        )
+
+        # Common post-split: write selection-train and extra-train data to workspace as
+        # Snappy-compressed Parquet (typed + compressed, materially smaller on disk than CSV).
+        selection_path = datasets_dir / "models_selection_train_dataset.parquet"
+        extra_path = datasets_dir / "extra_train_dataset.parquet"
+        selection_train_df.to_parquet(selection_path, index=False)
+        extra_train_df.to_parquet(extra_path, index=False)
 
         split_export_metrics = {
             "test_size": split_config_out["test_size"],
             "selection_train_size": selection_train_size,
+            "selection_train_rows": len(selection_train_df),
+            "extra_train_rows": len(extra_train_df),
+            "test_rows": len(test_data_for_sample),
+            "selection_train_disk_bytes": selection_path.stat().st_size,
+            "extra_train_disk_bytes": extra_path.stat().st_size,
         }
         if has_user_test_data:
             split_export_metrics["user_test_source"] = test_data_source

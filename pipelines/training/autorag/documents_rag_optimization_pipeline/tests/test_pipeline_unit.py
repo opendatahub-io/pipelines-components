@@ -37,9 +37,9 @@ class TestDocumentsRagOptimizationPipelineUnit:
         assert "test_data_key" in inputs
         assert "input_data_secret_name" in inputs
         assert "input_data_bucket_name" in inputs
-        assert "input_data_key" in inputs
+        assert "input_data_keys" in inputs
         assert "maas_secret_name" in inputs
-        assert "vector_db_secret_name" in inputs
+        assert "db_secret_name" in inputs
         assert "ogx_secret_name" not in inputs
         assert "vector_io_provider_id" not in inputs
         assert "preset" in inputs
@@ -82,6 +82,23 @@ class TestDocumentsRagOptimizationPipelineUnit:
         finally:
             Path(tmp_path).unlink(missing_ok=True)
 
+    def test_text_extraction_consumes_the_detected_ocr_language(self):
+        """The OCR bundle follows the language AutoRAG detected from the benchmark questions."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as tmp:
+            tmp_path = tmp.name
+        try:
+            compiler.Compiler().compile(
+                pipeline_func=documents_rag_optimization_pipeline,
+                package_path=tmp_path,
+            )
+            spec = load_pipeline_spec_document(Path(tmp_path))
+            te_task = spec["root"]["dag"]["tasks"]["text-extraction"]
+            ocr_lang = te_task["inputs"]["parameters"]["ocr_lang"]["taskOutputParameter"]
+            assert ocr_lang["producerTask"] == "search-space-preparation"
+            assert ocr_lang["outputParameterKey"] == "detected_ocr_lang"
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
+
     def test_optimization_consumes_models_pre_selector_report(self):
         """Optimization must receive the (possibly reduced) report from models_pre_selector."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as tmp:
@@ -97,6 +114,22 @@ class TestDocumentsRagOptimizationPipelineUnit:
         finally:
             Path(tmp_path).unlink(missing_ok=True)
 
+    def test_compiled_pipeline_wires_neo4j_ca_cert_to_ai4rag_tasks(self):
+        """The optional private CA reaches both tasks that initialize Neo4j."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as tmp:
+            tmp_path = tmp.name
+        try:
+            compiler.Compiler().compile(
+                pipeline_func=documents_rag_optimization_pipeline,
+                package_path=tmp_path,
+            )
+            content = Path(tmp_path).read_text(encoding="utf-8")
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
+
+        assert content.count("envVar: NEO4J_CA_CERT") == 2
+        assert content.count("secretKey: NEO4J_CA_CERT") == 2
+
     def test_compiled_pipeline_declares_component_resource_tiers(self):
         """Every AutoRAG optimization step declares the expected CPU/memory tier."""
         from kfp_components.utils.pipeline_task_resources import (
@@ -111,3 +144,24 @@ class TestDocumentsRagOptimizationPipelineUnit:
             AUTORAG_OPTIMIZATION_EXECUTOR_RESOURCES,
             pipeline_name="documents_rag_optimization_pipeline",
         )
+
+
+class TestDocumentsRagOptimizationPipelineMlflow:
+    """MLflow tracking wiring at the pipeline level."""
+
+    def test_optimization_receives_run_identity_placeholders(self):
+        """The optimization step gets the KFP run identity MLflow logging records."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as tmp:
+            tmp_path = tmp.name
+        try:
+            compiler.Compiler().compile(
+                pipeline_func=documents_rag_optimization_pipeline,
+                package_path=tmp_path,
+            )
+            spec = load_pipeline_spec_document(Path(tmp_path))
+            params = spec["root"]["dag"]["tasks"]["rag-templates-optimization"]["inputs"]["parameters"]
+            assert params["pipeline_name"]["runtimeValue"]["constant"] == "documents-rag-optimization-pipeline"
+            assert params["run_id"]["runtimeValue"]["constant"] == "{{$.pipeline_job_uuid}}"
+            assert params["run_name"]["runtimeValue"]["constant"] == "{{$.pipeline_job_name}}"
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)

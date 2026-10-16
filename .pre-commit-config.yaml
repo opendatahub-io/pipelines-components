@@ -101,7 +101,7 @@ repos:
           done;
           if [[ ${#components[@]} -gt 0 || ${#pipelines[@]} -gt 0 ]]; then
             echo "Validating base images for changed components/pipelines";
-            uv run python scripts/validate_base_images/validate_base_images.py \
+            uv run python -m scripts.validate_base_images.validate_base_images \
               "${components[@]}" "${pipelines[@]}" || exit 1;
           fi
           ' --

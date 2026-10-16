@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import sys
+from types import SimpleNamespace
 from unittest import mock
 
 import pytest
@@ -11,8 +12,10 @@ import pytest
 from components.training.finetuning.shared.output import (
     extract_metrics_from_jsonl,
     find_model_dir,
+    normalize_tokenizer_config,
     persist_model,
     plot_training_loss,
+    preserve_tokenizer_files,
 )
 
 
@@ -173,6 +176,51 @@ class TestPersistModel:
         persist_model(str(tmp_path / "ckpts"), str(pvc), "granite-7b", output_model, log)
 
         assert output_model.name == "granite-7b-checkpoint"
+
+
+class TestPreserveTokenizerFiles:
+    """Tests for preserving tokenizer files required by serving runtimes."""
+
+    def test_copies_resolved_tokenizer_files(self, tmp_path, log):
+        """Copies vocabulary files referenced by the tokenizer metadata."""
+        source = tmp_path / "source"
+        source.mkdir()
+        (source / "vocab.json").write_text("{}")
+        (source / "merges.txt").write_text("#version: 0.2\n")
+        destination = tmp_path / "destination"
+        destination.mkdir()
+        tokenizer = SimpleNamespace(
+            init_kwargs={
+                "vocab_file": str(source / "vocab.json"),
+                "merges_file": str(source / "merges.txt"),
+                "chat_template": "not-a-file",
+            }
+        )
+
+        preserve_tokenizer_files(tokenizer, str(destination), log)
+
+        assert (destination / "vocab.json").read_text() == "{}"
+        assert (destination / "merges.txt").read_text() == "#version: 0.2\n"
+
+
+class TestNormalizeTokenizerConfig:
+    """Tests for Transformers-compatible special-token metadata."""
+
+    def test_converts_legacy_special_token_list(self, tmp_path, log):
+        """Converts additional_special_tokens to named extra tokens."""
+        config_path = tmp_path / "tokenizer_config.json"
+        config_path.write_text(
+            json.dumps({"additional_special_tokens": ["<a>", "<b>"], "tokenizer_class": "Qwen2Tokenizer"})
+        )
+
+        normalize_tokenizer_config(str(tmp_path), log)
+
+        config = json.loads(config_path.read_text())
+        assert "additional_special_tokens" not in config
+        assert config["extra_special_tokens"] == {
+            "extra_special_token_0": "<a>",
+            "extra_special_token_1": "<b>",
+        }
 
 
 class TestPlotTrainingLoss:

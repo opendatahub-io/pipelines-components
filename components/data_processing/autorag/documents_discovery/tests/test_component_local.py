@@ -13,6 +13,6 @@ class TestDocumentsDiscoveryLocalRunner:
         """Test component execution with LocalRunner."""
         result = documents_discovery(
             input_data_bucket_name="test-bucket",
-            input_data_path="test-prefix/",
+            input_data_keys=["test-prefix/"],
         )
         assert result is not None

@@ -63,7 +63,7 @@ def example_pipeline():
   - Kubeflow:
     - Name: Pipelines, Version: >=2.15.2
   - External Services:
-    - Name: ai4rag, Version: ~=0.15.0
+    - Name: ai4rag, Version: ~=0.23.0
     - Name: MaaS, Version: >=1.0.0
     - Name: pandas, Version: >=2.0.0
 - **Tags**:
@@ -71,7 +71,7 @@ def example_pipeline():
   - autorag
   - model-selection
   - optimization
-- **Last Verified**: 2026-09-08 00:00:00+00:00
+- **Last Verified**: 2026-10-15 00:00:00+00:00
 - **Owners**:
   - No Parent Owners: Yes
   - Approvers:

@@ -166,6 +166,19 @@ class MockedDataFrame:
         """Column names."""
         return self._columns
 
+    def select_dtypes(self, include=None):
+        """Minimal mock: this mock does not track per-column dtypes, so it reports no matches.
+
+        The component uses this to find ``object``-dtype columns to normalize before
+        writing Parquet. Since ``MockedDataFrame`` stores every cell as-is with no dtype
+        concept, there is nothing to select; the caller's loop over ``.columns`` is a no-op.
+        """
+
+        class _NoColumns:
+            columns: list = []
+
+        return _NoColumns()
+
     def __len__(self):
         """Row count."""
         return len(self._rows)
@@ -222,6 +235,15 @@ class MockedDataFrame:
             writer = csv.writer(f)
             writer.writerow(self._columns)
             writer.writerows(self._rows)
+
+    def to_parquet(self, path, index=False, compression="snappy"):
+        """Write the data at the given path using the same CSV serialization as ``to_csv``.
+
+        Real ``pandas.DataFrame.to_parquet`` needs pyarrow, which this mock module
+        deliberately avoids requiring. Tests only need to verify the component's calling
+        convention (path, kwargs) and row/column content, not a byte-identical Parquet file.
+        """
+        self.to_csv(path, index=index)
 
     def to_json(self, orient="records"):
         """JSON records like pandas."""

@@ -12,6 +12,7 @@ from kfp import dsl
 )
 def kubeflow_model_registry(
     pvc_mount_path: str,
+    model_pvc_name: str = "",
     input_model: dsl.Input[dsl.Model] = None,
     input_metrics: dsl.Input[dsl.Metrics] = None,
     eval_metrics: dsl.Input[dsl.Metrics] = None,
@@ -40,6 +41,7 @@ def kubeflow_model_registry(
 
     Args:
         pvc_mount_path: PVC mount path for workspace storage.
+        model_pvc_name: Name of the persistent PVC containing the model.
         input_model: Model artifact from training step.
         input_metrics: Training metrics.
         eval_metrics: Evaluation metrics from lm-eval.
@@ -67,7 +69,9 @@ def kubeflow_model_registry(
     print("MODEL REGISTRY COMPONENT")
     print("=" * 60)
 
-    # Derive model URI from upstream artifact; use user-provided name (prioritize user input)
+    # Derive model URI from the persistent PVC when provided. KFP artifact paths
+    # such as /s3/... are temporary task-local paths and are not valid storage
+    # locations for a persistent Model Registry entry or KServe deployment.
     resolved_model_name = model_name  # User's parameter takes precedence
     model_uri = ""
     base_model_name = None
@@ -77,11 +81,14 @@ def kubeflow_model_registry(
         # Only use metadata name if user didn't provide one (kept default)
         if model_name == "fine-tuned-model" and base_model_name:
             resolved_model_name = base_model_name
-        model_uri = meta.get("artifact_path") or getattr(input_model, "path", "") or model_uri
-        if not model_uri:
-            model_uri = f"pvc://{pvc_mount_path}/final_model"
+        if model_pvc_name:
+            model_uri = f"pvc://{model_pvc_name}/final_model"
+        else:
+            model_uri = meta.get("artifact_path") or getattr(input_model, "path", "") or model_uri
+            if not model_uri:
+                model_uri = f"pvc://{pvc_mount_path}/final_model"
     else:
-        model_uri = f"pvc://{pvc_mount_path}/final_model"
+        model_uri = f"pvc://{model_pvc_name}/final_model" if model_pvc_name else f"pvc://{pvc_mount_path}/final_model"
 
     print(f"\n  Model Name: {resolved_model_name}")
     if base_model_name:

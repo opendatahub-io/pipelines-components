@@ -48,12 +48,12 @@ def documents_rag_optimization_pipeline(
     input_data_secret_name: str,
     input_data_bucket_name: str,
     maas_secret_name: str,
-    vector_db_secret_name: str,
+    db_secret_name: str,
     embedding_models: list[str],
     generation_models: list[str],
-    input_data_key: str = "",
+    input_data_keys: list[str] = [],
     optimization_metric: str = "overall_score",
-    optimization_max_rag_patterns: int = 8,
+    optimization_max_rag_patterns: int = 5,
     preset: str = "speed",
 ):
     """Automated system for building and optimizing Retrieval-Augmented Generation (RAG) applications.
@@ -65,7 +65,7 @@ def documents_rag_optimization_pipeline(
     settings based on an upfront-specified quality metric.
 
     The system integrates with MaaS (Models-as-a-Service) for inference and a vector database
-    (Milvus or PGVector) for retrieval, producing optimized RAG patterns as artifacts that can
+    (Milvus, PGVector, or Neo4j) for retrieval, producing optimized RAG patterns as artifacts that can
     be deployed and used for production RAG applications. Each optimized pattern contains a
     ``pattern.json`` (with deployment settings), executable notebooks, and evaluation results.
 
@@ -83,29 +83,40 @@ def documents_rag_optimization_pipeline(
         input_data_bucket_name: S3 (or compatible) bucket name for the input documents.
         maas_secret_name: Name of the Kubernetes secret for the MaaS inference connection.
             The secret must define: MAAS_BASE_URL, MAAS_API_KEY.
-        vector_db_secret_name: Name of the Kubernetes secret carrying the vector database
+        db_secret_name: Name of the Kubernetes secret carrying the database
             configuration. The env-var prefix selects the backend: ``MILVUS_*`` keys (at least
-            ``MILVUS_URI``) select Milvus, ``PGVECTOR_*`` keys select PGVector.
+            ``MILVUS_URI``) select Milvus, ``PGVECTOR_*`` keys select PGVector,
+            ``NEO4J_*`` keys (at least ``NEO4J_URI`` and ``NEO4J_PASSWORD``) select Neo4j.
+            ``NEO4J_CA_CERT`` optionally supplies a private CA certificate for Neo4j TLS.
         embedding_models: List of embedding model identifiers to use in the search space.
             Required: MaaS exposes no metadata to distinguish model types, so embedding
             models can no longer be inferred and must be declared explicitly.
         generation_models: List of foundation/generation model identifiers to use in the
             search space. Required: MaaS exposes no metadata to distinguish model types, so
             generation models can no longer be inferred and must be declared explicitly.
-        input_data_key: Object key (path) of the input documents in the input data bucket.
-        optimization_metric: Quality metric used to rank RAG patterns. Supported values:
-            "faithfulness", "answer_correctness", "context_correctness", "answer_relevance",
-            and "overall_score" (default). "faithfulness", "answer_correctness", and
-            "context_correctness" are deterministic Unitxt metrics; choosing one as the
-            optimization metric keeps the experiment deterministic. The LLM-judge metric
-            "answer_relevance" is always computed but only drives optimization when selected
-            (or via "overall_score", which aggregates all metrics).
-        optimization_max_rag_patterns: Maximum number of RAG patterns to generate. Passed to ai4rag
-            (max_number_of_rag_patterns). Defaults to 8.
+        input_data_keys: Up to ten object-key prefixes for input documents in the input
+            data bucket. Every location is discovered and merged into one deduplicated corpus.
+        optimization_metric: Quality metric used to rank RAG patterns. Use an
+            evaluator-qualified value such as ``"unitxt:faithfulness"``,
+            ``"ragas:context_precision"``, or ``"custom:overall_score"`` (default).
+            The ``speed`` preset supports Unitxt and custom metrics; ``balanced`` also
+            supports RAGAS metrics. ``custom:overall_score`` aggregates Unitxt outputs
+            for ``speed`` and Unitxt plus RAGAS outputs for ``balanced``.
+        optimization_max_rag_patterns: Maximum number of optimization iterations
+            and published RAG patterns (4-10, default 5).
         preset: Pipeline quality tier. "speed" (default) uses recursive chunking,
             no table structure parsing, and no contextual enrichment. "balanced"
             enables Docling table layout parsing, hybrid chunking, and LLM
             contextual enrichment. Both presets use the same resource tier.
+    MLflow logging:
+        Runs are tracked in MLflow automatically when the cluster's MLflow integration
+        is enabled; there is no parameter to turn it on. The platform injects the
+        tracking endpoint, workspace, experiment, and parent run into every step, and
+        authentication uses the pod's ServiceAccount token, so no connection secret is
+        needed. Optimization parameters and results land on the pipeline's parent run,
+        and each discovered RAG pattern gets a nested child run written *as the
+        optimizer evaluates it*, so the experiment fills in live during the run. When
+        MLflow is not enabled, the pipeline behaves exactly as before.
     """
     component_stage_map_task = publish_component_stage_map(
         pipeline_id=PIPELINE_NAME,
@@ -120,7 +131,7 @@ def documents_rag_optimization_pipeline(
         input_data_bucket_name=input_data_bucket_name,
         test_data_bucket_name=test_data_bucket_name,
         test_data_path_key=test_data_key,
-        input_data_path=input_data_key,
+        input_data_keys=input_data_keys,
     )
     documents_discovery_task.after(component_stage_map_task)
 
@@ -141,11 +152,14 @@ def documents_rag_optimization_pipeline(
         MAX_CPUS
     ).set_memory_limit(MAX_MEMORY)
 
+    # Consuming the detected language also orders this task after search space
+    # preparation, so misconfigured models still fail before any heavy document
+    # processing starts.
     text_extraction_task = text_extraction(
         documents_descriptor=documents_discovery_task.outputs["discovered_documents"],
         preset=preset,
+        ocr_lang=search_space_preparation_task.outputs["detected_ocr_lang"],
     )
-    text_extraction_task.after(search_space_preparation_task)
 
     text_extraction_task.set_caching_options(False)
     text_extraction_task.set_cpu_request("4").set_memory_request("16Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(
@@ -169,7 +183,7 @@ def documents_rag_optimization_pipeline(
         test_data=documents_discovery_task.outputs["test_data"],
         search_space_mps_report=models_pre_selector_task.outputs["search_space_mps_report"],
         maas_secret_name=maas_secret_name,
-        vector_db_secret_name=vector_db_secret_name,
+        db_secret_name=db_secret_name,
         input_data_secret_name=input_data_secret_name,
         input_data_bucket_name=input_data_bucket_name,
         optimization_settings={
@@ -177,8 +191,11 @@ def documents_rag_optimization_pipeline(
             "max_number_of_rag_patterns": optimization_max_rag_patterns,
         },
         test_data_key=test_data_key,
-        input_data_key=input_data_key,
+        input_data_keys=input_data_keys,
         preset=preset,
+        pipeline_name=PIPELINE_NAME,
+        run_id=dsl.PIPELINE_JOB_ID_PLACEHOLDER,
+        run_name=dsl.PIPELINE_JOB_NAME_PLACEHOLDER,
     )
 
     rag_optimization_task.set_caching_options(False)
@@ -225,21 +242,24 @@ def documents_rag_optimization_pipeline(
     use_secret_as_env(models_pre_selector_task, maas_secret_name, MAAS_SECRET_KEYS)
     use_secret_as_env(rag_optimization_task, maas_secret_name, MAAS_SECRET_KEYS)
 
-    use_secret_as_env(
-        rag_optimization_task,
-        vector_db_secret_name,
-        secret_key_to_env={
-            "MILVUS_URI": "MILVUS_URI",
-            "MILVUS_TOKEN": "MILVUS_TOKEN",
-            "MILVUS_SERVER_CERT": "MILVUS_SERVER_CERT",
-            "PGVECTOR_HOST": "PGVECTOR_HOST",
-            "PGVECTOR_PORT": "PGVECTOR_PORT",
-            "PGVECTOR_DB": "PGVECTOR_DB",
-            "PGVECTOR_USER": "PGVECTOR_USER",
-            "PGVECTOR_PASSWORD": "PGVECTOR_PASSWORD",
-        },
-        optional=True,
-    )
+    _VECTOR_DB_SECRET_KEYS = {
+        "MILVUS_URI": "MILVUS_URI",
+        "MILVUS_TOKEN": "MILVUS_TOKEN",
+        "MILVUS_CA_CERT": "MILVUS_CA_CERT",
+        "PGVECTOR_HOST": "PGVECTOR_HOST",
+        "PGVECTOR_PORT": "PGVECTOR_PORT",
+        "PGVECTOR_DB": "PGVECTOR_DB",
+        "PGVECTOR_USER": "PGVECTOR_USER",
+        "PGVECTOR_PASSWORD": "PGVECTOR_PASSWORD",
+        "PGVECTOR_CA_CERT": "PGVECTOR_CA_CERT",
+        "NEO4J_URI": "NEO4J_URI",
+        "NEO4J_USERNAME": "NEO4J_USERNAME",
+        "NEO4J_PASSWORD": "NEO4J_PASSWORD",
+        "NEO4J_DATABASE": "NEO4J_DATABASE",
+        "NEO4J_CA_CERT": "NEO4J_CA_CERT",
+    }
+    use_secret_as_env(search_space_preparation_task, db_secret_name, _VECTOR_DB_SECRET_KEYS, optional=True)
+    use_secret_as_env(rag_optimization_task, db_secret_name, _VECTOR_DB_SECRET_KEYS, optional=True)
 
 
 if __name__ == "__main__":

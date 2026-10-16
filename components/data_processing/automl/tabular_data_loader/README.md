@@ -4,15 +4,16 @@
 
 ## Overview 🧾
 
-Automl Data Loader component.
+AutoML Data Loader component.
 
-Loads tabular (CSV) data from S3 in batches, sampling up to 100 MB of data, then splits the sampled data into test, selection-train, and extra-train sets.
+Loads tabular (CSV) data from S3 in batches, sampling up to a preset-dependent size budget (``"speed"``: 100 MiB, ``"balanced"``: 1 GiB, ``"quality"``: 10 GiB), then splits the sampled data into test, selection-train, and extra-train sets.
 
 The component reads data in chunks to efficiently handle large files without loading the entire dataset into memory at once. After sampling, it performs a two-stage split:
 
-1. **Primary split** (default 80/20): separates a *test set* (20%, written to the ``sampled_test_dataset`` S3 artifact) from the *train portion* (80%).
+1. **Primary split** (default 80/20): separates a *test set* (20%, written as Parquet to the ``sampled_test_dataset`` artifact) from the *train portion* (80%).
 
-2. **Secondary split** (default 30/70 of the train portion): produces ``models_selection_train_dataset.csv`` (30%, used for model selection) and ``extra_train_dataset.csv`` (70%, passed to ``refit_full`` as extra data). Both are written to the PVC workspace under ``{workspace_path}/datasets/``.
+2. **Secondary split** (default 30/70 of the train portion): produces ``models_selection_train_dataset.parquet`` (30%, used for model selection) and ``extra_train_dataset.parquet`` (70%, passed to ``refit_full`` as extra data). Both are written to the PVC workspace under
+``{workspace_path}/datasets/`` as Snappy-compressed Parquet so the workspace never holds a full-size CSV copy of either split.
 
 For **regression** tasks the split is random; for **binary** and **multiclass** tasks the split is **stratified** by the label column by default.
 
@@ -31,22 +32,23 @@ Authentication uses AWS-style credentials provided via environment variables (e.
 | --------- | ---- | ------- | ----------- |
 | `file_key` | `str` | `None` | S3 object key of the CSV file. |
 | `bucket_name` | `str` | `None` | S3 bucket name containing the file. |
-| `workspace_path` | `str` | `None` | PVC workspace directory where train CSVs will be written. |
+| `workspace_path` | `str` | `None` | PVC workspace directory where train Parquet files will be written. |
 | `label_column` | `str` | `None` | Name of the label/target column in the dataset. |
 | `sampled_test_dataset` | `dsl.Output[dsl.Dataset]` | `None` | Output dataset artifact for the test split. |
 | `component_status` | `dsl.Output[dsl.Artifact]` | `None` | Output artifact containing stage-level progress tracking for this component. |
 | `sampling_method` | `Optional[str]` | `None` | "first_n_rows", "stratified", or "random"; if None, derived from task_type. |
 | `task_type` | `str` | `regression` | "binary", "multiclass", or "regression" (default); used when sampling_method is None. |
 | `split_config` | `Optional[dict]` | `None` | Split configuration dictionary. Available keys: "test_size" (float), "random_state" (int), "stratify" (bool). |
-| `selection_train_size` | `float` | `0.3` | Fraction of the train portion used for model selection (default 0.3). |
+| `selection_train_size` | `float` | `0.3` | Model-selection fraction (default 0.3). |
 | `test_data_bucket_name` | `str` | `""` | S3 bucket name for user-provided test dataset (default: empty string). |
 | `test_data_file_key` | `str` | `""` | S3 object key of the user-provided test CSV (default: empty string). |
+| `preset` | `str` | `speed` | Training quality tier controlling the sampling size budget. ``"speed"`` (default) samples up to 100 MiB; ``"balanced"`` samples up to 1 GiB; and ``"quality"`` samples up to 10 GiB. User-provided test datasets are capped at 50 MiB, 100 MiB, and 1 GiB respectively. |
 
 ## Outputs 📤
 
 | Name | Type | Description |
 | ---- | ---- | ----------- |
-| Output | `NamedTuple('outputs', sample_config=dict, split_config=dict, sample_row=str, models_selection_train_data_path=str, extra_train_data_path=str)` | Contains sample config, split config, a sample row, and paths to selection-train and extra-train CSVs. |
+| Output | `NamedTuple('outputs', sample_config=dict, split_config=dict, sample_row=str, models_selection_train_data_path=str, extra_train_data_path=str)` | Contains sample config, split config, a sample row, and paths to selection-train and extra-train Parquet files. |
 
 ## Usage Examples 🧪
 
@@ -96,7 +98,7 @@ def example_pipeline(
     - Name: Pipelines, Version: >=2.15.2
 - **Tags**:
   - data-processing
-- **Last Verified**: 2026-05-22 00:00:00+00:00
+- **Last Verified**: 2026-10-12 00:00:00+00:00
 - **Owners**:
   - No Parent Owners: Yes
   - Approvers:
@@ -112,7 +114,7 @@ def example_pipeline(
 
 Available values for the `sampling_method` parameter are:
 
-- `"first_n_rows"`: Reads the first N rows from the file up to the component's memory limit (default 100 MB).
+- `"first_n_rows"`: Reads the first N rows from the file up to the component's preset-dependent memory limit (``"speed"``: 100 MiB, ``"balanced"``: 1 GiB).
 - `"stratified"`: Samples the dataset in a way that preserves the distribution of the `label_column`. Only available if `label_column` is specified and task type is classification.
 - `"random"`: Randomly samples rows from the dataset up to the size limit.
 
@@ -133,10 +135,14 @@ The `split_config` dictionary parameter supports:
 - **Regression**: `stratify` is ignored; the split is always random.
 - **Binary / multiclass**: If `stratify` is `True` (default), the split is stratified by `label_column`; if `False`, the split is random.
 
+For classification with `stratify=True`, each class needs enough sampled training rows to appear on both sides of the holdout split and, afterward, on both sides of the selection/extra split.
+The loader raises a `ValueError` with class counts and the resulting allocation before training if either split is not viable.
+A user-provided test file skips the holdout check.
+
 The `selection_train_size` parameter (default: 0.3) controls the secondary split of the train portion:
 
-- 30% of train data goes to `models_selection_train_data.csv` (used for model selection).
-- 70% of train data goes to `extra_train_dataset.csv` (passed to `refit_full` as extra training data).
+- 30% of train data goes to `models_selection_train_dataset.parquet` (used for model selection).
+- 70% of train data goes to `extra_train_dataset.parquet` (passed to `refit_full` as extra training data).
 
 ## Credentials
 
@@ -163,9 +169,9 @@ def my_pipeline():
         label_column="price",
         task_type="regression",
     )
-    # load_task.outputs["models_selection_train_data_path"] - PVC path for model selection training
-    # load_task.outputs["extra_train_data_path"] - PVC path for extra training data (refit_full)
-    # load_task.outputs["sampled_test_dataset"] - S3 artifact for test evaluation
+    # load_task.outputs["models_selection_train_data_path"] - PVC path (Parquet) for model selection training
+    # load_task.outputs["extra_train_data_path"] - PVC path (Parquet) for extra training data (refit_full)
+    # load_task.outputs["sampled_test_dataset"] - artifact (Parquet) for test evaluation
     # load_task.outputs["sample_row"] - JSON string with one sample row from test set
     return load_task
 ```
@@ -234,8 +240,11 @@ Match stage ids to the tabular pipeline entry in ``component_stage_map.json`` fr
 
 ## Supported formats and limits 📋
 
-- **Format**: CSV only.
-- **Size limit**: Up to 100 MB of data in memory (sampled if larger).
+- **Input format**: CSV only (S3 source file, and the optional user-provided test dataset).
+- **Output format**: Snappy-compressed Parquet for all pipeline-owned copies — the two PVC
+  workspace train splits (`models_selection_train_dataset.parquet`, `extra_train_dataset.parquet`)
+  and the `sampled_test_dataset` artifact. No full-size CSV copy of any split is kept.
+- **Size limit**: Preset-dependent size budget in memory (sampled if larger) — ``"speed"``: 100 MiB, ``"balanced"``: 1 GiB.
 - **Streaming**: Data is read in batches (10k rows per chunk) to handle large files.
 
 ## Logging 📝

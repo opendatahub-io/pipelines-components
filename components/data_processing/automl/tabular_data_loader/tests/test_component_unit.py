@@ -1,15 +1,22 @@
 """Tests for the tabular_data_loader component.
 
 boto3, pandas, and sklearn are mocked via sys.modules so the real packages are not required.
-Tests use the stdlib csv module for asserting on output CSV content.
+The component writes train/test splits via ``to_parquet``; the mock (see ``mocked_pandas.py``)
+serializes those calls as CSV under the hood, so tests use the stdlib csv module for asserting
+on output content without needing a real pyarrow-backed Parquet writer/reader.
 """
 
 import csv
 import io
 import json
+import math
+import shutil
 import sys
+import types
+from collections import Counter
 from contextlib import contextmanager
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 import pytest
@@ -28,6 +35,7 @@ from .mocked_pandas import (
 
 TAXI_TRIP_PRICING_SAMPLE = Path(__file__).resolve().parent / "data" / "taxi_trip_pricing_sample.csv"
 MIN_VALID_RECORDS = 100
+DATA_DIR = Path(__file__).resolve().parent / "data"
 
 
 def _pad_tabular_csv(csv_content: str, min_rows: int = MIN_VALID_RECORDS + 1) -> str:
@@ -71,6 +79,11 @@ def _csv_body(csv_content: str, *, pad: bool = True, min_rows: int = MIN_VALID_R
     return io.BytesIO(csv_content.encode("utf-8"))
 
 
+def _classification_csv(labels: list[str]) -> str:
+    """Build rows with unique features and exact class counts."""
+    return "f1,f2,target\n" + "".join(f"{i},{i + 1},{label}\n" for i, label in enumerate(labels))
+
+
 def _count_rows_with_non_empty_trip_price(csv_path: Path) -> int:
     """Match mocked CSV parsing: empty ``Trip_Price`` cell is a blank last field."""
     with csv_path.open(newline="", encoding="utf-8") as f:
@@ -110,10 +123,24 @@ def _mock_boto3_module(get_object_return=None, get_object_side_effect=None):
     mock_botocore_exceptions.SSLError = _MockSSLError
     mock_botocore.exceptions = mock_botocore_exceptions
 
+    mock_boto3_s3 = types.ModuleType("boto3.s3")
+    mock_boto3_transfer = types.ModuleType("boto3.s3.transfer")
+
+    class TransferConfig:
+        """Minimal transfer config accepting the production keyword arguments."""
+
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    mock_boto3_transfer.TransferConfig = TransferConfig
+    mock_boto3_s3.transfer = mock_boto3_transfer
+
     with mock.patch.dict(
         sys.modules,
         {
             "boto3": mock_boto3,
+            "boto3.s3": mock_boto3_s3,
+            "boto3.s3.transfer": mock_boto3_transfer,
             "botocore": mock_botocore,
             "botocore.exceptions": mock_botocore_exceptions,
         },
@@ -179,12 +206,141 @@ def _read_csv_path(path):
     return header, rows
 
 
-def _make_test_artifact(tmp_path, name="test_output.csv"):
+def _make_test_artifact(tmp_path, name="test_output.parquet"):
     """Create a mock artifact with .path and .uri for sampled_test_dataset."""
     art = mock.MagicMock()
     art.path = str(tmp_path / name)
     art.uri = "/artifacts/test"
     return art
+
+
+@pytest.fixture(params=[None, "first_n_rows"], ids=["default-sampling", "streaming"])
+def csv_split_loader(request, tmp_path, monkeypatch):
+    """Run the loader with mocked packages and predetermined class allocations."""
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "local-test")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "local-test")
+    monkeypatch.setenv("AWS_S3_ENDPOINT", "http://localhost:9000")
+
+    test_artifact = SimpleNamespace(path=str(tmp_path / "test.parquet"), uri="/artifacts/test.parquet")
+    status_artifact = SimpleNamespace(path=str(tmp_path / "component_status"), metadata={})
+    pending_allocations = []
+
+    def split(X, y, *, test_size, stratify, random_state):
+        if not pending_allocations:
+            return _mock_train_test_split(X, y, test_size=test_size, stratify=stratify, random_state=random_state)
+        first_counts = Counter({str(label): count for label, count in pending_allocations.pop(0).items()})
+        first_indices, second_indices = [], []
+        for index, row in enumerate(y._rows):
+            label = row[0]
+            if first_counts[label]:
+                first_indices.append(index)
+                first_counts[label] -= 1
+            else:
+                second_indices.append(index)
+        assert not +first_counts, "Requested split allocation exceeds the available class counts"
+        assert len(first_indices) == len(y) - math.ceil(len(y) * test_size)
+        return (
+            MockedDataFrame(X._columns, [X._rows[index] for index in first_indices]),
+            MockedDataFrame(X._columns, [X._rows[index] for index in second_indices]),
+            MockedDataFrame(y._columns, [y._rows[index] for index in first_indices]),
+            MockedDataFrame(y._columns, [y._rows[index] for index in second_indices]),
+        )
+
+    split_spy = mock.Mock(side_effect=split)
+
+    def get_object(*, Bucket, Key):
+        data = (DATA_DIR / Key).read_bytes()
+        return {"Body": io.BytesIO(data), "ContentLength": len(data)}
+
+    def download_file(bucket, key, filename, **kwargs):
+        shutil.copyfile(DATA_DIR / key, filename)
+
+    def run(filename, *, allocations=(), task_type="binary", selection_train_size=0.3, stratify=True, test_filename=""):
+        pending_allocations.extend(allocations)
+        return automl_data_loader.python_func(
+            file_key=filename,
+            bucket_name="local",
+            workspace_path=str(tmp_path),
+            label_column="target",
+            sampled_test_dataset=test_artifact,
+            component_status=status_artifact,
+            sampling_method=request.param,
+            task_type=task_type,
+            split_config={"test_size": 0.2, "random_state": 42, "stratify": stratify},
+            selection_train_size=selection_train_size,
+            test_data_bucket_name="local" if test_filename else "",
+            test_data_file_key=test_filename,
+            preset="speed",
+        )
+
+    with _mock_boto3_pandas_custom_train_test_split(split_spy, get_object_side_effect=get_object) as s3:
+        s3.head_object.side_effect = lambda *, Bucket, Key: {"ContentLength": (DATA_DIR / Key).stat().st_size}
+        s3.download_file.side_effect = download_file
+        yield SimpleNamespace(
+            run=run,
+            split_spy=split_spy,
+            test_path=Path(test_artifact.path),
+            status_path=Path(status_artifact.path) / "component_status.json",
+            datasets_dir=tmp_path / "datasets",
+        )
+
+
+def _assert_csv_split_status(csv_split_loader, state):
+    status = json.loads(csv_split_loader.status_path.read_text(encoding="utf-8"))
+    split_stage = next(stage for stage in status["stages"] if stage["id"] == "split_and_export")
+    assert split_stage["status"]["state"] == state
+
+
+def _read_fixture_records(path):
+    with Path(path).open(newline="", encoding="utf-8") as stream:
+        return list(csv.DictReader(stream))
+
+
+def _fixture_class_counts(rows):
+    return Counter(int(row["target"]) for row in rows)
+
+
+def _read_csv_split_exports(csv_split_loader, output):
+    return {
+        "test": _read_fixture_records(csv_split_loader.test_path),
+        "selection": _read_fixture_records(output.models_selection_train_data_path),
+        "extra": _read_fixture_records(output.extra_train_data_path),
+    }
+
+
+def _assert_csv_rows_preserved(source, splits):
+    combined = [row for rows in splits.values() for row in rows]
+    assert len({row["feature_1"] for row in combined}) == len(combined)
+    assert sorted(combined, key=lambda row: int(row["feature_1"])) == sorted(
+        source, key=lambda row: int(row["feature_1"])
+    )
+
+
+def _assert_csv_split_failure(
+    csv_split_loader, filename, source_counts, options, stage, after_allocation, split_calls, failure_details
+):
+    """Check the error stage, message, exports, and absence of an unstratified fallback."""
+    source = _read_fixture_records(DATA_DIR / filename)
+    assert _fixture_class_counts(source) == source_counts
+
+    expected_message = f"Stratified {stage} split is not viable"
+    with pytest.raises(ValueError, match=expected_message) as exc_info:
+        csv_split_loader.run(filename, **options)
+
+    message = str(exc_info.value)
+    assert ("after allocation" in message) == after_allocation
+    for fragment in ["class_counts=", "test_size=", "selection_train_size=", "split_config.stratify=false"]:
+        assert fragment in message
+    for fragment in failure_details:
+        assert fragment in message
+    assert csv_split_loader.split_spy.call_count == split_calls
+    assert all(call.kwargs["stratify"] is not None for call in csv_split_loader.split_spy.call_args_list)
+    if stage == "holdout":
+        assert not csv_split_loader.test_path.exists()
+    else:
+        assert csv_split_loader.test_path.exists()
+    assert not list(csv_split_loader.datasets_dir.glob("*.parquet"))
+    _assert_csv_split_status(csv_split_loader, "failed")
 
 
 class TestComponentStatusArtifact:
@@ -194,14 +350,16 @@ class TestComponentStatusArtifact:
     def test_writes_component_status_json(self, tmp_path, monkeypatch):
         """Test that component_status.json is written to the output artifact."""
         monkeypatch.delenv("MLFLOW_TRACKING_URI", raising=False)
-        csv_content = "a,b,c\n1,2,3\n4,5,6\n"
-        body_stream = _csv_body(csv_content)
+        csv_content = _pad_tabular_csv("a,b,c\n1,2,3\n4,5,6\n")
+        body_stream = _csv_body(csv_content, pad=False)
         sampled_test = _make_test_artifact(tmp_path)
         component_status = mock.MagicMock()
         component_status.path = str(tmp_path / "component_status_out")
         component_status.metadata = {}
 
-        with _mock_boto3_and_pandas(get_object_return={"Body": body_stream}):
+        with _mock_boto3_and_pandas(
+            get_object_return={"Body": body_stream, "ContentLength": len(csv_content.encode("utf-8"))}
+        ):
             automl_data_loader.python_func(
                 file_key="data/file.csv",
                 bucket_name="my-bucket",
@@ -218,10 +376,25 @@ class TestComponentStatusArtifact:
         assert payload["component_id"] == "automl_data_loader"
         stage_ids = [stage["id"] for stage in payload["stages"]]
         assert stage_ids == ["prepare_data", "split_and_export"]
+        prepare_stage = next(stage for stage in payload["stages"] if stage["id"] == "prepare_data")
+        prepare_metrics = prepare_stage["metrics"]
+        assert prepare_metrics["source_bytes"] == len(csv_content.encode("utf-8"))
+        assert prepare_metrics["batches_read"] == 1
+        assert prepare_metrics["source_rows_read"] >= prepare_metrics["rows_before_cleansing"]
+        assert prepare_metrics["sampling_compactions"] >= 1
+        assert prepare_metrics["rows_before_cleansing"] >= prepare_metrics["rows"]
         split_stage = next(stage for stage in payload["stages"] if stage["id"] == "split_and_export")
         assert split_stage["status"]["state"] == "completed"
         assert split_stage["metrics"]["test_size"] == 0.2
-        assert "test_rows" not in split_stage.get("metrics", {})
+        assert split_stage["metrics"]["test_rows"] > 0
+        assert split_stage["metrics"]["selection_train_rows"] > 0
+        assert split_stage["metrics"]["extra_train_rows"] > 0
+        assert split_stage["metrics"]["selection_train_disk_bytes"] > 0
+        assert split_stage["metrics"]["extra_train_disk_bytes"] > 0
+        prepare_stage = next(stage for stage in payload["stages"] if stage["id"] == "prepare_data")
+        assert prepare_stage["metrics"]["source_rows_scanned"] >= prepare_stage["metrics"]["sampled_rows"]
+        assert prepare_stage["metrics"]["sampled_in_memory_bytes"] > 0
+        assert prepare_stage["metrics"]["sample_cap_bytes"] == 100 * 1024 * 1024
 
     @mock.patch.dict("os.environ", mocked_env_variables)
     def test_sets_component_status_display_name(self, tmp_path):
@@ -245,6 +418,30 @@ class TestComponentStatusArtifact:
 
         assert (Path(component_status.path) / "component_status.json").is_file()
         assert component_status.metadata["display_name"] == "Data Loader Status"
+
+    @mock.patch.dict("os.environ", mocked_env_variables)
+    def test_quality_records_ten_gib_sample_cap(self, tmp_path):
+        """Large-tabular status exposes its platform-managed 10 GiB sample cap."""
+        body_stream = _csv_body("a,b,c\n1,2,3\n4,5,6\n")
+        sampled_test = _make_test_artifact(tmp_path)
+        component_status = mock.MagicMock()
+        component_status.path = str(tmp_path / "component_status_out")
+        component_status.metadata = {}
+
+        with _mock_boto3_and_pandas(get_object_return={"Body": body_stream}):
+            automl_data_loader.python_func(
+                file_key="data/file.csv",
+                bucket_name="my-bucket",
+                workspace_path=str(tmp_path),
+                label_column="c",
+                sampled_test_dataset=sampled_test,
+                component_status=component_status,
+                preset="quality",
+            )
+
+        payload = json.loads((Path(component_status.path) / "component_status.json").read_text())
+        prepare_stage = next(stage for stage in payload["stages"] if stage["id"] == "prepare_data")
+        assert prepare_stage["metrics"]["sample_cap_bytes"] == 10 * 1024 * 1024 * 1024
 
 
 class TestAutomlDataLoaderUnitTests:
@@ -277,8 +474,56 @@ class TestAutomlDataLoaderUnitTests:
             mock_s3.get_object.assert_called_once_with(Bucket="my-bucket", Key="data/file.csv")
 
         # Verify split outputs exist
-        assert (tmp_path / "datasets" / "models_selection_train_dataset.csv").exists()
-        assert (tmp_path / "datasets" / "extra_train_dataset.csv").exists()
+        assert (tmp_path / "datasets" / "models_selection_train_dataset.parquet").exists()
+        assert (tmp_path / "datasets" / "extra_train_dataset.parquet").exists()
+
+    @mock.patch.dict("os.environ", mocked_env_variables)
+    def test_random_sampling_uses_multipart_local_download_for_small_source(self, tmp_path):
+        """Representative sampling uses the local multipart path only for bounded sources."""
+        csv_content = _pad_tabular_csv("feature,target\n1,0\n2,1\n")
+        payload = csv_content.encode("utf-8")
+        sampled_test = _make_test_artifact(tmp_path)
+
+        with _mock_boto3_and_pandas() as mock_s3:
+            mock_s3.head_object.return_value = {"ContentLength": len(payload)}
+            mock_s3.download_file.side_effect = lambda bucket, key, destination, Config: Path(destination).write_bytes(
+                payload
+            )
+
+            result = automl_data_loader.python_func(
+                file_key="data/train.csv",
+                bucket_name="bucket",
+                workspace_path=str(tmp_path),
+                label_column="target",
+                sampled_test_dataset=sampled_test,
+                sampling_method="random",
+            )
+
+        assert result.sample_config["n_samples"] >= MIN_VALID_RECORDS
+        mock_s3.download_file.assert_called_once()
+        mock_s3.get_object.assert_not_called()
+
+    @mock.patch.dict("os.environ", mocked_env_variables)
+    def test_random_sampling_streams_source_above_local_download_budget(self, tmp_path):
+        """Large sources avoid a full node-local copy and keep progressive streaming sampling."""
+        csv_content = "feature,target\n1,0\n2,1\n"
+        sampled_test = _make_test_artifact(tmp_path)
+
+        with _mock_boto3_and_pandas(get_object_return={"Body": _csv_body(csv_content)}) as mock_s3:
+            mock_s3.head_object.return_value = {"ContentLength": 3 * 1024 * 1024 * 1024}
+
+            result = automl_data_loader.python_func(
+                file_key="data/large.csv",
+                bucket_name="bucket",
+                workspace_path=str(tmp_path),
+                label_column="target",
+                sampled_test_dataset=sampled_test,
+                sampling_method="random",
+            )
+
+        assert result.sample_config["n_samples"] >= MIN_VALID_RECORDS
+        mock_s3.download_file.assert_not_called()
+        mock_s3.get_object.assert_called_once_with(Bucket="bucket", Key="data/large.csv")
 
     @mock.patch.dict("os.environ", mocked_env_variables)
     def test_component_explicit_first_n_rows(self, tmp_path):
@@ -321,7 +566,7 @@ class TestAutomlDataLoaderUnitTests:
             assert hasattr(result, "sample_config")
             assert result.sample_config["n_samples"] >= MIN_VALID_RECORDS
             mock_s3.get_object.assert_called_once_with(Bucket="my-bucket", Key="data/train.csv")
-        assert (tmp_path / "datasets" / "models_selection_train_dataset.csv").exists()
+        assert (tmp_path / "datasets" / "models_selection_train_dataset.parquet").exists()
 
     @mock.patch.dict("os.environ", mocked_env_variables)
     def test_component_stratified_requires_label_column(self, tmp_path):
@@ -485,8 +730,8 @@ class TestAutomlDataLoaderUnitTests:
         price_idx = None
         for path in (
             sampled_test.path,
-            tmp_path / "datasets" / "models_selection_train_dataset.csv",
-            tmp_path / "datasets" / "extra_train_dataset.csv",
+            tmp_path / "datasets" / "models_selection_train_dataset.parquet",
+            tmp_path / "datasets" / "extra_train_dataset.parquet",
         ):
             header, rows = _read_csv_path(path)
             if price_idx is None:
@@ -664,7 +909,7 @@ class TestAutomlDataLoaderUnitTests:
 
     @mock.patch.dict("os.environ", mocked_env_variables)
     def test_stratified_train_test_split_rejection_propagates(self, tmp_path):
-        """Classification stratify failures (e.g. too few per class) surface from train_test_split."""
+        """An unexpected sklearn rejection still propagates after the loader viability check."""
 
         def train_test_split_impl(*args, **kwargs):
             if kwargs.get("stratify") is not None:
@@ -711,8 +956,8 @@ class TestAutomlDataLoaderUnitTests:
 
             assert result.sample_config["n_samples"] >= MIN_VALID_RECORDS
             mock_s3.get_object.assert_called_once_with(Bucket="my-bucket", Key="data/file.csv")
-        assert (tmp_path / "datasets" / "models_selection_train_dataset.csv").exists()
-        assert (tmp_path / "datasets" / "extra_train_dataset.csv").exists()
+        assert (tmp_path / "datasets" / "models_selection_train_dataset.parquet").exists()
+        assert (tmp_path / "datasets" / "extra_train_dataset.parquet").exists()
 
     @mock.patch.dict("os.environ", mocked_env_variables)
     def test_component_random_sampling_deterministic(self, tmp_path):
@@ -735,7 +980,7 @@ class TestAutomlDataLoaderUnitTests:
             MockedDataFrame.BYTES_PER_ROW = 600_000
 
             with _mock_boto3_and_pandas(get_object_side_effect=get_object):
-                sampled_test1 = _make_test_artifact(tmp_path, "test1.csv")
+                sampled_test1 = _make_test_artifact(tmp_path, "test1.parquet")
                 result1 = automl_data_loader.python_func(
                     file_key="data/file.csv",
                     bucket_name="bucket",
@@ -744,7 +989,7 @@ class TestAutomlDataLoaderUnitTests:
                     sampled_test_dataset=sampled_test1,
                     sampling_method="random",
                 )
-                sampled_test2 = _make_test_artifact(tmp_path, "test2.csv")
+                sampled_test2 = _make_test_artifact(tmp_path, "test2.parquet")
                 result2 = automl_data_loader.python_func(
                     file_key="data/file.csv",
                     bucket_name="bucket",
@@ -781,11 +1026,80 @@ class TestAutomlDataLoaderUnitTests:
             )
 
             assert result.sample_config["n_samples"] == 15000
-        assert (tmp_path / "datasets" / "models_selection_train_dataset.csv").exists()
+        assert (tmp_path / "datasets" / "models_selection_train_dataset.parquet").exists()
+
+    @mock.patch.dict("os.environ", mocked_env_variables)
+    def test_random_sampling_compacts_before_pending_data_reaches_sample_cap(self, tmp_path):
+        """Pending batches are compacted before they accumulate to the retained-sample budget."""
+        header = "feature,target\n"
+        rows = "\n".join(f"{i},{i % 10}" for i in range(20000))
+        component_status = mock.MagicMock()
+        component_status.path = str(tmp_path / "component_status")
+        component_status.metadata = {}
+        sampled_test = _make_test_artifact(tmp_path)
+        original_bytes_per_row = MockedDataFrame.BYTES_PER_ROW
+
+        try:
+            # Each 10k-row batch is ~70 MiB: below the 100 MiB speed-sample cap,
+            # but above the 10% pending-data threshold.
+            MockedDataFrame.BYTES_PER_ROW = 7_000
+            with _mock_boto3_and_pandas(get_object_return={"Body": _csv_body(header + rows, pad=False)}):
+                automl_data_loader.python_func(
+                    file_key="data/large.csv",
+                    bucket_name="bucket",
+                    workspace_path=str(tmp_path),
+                    label_column="target",
+                    sampled_test_dataset=sampled_test,
+                    component_status=component_status,
+                    sampling_method="random",
+                )
+        finally:
+            MockedDataFrame.BYTES_PER_ROW = original_bytes_per_row
+
+        status = json.loads((tmp_path / "component_status" / "component_status.json").read_text())
+        prepare_metrics = next(stage for stage in status["stages"] if stage["id"] == "prepare_data")["metrics"]
+        assert prepare_metrics["batches_read"] == 2
+        assert prepare_metrics["sampling_compactions"] == 2
+
+    @mock.patch.dict("os.environ", mocked_env_variables)
+    def test_memory_error_is_not_treated_as_a_recoverable_partial_read(self, tmp_path):
+        """Memory exhaustion must fail the component instead of returning a partial training sample."""
+        mocked_pandas = make_mocked_pandas_module()
+        mocked_pandas.read_csv = mock.MagicMock(side_effect=MemoryError("out of memory"))
+        sampled_test = _make_test_artifact(tmp_path)
+
+        with _mock_boto3_module(get_object_return={"Body": _csv_body("feature,target\n1,0\n", pad=False)}):
+            with mock.patch.dict(sys.modules, {"pandas": mocked_pandas}):
+                with pytest.raises(MemoryError, match="out of memory"):
+                    automl_data_loader.python_func(
+                        file_key="data/train.csv",
+                        bucket_name="bucket",
+                        workspace_path=str(tmp_path),
+                        label_column="target",
+                        sampled_test_dataset=sampled_test,
+                        sampling_method="random",
+                    )
 
 
 class TestUserProvidedTestData:
     """Tests for user-provided test dataset feature."""
+
+    def test_external_csv_validates_selection_without_holdout(self, csv_split_loader):
+        """Skip holdout and reject missing selection classes with an external test CSV."""
+        _assert_csv_split_failure(
+            csv_split_loader,
+            "external_train.csv",
+            {0: 100, 1: 2, 2: 2, 3: 2},
+            {
+                "task_type": "multiclass",
+                "test_filename": "external_test.csv",
+                "allocations": [{0: 29, 1: 1, 2: 1}],
+            },
+            "selection_extra",
+            True,
+            1,
+            ["class_counts=[100, 2, 2, 2]", "test_size=0.7", "'selection': 0"],
+        )
 
     @mock.patch.dict("os.environ", mocked_env_variables, clear=True)
     def test_user_provided_test_data_happy_path(self, tmp_path):
@@ -887,6 +1201,45 @@ class TestUserProvidedTestData:
         _, sel_rows = _read_csv_path(result.models_selection_train_data_path)
         _, ext_rows = _read_csv_path(result.extra_train_data_path)
         assert len(sel_rows) + len(ext_rows) == result.sample_config["n_samples"]
+
+    @pytest.mark.parametrize(
+        "selection_train_size",
+        [0.1, 0.2],
+    )
+    @mock.patch.dict("os.environ", mocked_env_variables, clear=True)
+    def test_user_test_data_checks_only_selection_extra_viability(self, tmp_path, selection_train_size):
+        """An external test file skips holdout but still checks remaining training labels."""
+        train_csv = _classification_csv(["A"] * 99 + ["B"] * 2)
+        test_csv = _classification_csv(["A", "B"])
+        sources = iter([train_csv, test_csv])
+        split_calls = []
+
+        def get_object_side_effect(**kwargs):
+            return {"Body": _csv_body(next(sources), pad=False)}
+
+        def tracking_split(*args, **kwargs):
+            split_calls.append(kwargs)
+            return _mock_train_test_split(*args, **kwargs)
+
+        with _mock_boto3_pandas_custom_train_test_split(tracking_split, get_object_side_effect=get_object_side_effect):
+            with pytest.raises(ValueError, match="Stratified selection_extra split is not viable") as exc_info:
+                automl_data_loader.python_func(
+                    file_key="data/train.csv",
+                    bucket_name="bucket",
+                    workspace_path=str(tmp_path),
+                    label_column="target",
+                    sampled_test_dataset=_make_test_artifact(tmp_path),
+                    sampling_method="first_n_rows",
+                    task_type="binary",
+                    selection_train_size=selection_train_size,
+                    test_data_bucket_name="test-bucket",
+                    test_data_file_key="data/test.csv",
+                )
+
+        assert "'class_count': 2" in str(exc_info.value)
+        assert f"selection_train_size={selection_train_size}" in str(exc_info.value)
+        assert "'selection': 0" in str(exc_info.value)
+        assert len(split_calls) == 1
 
     @mock.patch.dict("os.environ", mocked_env_variables, clear=True)
     def test_no_test_data_backward_compatible(self, tmp_path):
@@ -1032,7 +1385,7 @@ class TestUserProvidedTestData:
 
     @mock.patch.dict("os.environ", mocked_env_variables, clear=True)
     def test_user_provided_test_data_truncation_warns_and_is_recorded(self, tmp_path, caplog):
-        """A test dataset over the 50 MB load limit is truncated with a WARNING and a status flag.
+        """A test dataset over the speed preset's 50 MiB limit is truncated with a WARNING and a status flag.
 
         BYTES_PER_ROW is inflated only on the second S3 call (test data fetch) so the
         training data loads normally (default 100 bytes/row, no sampling truncation).
@@ -1049,7 +1402,7 @@ class TestUserProvidedTestData:
             call_count += 1
             if call_count == 1:
                 return {"Body": _csv_body(train_csv)}
-            # 40 MB per row: exceeds the 50 MB test-data cap after the first row, so the
+            # 40 MiB per row: exceeds the 50 MiB test-data cap after the first row, so the
             # reader stops early and reports the truncation.
             MockedDataFrame.BYTES_PER_ROW = 40_000_000
             return {"Body": _csv_body(test_csv)}
@@ -1293,6 +1646,352 @@ class TestUserProvidedTestData:
 class TestDataLoaderSplitLogic:
     """Tests for the train/test split logic integrated into the data loader."""
 
+    @pytest.mark.parametrize(
+        ("filename", "source_counts", "options", "stage", "after_allocation", "split_calls", "failure_details"),
+        [
+            pytest.param(
+                "fail_holdout_singleton_binary.csv",
+                {0: 199, 1: 1},
+                {},
+                "holdout",
+                False,
+                0,
+                ["minimum_per_class=2", "failing_class_counts=[1]"],
+                id="binary-singleton-before-split",
+            ),
+            pytest.param(
+                "fail_holdout_singleton_multiclass.csv",
+                {0: 150, 1: 49, 2: 1},
+                {"task_type": "multiclass"},
+                "holdout",
+                False,
+                0,
+                ["minimum_per_class=2", "failing_class_counts=[1]"],
+                id="multiclass-singleton-before-split",
+            ),
+            pytest.param(
+                "fail_holdout_two_rows.csv",
+                {0: 198, 1: 2},
+                {"allocations": [{0: 158, 1: 2}]},
+                "holdout",
+                True,
+                1,
+                ["'class_count': 2", "'train': 2", "'test': 0"],
+                id="holdout-missing-rare-class",
+            ),
+            pytest.param(
+                "fail_selection_extra.csv",
+                {0: 195, 1: 5},
+                {"selection_train_size": 0.1, "allocations": [{0: 156, 1: 4}, {0: 16}]},
+                "selection_extra",
+                True,
+                2,
+                ["class_counts=[156, 4]", "test_size=0.9", "'selection': 0", "'extra': 4"],
+                id="selection-missing-rare-class",
+            ),
+        ],
+    )
+    def test_csv_rejects_nonviable_stratified_splits(
+        self, csv_split_loader, filename, source_counts, options, stage, after_allocation, split_calls, failure_details
+    ):
+        """Report singleton and missing-class failures for the supplied CSV fixtures."""
+        _assert_csv_split_failure(
+            csv_split_loader, filename, source_counts, options, stage, after_allocation, split_calls, failure_details
+        )
+
+    @pytest.mark.parametrize(
+        ("filename", "task_type", "allocations", "expected_counts"),
+        [
+            pytest.param(
+                "valid_binary.csv",
+                "binary",
+                [{0: 720, 1: 80}, {0: 216, 1: 24}],
+                {"test": {0: 180, 1: 20}, "selection": {0: 216, 1: 24}, "extra": {0: 504, 1: 56}},
+                id="viable-binary",
+            ),
+            pytest.param(
+                "valid_multiclass.csv",
+                "multiclass",
+                [{0: 480, 1: 240, 2: 80}, {0: 144, 1: 72, 2: 24}],
+                {
+                    "test": {0: 120, 1: 60, 2: 20},
+                    "selection": {0: 144, 1: 72, 2: 24},
+                    "extra": {0: 336, 1: 168, 2: 56},
+                },
+                id="viable-multiclass",
+            ),
+            pytest.param(
+                "boundary_four_rows.csv",
+                "binary",
+                [{0: 157, 1: 3}, {0: 47, 1: 1}],
+                {"test": {0: 39, 1: 1}, "selection": {0: 47, 1: 1}, "extra": {0: 110, 1: 2}},
+                id="four-rare-rows-retain-all-classes",
+            ),
+        ],
+    )
+    def test_csv_viable_stratified_splits_preserve_rows(
+        self, csv_split_loader, filename, task_type, allocations, expected_counts
+    ):
+        """Preserve rows and every class when the split mock returns viable allocations."""
+        source = _read_fixture_records(DATA_DIR / filename)
+        output = csv_split_loader.run(filename, task_type=task_type, allocations=allocations)
+        splits = _read_csv_split_exports(csv_split_loader, output)
+
+        assert csv_split_loader.split_spy.call_count == 2
+        assert all(call.kwargs["stratify"] is not None for call in csv_split_loader.split_spy.call_args_list)
+        assert output.split_config["stratify"] is True
+        assert output.sample_config["n_samples"] == len(source)
+        assert {name: _fixture_class_counts(rows) for name, rows in splits.items()} == expected_counts
+        _assert_csv_rows_preserved(source, splits)
+        _assert_csv_split_status(csv_split_loader, "completed")
+
+    @pytest.mark.parametrize(
+        ("task_type", "stratify"),
+        [
+            pytest.param("binary", False, id="explicit-stratify-false"),
+            pytest.param("regression", True, id="regression"),
+        ],
+    )
+    def test_csv_regression_or_override_skips_rare_class_checks(self, csv_split_loader, task_type, stratify):
+        """Regression and an explicit override bypass rare-class checks in both splits."""
+        filename = "fail_holdout_singleton_binary.csv"
+        output = csv_split_loader.run(filename, task_type=task_type, stratify=stratify)
+
+        assert csv_split_loader.split_spy.call_count == 2
+        assert all(call.kwargs["stratify"] is None for call in csv_split_loader.split_spy.call_args_list)
+        assert output.split_config["stratify"] is False
+        _assert_csv_rows_preserved(
+            _read_fixture_records(DATA_DIR / filename), _read_csv_split_exports(csv_split_loader, output)
+        )
+        _assert_csv_split_status(csv_split_loader, "completed")
+
+    @pytest.mark.parametrize("task_type", ["binary", "regression"])
+    @mock.patch.dict("os.environ", mocked_env_variables)
+    def test_explicit_none_test_size_preserves_sklearn_default(self, tmp_path, task_type):
+        """An explicit None keeps sklearn's former 25% holdout behavior."""
+        split_calls = []
+
+        def tracking_split(*args, **kwargs):
+            split_calls.append(kwargs)
+            return _mock_train_test_split(*args, **kwargs)
+
+        body_stream = _csv_body(_classification_csv(["A", "B"] * 50 + ["A"]), pad=False)
+        with _mock_boto3_pandas_custom_train_test_split(tracking_split, get_object_return={"Body": body_stream}):
+            result = automl_data_loader.python_func(
+                file_key="data/file.csv",
+                bucket_name="bucket",
+                workspace_path=str(tmp_path),
+                label_column="target",
+                sampled_test_dataset=_make_test_artifact(tmp_path),
+                sampling_method="first_n_rows",
+                task_type=task_type,
+                split_config={"test_size": None},
+            )
+
+        assert result.split_config["test_size"] == 0.25
+        assert len(split_calls) == 2
+        assert split_calls[0]["test_size"] == 0.25
+        assert (split_calls[0]["stratify"] is not None) == (task_type == "binary")
+
+    @mock.patch.dict("os.environ", mocked_env_variables)
+    def test_holdout_singleton_fails_before_split(self, tmp_path, caplog):
+        """A singleton fails the sklearn floor before the split runs."""
+        split_calls = []
+
+        def tracking_split(*args, **kwargs):
+            split_calls.append(kwargs)
+            return _mock_train_test_split(*args, **kwargs)
+
+        sensitive_label = "patient@example.com"
+        body_stream = _csv_body(_classification_csv(["A"] * 100 + [sensitive_label]), pad=False)
+        caplog.set_level("INFO")
+        with _mock_boto3_pandas_custom_train_test_split(tracking_split, get_object_return={"Body": body_stream}):
+            with pytest.raises(ValueError, match="Stratified holdout split is not viable") as exc_info:
+                automl_data_loader.python_func(
+                    file_key="data/file.csv",
+                    bucket_name="bucket",
+                    workspace_path=str(tmp_path),
+                    label_column="target",
+                    sampled_test_dataset=_make_test_artifact(tmp_path),
+                    sampling_method="first_n_rows",
+                    task_type="binary",
+                )
+
+        message = str(exc_info.value)
+        assert "class_counts=" in message
+        assert "class_counts=[100, 1]" in message
+        assert "test_size=0.2" in message
+        assert "selection_train_size=0.3" in message
+        assert "minimum_per_class=2" in message
+        assert "failing_class_counts=[1]" in message
+        assert "split_config.stratify=false" in message
+        assert sensitive_label not in message
+        assert sensitive_label not in caplog.text
+        assert sensitive_label not in (tmp_path / "component_status" / "component_status.json").read_text()
+        assert split_calls == []
+
+    @mock.patch.dict("os.environ", mocked_env_variables)
+    def test_holdout_allocation_missing_class_fails_after_split(self, tmp_path, caplog):
+        """A class omitted by the actual allocation is reported before export."""
+        split_calls = []
+
+        def tracking_split(*args, **kwargs):
+            split_calls.append(kwargs)
+            return _mock_train_test_split(*args, **kwargs)
+
+        sensitive_label = "patient@example.com"
+        body_stream = _csv_body(_classification_csv(["A"] * 97 + [sensitive_label] * 2 + ["C"] * 2), pad=False)
+        caplog.set_level("INFO")
+        with _mock_boto3_pandas_custom_train_test_split(tracking_split, get_object_return={"Body": body_stream}):
+            with pytest.raises(ValueError, match="Stratified holdout split is not viable after allocation") as exc_info:
+                automl_data_loader.python_func(
+                    file_key="data/file.csv",
+                    bucket_name="bucket",
+                    workspace_path=str(tmp_path),
+                    label_column="target",
+                    sampled_test_dataset=_make_test_artifact(tmp_path),
+                    sampling_method="first_n_rows",
+                    task_type="multiclass",
+                )
+
+        assert str(exc_info.value).count("'class_count': 2") == 2
+        assert "'train': 0" in str(exc_info.value)
+        assert sensitive_label not in str(exc_info.value)
+        assert sensitive_label not in caplog.text
+        assert sensitive_label not in (tmp_path / "component_status" / "component_status.json").read_text()
+        assert len(split_calls) == 1
+
+    @mock.patch.dict("os.environ", mocked_env_variables)
+    def test_holdout_rejects_insufficient_rows_for_class_cardinality(self, tmp_path):
+        """Each side must fit at least one row from every class."""
+        split_calls = []
+
+        def tracking_split(*args, **kwargs):
+            split_calls.append(kwargs)
+            return _mock_train_test_split(*args, **kwargs)
+
+        labels = [f"C{i}" for i in range(50) for _ in range(2)]
+        body_stream = _csv_body(_classification_csv(labels), pad=False)
+        with _mock_boto3_pandas_custom_train_test_split(tracking_split, get_object_return={"Body": body_stream}):
+            with pytest.raises(ValueError, match="Stratified holdout split is not viable") as exc_info:
+                automl_data_loader.python_func(
+                    file_key="data/file.csv",
+                    bucket_name="bucket",
+                    workspace_path=str(tmp_path),
+                    label_column="target",
+                    sampled_test_dataset=_make_test_artifact(tmp_path),
+                    sampling_method="first_n_rows",
+                    task_type="multiclass",
+                )
+
+        assert "n_classes=50" in str(exc_info.value)
+        assert "test_rows=20" in str(exc_info.value)
+        assert split_calls == []
+
+    @mock.patch.dict("os.environ", mocked_env_variables)
+    def test_selection_extra_rare_class_fails_before_second_split(self, tmp_path):
+        """The secondary check uses labels remaining after the holdout split."""
+        split_calls = []
+
+        def tracking_split(*args, **kwargs):
+            split_calls.append(kwargs)
+            return _mock_train_test_split(*args, **kwargs)
+
+        labels = ["B"] * 3 + ["A"] * 96 + ["B"] * 2
+        body_stream = _csv_body(_classification_csv(labels), pad=False)
+        with _mock_boto3_pandas_custom_train_test_split(tracking_split, get_object_return={"Body": body_stream}):
+            with pytest.raises(ValueError, match="Stratified selection_extra split is not viable") as exc_info:
+                automl_data_loader.python_func(
+                    file_key="data/file.csv",
+                    bucket_name="bucket",
+                    workspace_path=str(tmp_path),
+                    label_column="target",
+                    sampled_test_dataset=_make_test_artifact(tmp_path),
+                    sampling_method="first_n_rows",
+                    task_type="binary",
+                )
+
+        message = str(exc_info.value)
+        assert "test_size=0.7" in message or "test_size=0.69999999999999996" in message
+        assert "'class_count': 3" in message
+        assert "'extra': 0" in message
+        assert len(split_calls) == 2
+        assert split_calls[0]["stratify"] is not None
+
+    @pytest.mark.parametrize(
+        "labels",
+        [
+            ["A", "B"] * 50 + ["A"],
+            ["A", "B", "C"] * 34,
+            ["B" if i in {0, 30, 60, 100} else "A" for i in range(101)],
+        ],
+    )
+    @mock.patch.dict("os.environ", mocked_env_variables)
+    def test_viable_classification_keeps_both_stratified_splits(self, tmp_path, labels):
+        """Viable class counts preserve stratification at both split calls."""
+        split_calls = []
+
+        def tracking_split(*args, **kwargs):
+            split_calls.append(kwargs)
+            return _mock_train_test_split(*args, **kwargs)
+
+        body_stream = _csv_body(_classification_csv(labels), pad=False)
+        with _mock_boto3_pandas_custom_train_test_split(tracking_split, get_object_return={"Body": body_stream}):
+            result = automl_data_loader.python_func(
+                file_key="data/file.csv",
+                bucket_name="bucket",
+                workspace_path=str(tmp_path),
+                label_column="target",
+                sampled_test_dataset=_make_test_artifact(tmp_path),
+                sampling_method="first_n_rows",
+                task_type="binary" if len(set(labels)) == 2 else "multiclass",
+            )
+
+        assert result.split_config["stratify"] is True
+        assert len(split_calls) == 2
+        assert all(call["stratify"] is not None for call in split_calls)
+        assert Path(result.models_selection_train_data_path).exists()
+        assert Path(result.extra_train_data_path).exists()
+        if labels.count("B") == 4:
+            _, test_rows = _read_csv_path(str(tmp_path / "test_output.parquet"))
+            _, selection_rows = _read_csv_path(result.models_selection_train_data_path)
+            _, extra_rows = _read_csv_path(result.extra_train_data_path)
+            assert [sum(row[-1] == "B" for row in rows) for rows in (test_rows, selection_rows, extra_rows)] == [
+                1,
+                1,
+                2,
+            ]
+
+    @pytest.mark.parametrize(
+        ("task_type", "split_config"),
+        [("regression", None), ("binary", {"stratify": False})],
+    )
+    @mock.patch.dict("os.environ", mocked_env_variables)
+    def test_unstratified_splits_skip_rare_class_check(self, tmp_path, task_type, split_config):
+        """Regression and an explicit stratify override retain random split behavior."""
+        split_calls = []
+
+        def tracking_split(*args, **kwargs):
+            split_calls.append(kwargs)
+            return _mock_train_test_split(*args, **kwargs)
+
+        body_stream = _csv_body(_classification_csv(["A"] * 100 + ["B"]), pad=False)
+        with _mock_boto3_pandas_custom_train_test_split(tracking_split, get_object_return={"Body": body_stream}):
+            result = automl_data_loader.python_func(
+                file_key="data/file.csv",
+                bucket_name="bucket",
+                workspace_path=str(tmp_path),
+                label_column="target",
+                sampled_test_dataset=_make_test_artifact(tmp_path),
+                sampling_method="first_n_rows",
+                task_type=task_type,
+                split_config=split_config,
+            )
+
+        assert result.split_config["stratify"] is False
+        assert len(split_calls) == 2
+        assert all(call["stratify"] is None for call in split_calls)
+
     @mock.patch.dict("os.environ", mocked_env_variables)
     def test_split_outputs_have_correct_paths(self, tmp_path):
         """Verify selection-train and extra-train are written to workspace/datasets/."""
@@ -1309,8 +2008,8 @@ class TestDataLoaderSplitLogic:
                 sampled_test_dataset=sampled_test,
             )
 
-        assert "models_selection_train_dataset.csv" in result.models_selection_train_data_path
-        assert "extra_train_dataset.csv" in result.extra_train_data_path
+        assert "models_selection_train_dataset.parquet" in result.models_selection_train_data_path
+        assert "extra_train_dataset.parquet" in result.extra_train_data_path
         assert result.models_selection_train_data_path.startswith(str(tmp_path))
         assert result.extra_train_data_path.startswith(str(tmp_path))
 
@@ -1419,12 +2118,17 @@ class TestDataLoaderSplitLogic:
 
     @mock.patch.dict("os.environ", mocked_env_variables)
     def test_test_dataset_written_to_artifact(self, tmp_path):
-        """Test dataset is written to the sampled_test_dataset artifact path."""
+        """Test dataset is written to the sampled_test_dataset artifact path via to_parquet."""
         csv_content = "a,b,target\n1,2,X\n3,4,Y\n5,6,X\n7,8,Y\n9,10,X\n"
         body_stream = _csv_body(csv_content)
         sampled_test = _make_test_artifact(tmp_path)
 
-        with _mock_boto3_and_pandas(get_object_return={"Body": body_stream}):
+        with (
+            _mock_boto3_and_pandas(get_object_return={"Body": body_stream}),
+            mock.patch.object(
+                MockedDataFrame, "to_parquet", autospec=True, side_effect=MockedDataFrame.to_parquet
+            ) as mock_to_parquet,
+        ):
             automl_data_loader.python_func(
                 file_key="data/file.csv",
                 bucket_name="bucket",
@@ -1433,7 +2137,12 @@ class TestDataLoaderSplitLogic:
                 sampled_test_dataset=sampled_test,
             )
 
-        assert sampled_test.uri == "/artifacts/test.csv"
+        # Parquet is actually written (not just a filename ending in .parquet with CSV
+        # content underneath): one call each for test, selection-train, extra-train.
+        assert mock_to_parquet.call_count == 3
+        assert sampled_test.path in [call.args[1] for call in mock_to_parquet.call_args_list]
+
+        assert sampled_test.uri == "/artifacts/test.parquet"
         header, rows = _read_csv_path(sampled_test.path)
         assert "target" in header
         assert len(rows) >= 1

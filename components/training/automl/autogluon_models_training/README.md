@@ -6,11 +6,12 @@
 
 Train AutoGluon models, select the top N, and refit each on the full dataset.
 
-Expects pre-cleaned CSV data from the tabular data loader (infinite values replaced, duplicates removed, missing labels dropped). Reads train/test/extra-train CSVs and validates that the label column exists in each dataset.
+Expects pre-cleaned Parquet data from the tabular data loader (infinite values replaced, duplicates removed, missing labels dropped). Reads train/test/extra-train Parquet files and validates that the label column exists in each dataset.
 
-This component combines the model selection and full-refit stages into a single step. It trains a TabularPredictor on sampled data, ranks all models on the test set, then refits each of the top N models on the full training data in a single ``refit_full`` call. Post-refit work (predict, evaluate,
-feature importance, confusion matrix (via evaluate_predictions detailed_report), classification curves, notebook generation) runs concurrently across all top-N models via ``ThreadPoolExecutor``. The deployment clone (``set_model_best`` + ``clone_for_deployment``) is serialized afterward because it
-mutates predictor state. All artifacts are written under a single output artifact so the pipeline does not require a ParallelFor loop. Each model directory contains a ``model.json`` file with model metadata (name, location, metrics).
+This component combines the model selection and full-refit stages into a single step. It trains a TabularPredictor on sampled data, ranks all models on the test set, then refits each of the top N models on the full training data in a single ``refit_full`` call. Lightweight post-refit work (predict,
+evaluate, confusion matrix (via evaluate_predictions detailed_report), classification curves, notebook generation) runs concurrently across all top-N models via ``ThreadPoolExecutor``. Permutation feature importance runs sequentially for wide tables because it can hold substantial batched prediction
+data in memory; narrower tables run it concurrently. The deployment clone (``set_model_best`` + ``clone_for_deployment``) is serialized afterward because it mutates predictor state. All artifacts are written under a single output artifact so the pipeline does not require a ParallelFor loop. Each
+model directory contains a ``model.json`` file with model metadata (name, location, metrics).
 
 ## Inputs 📥
 
@@ -19,21 +20,28 @@ mutates predictor state. All artifacts are written under a single output artifac
 | `label_column` | `str` | `None` | Target/label column name in train and test datasets. |
 | `task_type` | `str` | `None` | ML task type: ``"binary"``, ``"multiclass"``, or ``"regression"``. |
 | `top_n` | `int` | `None` | Number of top models to select and refit (1-10). |
-| `train_data_path` | `str` | `None` | Path to the selection-train CSV on the PVC workspace. |
-| `test_data` | `dsl.Input[dsl.Dataset]` | `None` | Dataset artifact (CSV) used for leaderboard ranking and evaluation. |
+| `train_data_path` | `str` | `None` | Path to the selection-train Parquet file on the PVC workspace. |
+| `test_data` | `dsl.Input[dsl.Dataset]` | `None` | Dataset artifact (Parquet) used for leaderboard ranking and evaluation. |
 | `workspace_path` | `str` | `None` | PVC workspace directory; predictor saved at ``workspace_path/autogluon_predictor``. |
 | `pipeline_name` | `str` | `None` | Pipeline run name; last dash-segment stripped for the notebook. |
 | `run_id` | `str` | `None` | Pipeline run ID written into the generated notebook. |
 | `sample_row` | `str` | `None` | JSON array of row dicts for the notebook example input; label column is stripped. |
 | `models_artifact` | `dsl.Output[dsl.Model]` | `None` | Output Model artifact containing all refitted model subdirectories. |
 | `html_artifact` | `dsl.Output[dsl.HTML]` | `None` | Output HTML artifact containing the ranked leaderboard page. |
+| `experiment_notebook` | `dsl.Output[dsl.Artifact]` | `None` | Output artifact containing the run-level experiment launcher notebook. |
 | `component_status` | `dsl.Output[dsl.Artifact]` | `None` | Output artifact containing stage-level progress tracking for this component. |
 | `sampling_config` | `Optional[dict]` | `None` | Data sampling config stored in artifact metadata. |
 | `split_config` | `Optional[dict]` | `None` | Data split config stored in artifact metadata. |
-| `extra_train_data_path` | `str` | `""` | Optional path to extra training CSV passed to ``refit_full``. |
+| `extra_train_data_path` | `str` | `""` | Optional path to extra training Parquet file passed to ``refit_full``. |
 | `positive_class` | `str` | `""` | Label value for the positive class in **binary** classification (e.g. ``"1"`` or ``"yes"``). Passed to ``TabularPredictor`` when set. Empty string (default) lets AutoGluon infer the positive class when ``fit`` runs. Ignored for ``multiclass`` and ``regression``. |
-| `preset` | `str` | `speed` | Training quality tier. ``"speed"`` (default) or ``"balanced"`` (may run more than 2x longer). |
+| `preset` | `str` | `speed` | Training quality tier. ``"speed"`` (45-minute selection budget, default), ``"balanced"`` (180-minute selection budget), or ``"quality"`` (six-hour selection budget with AutoGluon ``best_quality``, the broad ``zeroshot`` portfolio, and bagging/stacking). |
 | `eval_metric` | `str` | `""` | Metric for model ranking (e.g. ``"r2"``, ``"accuracy"``). Defaults to ``"r2"`` for regression and ``"accuracy"`` otherwise. |
+| `run_name` | `str` | `""` | Per-execution MLflow run name recorded as a tag on child runs. Falls back to ``pipeline_name`` when empty. |
+| `test_data_bucket_name` | `str` | `""` | Optional S3 bucket for user-provided external test data. |
+| `test_data_file_key` | `str` | `""` | Optional S3 object key for user-provided external test data. |
+| `train_data_secret_name` | `str` | `""` | Kubernetes secret name for S3 credentials used by the pipeline. |
+| `train_data_bucket_name` | `str` | `""` | S3 bucket containing the training dataset. |
+| `train_data_file_key` | `str` | `""` | S3 object key for the training dataset. |
 
 ## Outputs 📤
 
@@ -88,14 +96,14 @@ def my_pipeline():
         label_column="price",
         task_type="regression",
         top_n=3,
-        train_data_path=f"{dsl.WORKSPACE_PATH_PLACEHOLDER}/datasets/models_selection_train_dataset.csv",
+        train_data_path=f"{dsl.WORKSPACE_PATH_PLACEHOLDER}/datasets/models_selection_train_dataset.parquet",
         test_data=<test_dataset_artifact>,
         workspace_path=dsl.WORKSPACE_PATH_PLACEHOLDER,
         pipeline_name=dsl.PIPELINE_JOB_RESOURCE_NAME_PLACEHOLDER,
         run_id=dsl.PIPELINE_JOB_ID_PLACEHOLDER,
         sample_row='[{"bedrooms": 3, "sqft": 1200, "location": "urban"}]',
-        extra_train_data_path=f"{dsl.WORKSPACE_PATH_PLACEHOLDER}/datasets/extra_train_dataset.csv",
-    )
+        extra_train_data_path=f"{dsl.WORKSPACE_PATH_PLACEHOLDER}/datasets/extra_train_dataset.parquet",
+)
 ```
 
 ### Classification (binary or multiclass)
@@ -105,7 +113,7 @@ training_task = autogluon_models_training(
     label_column="target",
     task_type="multiclass",
     top_n=5,
-    train_data_path=f"{dsl.WORKSPACE_PATH_PLACEHOLDER}/datasets/models_selection_train_dataset.csv",
+    train_data_path=f"{dsl.WORKSPACE_PATH_PLACEHOLDER}/datasets/models_selection_train_dataset.parquet",
     test_data=<test_dataset_artifact>,
     workspace_path=dsl.WORKSPACE_PATH_PLACEHOLDER,
     pipeline_name=dsl.PIPELINE_JOB_RESOURCE_NAME_PLACEHOLDER,

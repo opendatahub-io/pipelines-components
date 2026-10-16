@@ -33,13 +33,15 @@ class TestDocumentsIndexingPipelineUnit:
         inputs = getattr(documents_indexing_pipeline, "_component_inputs", set())
         for name in (
             "maas_secret_name",
-            "vector_db_secret_name",
+            "db_secret_name",
             "embedding_model_id",
             "input_data_secret_name",
             "input_data_bucket_name",
             "chunk_size",
             "chunk_overlap",
             "collection_name",
+            "ocr_lang",
+            "graph_extraction_config",
         ):
             assert name in inputs
 
@@ -95,8 +97,43 @@ class TestDocumentsIndexingPipelineUnit:
         assert "componentInputParameter: chunk_size" in content
         assert "componentInputParameter: chunk_overlap" in content
         assert "componentInputParameter: embedding_model_id" in content
+        assert "componentInputParameter: foundation_model_id" in content
+        assert "componentInputParameter: foundation_model_params" in content
         assert "componentInputParameter: collection_name" in content
         assert "comp-documents-indexing:" in content
+
+    def test_compiled_pipeline_wires_graph_extraction_config(self, tmp_path):
+        """The pattern's public graph settings reach the indexing component unchanged."""
+        tmp_file = tmp_path / "graph-indexing.yaml"
+        compiler.Compiler().compile(
+            pipeline_func=documents_indexing_pipeline,
+            package_path=str(tmp_file),
+        )
+        spec = load_pipeline_spec_document(tmp_file)
+        root_inputs = spec["root"]["inputDefinitions"]["parameters"]
+        component_inputs = spec["components"]["comp-documents-indexing"]["inputDefinitions"]["parameters"]
+        task_inputs = spec["root"]["dag"]["tasks"]["documents-indexing"]["inputs"]["parameters"]
+
+        assert root_inputs["graph_extraction_config"]["parameterType"] == "STRUCT"
+        assert component_inputs["graph_extraction_config"]["parameterType"] == "STRUCT"
+        assert task_inputs["graph_extraction_config"] == {"componentInputParameter": "graph_extraction_config"}
+        for inputs in (root_inputs, component_inputs, task_inputs):
+            assert "kg_extraction_config" not in inputs
+
+    def test_compiled_pipeline_wires_ocr_lang_to_text_extraction(self):
+        """ocr_lang reaches extraction so indexing OCRs the corpus the way the experiment did."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as tmp:
+            tmp_path = tmp.name
+        try:
+            compiler.Compiler().compile(
+                pipeline_func=documents_indexing_pipeline,
+                package_path=tmp_path,
+            )
+            spec = load_pipeline_spec_document(Path(tmp_path))
+            te_inputs = spec["root"]["dag"]["tasks"]["text-extraction"]["inputs"]["parameters"]
+            assert te_inputs["ocr_lang"]["componentInputParameter"] == "ocr_lang"
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
 
     def test_compiled_pipeline_wires_s3_maas_and_vector_db_secrets(self):
         """S3 secrets attach to discovery/extraction; MaaS + vector-DB secrets attach to indexing."""
@@ -117,6 +154,8 @@ class TestDocumentsIndexingPipelineUnit:
         # Union of vector-DB backends is mapped as optional env vars.
         assert "MILVUS_URI" in content
         assert "PGVECTOR_HOST" in content
+        assert "NEO4J_URI" in content
+        assert "NEO4J_CA_CERT" in content
 
     def test_compiled_pipeline_declares_component_resource_tiers(self):
         """All indexing pipeline steps declare the workload CPU/memory tier."""

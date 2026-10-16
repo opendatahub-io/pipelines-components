@@ -1,7 +1,7 @@
 # This container is used for deploying AutoRAG-generated agents for inference.
 # Placeholder image for initial onboarding to ODH & RHOAI (odh-autorag-inference).
 
-ARG BASE_IMAGE="quay.io/aipcc/base-images/cpu:3.5.0"
+ARG BASE_IMAGE="quay.io/aipcc/base-images/cpu-el9.8:3.6.0"
 
 FROM ${BASE_IMAGE}
 

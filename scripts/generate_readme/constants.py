@@ -14,4 +14,18 @@ EXIT_DIFF_DETECTED = 1  # Diffs detected in check mode
 EXIT_ERROR = 2  # Actual error (e.g., missing function, failed to write file)
 
 # Markdown formatting constraints (per .markdownlint.json)
-MAX_LINE_LENGTH = 300  # Maximum line length for markdown content
+MAX_LINE_LENGTH = 300  # Maximum line length for Markdown content
+
+# Words with non-standard capitalization that should be preserved as-is
+# instead of being title-cased. Keys must be lowercase.
+SPECIAL_CASE_WORDS = {
+    "kfp": "KFP",
+    "api": "API",
+    "url": "URL",
+    "id": "ID",
+    "ui": "UI",
+    "ci": "CI",
+    "cd": "CD",
+    "automl": "AutoML",
+    "autorag": "AutoRAG",
+}

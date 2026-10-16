@@ -7,7 +7,7 @@ dependencies:
       version: '>=2.15.2'
   external_services:
     - name: ai4rag
-      version: "~=0.15.0"
+      version: "~=0.23.0"
     - name: MaaS
       version: ">=1.0.0"
     - name: pandas
@@ -17,4 +17,4 @@ tags:
   - autorag
   - model-selection
   - optimization
-lastVerified: 2026-09-08T00:00:00Z
+lastVerified: 2026-10-15T00:00:00Z

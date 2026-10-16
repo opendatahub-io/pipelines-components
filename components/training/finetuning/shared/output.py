@@ -43,6 +43,85 @@ def find_model_dir(root: str) -> Optional[str]:
     return cands[0][1]
 
 
+def preserve_tokenizer_files(tokenizer, destination: str, log: logging.Logger) -> None:
+    """Preserve tokenizer source files that fast-tokenizer serialization omits.
+
+    ``save_pretrained`` writes the portable tokenizer representation, but some
+    serving runtimes also need the source vocabulary files used by a slow
+    tokenizer (for example, ``vocab.json`` and ``merges.txt``).  Transformers
+    records the resolved source paths in ``init_kwargs``; copy every existing
+    tokenizer file referenced there so the model artifact supports both fast
+    and slow loading when the model provides both implementations.
+    """
+    copied = 0
+    for key, source in getattr(tokenizer, "init_kwargs", {}).items():
+        if not key.endswith("_file") or not isinstance(source, str):
+            continue
+        if not os.path.isfile(source):
+            continue
+
+        target = os.path.join(destination, os.path.basename(source))
+        if os.path.abspath(source) == os.path.abspath(target):
+            continue
+        shutil.copy2(source, target)
+        copied += 1
+
+    if copied:
+        log.info("Preserved %d tokenizer source file(s) in %s", copied, destination)
+
+
+def normalize_tokenizer_config(destination: str, log: logging.Logger) -> None:
+    """Normalize legacy additional special tokens for Transformers 5 loaders.
+
+    Some Transformers 5 versions expect named ``extra_special_tokens`` but
+    model repositories still serialize the same tokens as a list under the
+    deprecated ``additional_special_tokens`` key.  Store the tokens using the
+    current named representation so both fast and slow serving paths can load
+    the artifact consistently.
+    """
+    config_path = os.path.join(destination, "tokenizer_config.json")
+    if not os.path.isfile(config_path):
+        return
+
+    try:
+        with open(config_path, encoding="utf-8") as config_file:
+            config = json.load(config_file)
+    except (OSError, json.JSONDecodeError) as exc:
+        log.warning("Could not inspect tokenizer config %s: %s", config_path, exc)
+        return
+
+    additional = config.get("additional_special_tokens")
+    extra = config.get("extra_special_tokens")
+    if isinstance(extra, dict):
+        tokens = list(extra.values())
+        if isinstance(additional, list):
+            tokens.extend(token for token in additional if token not in tokens)
+    elif isinstance(extra, list):
+        tokens = list(extra)
+        if isinstance(additional, list):
+            tokens.extend(token for token in additional if token not in tokens)
+    elif isinstance(additional, list):
+        tokens = list(additional)
+    else:
+        return
+
+    if not all(isinstance(token, str) for token in tokens):
+        log.warning("Leaving unsupported non-string special tokens unchanged in %s", config_path)
+        return
+
+    config["extra_special_tokens"] = {f"extra_special_token_{index}": token for index, token in enumerate(tokens)}
+    config.pop("additional_special_tokens", None)
+    try:
+        with open(config_path, "w", encoding="utf-8") as config_file:
+            json.dump(config, config_file, indent=2, ensure_ascii=False)
+            config_file.write("\n")
+    except OSError as exc:
+        log.warning("Could not update tokenizer config %s: %s", config_path, exc)
+        return
+
+    log.info("Normalized legacy special-token metadata in %s", config_path)
+
+
 def persist_model(
     ckpt_dir: str,
     pvc_path: str,

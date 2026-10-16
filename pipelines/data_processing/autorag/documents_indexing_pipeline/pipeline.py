@@ -21,17 +21,21 @@ MAX_MEMORY = "64Gi"
 )
 def documents_indexing_pipeline(
     maas_secret_name: str,
-    vector_db_secret_name: str,
+    db_secret_name: str,
     embedding_model_id: str,
     input_data_secret_name: str,
     input_data_bucket_name: str,
-    input_data_key: Optional[str] = None,
+    input_data_keys: Optional[list[str]] = None,
     collection_name: Optional[str] = None,
     embedding_params: Optional[dict] = None,
+    foundation_model_id: Optional[str] = None,
+    foundation_model_params: Optional[dict] = None,
     chunking_method: str = "recursive",
     chunk_size: int = 1024,
     chunk_overlap: int = 0,
     batch_size: int = 20,
+    ocr_lang: Optional[str] = None,
+    graph_extraction_config: Optional[dict] = None,
 ):
     """Build a production vector index from documents for AutoRAG.
 
@@ -42,27 +46,45 @@ def documents_indexing_pipeline(
     Args:
         maas_secret_name: Name of the secret with MaaS inference credentials
             ("MAAS_BASE_URL", "MAAS_API_KEY").
-        vector_db_secret_name: Name of the secret carrying the vector database
+        db_secret_name: Name of the secret carrying the database
             configuration. The env-var prefix selects the backend: ``MILVUS_*`` keys
-            (at least ``MILVUS_URI``) select Milvus, ``PGVECTOR_*`` keys select PGVector.
+            (at least ``MILVUS_URI``) select Milvus, ``PGVECTOR_*`` keys select PGVector,
+            and ``NEO4J_*`` keys select Neo4j. ``NEO4J_CA_CERT`` optionally supplies a
+            private CA certificate for Neo4j TLS.
         embedding_model_id: Embedding model ID served by MaaS.
         input_data_secret_name: Name of the secret with S3 credentials for input data
             ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_S3_ENDPOINT", "AWS_DEFAULT_REGION").
         input_data_bucket_name: Name of the S3 bucket containing input data.
-        input_data_key: Path to folder with input documents within bucket.
+        input_data_keys: Paths to folders with input documents within bucket, 1-10 of them.
+            Every one is discovered and merged into a single corpus deduplicated by object key;
+            leave empty to use the whole bucket. More than 10 fails the run.
         collection_name: Vector store collection to reuse (aligned with
-            ``pattern.json`` ``settings.vector_store_binding.collection_name``).
+            ``pattern.json`` ``settings.store_binding.collection_name``).
             Omit to create a new collection.
         embedding_params: Dict passed to OpenAIEmbeddingParams (default: {}).
+        foundation_model_id: Generation model used to rebuild Neo4j graph entities.
+            It is supplied by an optimized graph-mode pattern; ignored by non-Neo4j stores.
+        foundation_model_params: Generation parameters (for example, ``temperature``
+            and ``max_completion_tokens``) for Neo4j graph extraction. Supplied by an
+            optimized graph-mode pattern; ignored by non-Neo4j stores.
         chunking_method: Chunking method (e.g. "recursive").
         chunk_size: Maximum chunk size in tokens (128--2048).
         chunk_overlap: Token overlap between consecutive chunks (recursive method only).
         batch_size: Number of documents per batch. Defaults to ``20``; ``0`` processes all
             documents in a single batch.
+        ocr_lang: Language used to pick the RapidOCR model bundle. Pass ``pattern.json``
+            ``settings.generation.language.code`` from the optimization run so indexing
+            OCRs the corpus the same way the experiment did. Note that AutoRAG derives
+            that code from the benchmark questions, not from the documents themselves,
+            so override it when the corpus is in a different language. Chinese selects
+            the Chinese bundle; omitting it selects the English bundle, which covers all
+            Latin-script languages.
+        graph_extraction_config: Neo4j graph-extraction settings from an optimized
+            pattern. Ignored by other vector stores.
     """
     documents_discovery_task = documents_discovery(
         input_data_bucket_name=input_data_bucket_name,
-        input_data_path=input_data_key,
+        input_data_keys=input_data_keys,
     )
     documents_discovery_task.set_caching_options(False)
     documents_discovery_task.set_cpu_request("2").set_memory_request("8Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(
@@ -71,6 +93,7 @@ def documents_indexing_pipeline(
 
     text_extraction_task = text_extraction(
         documents_descriptor=documents_discovery_task.outputs["discovered_documents"],
+        ocr_lang=ocr_lang,
     )
     text_extraction_task.set_caching_options(False)
     text_extraction_task.set_cpu_request("2").set_memory_request("8Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(
@@ -80,12 +103,15 @@ def documents_indexing_pipeline(
     documents_indexing_task = documents_indexing(
         embedding_params=embedding_params,
         embedding_model_id=embedding_model_id,
+        foundation_model_id=foundation_model_id,
+        foundation_model_params=foundation_model_params,
         extracted_text=text_extraction_task.outputs["extracted_text"],
         chunking_method=chunking_method,
         chunk_size=chunk_size,
         chunk_overlap=chunk_overlap,
         batch_size=batch_size,
         collection_name=collection_name,
+        graph_extraction_config=graph_extraction_config,
     )
     documents_indexing_task.set_caching_options(False)
     documents_indexing_task.set_cpu_request("2").set_memory_request("8Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(
@@ -119,16 +145,22 @@ def documents_indexing_pipeline(
     # Vector database configuration: one secret, backend chosen from the key prefix.
     use_secret_as_env(
         documents_indexing_task,
-        secret_name=vector_db_secret_name,
+        secret_name=db_secret_name,
         secret_key_to_env={
             "MILVUS_URI": "MILVUS_URI",
             "MILVUS_TOKEN": "MILVUS_TOKEN",
-            "MILVUS_SERVER_CERT": "MILVUS_SERVER_CERT",
+            "MILVUS_CA_CERT": "MILVUS_CA_CERT",
             "PGVECTOR_HOST": "PGVECTOR_HOST",
             "PGVECTOR_PORT": "PGVECTOR_PORT",
             "PGVECTOR_DB": "PGVECTOR_DB",
             "PGVECTOR_USER": "PGVECTOR_USER",
             "PGVECTOR_PASSWORD": "PGVECTOR_PASSWORD",
+            "PGVECTOR_CA_CERT": "PGVECTOR_CA_CERT",
+            "NEO4J_URI": "NEO4J_URI",
+            "NEO4J_USERNAME": "NEO4J_USERNAME",
+            "NEO4J_PASSWORD": "NEO4J_PASSWORD",
+            "NEO4J_DATABASE": "NEO4J_DATABASE",
+            "NEO4J_CA_CERT": "NEO4J_CA_CERT",
         },
         optional=True,
     )

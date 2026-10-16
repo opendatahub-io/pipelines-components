@@ -27,8 +27,6 @@ def _make_ai4rag_mocks() -> SimpleNamespace:
     create_maas_client = mock.MagicMock(name="create_maas_client")
     prepare_search_space_with_maas = mock.MagicMock(name="prepare_search_space_with_maas")
     build_search_space_report = mock.MagicMock(name="build_search_space_report")
-    ensure_sqlite3 = mock.MagicMock(name="ensure_sqlite3")
-
     utils = mock.MagicMock()
     utils.create_maas_client = create_maas_client
 
@@ -36,16 +34,12 @@ def _make_ai4rag_mocks() -> SimpleNamespace:
     prepare_module.prepare_search_space_with_maas = prepare_search_space_with_maas
     prepare_module.build_search_space_report = build_search_space_report
 
-    compat = mock.MagicMock()
-    compat.ensure_sqlite3 = ensure_sqlite3
-
     modules = {
         "ai4rag": mock.MagicMock(),
         "ai4rag.utils.clients": utils,
         "ai4rag.search_space": mock.MagicMock(),
         "ai4rag.search_space.prepare": prepare_module,
         "ai4rag.utils": mock.MagicMock(),
-        "ai4rag.utils.compat": compat,
         "pandas": mock.MagicMock(name="pandas"),
     }
     return SimpleNamespace(
@@ -53,8 +47,16 @@ def _make_ai4rag_mocks() -> SimpleNamespace:
         create_maas_client=create_maas_client,
         prepare=prepare_search_space_with_maas,
         build=build_search_space_report,
-        ensure_sqlite3=ensure_sqlite3,
     )
+
+
+def _make_search_space(*language_codes) -> dict:
+    """Build a stand-in search space whose foundation models carry detected languages.
+
+    A code of ``None`` models a foundation model for which ai4rag ran no detection.
+    """
+    models = [SimpleNamespace(language=None if code is None else SimpleNamespace(code=code)) for code in language_codes]
+    return {"foundation_model": SimpleNamespace(values=models)}
 
 
 class TestSearchSpacePreparationUnitTests:
@@ -101,7 +103,6 @@ class TestSearchSpacePreparationUnitTests:
                 generation_models=["gen-1"],
             )
 
-        m.ensure_sqlite3.assert_called_once()
         m.create_maas_client.assert_called_once_with(
             base_url="https://maas.example.com/v1",
             api_key="test-api-key",
@@ -114,6 +115,7 @@ class TestSearchSpacePreparationUnitTests:
         assert payload["chunking_methods"] == ["recursive"]
         assert m.prepare.call_args.kwargs["client"] is client
         assert "benchmark_data" in m.prepare.call_args.kwargs
+        assert m.prepare.call_args.kwargs["vector_store_type"] == "milvus"
 
         m.build.assert_called_once_with(search_space)
         report.save_json.assert_called_once_with(str(tmp_path / "report.json"))
@@ -210,6 +212,46 @@ class TestSearchSpacePreparationUnitTests:
                 )
 
     @pytest.mark.parametrize(
+        ("env_vars", "expected_vector_store_type", "expects_fallback_warning"),
+        [
+            ({"MILVUS_URI": "http://milvus:19530"}, "milvus", False),
+            ({"PGVECTOR_HOST": "pg-host"}, "pgvector", False),
+            ({"NEO4J_URI": "neo4j://neo4j:7687", "NEO4J_PASSWORD": "s3cr3t"}, "neo4j", False),
+            ({}, "milvus", True),
+            ({"NEO4J_HOME": "/opt/neo4j"}, "milvus", True),
+        ],
+    )
+    def test_vector_db_env_selects_ai4rag_backend(
+        self, tmp_path, caplog, env_vars, expected_vector_store_type, expects_fallback_warning
+    ):
+        """Only underscore-qualified database-secret keys select an ai4rag backend."""
+        m = _make_ai4rag_mocks()
+        m.create_maas_client.return_value = mock.MagicMock()
+        m.prepare.return_value = mock.MagicMock()
+        m.build.return_value = mock.MagicMock()
+
+        test_data = mock.MagicMock()
+        test_data.path = str(tmp_path / "test.json")
+        report = mock.MagicMock()
+        report.path = str(tmp_path / "report.json")
+
+        full_env = {**MOCKED_ENV_VARIABLES, **env_vars}
+        with mock.patch.dict("os.environ", full_env, clear=True):
+            with mock.patch.dict("sys.modules", m.modules):
+                search_space_preparation.python_func(
+                    test_data=test_data,
+                    search_space_report=report,
+                    embedding_models=["embed-1"],
+                    generation_models=["gen-1"],
+                )
+
+        assert m.prepare.call_args.kwargs["vector_store_type"] == expected_vector_store_type
+        if expects_fallback_warning:
+            assert "defaulting to milvus" in caplog.text
+        else:
+            assert "defaulting to milvus" not in caplog.text
+
+    @pytest.mark.parametrize(
         ("preset_value", "expected_chunking", "expected_chunk_sizes", "expected_chunk_overlaps"),
         [
             ("speed", ["recursive"], [128, 256, 512], [32, 64]),
@@ -244,3 +286,86 @@ class TestSearchSpacePreparationUnitTests:
         assert payload["chunking_methods"] == expected_chunking
         assert payload["chunk_sizes"] == expected_chunk_sizes
         assert payload["chunk_overlaps"] == expected_chunk_overlaps
+
+    def _run_and_get_detected_lang(self, tmp_path, search_space):
+        """Run the component over a stand-in search space and return detected_ocr_lang."""
+        m = _make_ai4rag_mocks()
+        m.create_maas_client.return_value = mock.MagicMock()
+        m.prepare.return_value = search_space
+        m.build.return_value = mock.MagicMock()
+
+        test_data = mock.MagicMock()
+        test_data.path = str(tmp_path / "test.json")
+        report = mock.MagicMock()
+        report.path = str(tmp_path / "report.json")
+
+        with mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True):
+            with mock.patch.dict("sys.modules", m.modules):
+                result = search_space_preparation.python_func(
+                    test_data=test_data,
+                    search_space_report=report,
+                    embedding_models=["embed-1"],
+                    generation_models=["gen-1"],
+                )
+        return result.detected_ocr_lang
+
+    @pytest.mark.parametrize("preset_value", ["speed", "balanced"])
+    def test_neo4j_delegates_backend_defaults_to_ai4rag(self, tmp_path, preset_value):
+        """Neo4j preserves ai4rag chunk defaults regardless of preset."""
+        m = _make_ai4rag_mocks()
+        m.create_maas_client.return_value = mock.MagicMock()
+        m.prepare.return_value = mock.MagicMock()
+        m.build.return_value = mock.MagicMock()
+
+        test_data = mock.MagicMock()
+        test_data.path = str(tmp_path / "test.json")
+        report = mock.MagicMock()
+        report.path = str(tmp_path / "report.json")
+
+        neo4j_env = {
+            **MOCKED_ENV_VARIABLES,
+            "NEO4J_URI": "neo4j://neo4j:7687",
+            "NEO4J_PASSWORD": "s3cr3t",
+        }
+        with mock.patch.dict("os.environ", neo4j_env, clear=True):
+            with mock.patch.dict("sys.modules", m.modules):
+                search_space_preparation.python_func(
+                    test_data=test_data,
+                    search_space_report=report,
+                    embedding_models=["embed-1"],
+                    generation_models=["gen-1"],
+                    preset=preset_value,
+                )
+
+        payload = m.prepare.call_args.args[0]
+        assert m.prepare.call_args.kwargs["vector_store_type"] == "neo4j"
+        expected_methods = ["recursive"] if preset_value == "speed" else ["recursive", "hybrid"]
+        assert payload["chunking_methods"] == expected_methods
+        assert "chunk_sizes" not in payload
+        assert "chunk_overlaps" not in payload
+
+    @pytest.mark.parametrize(("code", "expected"), [("en", "en"), ("ZH", "zh"), (" pl ", "pl")])
+    def test_detected_language_is_returned_normalized(self, tmp_path, code, expected):
+        """The detected language is surfaced lowercased and stripped for text extraction."""
+        assert self._run_and_get_detected_lang(tmp_path, _make_search_space(code)) == expected
+
+    @pytest.mark.parametrize("codes", [(), (None,), ("",), ("   ",)])
+    def test_missing_detection_returns_empty_string(self, tmp_path, codes):
+        """No detected language yields an empty string, which text extraction reads as English."""
+        assert self._run_and_get_detected_lang(tmp_path, _make_search_space(*codes)) == ""
+
+    def test_blank_code_does_not_override_a_real_detection(self, tmp_path, caplog):
+        """A whitespace-only code is discarded, not normalized into a winning empty string."""
+        with caplog.at_level("WARNING"):
+            detected = self._run_and_get_detected_lang(tmp_path, _make_search_space(" ", "zh"))
+
+        assert detected == "zh"
+        assert "disagree on the detected language" not in caplog.text
+
+    def test_disagreeing_models_pick_one_and_warn(self, tmp_path, caplog):
+        """Foundation models should agree; if they don't, pick deterministically and say so."""
+        with caplog.at_level("WARNING"):
+            detected = self._run_and_get_detected_lang(tmp_path, _make_search_space("zh", "en"))
+
+        assert detected == "en"
+        assert "disagree on the detected language" in caplog.text

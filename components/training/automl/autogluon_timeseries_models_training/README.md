@@ -18,7 +18,7 @@ Refit outputs for all selected models are written under one ``models_artifact``,
 | `target` | `str` | `None` | Name of the target column to forecast. |
 | `id_column` | `str` | `None` | Name of the column identifying each time series (item_id). |
 | `timestamp_column` | `str` | `None` | Name of the timestamp/datetime column. |
-| `train_data_path` | `str` | `None` | Path to the selection training CSV file. |
+| `train_data_path` | `str` | `None` | Path to the selection training Parquet file. |
 | `test_data` | `dsl.Input[dsl.Dataset]` | `None` | Test dataset artifact for evaluation. |
 | `top_n` | `int` | `None` | Number of top models to select for full refit. |
 | `workspace_path` | `str` | `None` | Workspace directory where predictor will be saved. |
@@ -27,6 +27,7 @@ Refit outputs for all selected models are written under one ``models_artifact``,
 | `models_artifact` | `dsl.Output[dsl.Model]` | `None` | Combined output artifact containing all refitted models. |
 | `extra_train_data_path` | `str` | `None` | Path to extra train split for full refit. |
 | `html_artifact` | `dsl.Output[dsl.HTML]` | `None` | Output HTML artifact containing the ranked leaderboard page. |
+| `experiment_notebook` | `dsl.Output[dsl.Artifact]` | `None` | Output artifact containing the run-level experiment launcher notebook. |
 | `component_status` | `dsl.Output[dsl.Artifact]` | `None` | Output artifact containing stage-level progress tracking for this component. |
 | `uses_synthetic_id` | `bool` | `False` | True if the loader injected a synthetic ID column for two-column datasets. |
 | `sample_rows` | `str` | `[]` | Sample rows JSON string used in generated notebook placeholders. |
@@ -34,8 +35,14 @@ Refit outputs for all selected models are written under one ``models_artifact``,
 | `split_config` | `Optional[dict]` | `None` | Optional split config stored in artifact metadata. |
 | `prediction_length` | `int` | `1` | Forecast horizon (number of timesteps). |
 | `known_covariates_names` | `Optional[List[str]]` | `None` | Optional list of known covariate column names. |
-| `preset` | `str` | `speed` | Training quality tier. ``"speed"`` (default) or ``"balanced"`` (may run more than 2x longer). |
+| `preset` | `str` | `speed` | Training quality tier. ``"speed"`` (default, AutoGluon ``medium_quality``), ``"balanced"`` (AutoGluon ``high_quality``), or ``"quality"`` (two-hour selection budget with AutoGluon ``best_quality``). |
 | `eval_metric` | `str` | `mean_absolute_scaled_error` | Metric for model ranking (e.g. ``"mean_absolute_scaled_error"``, ``"weighted_quantile_loss"``). Defaults to ``"mean_absolute_scaled_error"``. Legacy uppercase acronyms (e.g. ``"MASE"``) are accepted and normalized to snake_case. |
+| `run_name` | `str` | `""` | Per-execution MLflow run name recorded as a tag on child runs. Falls back to ``pipeline_name`` when empty. |
+| `test_data_bucket_name` | `str` | `""` | Optional S3 bucket for user-provided external test data. |
+| `test_data_file_key` | `str` | `""` | Optional S3 object key for user-provided external test data. |
+| `train_data_secret_name` | `str` | `""` | Kubernetes secret name for S3 credentials used by the pipeline. |
+| `train_data_bucket_name` | `str` | `""` | S3 bucket containing the training dataset. |
+| `train_data_file_key` | `str` | `""` | S3 object key for the training dataset. |
 
 ## Outputs 📤
 
