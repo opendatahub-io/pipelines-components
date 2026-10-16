@@ -4,6 +4,8 @@ import io
 import json
 from unittest import mock
 
+import pytest
+
 from ..component import prepare_grpo_dataset
 
 
@@ -67,7 +69,7 @@ def test_component_has_expected_interface():
     assert "use_hf_direct" in prepare_grpo_dataset.component_spec.outputs
 
 
-def test_huggingface_reference_is_not_materialized(tmp_path):
+def test_huggingface_reference_is_not_materialized(tmp_path, capsys):
     """Keep HF references direct and avoid creating a PVC cache."""
     result = prepare_grpo_dataset.python_func(
         dataset_uri="hf://Agent-Ark/Toucan-1.5M:Qwen3",
@@ -77,6 +79,7 @@ def test_huggingface_reference_is_not_materialized(tmp_path):
 
     assert result == ("Agent-Ark/Toucan-1.5M", "Qwen3", True)
     assert not (tmp_path / "pvc").exists()
+    assert "Agent-Ark/Toucan-1.5M" not in capsys.readouterr().out
 
 
 def test_local_rows_are_normalized_without_sampling_or_splitting(tmp_path):
@@ -157,4 +160,28 @@ def test_http_source_is_downloaded_to_pvc(tmp_path):
             )
 
     assert result[2] is False
-    assert urlopen.called
+    urlopen.assert_called_once_with("https://example.test/data.jsonl", timeout=300)
+
+
+def test_failed_http_download_does_not_leave_a_cache_file(tmp_path):
+    """Do not publish or retain partial HTTP downloads."""
+    with mock.patch("urllib.request.urlopen", return_value=io.BytesIO(b"partial")):
+        with mock.patch("shutil.copyfileobj", side_effect=RuntimeError("download failed")):
+            with pytest.raises(RuntimeError, match="download failed"):
+                prepare_grpo_dataset.python_func(
+                    dataset_uri="https://example.test/data.jsonl",
+                    pvc_mount_path=str(tmp_path / "pvc"),
+                )
+
+    download_dir = tmp_path / "pvc" / ".cache" / "prepare_grpo_dataset" / "downloads"
+    assert not list(download_dir.iterdir())
+
+
+@pytest.mark.parametrize("dataset_uri", ["pvc://../outside.jsonl", "../outside.jsonl"])
+def test_pvc_relative_paths_cannot_escape_mount(tmp_path, dataset_uri):
+    """Keep PVC-relative paths inside the configured mount."""
+    with pytest.raises(ValueError, match="within pvc_mount_path"):
+        prepare_grpo_dataset.python_func(
+            dataset_uri=dataset_uri,
+            pvc_mount_path=str(tmp_path / "pvc"),
+        )

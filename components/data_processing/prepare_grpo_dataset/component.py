@@ -61,6 +61,7 @@ def prepare_grpo_dataset(
     import shutil
     import urllib.parse
     import urllib.request
+    import uuid
     from pathlib import Path
 
     from datasets import load_dataset
@@ -273,7 +274,7 @@ def prepare_grpo_dataset(
     dataset_uri = dataset_uri.strip()
     if _is_huggingface_reference(dataset_uri):
         reference, resolved_config = _normalise_huggingface_reference(dataset_uri, dataset_config.strip())
-        print(f"Using Training Hub Hugging Face loader for dataset reference '{reference}'")
+        print("Using Training Hub Hugging Face loader for the supplied dataset reference")
         return reference, resolved_config, True
 
     pvc_root = Path(pvc_mount_path).resolve()
@@ -293,12 +294,24 @@ def prepare_grpo_dataset(
     Path(os.environ["HOME"]).mkdir(parents=True, exist_ok=True)
 
     parsed = urllib.parse.urlparse(dataset_uri)
+    supported_schemes = {"", "pvc", "http", "https", "s3"}
+    if parsed.scheme not in supported_schemes:
+        raise ValueError(f"unsupported dataset URI scheme: {parsed.scheme}")
+
+    def _resolve_pvc_path(relative_path):
+        candidate = (pvc_root / relative_path).resolve()
+        try:
+            candidate.relative_to(pvc_root)
+        except ValueError as exc:
+            raise ValueError("dataset path must remain within pvc_mount_path") from exc
+        return candidate
+
     source_uri = dataset_uri
     if dataset_uri.startswith("pvc://"):
         relative_path = dataset_uri.removeprefix("pvc://").lstrip("/")
-        source_uri = str(pvc_root / relative_path)
+        source_uri = str(_resolve_pvc_path(relative_path))
     elif not parsed.scheme and not os.path.isabs(dataset_uri):
-        source_uri = str(pvc_root / dataset_uri)
+        source_uri = str(_resolve_pvc_path(dataset_uri))
 
     if parsed.scheme in {"http", "https"}:
         suffix = Path(urllib.parse.urlparse(dataset_uri).path).suffix.lower()
@@ -309,11 +322,19 @@ def prepare_grpo_dataset(
         downloaded_path.parent.mkdir(parents=True, exist_ok=True)
         if not downloaded_path.exists():
             print("Downloading HTTP(S) dataset to the shared PVC")
-            with urllib.request.urlopen(dataset_uri) as response, downloaded_path.open("wb") as output:
-                shutil.copyfileobj(response, output)
+            temporary_download_path = downloaded_path.with_name(f"{downloaded_path.name}.{uuid.uuid4().hex}.tmp")
+            try:
+                with (
+                    urllib.request.urlopen(dataset_uri, timeout=300) as response,
+                    temporary_download_path.open("wb") as output,
+                ):
+                    shutil.copyfileobj(response, output)
+                os.replace(temporary_download_path, downloaded_path)
+            finally:
+                temporary_download_path.unlink(missing_ok=True)
         source_uri = str(downloaded_path)
 
-    if not parsed.scheme and not str(source_uri).lower().endswith((".json", ".jsonl")):
+    if parsed.scheme in {"", "pvc"} and not str(source_uri).lower().endswith((".json", ".jsonl")):
         raise ValueError("local/PVC dataset paths must end in .json or .jsonl")
     if parsed.scheme == "pvc" and not Path(source_uri).is_file():
         raise FileNotFoundError(f"dataset file not found on PVC: {source_uri}")
@@ -321,7 +342,7 @@ def prepare_grpo_dataset(
     normalized_name = hashlib.sha256(f"{dataset_uri}\n{dataset_config}".encode()).hexdigest() + ".jsonl"
     normalized_path = cache_root / "normalized" / normalized_name
     normalized_path.parent.mkdir(parents=True, exist_ok=True)
-    temporary_path = normalized_path.with_suffix(".tmp")
+    temporary_path = normalized_path.with_name(f"{normalized_path.name}.{uuid.uuid4().hex}.tmp")
 
     data_files = source_uri if parsed.scheme == "s3" else str(source_uri)
     storage_options = {}
