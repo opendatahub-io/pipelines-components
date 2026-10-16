@@ -106,26 +106,36 @@ def prepare_grpo_dataset(
             normalized.append(normalized_tool)
         return normalized
 
-    def _message_tool_call(message):
+    def _message_tool_calls(message):
         if not isinstance(message, dict) or message.get("role") != "assistant":
-            return None
+            return []
         if isinstance(message.get("function_call"), dict):
             function_call = message["function_call"]
-            return {
-                "name": function_call.get("name", ""),
-                "arguments": function_call.get("arguments", "{}"),
-            }
+            return [
+                {
+                    "name": function_call.get("name", ""),
+                    "arguments": function_call.get("arguments", "{}"),
+                }
+            ]
         tool_calls = message.get("tool_calls") or []
         if not isinstance(tool_calls, list) or not tool_calls:
-            return None
-        call = tool_calls[0]
-        if not isinstance(call, dict):
-            return None
-        function = call.get("function") or {}
-        return {
-            "name": function.get("name", ""),
-            "arguments": function.get("arguments", "{}"),
-        }
+            return []
+        calls = []
+        for call in tool_calls:
+            if not isinstance(call, dict):
+                continue
+            function = call.get("function") or {}
+            calls.append(
+                {
+                    "name": function.get("name", ""),
+                    "arguments": function.get("arguments", "{}"),
+                }
+            )
+        return calls
+
+    def _message_tool_call(message):
+        calls = _message_tool_calls(message)
+        return calls[0] if calls else None
 
     def _normalise_messages(messages, row_index):
         messages = _parse_json_value(messages, "messages")
@@ -133,7 +143,16 @@ def prepare_grpo_dataset(
             raise ValueError("messages must be a list")
 
         normalized = []
-        last_tool_call_id = None
+        pending_tool_call_ids = []
+
+        def _set_tool_response_id(message, fallback_id):
+            explicit_id = message.get("tool_call_id")
+            if explicit_id:
+                if explicit_id in pending_tool_call_ids:
+                    pending_tool_call_ids.remove(explicit_id)
+                return
+            message["tool_call_id"] = pending_tool_call_ids.pop(0) if pending_tool_call_ids else fallback_id
+
         for message_index, original in enumerate(messages):
             if not isinstance(original, dict):
                 raise ValueError(f"messages[{message_index}] must be an object")
@@ -155,13 +174,17 @@ def prepare_grpo_dataset(
                         },
                     }
                 ]
-                last_tool_call_id = tool_call_id
+                pending_tool_call_ids.append(tool_call_id)
             elif role == "assistant" and message.get("tool_calls"):
+                if not isinstance(message["tool_calls"], list):
+                    raise ValueError("assistant tool_calls must be a list")
                 tool_calls = []
                 for call_index, original_call in enumerate(message["tool_calls"]):
+                    if not isinstance(original_call, dict):
+                        raise ValueError("assistant tool calls must be objects")
                     call = dict(original_call)
                     function = dict(call.get("function") or {})
-                    call.setdefault("id", f"call_{row_index}_{message_index}_{call_index}")
+                    call["id"] = call.get("id") or f"call_{row_index}_{message_index}_{call_index}"
                     call.setdefault("type", "function")
                     arguments = function.get("arguments", "{}")
                     if not isinstance(arguments, str):
@@ -169,19 +192,19 @@ def prepare_grpo_dataset(
                     function["arguments"] = arguments
                     call["function"] = function
                     tool_calls.append(call)
-                    last_tool_call_id = call["id"]
+                    pending_tool_call_ids.append(call["id"])
                 message["tool_calls"] = tool_calls
             elif role == "function":
                 message["role"] = "tool"
-                message.setdefault("tool_call_id", last_tool_call_id or f"call_{row_index}")
+                _set_tool_response_id(message, f"call_{row_index}")
                 message.setdefault("content", "")
                 message.pop("name", None)
             elif role == "tool":
-                message.setdefault("tool_call_id", last_tool_call_id or f"call_{row_index}")
+                _set_tool_response_id(message, f"call_{row_index}")
 
-            call = _message_tool_call(message)
-            if call is not None and not str(call.get("name", "")).strip():
-                raise ValueError("assistant tool-call function name must be non-empty")
+            for call in _message_tool_calls(message):
+                if not str(call.get("name", "")).strip():
+                    raise ValueError("assistant tool-call function name must be non-empty")
             normalized.append(message)
         return normalized
 
@@ -201,7 +224,7 @@ def prepare_grpo_dataset(
         return ""
 
     def _tool_call_count(messages):
-        return sum(1 for message in messages if _message_tool_call(message) is not None)
+        return sum(len(_message_tool_calls(message)) for message in messages)
 
     def _canonicalize_row(row, row_index):
         if not isinstance(row, dict):
@@ -340,8 +363,8 @@ def prepare_grpo_dataset(
 
     if parsed.scheme in {"", "pvc"} and not str(source_uri).lower().endswith((".json", ".jsonl")):
         raise ValueError("local/PVC dataset paths must end in .json or .jsonl")
-    if parsed.scheme == "pvc" and not Path(source_uri).is_file():
-        raise FileNotFoundError(f"dataset file not found on PVC: {source_uri}")
+    if parsed.scheme in {"", "pvc"} and not Path(source_uri).is_file():
+        raise FileNotFoundError(f"dataset file not found: {source_uri}")
 
     normalized_name = hashlib.sha256(f"{dataset_uri}\n{dataset_config}".encode()).hexdigest() + ".jsonl"
     normalized_path = cache_root / "normalized" / normalized_name

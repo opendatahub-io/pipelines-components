@@ -138,6 +138,41 @@ def test_existing_canonical_rows_are_preserved(tmp_path):
     assert normalized[0]["tools"][0]["function"]["name"] == "get_weather"
 
 
+def test_multiple_tool_calls_use_fifo_response_ids(tmp_path):
+    """Assign missing tool-response IDs to the matching calls in order."""
+    row = _raw_tool_call_row()
+    row["available_tools"].append(
+        {
+            "type": "function",
+            "function": {
+                "name": "get_time",
+                "description": "Get the time.",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        }
+    )
+    row["messages"][2]["tool_calls"].append(
+        {
+            "id": "call_2",
+            "type": "function",
+            "function": {"name": "get_time", "arguments": "{}"},
+        }
+    )
+    row["messages"].extend(
+        [
+            {"role": "tool", "content": "Boston", "name": "get_weather"},
+            {"role": "tool", "content": "12:00", "name": "get_time"},
+        ]
+    )
+
+    result, _ = _run_component(tmp_path, [row])
+    with open(result[0], encoding="utf-8") as normalized_file:
+        normalized = [json.loads(line) for line in normalized_file]
+
+    tool_messages = [message for message in normalized[0]["messages"] if message["role"] == "tool"]
+    assert [message["tool_call_id"] for message in tool_messages] == ["call_1", "call_2"]
+
+
 def test_invalid_rows_are_skipped_and_reported(tmp_path):
     """Skip malformed rows while retaining valid tool-call examples."""
     bad_row = {"question": "missing tool target"}
@@ -202,3 +237,16 @@ def test_pvc_relative_paths_cannot_escape_mount(tmp_path, dataset_uri):
             dataset_uri=dataset_uri,
             pvc_mount_path=str(tmp_path / "pvc"),
         )
+
+
+def test_missing_bare_local_path_fails_before_dataset_load(tmp_path):
+    """Report missing local files before invoking the dataset reader."""
+    missing_path = tmp_path / "missing.jsonl"
+    with mock.patch("datasets.load_dataset") as load_dataset:
+        with pytest.raises(FileNotFoundError, match="dataset file not found"):
+            prepare_grpo_dataset.python_func(
+                dataset_uri=str(missing_path),
+                pvc_mount_path=str(tmp_path / "pvc"),
+            )
+
+    load_dataset.assert_not_called()
