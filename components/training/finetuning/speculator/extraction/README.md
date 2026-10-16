@@ -74,6 +74,11 @@ hidden-state paths.
     - ChughShilpa
     - efazal
     - hrathina
+    - JaZeeGH
+    - Sridhar1030
+  - Reviewers:
+    - ChughShilpa
+    - hrathina
 
 ## Additional Resources 📚
 

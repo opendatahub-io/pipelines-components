@@ -82,6 +82,11 @@ Train a draft model from hidden states already stored on the PVC.
     - ChughShilpa
     - efazal
     - hrathina
+    - JaZeeGH
+    - Sridhar1030
+  - Reviewers:
+    - ChughShilpa
+    - hrathina
 
 ## Additional Resources 📚
 

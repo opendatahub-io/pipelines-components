@@ -87,6 +87,11 @@ Extract and train a draft model with a managed vLLM sidecar.
     - ChughShilpa
     - efazal
     - hrathina
+    - JaZeeGH
+    - Sridhar1030
+  - Reviewers:
+    - ChughShilpa
+    - hrathina
 
 ## Additional Resources 📚
 
