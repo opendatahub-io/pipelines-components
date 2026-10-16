@@ -582,6 +582,7 @@ class TestRagTemplatesOptimizationRun:
             "max_completion_tokens": 2048,
         }
         assert pattern_json["template_id"] == "agentic_rag"
+        assert pattern_json["settings"]["agentic"] == {"enable_context_compression": True}
         assert "graph_extraction_config" not in pattern_json["indexing"]["pipeline_spec"]["parameters"]
         indexing_notebook_call = next(
             call for call in mocks.generate_notebook_from_template.call_args_list if call.args[0] == "maas_indexing"
