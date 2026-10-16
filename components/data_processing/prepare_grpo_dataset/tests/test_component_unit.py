@@ -47,13 +47,15 @@ def _raw_tool_call_row():
     }
 
 
-def _run_component(tmp_path, dataset_rows):
+def _run_component(tmp_path, dataset_rows, **component_kwargs):
+    tmp_path.mkdir(parents=True, exist_ok=True)
     input_path = tmp_path / "input.jsonl"
     input_path.write_text("\n".join(json.dumps(row) for row in dataset_rows) + "\n")
     with mock.patch("datasets.load_dataset", return_value=iter(dataset_rows)) as load_dataset:
         result = prepare_grpo_dataset.python_func(
             dataset_uri=str(input_path),
             pvc_mount_path=str(tmp_path / "pvc"),
+            **component_kwargs,
         )
     return result, load_dataset
 
@@ -65,6 +67,7 @@ def test_component_has_expected_interface():
     assert "dataset_uri" in prepare_grpo_dataset.component_spec.inputs
     assert "pvc_mount_path" in prepare_grpo_dataset.component_spec.inputs
     assert "max_http_download_bytes" in prepare_grpo_dataset.component_spec.inputs
+    assert "max_invalid_row_ratio" in prepare_grpo_dataset.component_spec.inputs
     assert "resolved_data_path" in prepare_grpo_dataset.component_spec.outputs
     assert "resolved_data_config" in prepare_grpo_dataset.component_spec.outputs
     assert "use_hf_direct" in prepare_grpo_dataset.component_spec.outputs
@@ -117,6 +120,41 @@ def test_local_jsonl_uses_the_datasets_reader(tmp_path):
     assert normalized[0]["target_tool_name"] == "get_weather"
 
 
+def test_real_jsonl_reader_null_fields_use_legacy_fallbacks(tmp_path):
+    """Handle null fields produced when JSONL rows have different schemas."""
+    tool_definitions = _raw_tool_call_row()["available_tools"]
+    rows = [
+        {
+            "question": "first",
+            "tools": tool_definitions,
+            "target_tool_name": "get_weather",
+            "target_arguments": {"city": "Boston"},
+        },
+        {
+            "question": None,
+            "available_tools": tool_definitions,
+            "target_tool_name": None,
+            "tool_name": "get_weather",
+            "target_arguments": None,
+            "arguments": {"city": "Boston"},
+        },
+    ]
+    input_path = tmp_path / "input.jsonl"
+    input_path.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+
+    result = prepare_grpo_dataset.python_func(
+        dataset_uri=str(input_path),
+        pvc_mount_path=str(tmp_path / "pvc"),
+    )
+
+    with open(result[0], encoding="utf-8") as normalized_file:
+        normalized = [json.loads(line) for line in normalized_file]
+    assert len(normalized) == 2
+    assert normalized[1]["question"] == ""
+    assert normalized[1]["target_tool_name"] == "get_weather"
+    assert normalized[1]["target_arguments"] == {"city": "Boston"}
+
+
 def test_existing_canonical_rows_are_preserved(tmp_path):
     """Keep already-canonical rows usable by the Training Hub loader."""
     row = {
@@ -136,6 +174,28 @@ def test_existing_canonical_rows_are_preserved(tmp_path):
         normalized = [json.loads(line) for line in normalized_file]
 
     assert normalized[0]["target_tool_name"] == "get_weather"
+    assert normalized[0]["tools"][0]["function"]["name"] == "get_weather"
+
+
+def test_none_fields_fall_back_to_legacy_names(tmp_path):
+    """Handle null fields emitted by the datasets/PyArrow reader."""
+    row = {
+        "question": None,
+        "tools": None,
+        "available_tools": _raw_tool_call_row()["available_tools"],
+        "target_tool_name": None,
+        "tool_name": "get_weather",
+        "target_arguments": None,
+        "arguments": {"city": "Boston"},
+    }
+
+    result, _ = _run_component(tmp_path, [row])
+    with open(result[0], encoding="utf-8") as normalized_file:
+        normalized = [json.loads(line) for line in normalized_file]
+
+    assert normalized[0]["question"] == ""
+    assert normalized[0]["target_tool_name"] == "get_weather"
+    assert normalized[0]["target_arguments"] == {"city": "Boston"}
     assert normalized[0]["tools"][0]["function"]["name"] == "get_weather"
 
 
@@ -189,6 +249,27 @@ def test_too_many_invalid_rows_fail(tmp_path):
     """Fail instead of silently training on a mostly invalid dataset."""
     with pytest.raises(ValueError, match="too many invalid GRPO rows"):
         _run_component(tmp_path, [{"question": "missing tool target"}, _raw_tool_call_row()])
+
+
+def test_invalid_row_ratio_can_be_configured(tmp_path):
+    """Allow callers to choose a stricter or more permissive invalid-row limit."""
+    rows = [{"question": "missing tool target"}, *([_raw_tool_call_row()] * 9)]
+
+    result, _ = _run_component(tmp_path, rows)
+    assert result[2] is False
+
+    with pytest.raises(ValueError, match="too many invalid GRPO rows"):
+        _run_component(tmp_path / "strict", rows, max_invalid_row_ratio=0.09)
+
+
+def test_invalid_row_ratio_must_be_between_zero_and_one(tmp_path):
+    """Reject invalid threshold values before processing the dataset."""
+    with pytest.raises(ValueError, match="max_invalid_row_ratio"):
+        prepare_grpo_dataset.python_func(
+            dataset_uri="hf://example/dataset",
+            pvc_mount_path=str(tmp_path / "pvc"),
+            max_invalid_row_ratio=1.1,
+        )
 
 
 def test_unexpected_normalization_errors_propagate(tmp_path):

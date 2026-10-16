@@ -15,7 +15,7 @@ secret name is a pipeline-task setting, not a component runtime input.
 See the Training Hub GRPO loader contract: https://github.com/Red-Hat-AI-Innovation-Team/training_hub/blob/main/src/training_hub/algorithms/lora_grpo.py
 
 The local canonical single-turn format is ``question``, ``tools``, ``target_tool_name``, ``target_arguments``, and an optional ``system_prompt``. Multi-turn rows retain ``messages`` and are normalized to modern OpenAI ``tool_calls``/``tool`` messages so Training Hub can decompose them. Malformed
-rows are skipped only when they raise an expected ``ValueError``; the component fails if more than 10% of rows are invalid.
+rows are skipped only when they raise an expected ``ValueError``; the component fails if the invalid-row ratio exceeds ``max_invalid_row_ratio``.
 
 ## Inputs 📥
 
@@ -25,6 +25,7 @@ rows are skipped only when they raise an expected ``ValueError``; the component 
 | `pvc_mount_path` | `str` | `None` | Mount point of the shared PVC used for caches and normalized local data. |
 | `dataset_config` | `str` | `""` | Optional Hugging Face dataset configuration. An inline ``:config`` suffix on an HF URI takes precedence. |
 | `max_http_download_bytes` | `int` | `2147483648` | Maximum HTTP(S) response size in bytes. The default is 2 GiB; the limit is enforced before and during the download. |
+| `max_invalid_row_ratio` | `float` | `0.1` | Maximum fraction of invalid rows to skip before failing validation. The default is 10%; use ``0.0`` for strict validation. |
 
 ## Outputs 📤
 

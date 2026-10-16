@@ -14,6 +14,7 @@ def prepare_grpo_dataset(
     pvc_mount_path: str,
     dataset_config: str = "",
     max_http_download_bytes: int = 2_147_483_648,
+    max_invalid_row_ratio: float = 0.10,
 ) -> NamedTuple(
     "PrepareDatasetOutputs",
     [
@@ -45,7 +46,8 @@ def prepare_grpo_dataset(
     ``system_prompt``. Multi-turn rows retain ``messages`` and are normalized
     to modern OpenAI ``tool_calls``/``tool`` messages so Training Hub can
     decompose them. Malformed rows are skipped only when they raise an expected
-    ``ValueError``; the component fails if more than 10% of rows are invalid.
+    ``ValueError``; the component fails if the invalid-row ratio exceeds
+    ``max_invalid_row_ratio``.
 
     Args:
         dataset_uri: Hugging Face URI/repository ID, ``s3://`` object,
@@ -58,6 +60,9 @@ def prepare_grpo_dataset(
         max_http_download_bytes: Maximum HTTP(S) response size in bytes. The
             default is 2 GiB; the limit is enforced before and during the
             download.
+        max_invalid_row_ratio: Maximum fraction of invalid rows to skip before
+            failing validation. The default is 10%; use ``0.0`` for strict
+            validation.
 
     Returns:
         A Training Hub data path, config, and flag indicating whether the path
@@ -236,7 +241,7 @@ def prepare_grpo_dataset(
         messages = row.get("messages")
         if messages is not None:
             normalized_messages = _normalise_messages(messages, row_index)
-            tools = row.get("tools", row.get("available_tools", []))
+            tools = row.get("tools") or row.get("available_tools") or []
             tools = _normalise_tools(tools)
             tool_call_count = _tool_call_count(normalized_messages)
             if tool_call_count > 1:
@@ -262,9 +267,11 @@ def prepare_grpo_dataset(
                 "system_prompt": row.get("system_prompt") or _system_content(normalized_messages),
             }
 
-        tools = row.get("tools", row.get("available_tools"))
-        target_name = row.get("target_tool_name", row.get("tool_name"))
-        target_arguments = row.get("target_arguments", row.get("arguments", {}))
+        tools = row.get("tools") or row.get("available_tools")
+        target_name = row.get("target_tool_name") or row.get("tool_name")
+        target_arguments = row.get("target_arguments")
+        if target_arguments is None:
+            target_arguments = row.get("arguments", {})
         if tools is None or target_name is None:
             raise ValueError("row is missing tool-call fields")
         target_name = str(target_name).strip()
@@ -272,11 +279,11 @@ def prepare_grpo_dataset(
             raise ValueError("target_tool_name must be a non-empty string")
         return {
             "id": row.get("id", row.get("uuid", str(row_index))),
-            "question": row.get("question", ""),
+            "question": row.get("question") or "",
             "tools": _normalise_tools(tools),
             "target_tool_name": target_name,
             "target_arguments": _parse_json_value(target_arguments, "target_arguments"),
-            "system_prompt": row.get("system_prompt", ""),
+            "system_prompt": row.get("system_prompt") or "",
         }
 
     def _is_huggingface_reference(uri):
@@ -300,6 +307,8 @@ def prepare_grpo_dataset(
         raise ValueError("dataset_uri must not be empty")
     if not pvc_mount_path or not pvc_mount_path.strip():
         raise ValueError("pvc_mount_path must not be empty")
+    if not 0.0 <= max_invalid_row_ratio <= 1.0:
+        raise ValueError("max_invalid_row_ratio must be between 0.0 and 1.0")
 
     dataset_uri = dataset_uri.strip()
     if _is_huggingface_reference(dataset_uri):
@@ -431,7 +440,6 @@ def prepare_grpo_dataset(
     written = 0
     skipped = 0
     first_errors = []
-    max_invalid_row_ratio = 0.10
     with temporary_path.open("w", encoding="utf-8") as output:
         for row_index, row in enumerate(dataset):
             try:
