@@ -57,6 +57,7 @@ def speculative_decoding_serving(
     rolling out and for KServe readiness. Updates release an old replica before
     allocating replacement GPU resources, so single-replica updates have downtime.
     Rollout and endpoint publication share a 30-minute timeout.
+    Reusing a stopped InferenceService clears its stop annotation to resume serving.
 
     Args:
         namespace: Namespace in which to create the KServe resources.
@@ -270,6 +271,8 @@ def speculative_decoding_serving(
             if plural == "inferenceservices":
                 existing_annotations = existing.get("metadata", {}).get("annotations", {}) or {}
                 desired_annotations = patch_body["metadata"]["annotations"]
+                if "serving.kserve.io/stop" in existing_annotations:
+                    desired_annotations["serving.kserve.io/stop"] = None
                 for key in hp_annotation_keys:
                     if key in existing_annotations and key not in desired_annotations:
                         desired_annotations[key] = None

@@ -196,6 +196,8 @@ def test_creates_resources_with_speculative_config_and_shared_pvc():
     assert isvc["spec"]["predictor"]["model"]["storageUri"] == "pvc://model-cache"
     assert isvc["metadata"]["annotations"]["security.opendatahub.io/enable-auth"] == "false"
     assert isvc["metadata"]["annotations"][HP_ANNOTATIONS[2]] == "7"
+    assert "serving.kserve.io/stop" not in isvc["metadata"]["annotations"]
+    assert "serving.kserve.io/stop" not in runtime["metadata"]["annotations"]
     assert isvc["metadata"]["labels"]["networking.kserve.io/visibility"] == "cluster-local"
     assert [call.kwargs["plural"] for call in api.create_namespaced_custom_object.call_args_list] == [
         "servingruntimes",
@@ -231,6 +233,51 @@ def test_patches_existing_resources_and_can_enable_auth():
         "security.opendatahub.io/enable-auth"
     ] == ("true")
     api.create_namespaced_custom_object.assert_not_called()
+
+
+@pytest.mark.parametrize("stop_value", ["true", "false"])
+def test_redeploy_clears_existing_stop_annotation(stop_value):
+    """Explicit deployment resumes a stopped endpoint without changing unrelated metadata."""
+    api = mock.MagicMock()
+    existing_runtime = {"metadata": {"annotations": {"serving.kserve.io/stop": "true"}}}
+    existing_isvc = {
+        "metadata": {"annotations": {"serving.kserve.io/stop": stop_value, "example.org/unrelated": "keep"}}
+    }
+    original_isvc = copy.deepcopy(existing_isvc)
+    api.get_namespaced_custom_object.side_effect = [
+        {"metadata": {"resourceVersion": "7"}},
+        existing_runtime,
+        existing_isvc,
+        _ready_isvc(),
+    ]
+
+    assert _run_component(api) == "http://qwen3-speculative.test.svc/v1"
+
+    annotations = _resource_body(api, "inferenceservices")["metadata"]["annotations"]
+    assert "serving.kserve.io/stop" in annotations
+    assert annotations["serving.kserve.io/stop"] is None
+    assert "example.org/unrelated" not in annotations
+    assert "serving.kserve.io/stop" not in _resource_body(api, "servingruntimes")["metadata"]["annotations"]
+    assert existing_isvc == original_isvc
+    assert existing_runtime["metadata"]["annotations"]["serving.kserve.io/stop"] == "true"
+
+
+@pytest.mark.parametrize("annotations", [None, {}, {"example.org/unrelated": "keep"}])
+def test_redeploy_without_stop_annotation_omits_stop_patch(annotations):
+    """Already running endpoints do not acquire a stop annotation or deletion marker."""
+    api = mock.MagicMock()
+    api.get_namespaced_custom_object.side_effect = [
+        {"metadata": {"resourceVersion": "7"}},
+        {},
+        {"metadata": {"annotations": annotations}},
+        _ready_isvc(),
+    ]
+
+    assert _run_component(api) == "http://qwen3-speculative.test.svc/v1"
+
+    submitted_annotations = _resource_body(api, "inferenceservices")["metadata"]["annotations"]
+    assert "serving.kserve.io/stop" not in submitted_annotations
+    assert "example.org/unrelated" not in submitted_annotations
 
 
 @pytest.mark.parametrize("enable_auth", [False, True])

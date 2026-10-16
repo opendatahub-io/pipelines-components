@@ -19,6 +19,6 @@ tags:
   - speculative_decoding
   - vllm
   - kserve
-lastVerified: 2026-09-14T00:00:00Z
+lastVerified: 2026-10-16T12:32:07Z
 links:
   documentation: https://github.com/kubeflow/pipelines-components

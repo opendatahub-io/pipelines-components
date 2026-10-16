@@ -9,7 +9,8 @@ Serve a verifier and Eagle3 draft model through one vLLM endpoint.
 The verifier and draft directories must already exist on ``model_cache_pvc``. KServe mounts the PVC root at ``/mnt/models``. The draft directory should contain the speculator checkpoint's ``config.json`` and weights. vLLM receives an Eagle3 ``--speculative-config`` that points to the draft path
 under that root; the verifier is the primary ``--model``.
 
-The component waits for the requested predictor configuration to finish rolling out and for KServe readiness. Updates release an old replica before allocating replacement GPU resources, so single-replica updates have downtime. Rollout and endpoint publication share a 30-minute timeout.
+The component waits for the requested predictor configuration to finish rolling out and for KServe readiness. Updates release an old replica before allocating replacement GPU resources, so single-replica updates have downtime. Rollout and endpoint publication share a 30-minute timeout. Reusing a
+stopped InferenceService clears its stop annotation to resume serving.
 
 ## Inputs 📥
 
@@ -62,7 +63,7 @@ The component waits for the requested predictor configuration to finish rolling 
   - speculative_decoding
   - vllm
   - kserve
-- **Last Verified**: 2026-09-14 00:00:00+00:00
+- **Last Verified**: 2026-10-16 12:32:07+00:00
 - **Owners**:
   - No Parent Owners: Yes
   - Approvers:
