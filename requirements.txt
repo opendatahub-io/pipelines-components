@@ -24,8 +24,8 @@ durationpy==0.11 \
     --hash=sha256:71c662845428c8f6e7ba2668b76fc77eba9ad5c13cdeb125d2c09fffb9a0260b
 google-api-core==2.42.0 \
     --hash=sha256:ec15113ae7ddd039268caccb046bef903c33027a8b293394bc3ae02d7a4fd6ea
-google-auth==2.61.0 \
-    --hash=sha256:79d386fdcd9cc39814372ce1c0704f663a2f213b0794a77a88570a07ffb9639c
+google-auth==2.62.0 \
+    --hash=sha256:bbd3cdda6938c2a20b1ba7e2f0db32922366b07f2e27e36f4ebf021fa931a7a2
 google-cloud-core==2.8.0 \
     --hash=sha256:47d5994749fc90788c14ea3eb7563500445cbae61fba122cbf8192c9734c3233
 google-cloud-storage==3.17.0 \
