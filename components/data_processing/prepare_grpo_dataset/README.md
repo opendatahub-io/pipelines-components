@@ -24,6 +24,7 @@ rows are skipped only when they raise an expected ``ValueError``; the component 
 | `dataset_uri` | `str` | `None` | Hugging Face URI/repository ID, ``s3://`` object, ``http://`` or ``https://`` JSON/JSONL URL, ``pvc://`` path, or local JSON/JSONL path visible in the component container. |
 | `pvc_mount_path` | `str` | `None` | Mount point of the shared PVC used for caches and normalized local data. |
 | `dataset_config` | `str` | `""` | Optional Hugging Face dataset configuration. An inline ``:config`` suffix on an HF URI takes precedence. |
+| `max_http_download_bytes` | `int` | `2147483648` | Maximum HTTP(S) response size in bytes. The default is 2 GiB; the limit is enforced before and during the download. |
 
 ## Outputs 📤
 

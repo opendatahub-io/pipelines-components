@@ -64,6 +64,7 @@ def test_component_has_expected_interface():
     assert hasattr(prepare_grpo_dataset, "python_func")
     assert "dataset_uri" in prepare_grpo_dataset.component_spec.inputs
     assert "pvc_mount_path" in prepare_grpo_dataset.component_spec.inputs
+    assert "max_http_download_bytes" in prepare_grpo_dataset.component_spec.inputs
     assert "resolved_data_path" in prepare_grpo_dataset.component_spec.outputs
     assert "resolved_data_config" in prepare_grpo_dataset.component_spec.outputs
     assert "use_hf_direct" in prepare_grpo_dataset.component_spec.outputs
@@ -215,15 +216,33 @@ def test_http_source_is_downloaded_to_pvc(tmp_path):
     urlopen.assert_called_once_with("https://example.test/data.jsonl", timeout=300)
 
 
+@pytest.mark.parametrize("headers", [{}, {"Content-Length": "10"}])
+def test_http_download_respects_maximum_size(tmp_path, headers):
+    """Reject an HTTP response larger than the configured limit."""
+    response = io.BytesIO(b"0123456789")
+    response.headers = headers
+    with mock.patch("urllib.request.urlopen", return_value=response):
+        with pytest.raises(ValueError, match="max_http_download_bytes"):
+            prepare_grpo_dataset.python_func(
+                dataset_uri="https://example.test/data.jsonl",
+                pvc_mount_path=str(tmp_path / "pvc"),
+                max_http_download_bytes=9,
+            )
+
+
 def test_failed_http_download_does_not_leave_a_cache_file(tmp_path):
     """Do not publish or retain partial HTTP downloads."""
-    with mock.patch("urllib.request.urlopen", return_value=io.BytesIO(b"partial")):
-        with mock.patch("shutil.copyfileobj", side_effect=RuntimeError("download failed")):
-            with pytest.raises(RuntimeError, match="download failed"):
-                prepare_grpo_dataset.python_func(
-                    dataset_uri="https://example.test/data.jsonl",
-                    pvc_mount_path=str(tmp_path / "pvc"),
-                )
+
+    class FailingResponse(io.BytesIO):
+        def read(self, *args, **kwargs):
+            raise RuntimeError("download failed")
+
+    with mock.patch("urllib.request.urlopen", return_value=FailingResponse(b"partial")):
+        with pytest.raises(RuntimeError, match="download failed"):
+            prepare_grpo_dataset.python_func(
+                dataset_uri="https://example.test/data.jsonl",
+                pvc_mount_path=str(tmp_path / "pvc"),
+            )
 
     download_dir = tmp_path / "pvc" / ".cache" / "prepare_grpo_dataset" / "downloads"
     assert not list(download_dir.iterdir())

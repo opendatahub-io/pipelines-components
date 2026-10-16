@@ -13,6 +13,7 @@ def prepare_grpo_dataset(
     dataset_uri: str,
     pvc_mount_path: str,
     dataset_config: str = "",
+    max_http_download_bytes: int = 2_147_483_648,
 ) -> NamedTuple(
     "PrepareDatasetOutputs",
     [
@@ -54,6 +55,9 @@ def prepare_grpo_dataset(
             normalized local data.
         dataset_config: Optional Hugging Face dataset configuration. An inline
             ``:config`` suffix on an HF URI takes precedence.
+        max_http_download_bytes: Maximum HTTP(S) response size in bytes. The
+            default is 2 GiB; the limit is enforced before and during the
+            download.
 
     Returns:
         A Training Hub data path, config, and flag indicating whether the path
@@ -62,7 +66,6 @@ def prepare_grpo_dataset(
     import hashlib
     import json
     import os
-    import shutil
     import urllib.parse
     import urllib.request
     import uuid
@@ -341,12 +344,16 @@ def prepare_grpo_dataset(
         source_uri = str(_resolve_pvc_path(dataset_uri))
 
     if parsed.scheme in {"http", "https"}:
+        if max_http_download_bytes <= 0:
+            raise ValueError("max_http_download_bytes must be positive")
         suffix = Path(urllib.parse.urlparse(dataset_uri).path).suffix.lower()
         if suffix not in {".json", ".jsonl"}:
             raise ValueError("HTTP(S) dataset URIs must point to a .json or .jsonl resource")
         filename = hashlib.sha256(dataset_uri.encode()).hexdigest() + suffix
         downloaded_path = cache_root / "downloads" / filename
         downloaded_path.parent.mkdir(parents=True, exist_ok=True)
+        if downloaded_path.exists() and downloaded_path.stat().st_size > max_http_download_bytes:
+            raise ValueError(f"cached HTTP dataset exceeds max_http_download_bytes ({max_http_download_bytes} bytes)")
         if not downloaded_path.exists():
             print("Downloading HTTP(S) dataset to the shared PVC")
             temporary_download_path = downloaded_path.with_name(f"{downloaded_path.name}.{uuid.uuid4().hex}.tmp")
@@ -355,7 +362,29 @@ def prepare_grpo_dataset(
                     urllib.request.urlopen(dataset_uri, timeout=300) as response,
                     temporary_download_path.open("wb") as output,
                 ):
-                    shutil.copyfileobj(response, output)
+                    raw_content_length = getattr(response, "headers", {}).get("Content-Length")
+                    content_length = None
+                    if raw_content_length:
+                        try:
+                            content_length = int(raw_content_length)
+                        except (TypeError, ValueError):
+                            pass
+                    if content_length is not None and content_length > max_http_download_bytes:
+                        raise ValueError(
+                            f"HTTP dataset exceeds max_http_download_bytes ({max_http_download_bytes} bytes)"
+                        )
+
+                    bytes_written = 0
+                    while True:
+                        chunk = response.read(min(1024 * 1024, max_http_download_bytes - bytes_written + 1))
+                        if not chunk:
+                            break
+                        bytes_written += len(chunk)
+                        if bytes_written > max_http_download_bytes:
+                            raise ValueError(
+                                f"HTTP dataset exceeds max_http_download_bytes ({max_http_download_bytes} bytes)"
+                            )
+                        output.write(chunk)
                 os.replace(temporary_download_path, downloaded_path)
             finally:
                 temporary_download_path.unlink(missing_ok=True)
