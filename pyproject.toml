@@ -75,6 +75,7 @@ packages = [
     "kfp_components.components.deployment.deploy_embedding_model",
     "kfp_components.components.deployment.kubeflow_model_registry",
     "kfp_components.components.deployment.model_deployment",
+    "kfp_components.components.deployment.speculative_decoding_serving",
     "kfp_components.components.evaluation",
     "kfp_components.components.evaluation.evalhub",
     "kfp_components.components.evaluation.evalhub.kserve",
