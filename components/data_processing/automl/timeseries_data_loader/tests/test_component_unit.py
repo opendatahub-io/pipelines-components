@@ -230,7 +230,7 @@ class TestTimeseriesDataLoaderUnitTests:
         assert sampled_test.uri == "/artifacts/test.parquet"
         assert test_rows[0]["target"] == "80"
 
-        assert result.sample_config["sampling_method"] == "first_n_rows"
+        assert result.sample_config["sampling_method"] == "last_n_rows_per_series"
         assert result.sample_config["total_rows_loaded"] == MIN_VALID_RECORDS
         assert result.split_config["test_size"] == 0.2
         assert result.split_config["selection_train_size"] == 0.3
@@ -240,7 +240,7 @@ class TestTimeseriesDataLoaderUnitTests:
         """Quality accepts the 10 GiB sampling-profile preset."""
         result, sampled_test = _run_loader(tmp_path, _timeseries_csv(), preset="quality")
 
-        assert result.sample_config["sampling_method"] == "first_n_rows"
+        assert result.sample_config["sampling_method"] == "last_n_rows_per_series"
         assert Path(result.models_selection_train_data_path).exists()
         assert Path(sampled_test.path).exists()
 
@@ -345,8 +345,8 @@ class TestTimeseriesDataLoaderUnitTests:
             MockedDataFrame.BYTES_PER_ROW = original_bytes_per_row
 
     @mock.patch.dict(os.environ, mocked_env_variables, clear=True)
-    def test_partial_train_read_does_not_report_sample_cap_reached(self, tmp_path):
-        """A mid-stream train CSV error keeps loaded rows but must not set sample_cap_reached."""
+    def test_partial_train_read_fails_closed_for_last_values(self, tmp_path):
+        """A mid-stream train CSV error is fatal: unread rows may be newer than what was seen."""
         train_csv = _timeseries_csv(n_rows=MIN_VALID_RECORDS + 20)
         mocked_pandas = make_mocked_pandas_module()
         real_read_csv = mocked_pandas.read_csv
@@ -363,30 +363,28 @@ class TestTimeseriesDataLoaderUnitTests:
 
         mocked_pandas.read_csv = flaky_read_csv
         sampled_test = _make_test_artifact(tmp_path)
-        component_status = mock.MagicMock()
-        component_status.path = str(tmp_path / "component_status")
-        component_status.metadata = {}
 
         with _mock_boto3_module(get_object_return={"Body": io.BytesIO(train_csv.encode("utf-8"))}):
             with mock.patch.dict(sys.modules, {"pandas": mocked_pandas}):
-                timeseries_data_loader.python_func(
-                    file_key="train.csv",
-                    bucket_name="b",
-                    workspace_path=str(tmp_path),
-                    target="target",
-                    id_column="item_id",
-                    timestamp_column="timestamp",
-                    sampled_test_dataset=sampled_test,
-                    component_status=component_status,
-                )
-
-        payload = json.loads((Path(component_status.path) / "component_status.json").read_text())
-        stages = {stage["id"]: stage for stage in payload["stages"]}
-        assert stages["prepare_data"]["metrics"]["sample_cap_reached"] is False
+                with pytest.raises(ValueError, match="Error reading CSV from S3"):
+                    timeseries_data_loader.python_func(
+                        file_key="train.csv",
+                        bucket_name="b",
+                        workspace_path=str(tmp_path),
+                        target="target",
+                        id_column="item_id",
+                        timestamp_column="timestamp",
+                        sampled_test_dataset=sampled_test,
+                    )
 
     @mock.patch.dict(os.environ, mocked_env_variables, clear=True)
     def test_sample_cap_reached_when_size_limit_stops_read(self, tmp_path):
-        """Hitting the preset byte budget sets sample_cap_reached without failing the run."""
+        """Hitting the preset byte budget sets sample_cap_reached without failing the run.
+
+        Last-values sampling keeps the newest rows (not the file head): 300 chronological
+        rows at 800 KiB/row fit ~131 rows in the speed 100 MiB budget, so targets 169-299
+        are retained.
+        """
         body_stream = io.BytesIO(_timeseries_csv(n_rows=300).encode("utf-8"))
         sampled_test = _make_test_artifact(tmp_path)
         component_status = mock.MagicMock()
@@ -398,7 +396,7 @@ class TestTimeseriesDataLoaderUnitTests:
             # 800 KiB/row → speed's 100 MiB budget keeps ~131 rows (>= MIN_VALID_RECORDS).
             MockedDataFrame.BYTES_PER_ROW = 800_000
             with _mock_boto3_and_pandas(get_object_return={"Body": body_stream}):
-                timeseries_data_loader.python_func(
+                result = timeseries_data_loader.python_func(
                     file_key="timeseries/train.csv",
                     bucket_name="my-bucket",
                     workspace_path=str(tmp_path),
@@ -414,6 +412,269 @@ class TestTimeseriesDataLoaderUnitTests:
         payload = json.loads((Path(component_status.path) / "component_status.json").read_text())
         stages = {stage["id"]: stage for stage in payload["stages"]}
         assert stages["prepare_data"]["metrics"]["sample_cap_reached"] is True
+        assert stages["prepare_data"]["metrics"]["sampling_method"] == "last_n_rows_per_series"
+        assert result.sample_config["sampled_rows"] == 131
+        targets = [
+            int(target)
+            for _, _, target in _multiset_observations(
+                result.models_selection_train_data_path, result.extra_train_data_path, sampled_test.path
+            )
+        ]
+        assert min(targets) == 169
+        assert max(targets) == 299
+
+    @staticmethod
+    def _panel_id_then_time_csv(n_per_series=100):
+        """Two series, all of A then all of B, chronological within each series."""
+        lines = ["item_id,timestamp,target,feature"]
+        for sid, letter in enumerate(["A", "B"]):
+            base = sid * 1000
+            for i in range(n_per_series):
+                lines.append(f"{letter},{_date_from_day_offset(i)},{base + i},{i}")
+        return "\n".join(lines) + "\n"
+
+    @staticmethod
+    def _panel_shuffled_csv(n_per_series=100, seed=11):
+        """Same observations as ``_panel_id_then_time_csv`` with shuffled row order."""
+        lines = ["item_id,timestamp,target,feature"]
+        rows = []
+        for sid, letter in enumerate(["A", "B"]):
+            base = sid * 1000
+            for i in range(n_per_series):
+                rows.append(f"{letter},{_date_from_day_offset(i)},{base + i},{i}")
+        rng = random.Random(seed)
+        rng.shuffle(rows)
+        lines.extend(rows)
+        return "\n".join(lines) + "\n"
+
+    @mock.patch.dict(os.environ, mocked_env_variables, clear=True)
+    def test_size_cap_keeps_latest_rows_per_series_not_file_head_or_tail(self, tmp_path):
+        """File layout is id-then-time (all A, then all B). Cap must keep each series' tail.
+
+        Head truncation would keep almost only A; file-tail truncation would keep only B.
+        """
+        body_stream = io.BytesIO(self._panel_id_then_time_csv(n_per_series=100).encode("utf-8"))
+        sampled_test = _make_test_artifact(tmp_path)
+        component_status = mock.MagicMock()
+        component_status.path = str(tmp_path / "component_status")
+        component_status.metadata = {}
+
+        original_bytes_per_row = MockedDataFrame.BYTES_PER_ROW
+        try:
+            # 200 rows * 900 KiB > 100 MiB; budget keeps ~116 rows (~58 per series).
+            MockedDataFrame.BYTES_PER_ROW = 900_000
+            with _mock_boto3_and_pandas(get_object_return={"Body": body_stream}):
+                result = timeseries_data_loader.python_func(
+                    file_key="ts.csv",
+                    bucket_name="b",
+                    workspace_path=str(tmp_path),
+                    target="target",
+                    id_column="item_id",
+                    timestamp_column="timestamp",
+                    sampled_test_dataset=sampled_test,
+                    component_status=component_status,
+                )
+        finally:
+            MockedDataFrame.BYTES_PER_ROW = original_bytes_per_row
+
+        payload = json.loads((Path(component_status.path) / "component_status.json").read_text())
+        stages = {stage["id"]: stage for stage in payload["stages"]}
+        metrics = stages["prepare_data"]["metrics"]
+        assert metrics["sample_cap_reached"] is True
+        assert metrics["n_series_retained"] == 2
+        by_id = {entry["id"]: entry for entry in metrics["series_profile"]}
+        assert set(by_id) == {"A", "B"}
+        obs = _multiset_observations(
+            result.models_selection_train_data_path, result.extra_train_data_path, sampled_test.path
+        )
+        by_series = {"A": [], "B": []}
+        for item_id, timestamp, target in obs:
+            by_series[item_id].append((timestamp, int(target)))
+        assert len(by_series["A"]) == 58
+        assert len(by_series["B"]) == 58
+        # Latest 58 of 100 days starting 2024-01-01 → drop days 0-41.
+        assert min(ts for ts, _ in by_series["A"]) == _date_from_day_offset(42)
+        assert min(ts for ts, _ in by_series["B"]) == _date_from_day_offset(42)
+        assert max(t for _, t in by_series["A"]) == 99
+        assert max(t for _, t in by_series["B"]) == 1099
+
+    @mock.patch.dict(os.environ, mocked_env_variables, clear=True)
+    def test_size_cap_keeps_latest_by_timestamp_when_file_is_unsorted(self, tmp_path):
+        """Unsorted panel still retains max timestamps per series under the size cap."""
+        body_stream = io.BytesIO(self._panel_shuffled_csv(n_per_series=100, seed=21).encode("utf-8"))
+        sampled_test = _make_test_artifact(tmp_path)
+
+        original_bytes_per_row = MockedDataFrame.BYTES_PER_ROW
+        try:
+            MockedDataFrame.BYTES_PER_ROW = 900_000
+            with _mock_boto3_and_pandas(get_object_return={"Body": body_stream}):
+                result = timeseries_data_loader.python_func(
+                    file_key="ts.csv",
+                    bucket_name="b",
+                    workspace_path=str(tmp_path),
+                    target="target",
+                    id_column="item_id",
+                    timestamp_column="timestamp",
+                    sampled_test_dataset=sampled_test,
+                )
+        finally:
+            MockedDataFrame.BYTES_PER_ROW = original_bytes_per_row
+
+        obs = _multiset_observations(
+            result.models_selection_train_data_path, result.extra_train_data_path, sampled_test.path
+        )
+        by_series = {"A": [], "B": []}
+        for item_id, timestamp, _target in obs:
+            by_series[item_id].append(timestamp)
+        assert min(by_series["A"]) == _date_from_day_offset(42)
+        assert min(by_series["B"]) == _date_from_day_offset(42)
+        assert max(by_series["A"]) == _date_from_day_offset(99)
+        assert max(by_series["B"]) == _date_from_day_offset(99)
+
+    @mock.patch.dict(os.environ, mocked_env_variables, clear=True)
+    def test_series_returning_after_later_chunk_keeps_earlier_tail(self, tmp_path):
+        """History for an id must survive until EOF even if a later chunk adds a newer row.
+
+        The loader reads 10000-row chunks. Chunk 0 is one early A observation plus 9999 other
+        series; chunk 1 is A's newest observation. Dropping A in chunk 0 and reintroducing it
+        from chunk 1 would keep only the final row.
+        """
+        lines = ["item_id,timestamp,target,feature"]
+        lines.append(f"A,{_date_from_day_offset(1)},10,1")
+        lines.append(f"A,{_date_from_day_offset(2)},20,2")
+        for i in range(9998):
+            lines.append(f"S{i},{_date_from_day_offset(10 + i)},{i},{i}")
+        lines.append(f"A,{_date_from_day_offset(20000)},30,3")
+        body_stream = io.BytesIO(("\n".join(lines) + "\n").encode("utf-8"))
+        sampled_test = _make_test_artifact(tmp_path)
+
+        original_bytes_per_row = MockedDataFrame.BYTES_PER_ROW
+        try:
+            # 500 KiB/row → ~209 rows fit; EOF series eviction keeps the 104 newest series.
+            MockedDataFrame.BYTES_PER_ROW = 500_000
+            with _mock_boto3_and_pandas(get_object_return={"Body": body_stream}):
+                result = timeseries_data_loader.python_func(
+                    file_key="ts.csv",
+                    bucket_name="b",
+                    workspace_path=str(tmp_path),
+                    target="target",
+                    id_column="item_id",
+                    timestamp_column="timestamp",
+                    sampled_test_dataset=sampled_test,
+                )
+        finally:
+            MockedDataFrame.BYTES_PER_ROW = original_bytes_per_row
+
+        obs = _multiset_observations(
+            result.models_selection_train_data_path, result.extra_train_data_path, sampled_test.path
+        )
+        a_targets = sorted(int(target) for item_id, _ts, target in obs if item_id == "A")
+        assert a_targets == [20, 30]
+
+    @mock.patch.dict(os.environ, mocked_env_variables, clear=True)
+    def test_invalid_timestamp_is_not_silently_evicted_under_cap(self, tmp_path):
+        """An unparseable timestamp must fail even when it would be the first row evicted."""
+        lines = ["item_id,timestamp,target,feature"]
+        lines.append("series-1,not-a-date,0,0")
+        for i in range(MIN_VALID_RECORDS + 50):
+            lines.append(f"series-1,{_date_from_day_offset(i)},{i},{i}")
+        body_stream = io.BytesIO(("\n".join(lines) + "\n").encode("utf-8"))
+        sampled_test = _make_test_artifact(tmp_path)
+
+        original_bytes_per_row = MockedDataFrame.BYTES_PER_ROW
+        try:
+            MockedDataFrame.BYTES_PER_ROW = 800_000
+            with _mock_boto3_and_pandas(get_object_return={"Body": body_stream}):
+                with pytest.raises(ValueError, match="could not be parsed"):
+                    timeseries_data_loader.python_func(
+                        file_key="ts.csv",
+                        bucket_name="b",
+                        workspace_path=str(tmp_path),
+                        target="target",
+                        id_column="item_id",
+                        timestamp_column="timestamp",
+                        sampled_test_dataset=sampled_test,
+                    )
+        finally:
+            MockedDataFrame.BYTES_PER_ROW = original_bytes_per_row
+
+    @mock.patch.dict(os.environ, mocked_env_variables, clear=True)
+    def test_null_id_is_not_silently_dropped_under_cap(self, tmp_path):
+        """A null id must fail before groupby/eviction, even if the row would not be retained."""
+        lines = ["item_id,timestamp,target,feature"]
+        lines.append(f",{_date_from_day_offset(0)},0,0")
+        for i in range(MIN_VALID_RECORDS + 50):
+            lines.append(f"series-1,{_date_from_day_offset(i + 1)},{i},{i}")
+        body_stream = io.BytesIO(("\n".join(lines) + "\n").encode("utf-8"))
+        sampled_test = _make_test_artifact(tmp_path)
+
+        original_bytes_per_row = MockedDataFrame.BYTES_PER_ROW
+        try:
+            MockedDataFrame.BYTES_PER_ROW = 800_000
+            with _mock_boto3_and_pandas(get_object_return={"Body": body_stream}):
+                with pytest.raises(ValueError, match="contains null values"):
+                    timeseries_data_loader.python_func(
+                        file_key="ts.csv",
+                        bucket_name="b",
+                        workspace_path=str(tmp_path),
+                        target="target",
+                        id_column="item_id",
+                        timestamp_column="timestamp",
+                        sampled_test_dataset=sampled_test,
+                    )
+        finally:
+            MockedDataFrame.BYTES_PER_ROW = original_bytes_per_row
+
+    @mock.patch.dict(os.environ, mocked_env_variables, clear=True)
+    def test_sampling_profile_includes_dropped_series_and_full_sidecar(self, tmp_path):
+        """Status keeps a bounded summary; the sidecar lists every seen/dropped series."""
+        lines = ["item_id,timestamp,target,feature"]
+        for i in range(250):
+            lines.append(f"S{i:03d},{_date_from_day_offset(i)},{i},0")
+        body_stream = io.BytesIO(("\n".join(lines) + "\n").encode("utf-8"))
+        sampled_test = _make_test_artifact(tmp_path)
+        component_status = mock.MagicMock()
+        component_status.path = str(tmp_path / "component_status")
+        component_status.metadata = {}
+
+        original_bytes_per_row = MockedDataFrame.BYTES_PER_ROW
+        try:
+            # 250 series x 1 row cannot all fit; keep ~104 newest series (>= 100 row minimum).
+            MockedDataFrame.BYTES_PER_ROW = 500_000
+            with _mock_boto3_and_pandas(get_object_return={"Body": body_stream}):
+                result = timeseries_data_loader.python_func(
+                    file_key="ts.csv",
+                    bucket_name="b",
+                    workspace_path=str(tmp_path),
+                    target="target",
+                    id_column="item_id",
+                    timestamp_column="timestamp",
+                    sampled_test_dataset=sampled_test,
+                    component_status=component_status,
+                )
+        finally:
+            MockedDataFrame.BYTES_PER_ROW = original_bytes_per_row
+
+        payload = json.loads((Path(component_status.path) / "component_status.json").read_text())
+        stages = {stage["id"]: stage for stage in payload["stages"]}
+        metrics = stages["prepare_data"]["metrics"]
+        assert metrics["n_series_seen"] == 250
+        assert metrics["n_series_retained"] == 104
+        assert metrics["n_series_dropped"] == 146
+        assert metrics["series_profile_truncated"] is True
+        assert len(metrics["series_profile"]) == 50
+        assert len(metrics["dropped_series_profile"]) == 50
+        assert metrics["dropped_series_profile_truncated"] is True
+        assert result.sample_config["n_series_dropped"] == 146
+
+        sidecar = json.loads((Path(component_status.path) / "series_sampling_profile.json").read_text())
+        assert len(sidecar["retained"]) == 104
+        assert len(sidecar["dropped"]) == 146
+        assert sidecar["n_series_seen"] == 250
+        dropped_ids = {entry["id"] for entry in sidecar["dropped"]}
+        retained_ids = {entry["id"] for entry in sidecar["retained"]}
+        assert dropped_ids.isdisjoint(retained_ids)
+        assert len(dropped_ids | retained_ids) == 250
 
     @mock.patch.dict(os.environ, mocked_env_variables, clear=True)
     def test_no_data_rows_raises(self, tmp_path):
@@ -1274,6 +1535,7 @@ class TestUserProvidedTestData:
 
         BYTES_PER_ROW is inflated only on the second S3 call (test data fetch) so the
         training data loads normally (default 100 bytes/row, no sampling truncation).
+        Last-values sampling keeps the newest test rows that fit, not the file head.
         """
         train_csv = _timeseries_csv(n_rows=MIN_VALID_RECORDS + 10)
         test_csv = _timeseries_csv(n_rows=MIN_VALID_RECORDS + 10)
@@ -1285,8 +1547,8 @@ class TestUserProvidedTestData:
             call_count += 1
             if call_count == 1:
                 return {"Body": io.BytesIO(train_csv.encode("utf-8"))}
-            # 20 MiB per row: exceeds the 50 MiB test-data cap after two rows, so the reader
-            # stops early and reports the truncation. Two rows, not one, so the surviving
+            # 20 MiB per row: exceeds the 50 MiB test-data cap after two rows, so last-values
+            # sampling keeps the newest two rows. Two rows, not one, so the surviving
             # series still clears the prediction_length horizon check.
             MockedDataFrame.BYTES_PER_ROW = 20_000_000
             return {"Body": io.BytesIO(test_csv.encode("utf-8"))}
@@ -1317,6 +1579,13 @@ class TestUserProvidedTestData:
         assert stages["split_and_export"]["metrics"]["truncated"] is True
         assert stages["split_and_export"]["metrics"]["test_rows"] > 0
         assert stages["split_and_export"]["status"]["state"] == "completed"
+        test_rows = _read_csv_rows(sampled_test.path)
+        # 20 MiB/row and a 50 MiB cap keep 2 last-values rows of the chronological test file.
+        assert len(test_rows) == 2
+        assert {r["target"] for r in test_rows} == {
+            str(MIN_VALID_RECORDS + 8),
+            str(MIN_VALID_RECORDS + 9),
+        }
 
     @mock.patch.dict(os.environ, mocked_env_variables, clear=True)
     @pytest.mark.parametrize("bad_key", ["/test.csv", "data/test.csv/", "data//test.csv"])
