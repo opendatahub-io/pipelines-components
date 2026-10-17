@@ -35,9 +35,13 @@ def timeseries_data_loader(
 ):
     """Load and split timeseries data from S3 for AutoGluon training.
 
-    This component loads time series data from S3, samples it (up to 100 MiB for the
+    This component loads time series data from S3, retains the latest observations
+    per series (up to 100 MiB for the
     ``"speed"`` preset, up to 1 GiB for ``"balanced"``, and up to 10 GiB for
-    ``"quality"``),
+    ``"quality"``). Small inputs use one read; larger inputs use a bounded two-pass
+    sampler pinned to the same S3 version or ETag. Unsorted inputs are sampled by parsed
+    timestamps, not file order. A per-series retained row count and timestamp range is
+    written to ``timeseries_profile.jsonl`` in the component status artifact. The loader
     applies light **cleansing** (replace ``+/-inf`` with NaN so AutoGluon can apply its
     own missing-value logic; require parseable timestamps and non-null ids; drop
     exact duplicate ``(id_column, timestamp_column)`` rows, keep last), then performs a two-stage
@@ -75,10 +79,10 @@ def timeseries_data_loader(
             Only used to fail fast when a user-provided test dataset omits one of them.
         test_data_bucket_name: S3 bucket name for user-provided test dataset (default: empty string).
         test_data_file_key: S3 object key of the user-provided test CSV (default: empty string).
-        preset: Training quality tier controlling the sampling size budget. ``"speed"``
-            (default) samples up to 100 MiB; ``"balanced"`` samples up to 1 GiB; and
+        preset: Training quality tier controlling the in-memory sampling size budget. ``"speed"``
+            (default) retains up to 100 MiB; ``"balanced"`` retains up to 1 GiB; and
             ``"quality"`` samples up to 10 GiB. User-provided test datasets are capped
-            at 50 MiB, 100 MiB, and 1 GiB respectively.
+            at 50 MiB, 100 MiB, and 1 GiB respectively using the existing head policy.
 
     Raises:
         ValueError: If a required parameter is empty or invalid, if only one of the
@@ -123,6 +127,7 @@ def timeseries_data_loader(
         except Exception as e:  # noqa: BLE001 - stats logging must never break the run
             logger.debug("Could not compute dataset stats for %s: %s", name, e)
 
+    from kfp_components.components.data_processing.automl.timeseries_data_loader.sampling import load_latest_timeseries
     from kfp_components.components.training.automl.shared.component_status import ComponentStatusTracker
     from kfp_components.components.training.automl.shared.parquet_utils import stringify_mixed_object_columns
     from kfp_components.components.training.automl.shared.user_test_data import (
@@ -231,6 +236,23 @@ def timeseries_data_loader(
                 verify=verify,
             )
 
+        def get_s3_response(bucket_name, file_key, **conditions):
+            """Open an S3 object, optionally pinning the sampling reread to its version."""
+            from botocore.exceptions import SSLError
+
+            s3_client = get_s3_client()
+            try:
+                response = s3_client.get_object(Bucket=bucket_name, Key=file_key, **conditions)
+            except SSLError:
+                logger.warning(
+                    "SSL error when downloading s3://%s/%s, retrying with verify=False",
+                    bucket_name,
+                    file_key,
+                )
+                no_verify_client = get_s3_client(verify=False)
+                response = no_verify_client.get_object(Bucket=bucket_name, Key=file_key, **conditions)
+            return response
+
         def load_timeseries_data_truncate(
             bucket_name,
             file_key,
@@ -239,30 +261,12 @@ def timeseries_data_loader(
             truncation_report=None,
             fail_on_partial_read: bool = False,
         ):
-            """Load time series CSV from S3, truncating to max_size_bytes while preserving order.
+            """Keep the existing head policy for user-provided test CSVs.
 
-            When ``truncation_report`` is a dict:
-            - ``"cap_reached"`` is True only when the size limit stopped the read (including the
-              conservative case where accumulated rows hit exactly ``max_size_bytes``).
-            - ``"truncated"`` is True when the returned frame may be incomplete for any reason
-              (cap exhaustion or mid-stream read error with partial recovery).
-
-            When ``fail_on_partial_read`` is True, a mid-stream error is fatal. If no rows were
-            read, an empty dataframe is returned so the caller can report an empty test dataset.
+            ``cap_reached`` identifies budget exhaustion; ``truncated`` also covers
+            a partial read. With ``fail_on_partial_read``, a read error is fatal.
             """
-            from botocore.exceptions import SSLError
-
-            s3_client = get_s3_client()
-            try:
-                response = s3_client.get_object(Bucket=bucket_name, Key=file_key)
-            except SSLError:
-                logger.warning(
-                    "SSL error when downloading s3://%s/%s, retrying with verify=False",
-                    bucket_name,
-                    file_key,
-                )
-                no_verify_client = get_s3_client(verify=False)
-                response = no_verify_client.get_object(Bucket=bucket_name, Key=file_key)
+            response = get_s3_response(bucket_name, file_key)
             text_stream = io.TextIOWrapper(response["Body"], encoding="utf-8")
 
             chunk_list = []
@@ -331,7 +335,7 @@ def timeseries_data_loader(
             )
             return pd.concat(chunk_list, ignore_index=True)
 
-        def _clean_timeseries_dataframe(data, id_col, ts_col, log):
+        def _clean_timeseries_dataframe(data, id_col, ts_col, log, sort_data=True):
             """Prepare panel data without dropping rows for missing targets (AutoGluon handles NaNs).
 
             Per time-series practice, **do not** drop rows for null/NaN targets or non-finite values
@@ -409,10 +413,10 @@ def timeseries_data_loader(
                     "AutoGluon frequency inference (set TimeSeriesPredictor(freq=...) or regularize upstream)."
                 )
 
-            # Sort by (id, timestamp) BEFORE deduplication so that keep="last" means
-            # "keep the last row in chronological order" (after sorting), not "keep the last row in file order".
-            # This ensures we retain the chronologically latest observation for each (id, timestamp) pair.
-            out = out.sort_values(by=[id_col, ts_col])
+            # Equal keys retain the last occurrence in source order. Chunk cleansing
+            # preserves file order so the sampler can detect monotonic series.
+            if sort_data:
+                out = out.sort_values(by=[id_col, ts_col], kind="stable")
             before_dedupe = len(out)
             out = out.drop_duplicates(subset=[id_col, ts_col], keep="last")
             dropped_dupes = before_dedupe - len(out)
@@ -436,15 +440,6 @@ def timeseries_data_loader(
             "running",
             metrics={"source": f"s3://{bucket_name}/{file_key}"},
         )
-        sampling_report = {}
-        df = load_timeseries_data_truncate(
-            bucket_name,
-            file_key,
-            MAX_SIZE_BYTES,
-            PANDAS_CHUNK_SIZE,
-            truncation_report=sampling_report,
-        )
-
         # Reject collision with reserved synthetic-ID column (CWE-20)
         # Check if any user-specified column uses the reserved name before we try to inject it.
         reserved_columns = {timestamp_column, target}
@@ -456,51 +451,58 @@ def timeseries_data_loader(
                 f"Please rename your timestamp, target, or id_column to avoid collision."
             )
 
-        uses_synthetic_id = False
-        if id_column == "":
-            # Two-column mode: dataset must have exactly timestamp + target columns.
-            required_columns = {timestamp_column, target}
-            missing_columns = required_columns - set(df.columns)
-            if missing_columns:
-                raise ValueError(
-                    f"Missing required columns in dataset: {missing_columns}. Available columns: {list(df.columns)}"
-                )
-            if len(df.columns) != 2:
-                raise ValueError(
-                    f"When id_column is not provided, the dataset must have exactly 2 columns "
-                    f"(timestamp + target), but found {len(df.columns)} columns: {list(df.columns)}. "
-                    f"Provide id_column to identify the series column for datasets with more than 2 columns."
-                )
-            # Check for collision with existing columns in the dataset
-            if SYNTHETIC_ITEM_ID_COLUMN in df.columns:
-                raise ValueError(
-                    f"Dataset already contains a column named {SYNTHETIC_ITEM_ID_COLUMN!r}. "
-                    f"This name is reserved for synthetic ID injection. Please rename the existing column."
-                )
-            df[SYNTHETIC_ITEM_ID_COLUMN] = SYNTHETIC_ITEM_ID_VALUE
-            id_column = SYNTHETIC_ITEM_ID_COLUMN
-            uses_synthetic_id = True
-            logger.info(
-                "Two-column dataset detected; injected synthetic item ID column %r with value %r.",
-                SYNTHETIC_ITEM_ID_COLUMN,
-                SYNTHETIC_ITEM_ID_VALUE,
-            )
-        else:
-            required_columns = {id_column, timestamp_column, target}
-            missing_columns = required_columns - set(df.columns)
-            if missing_columns:
-                raise ValueError(
-                    f"Missing required columns in dataset: {missing_columns}. Available columns: {list(df.columns)}"
-                )
+        uses_synthetic_id = id_column == ""
+        id_column = SYNTHETIC_ITEM_ID_COLUMN if uses_synthetic_id else id_column
 
+        def _prepare_columns(data):
+            """Validate the source schema and inject the single-series ID when needed."""
+            required_columns = {id_column, timestamp_column, target}
+            if uses_synthetic_id:
+                required_columns.remove(id_column)
+            missing_columns = required_columns - set(data.columns)
+            if missing_columns:
+                raise ValueError(
+                    f"Missing required columns in dataset: {missing_columns}. Available columns: {list(data.columns)}"
+                )
+            if uses_synthetic_id:
+                if SYNTHETIC_ITEM_ID_COLUMN in data.columns:
+                    raise ValueError(
+                        f"Dataset already contains a column named {SYNTHETIC_ITEM_ID_COLUMN!r}. "
+                        "This name is reserved for synthetic ID injection. Please rename the existing column."
+                    )
+                if len(data.columns) != 2:
+                    raise ValueError(
+                        "When id_column is not provided, the dataset must have exactly 2 columns "
+                        f"(timestamp + target), but found {len(data.columns)} columns: {list(data.columns)}. "
+                        "Provide id_column to identify the series column for datasets with more than 2 columns."
+                    )
+                data[SYNTHETIC_ITEM_ID_COLUMN] = SYNTHETIC_ITEM_ID_VALUE
+            return data
+
+        def _prepare_sampling_chunk(data):
+            """Apply the existing timestamp and missing-value rules before tail selection."""
+            return _clean_timeseries_dataframe(
+                _prepare_columns(data), id_column, timestamp_column, logger, sort_data=False
+            )
+
+        sampling_report = {}
+        df = load_latest_timeseries(
+            lambda conditions: get_s3_response(bucket_name, file_key, **conditions),
+            _prepare_sampling_chunk,
+            id_column,
+            timestamp_column,
+            MAX_SIZE_BYTES,
+            PANDAS_CHUNK_SIZE,
+            sampling_report,
+            logger,
+            synthetic_id=uses_synthetic_id,
+        )
         if len(df) == 0:
             raise ValueError(
                 "The loaded dataset has no data rows. Provide at least one row per time series "
                 f"with columns {sorted({id_column, timestamp_column, target})}."
             )
 
-        df = _clean_timeseries_dataframe(df, id_column, timestamp_column, logger)
-        stringify_mixed_object_columns(df)
         _log_dataset_stats("loaded (after cleansing)", df)
 
         n_valid = len(df)
@@ -511,6 +513,39 @@ def timeseries_data_loader(
                 "Provide a larger dataset or fix invalid timestamps, null ids, and duplicate keys."
             )
 
+        # Stream a complete per-series profile into the existing status artifact;
+        # keep the KFP parameter and status metrics small even for large panels.
+        profile_dir = Path(component_status.path)
+        profile_dir.mkdir(parents=True, exist_ok=True)
+        profile_name = "timeseries_profile.jsonl"
+        series_count = 0
+        with (profile_dir / profile_name).open("w", encoding="utf-8") as profile:
+            for item_id, series in df.groupby(id_column, sort=False):
+                series_count += 1
+                first, last = series[timestamp_column].min(), series[timestamp_column].max()
+                json.dump(
+                    {
+                        "item_id": str(item_id),
+                        "retained_rows": len(series),
+                        "min_timestamp": first.isoformat() if hasattr(first, "isoformat") else str(first),
+                        "max_timestamp": last.isoformat() if hasattr(last, "isoformat") else str(last),
+                    },
+                    profile,
+                )
+                profile.write("\n")
+        del series
+
+        sample_config = {
+            "sampling_method": "last_values_per_series",
+            "total_rows_loaded": n_valid,
+            "sampled_rows": n_valid,
+            "source_rows_read": sampling_report["source_rows_read"],
+            "source_read_complete": not sampling_report["partial_read"],
+            "read_passes": sampling_report["read_passes"],
+            "series_count": series_count,
+            "profile_file": profile_name,
+        }
+
         status.record(
             "prepare_data",
             "completed",
@@ -520,7 +555,7 @@ def timeseries_data_loader(
                 "sampled_in_memory_bytes": int(df.memory_usage(deep=True).sum()),
                 "sample_cap_bytes": MAX_SIZE_BYTES,
                 "sample_cap_reached": bool(sampling_report.get("cap_reached")),
-                "sampling_method": "first_n_rows",
+                **sample_config,
                 "preset": preset,
             },
         )
@@ -533,8 +568,9 @@ def timeseries_data_loader(
         datasets_dir = workspace_path_resolved / "datasets"
         datasets_dir.mkdir(parents=True, exist_ok=True)
 
-        # Stable ordering for downstream I/O (redundant if cleanse already sorted; kept for clarity)
+        # Order the bounded sample once before downstream splits.
         df = df.sort_values(by=[id_column, timestamp_column]).reset_index(drop=True)
+        dataset_columns = list(df.columns)
 
         def _early_late_split(group: pd.DataFrame, early_fraction: float) -> tuple[pd.DataFrame, pd.DataFrame]:
             """Split one series by time: first ``early_fraction`` of rows (by time) vs remainder.
@@ -542,7 +578,8 @@ def timeseries_data_loader(
             Ensures at least one row in each side when len >= 2. A single-row series is kept
             entirely in the early (train/selection) part.
             """
-            g = group.sort_values(by=timestamp_column)
+            # The bounded panel and its concatenated splits are already sorted.
+            g = group
             n = len(g)
             if n == 0:
                 return g.iloc[:0].copy(), g.iloc[:0].copy()
@@ -552,11 +589,11 @@ def timeseries_data_loader(
             split_idx = max(1, min(split_idx, n - 1))
             return g.iloc[:split_idx].copy(), g.iloc[split_idx:].copy()
 
-        def _concat_sorted(parts: list, sort_by: list) -> pd.DataFrame:
+        def _concat_parts(parts: list) -> pd.DataFrame:
+            """Concatenate groups in their existing (ID, timestamp) order."""
             if not parts:
-                return pd.DataFrame(columns=df.columns)
-            out = pd.concat(parts, ignore_index=True)
-            return out.sort_values(by=sort_by).reset_index(drop=True)
+                return pd.DataFrame(columns=dataset_columns)
+            return pd.concat(parts, ignore_index=True)
 
         has_user_test_data = bool(test_data_file_key)
 
@@ -668,8 +705,9 @@ def timeseries_data_loader(
                 selection_parts.append(sel)
                 extra_parts.append(ext)
 
-            selection_train_df = _concat_sorted(selection_parts, [id_column, timestamp_column])
-            extra_train_df = _concat_sorted(extra_parts, [id_column, timestamp_column])
+            selection_train_df = _concat_parts(selection_parts)
+            extra_train_df = _concat_parts(extra_parts)
+            del selection_parts, extra_parts, sel, ext, series_df
 
             if len(selection_train_df) == 0:
                 raise ValueError(
@@ -695,8 +733,10 @@ def timeseries_data_loader(
                 train_parts.append(tr)
                 test_parts.append(te)
 
-            train_df = _concat_sorted(train_parts, [id_column, timestamp_column])
-            test_df = _concat_sorted(test_parts, [id_column, timestamp_column])
+            train_df = _concat_parts(train_parts)
+            test_df = _concat_parts(test_parts)
+            del train_parts, test_parts, tr, te, series_df
+            train_rows = len(train_df)
 
             selection_parts: list = []
             extra_parts: list = []
@@ -705,11 +745,12 @@ def timeseries_data_loader(
                 selection_parts.append(sel)
                 extra_parts.append(ext)
 
-            selection_train_df = _concat_sorted(selection_parts, [id_column, timestamp_column])
-            extra_train_df = _concat_sorted(extra_parts, [id_column, timestamp_column])
+            selection_train_df = _concat_parts(selection_parts)
+            extra_train_df = _concat_parts(extra_parts)
+            del selection_parts, extra_parts, sel, ext, series_train, train_df
 
             # Validate split outputs:
-            if len(train_df) == 0:
+            if train_rows == 0:
                 raise ValueError(
                     "Primary temporal split produced no train rows. The dataset may be too small for "
                     "the configured splits. Add more rows per time series, or reduce test_size "
@@ -733,6 +774,7 @@ def timeseries_data_loader(
                 "selection_train_size": selection_train_size,
             }
 
+        del df
         _log_dataset_stats("split: selection_train", selection_train_df)
         _log_dataset_stats("split: extra_train", extra_train_df)
         _log_dataset_stats(
@@ -774,11 +816,9 @@ def timeseries_data_loader(
         else:
             sample_rows = sample_tail.to_json(orient="records")
 
-        sample_config = {"sampling_method": "first_n_rows", "total_rows_loaded": len(df), "sampled_rows": len(df)}
-
         logger.info(
             "Timeseries loader: %s rows from s3://%s/%s; split selection=%s extra=%s test=%s",
-            len(df),
+            n_valid,
             bucket_name,
             file_key,
             len(selection_train_df),

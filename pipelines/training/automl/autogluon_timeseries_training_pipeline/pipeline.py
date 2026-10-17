@@ -95,8 +95,11 @@ def autogluon_timeseries_training_pipeline(
     0. **Component stage map**: Publishes the static component-to-stage-to-step map as a KFP
        artifact for dashboards before data loading.
 
-    1. **Data loading & splitting** (``timeseries_data_loader``): Loads CSV from S3 (up to 100 MiB
+    1. **Data loading & splitting** (``timeseries_data_loader``): Retains the latest observations
+       per series from S3 CSVs (up to 100 MiB
        for the "speed" preset, up to 1 GiB for "balanced", and up to 10 GiB for "quality"),
+       uses bounded sampling by parsed timestamps even for unsorted inputs, records per-series
+       retained ranges in the loader status artifact,
        replaces ``+/-inf`` with NaN (missing targets stay for AutoGluon), requires parseable timestamps
        and non-null ids (or injects ``__synthetic_item_id`` for two-column datasets when ``id_column=""``),
        deduplicates ``(id_column, timestamp_column)``, then applies a two-stage

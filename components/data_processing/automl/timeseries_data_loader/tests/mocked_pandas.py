@@ -207,7 +207,7 @@ class MockedDataFrame:
         """Shallow copy of rows."""
         return MockedDataFrame(self._columns, [list(r) for r in self._rows])
 
-    def sort_values(self, by, ascending=True):
+    def sort_values(self, by, ascending=True, kind=None):
         """Sort rows lexicographically by the given column name(s)."""
         _ = ascending
         cols = list(by) if isinstance(by, (list, tuple)) else [by]
