@@ -76,6 +76,7 @@ to a single combined ``models_artifact``.
     - DorotaDR
     - Mateusz-Switala
   - Reviewers:
+    - mateusz-szewczyk-dev
     - DorotaDR
 
 <!-- custom-content -->

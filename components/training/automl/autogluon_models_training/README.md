@@ -67,6 +67,7 @@ model directory contains a ``model.json`` file with model metadata (name, locati
     - DorotaDR
     - Mateusz-Switala
   - Reviewers:
+    - mateusz-szewczyk-dev
     - Mateusz-Switala
     - DorotaDR
 

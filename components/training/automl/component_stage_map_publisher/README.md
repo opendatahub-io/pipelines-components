@@ -40,6 +40,7 @@ Reads the static JSON template from the package (``run_status_templates/pipeline
     - DorotaDR
     - Mateusz-Switala
   - Reviewers:
+    - mateusz-szewczyk-dev
     - Mateusz-Switala
     - DorotaDR
 

@@ -128,6 +128,7 @@ def example_pipeline(
     - DorotaDR
     - Mateusz-Switala
   - Reviewers:
+    - mateusz-szewczyk-dev
     - Mateusz-Switala
     - DorotaDR
 
