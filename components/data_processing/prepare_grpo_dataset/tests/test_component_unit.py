@@ -47,6 +47,34 @@ def _raw_tool_call_row():
     }
 
 
+def _multi_tool_call_row():
+    row = _raw_tool_call_row()
+    row["available_tools"].append(
+        {
+            "type": "function",
+            "function": {
+                "name": "get_time",
+                "description": "Get the time.",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        }
+    )
+    row["messages"][2]["tool_calls"].append(
+        {
+            "id": "call_2",
+            "type": "function",
+            "function": {"name": "get_time", "arguments": "{}"},
+        }
+    )
+    row["messages"].extend(
+        [
+            {"role": "tool", "content": "Boston", "name": "get_weather"},
+            {"role": "tool", "content": "12:00", "name": "get_time"},
+        ]
+    )
+    return row
+
+
 def _run_component(tmp_path, dataset_rows, **component_kwargs):
     tmp_path.mkdir(parents=True, exist_ok=True)
     input_path = tmp_path / "input.jsonl"
@@ -97,8 +125,9 @@ def test_local_rows_are_normalized_without_sampling_or_splitting(tmp_path):
     assert config == ""
     assert use_hf_direct is False
     assert len(normalized) == 1
-    assert normalized[0]["target_tool_name"] == "get_weather"
-    assert normalized[0]["target_arguments"] == {"city": "Boston"}
+    assert "target_tool_name" not in normalized[0]
+    assert normalized[0]["messages"][2]["tool_calls"][0]["function"]["name"] == "get_weather"
+    assert normalized[0]["messages"][2]["tool_calls"][0]["function"]["arguments"] == '{"city":"Boston"}'
     assert normalized[0]["tools"][0]["type"] == "function"
     load_dataset.assert_called_once()
     assert load_dataset.call_args.kwargs["streaming"] is True
@@ -117,7 +146,7 @@ def test_local_jsonl_uses_the_datasets_reader(tmp_path):
     with open(result[0], encoding="utf-8") as normalized_file:
         normalized = [json.loads(line) for line in normalized_file]
     assert len(normalized) == 1
-    assert normalized[0]["target_tool_name"] == "get_weather"
+    assert "messages" in normalized[0]
 
 
 def test_real_jsonl_reader_null_fields_use_legacy_fallbacks(tmp_path):
@@ -150,13 +179,13 @@ def test_real_jsonl_reader_null_fields_use_legacy_fallbacks(tmp_path):
     with open(result[0], encoding="utf-8") as normalized_file:
         normalized = [json.loads(line) for line in normalized_file]
     assert len(normalized) == 2
-    assert normalized[1]["question"] == ""
-    assert normalized[1]["target_tool_name"] == "get_weather"
-    assert normalized[1]["target_arguments"] == {"city": "Boston"}
+    assert normalized[1]["messages"][1]["content"] == ""
+    assert normalized[1]["messages"][2]["tool_calls"][0]["function"]["name"] == "get_weather"
+    assert normalized[1]["messages"][2]["tool_calls"][0]["function"]["arguments"] == '{"city":"Boston"}'
 
 
-def test_existing_canonical_rows_are_preserved(tmp_path):
-    """Keep already-canonical rows usable by the Training Hub loader."""
+def test_existing_canonical_rows_use_messages_format(tmp_path):
+    """Adapt flat canonical rows to the uniform messages format."""
     row = {
         "question": "What is the weather in Boston?",
         "tools": [
@@ -173,7 +202,8 @@ def test_existing_canonical_rows_are_preserved(tmp_path):
     with open(result[0], encoding="utf-8") as normalized_file:
         normalized = [json.loads(line) for line in normalized_file]
 
-    assert normalized[0]["target_tool_name"] == "get_weather"
+    assert "target_tool_name" not in normalized[0]
+    assert normalized[0]["messages"][2]["tool_calls"][0]["function"]["name"] == "get_weather"
     assert normalized[0]["tools"][0]["function"]["name"] == "get_weather"
 
 
@@ -193,38 +223,15 @@ def test_none_fields_fall_back_to_legacy_names(tmp_path):
     with open(result[0], encoding="utf-8") as normalized_file:
         normalized = [json.loads(line) for line in normalized_file]
 
-    assert normalized[0]["question"] == ""
-    assert normalized[0]["target_tool_name"] == "get_weather"
-    assert normalized[0]["target_arguments"] == {"city": "Boston"}
+    assert normalized[0]["messages"][1]["content"] == ""
+    assert normalized[0]["messages"][2]["tool_calls"][0]["function"]["name"] == "get_weather"
+    assert normalized[0]["messages"][2]["tool_calls"][0]["function"]["arguments"] == '{"city":"Boston"}'
     assert normalized[0]["tools"][0]["function"]["name"] == "get_weather"
 
 
 def test_multiple_tool_calls_use_fifo_response_ids(tmp_path):
     """Assign missing tool-response IDs to the matching calls in order."""
-    row = _raw_tool_call_row()
-    row["available_tools"].append(
-        {
-            "type": "function",
-            "function": {
-                "name": "get_time",
-                "description": "Get the time.",
-                "parameters": {"type": "object", "properties": {}},
-            },
-        }
-    )
-    row["messages"][2]["tool_calls"].append(
-        {
-            "id": "call_2",
-            "type": "function",
-            "function": {"name": "get_time", "arguments": "{}"},
-        }
-    )
-    row["messages"].extend(
-        [
-            {"role": "tool", "content": "Boston", "name": "get_weather"},
-            {"role": "tool", "content": "12:00", "name": "get_time"},
-        ]
-    )
+    row = _multi_tool_call_row()
 
     result, _ = _run_component(tmp_path, [row])
     with open(result[0], encoding="utf-8") as normalized_file:
@@ -232,6 +239,31 @@ def test_multiple_tool_calls_use_fifo_response_ids(tmp_path):
 
     tool_messages = [message for message in normalized[0]["messages"] if message["role"] == "tool"]
     assert [message["tool_call_id"] for message in tool_messages] == ["call_1", "call_2"]
+
+
+def test_mixed_single_and_multi_call_rows_use_one_shape(tmp_path):
+    """Keep mixed input rows visible to Training Hub regardless of order."""
+    single_row = {
+        "question": "What is the weather in Boston?",
+        "tools": [
+            {
+                "name": "get_weather",
+                "description": "Get the weather.",
+                "parameters": {"type": "object", "properties": {}},
+            }
+        ],
+        "target_tool_name": "get_weather",
+        "target_arguments": {"city": "Boston"},
+    }
+
+    for order, rows in enumerate(([single_row, _multi_tool_call_row()], [_multi_tool_call_row(), single_row])):
+        result, _ = _run_component(tmp_path / f"order-{order}", rows)
+        with open(result[0], encoding="utf-8") as normalized_file:
+            normalized = [json.loads(line) for line in normalized_file]
+
+        assert len(normalized) == 2
+        assert all("messages" in row and "tools" in row for row in normalized)
+        assert all("target_tool_name" not in row for row in normalized)
 
 
 def test_invalid_rows_are_skipped_and_reported(tmp_path):

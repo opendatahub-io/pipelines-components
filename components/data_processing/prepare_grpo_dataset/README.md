@@ -14,8 +14,8 @@ secret name is a pipeline-task setting, not a component runtime input.
 
 See the Training Hub GRPO loader contract: https://github.com/Red-Hat-AI-Innovation-Team/training_hub/blob/main/src/training_hub/algorithms/lora_grpo.py
 
-The local canonical single-turn format is ``question``, ``tools``, ``target_tool_name``, ``target_arguments``, and an optional ``system_prompt``. Multi-turn rows retain ``messages`` and are normalized to modern OpenAI ``tool_calls``/``tool`` messages so Training Hub can decompose them. Malformed
-rows are skipped only when they raise an expected ``ValueError``; the component fails if the invalid-row ratio exceeds ``max_invalid_row_ratio``.
+The normalized output always uses ``messages`` and ``tools`` so Training Hub sees one local format for every row. Single-turn source rows are represented as system, user, and assistant-with-tool-call messages. Multi-turn rows retain their conversation history and are normalized to modern OpenAI
+``tool_calls``/``tool`` messages. Malformed rows are skipped only when they raise an expected ``ValueError``; the component fails if the invalid-row ratio exceeds ``max_invalid_row_ratio``.
 
 ## Inputs 📥
 

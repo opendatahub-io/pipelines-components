@@ -41,13 +41,13 @@ def prepare_grpo_dataset(
     See the Training Hub GRPO loader contract:
     https://github.com/Red-Hat-AI-Innovation-Team/training_hub/blob/main/src/training_hub/algorithms/lora_grpo.py
 
-    The local canonical single-turn format is ``question``, ``tools``,
-    ``target_tool_name``, ``target_arguments``, and an optional
-    ``system_prompt``. Multi-turn rows retain ``messages`` and are normalized
-    to modern OpenAI ``tool_calls``/``tool`` messages so Training Hub can
-    decompose them. Malformed rows are skipped only when they raise an expected
-    ``ValueError``; the component fails if the invalid-row ratio exceeds
-    ``max_invalid_row_ratio``.
+    The normalized output always uses ``messages`` and ``tools`` so Training
+    Hub sees one local format for every row. Single-turn source rows are
+    represented as system, user, and assistant-with-tool-call messages.
+    Multi-turn rows retain their conversation history and are normalized to
+    modern OpenAI ``tool_calls``/``tool`` messages. Malformed rows are skipped
+    only when they raise an expected ``ValueError``; the component fails if the
+    invalid-row ratio exceeds ``max_invalid_row_ratio``.
 
     Args:
         dataset_uri: Hugging Face URI/repository ID, ``s3://`` object,
@@ -216,23 +216,28 @@ def prepare_grpo_dataset(
             normalized.append(message)
         return normalized
 
-    def _first_user_content(messages):
-        for message in messages:
-            if isinstance(message, dict) and message.get("role") == "user":
-                content = message.get("content", "")
-                if isinstance(content, str):
-                    return content
-        return ""
-
-    def _system_content(messages):
-        for message in messages:
-            if isinstance(message, dict) and message.get("role") == "system":
-                content = message.get("content", "")
-                return content if isinstance(content, str) else ""
-        return ""
-
     def _tool_call_count(messages):
         return sum(len(_message_tool_calls(message)) for message in messages)
+
+    def _single_turn_messages(question, system_prompt, target_name, target_arguments, row_index):
+        return [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": question},
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": f"call_{row_index}_0",
+                        "type": "function",
+                        "function": {
+                            "name": target_name,
+                            "arguments": json.dumps(target_arguments, separators=(",", ":")),
+                        },
+                    }
+                ],
+            },
+        ]
 
     def _canonicalize_row(row, row_index):
         if not isinstance(row, dict):
@@ -244,27 +249,14 @@ def prepare_grpo_dataset(
             tools = row.get("tools") or row.get("available_tools") or []
             tools = _normalise_tools(tools)
             tool_call_count = _tool_call_count(normalized_messages)
-            if tool_call_count > 1:
-                # Preserve multi-turn traces. Training Hub will decompose each
-                # assistant tool-call turn into a canonical training sample.
-                return {
-                    "id": row.get("id", row.get("uuid", str(row_index))),
-                    "messages": normalized_messages,
-                    "tools": tools,
-                }
-
             if tool_call_count == 0:
                 raise ValueError("messages contain no assistant tool call")
-            call = next(_message_tool_call(message) for message in normalized_messages if _message_tool_call(message))
-            target_name = str(call["name"]).strip()
-            target_arguments = _parse_json_value(call.get("arguments", "{}"), "tool-call arguments")
+            # Preserve every trace as messages. Training Hub will decompose
+            # each assistant tool-call turn into a training sample.
             return {
                 "id": row.get("id", row.get("uuid", str(row_index))),
-                "question": row.get("question") or _first_user_content(normalized_messages),
+                "messages": normalized_messages,
                 "tools": tools,
-                "target_tool_name": target_name,
-                "target_arguments": target_arguments,
-                "system_prompt": row.get("system_prompt") or _system_content(normalized_messages),
             }
 
         tools = row.get("tools") or row.get("available_tools")
@@ -277,13 +269,19 @@ def prepare_grpo_dataset(
         target_name = str(target_name).strip()
         if not target_name:
             raise ValueError("target_tool_name must be a non-empty string")
+        target_arguments = _parse_json_value(target_arguments, "target_arguments")
+        question = row.get("question") or ""
+        system_prompt = row.get("system_prompt") or ""
         return {
             "id": row.get("id", row.get("uuid", str(row_index))),
-            "question": row.get("question") or "",
+            "messages": _single_turn_messages(
+                question,
+                system_prompt,
+                target_name,
+                target_arguments,
+                row_index,
+            ),
             "tools": _normalise_tools(tools),
-            "target_tool_name": target_name,
-            "target_arguments": _parse_json_value(target_arguments, "target_arguments"),
-            "system_prompt": row.get("system_prompt") or "",
         }
 
     def _is_huggingface_reference(uri):
