@@ -51,8 +51,10 @@ def prepare_grpo_dataset(
 
     Args:
         dataset_uri: Hugging Face URI/repository ID, ``s3://`` object,
-            ``http://`` or ``https://`` JSON/JSONL URL, ``pvc://`` path, or
-            local JSON/JSONL path visible in the component container.
+            ``http://`` or ``https://`` JSON/JSONL URL, or local JSON/JSONL
+            path visible in the component container. Bare local/PVC paths are
+            preferred; ``pvc://`` is retained as a legacy alias for the same
+            local/PVC handling and validation.
         pvc_mount_path: Mount point of the shared PVC used for caches and
             normalized local data.
         dataset_config: Optional Hugging Face dataset configuration. An inline
