@@ -73,6 +73,7 @@ to a single combined ``models_artifact``.
 - **Owners**:
   - No Parent Owners: Yes
   - Approvers:
+    - mateusz-szewczyk-dev
     - DorotaDR
     - Mateusz-Switala
   - Reviewers:

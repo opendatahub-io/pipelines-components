@@ -98,6 +98,7 @@ def example_pipeline(
 - **Owners**:
   - No Parent Owners: Yes
   - Approvers:
+    - mateusz-szewczyk-dev
     - LukaszCmielowski
     - DorotaDR
     - Mateusz-Switala
