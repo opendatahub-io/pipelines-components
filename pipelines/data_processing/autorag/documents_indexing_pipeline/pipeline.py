@@ -85,6 +85,7 @@ def documents_indexing_pipeline(
     documents_discovery_task = documents_discovery(
         input_data_bucket_name=input_data_bucket_name,
         input_data_keys=input_data_keys,
+        sampling_enabled=False,
     )
     documents_discovery_task.set_caching_options(False)
     documents_discovery_task.set_cpu_request("2").set_memory_request("8Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(

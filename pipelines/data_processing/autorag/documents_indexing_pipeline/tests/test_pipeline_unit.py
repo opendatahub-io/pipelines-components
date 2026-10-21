@@ -81,6 +81,18 @@ class TestDocumentsIndexingPipelineUnit:
         finally:
             Path(tmp_path).unlink(missing_ok=True)
 
+    def test_compiled_pipeline_disables_document_sampling(self, tmp_path):
+        """Production indexing discovers the full corpus without the default size cap."""
+        tmp_file = tmp_path / "full-corpus-indexing.yaml"
+        compiler.Compiler().compile(
+            pipeline_func=documents_indexing_pipeline,
+            package_path=str(tmp_file),
+        )
+        spec = load_pipeline_spec_document(tmp_file)
+        discovery_inputs = spec["root"]["dag"]["tasks"]["documents-discovery"]["inputs"]["parameters"]
+
+        assert discovery_inputs["sampling_enabled"] == {"runtimeValue": {"constant": False}}
+
     def test_compiled_pipeline_wires_indexing_parameters(self):
         """Chunking and embedding pipeline inputs reach the indexing component."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as tmp:
