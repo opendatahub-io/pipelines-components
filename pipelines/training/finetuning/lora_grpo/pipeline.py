@@ -1,7 +1,7 @@
 """LoRA GRPO (Group Relative Policy Optimization) Training Pipeline.
 
 A 4-stage pipeline for LoRA GRPO fine-tuning with promotion gating:
-1. LoRA GRPO Training - Training Hub loads the dataset from Hugging Face,
+1. Dataset Preparation and LoRA GRPO Training - resolves the input source,
    then ART runs a 1 GPU TrainJob and merges LoRA adapters
 2. GRPO Evaluation - extracts reward metrics, computes promotion gate
 3. Model Registry - registers promoted model (gated by promotion check)
@@ -16,6 +16,7 @@ import kfp
 import kfp.kubernetes
 from kfp import dsl
 
+from components.data_processing.prepare_grpo_dataset import prepare_grpo_dataset
 from components.deployment.kubeflow_model_registry import (
     kubeflow_model_registry as shared_model_registry,
 )
@@ -52,13 +53,17 @@ def lora_grpo_pipeline(
     phase_00_infra_man_pvc_name: str,
     phase_04_registry_man_address: str,
     phase_05_deploy_man_namespace: str,
+    phase_01_dataset_man_data_uri: str,
+    phase_02_train_man_model: str,
+    phase_02_train_opt_data_config: str,
+    phase_05_deploy_opt_tokenizer_mode: str,
     # =========================================================================
     # KEY PARAMETERS - Sorted by stage
     # =========================================================================
-    # Dataset (loaded directly by Training Hub)
-    phase_01_dataset_man_data_uri: str = "hf://Agent-Ark/Toucan-1.5M:Qwen3",
+    # Dataset
+    phase_01_dataset_opt_max_invalid_row_ratio: float = 0.10,
+    data_connection_name: str = "s3-secret",
     # Stage 2: Training
-    phase_02_train_man_model: str = "Qwen/Qwen3-4B",
     phase_02_train_man_num_iterations: int = 50,
     phase_02_train_man_group_size: int = 4,
     phase_02_train_man_prompt_batch_size: int = 50,
@@ -70,7 +75,6 @@ def lora_grpo_pipeline(
     # OPTIONAL PARAMETERS - Sorted by stage
     # =========================================================================
     # Stage 2
-    phase_02_train_opt_data_config: str = "Qwen3",
     phase_02_train_opt_n_train: int = 200,
     phase_02_train_opt_learning_rate: float = 1e-5,
     phase_02_train_opt_gpu_memory_utilization: float = 0.45,
@@ -95,15 +99,13 @@ def lora_grpo_pipeline(
     phase_05_deploy_opt_max_replicas: int = 1,
     phase_05_deploy_opt_cpu_requests: str = "2",
     phase_05_deploy_opt_memory_requests: str = "8Gi",
-    phase_05_deploy_opt_tokenizer_mode: str = "auto",
 ):
     """LoRA GRPO Training Pipeline - RLVR fine-tuning with promotion gating.
 
-    A 4-stage pipeline that trains a language model using LoRA GRPO
-    (Group Relative Policy Optimization) for tool-calling tasks, loads the
-    dataset directly through Training Hub's Hugging Face loader, evaluates
-    training results, and conditionally registers and deploys the model only
-    if training shows improvement.
+    A 4-stage pipeline that prepares and trains a language model using LoRA
+    GRPO (Group Relative Policy Optimization) for tool-calling tasks, evaluates
+    training results, and conditionally registers and deploys the model only if
+    training shows improvement.
 
     Prerequisites:
         - A ReadWriteMany PVC (e.g., NFS-backed) for model storage and serving.
@@ -112,6 +114,8 @@ def lora_grpo_pipeline(
         - ``kubernetes-credentials`` secret with KUBERNETES_SERVER_URL and
           KUBERNETES_AUTH_TOKEN (required for TrainJob creation).
         - ``hf-token`` secret (optional, for gated HuggingFace models/datasets).
+        - RHOAI data connection Secret (only required for private S3 datasets;
+          defaults to ``s3-secret`` and is injected optionally).
         - Model Registry RoleBinding for the pipeline ServiceAccount (required
           for stage 4).
         - Pipeline ServiceAccount RBAC for KServe CRDs (required for stage 5).
@@ -122,21 +126,25 @@ def lora_grpo_pipeline(
             your Data Science Project -> Cluster Storage -> Create storage, select
             ReadWriteMany access mode, minimum 50Gi. Enter only the PVC name
             (not a path). Example: ``grpo-pipeline-pvc``
-        phase_01_dataset_man_data_uri: Hugging Face dataset URI only. This
-            pipeline bypasses dataset materialization and passes the value
-            directly to Training Hub. Defaults to
-            ``hf://Agent-Ark/Toucan-1.5M:Qwen3``. Use ``hf://org/dataset`` or
-            ``hf://org/dataset:config``; the ``hf://`` prefix is optional when
-            supplying a Hugging Face repository ID. Local JSON/JSONL, PVC, S3,
-            and HTTP dataset paths are not supported by this pipeline. Each
-            row must contain ``question``, ``available_tools`` (OpenAI
-            function-tool definitions), and ``messages`` whose first three
-            messages are system, user, and assistant-with-tool-call. The
-            assistant tool call must provide a non-empty function name and
-            JSON-encoded arguments. See the Training Hub loader format:
-            https://github.com/Red-Hat-AI-Innovation-Team/training_hub/blob/main/src/training_hub/algorithms/lora_grpo.py#L381-L387
-            For datasets with multiple configs, append ``:config`` or set
-            ``phase_02_train_opt_data_config``.
+        phase_01_dataset_man_data_uri: Dataset reference. Hugging Face
+            references are loaded directly by Training Hub; local JSON/JSONL,
+            PVC, S3, and HTTP(S) sources are normalized by the preparation
+            component onto the shared PVC. For Hugging Face datasets, use
+            ``hf://org/dataset`` or ``hf://org/dataset:config``; the ``hf://``
+            prefix is optional for repository IDs. Non-Hugging Face rows are
+            converted to Training Hub's canonical ``messages`` and ``tools``
+            format. See the [Training Hub loader format](https://github.com/Red-Hat-AI-Innovation-Team/training_hub/blob/main/src/training_hub/algorithms/lora_grpo.py#L381-L387).
+        phase_01_dataset_opt_max_invalid_row_ratio: Maximum fraction of invalid
+            rows that the preparation component may skip for local, PVC, S3,
+            and HTTP(S) sources before failing. Defaults to 10%; use ``0.0``
+            for strict validation. It is not applied to direct Hugging Face
+            loading.
+        data_connection_name: Name of the RHOAI data connection Secret used by
+            the preparation task for private S3 input. It defaults to
+            ``s3-secret`` and is optional for Hugging Face, HTTP(S), and
+            local/PVC input. The Secret should provide
+            ``AWS_ACCESS_KEY_ID``, ``AWS_SECRET_ACCESS_KEY``, and optionally
+            ``AWS_S3_ENDPOINT`` and ``AWS_DEFAULT_REGION``.
         phase_05_deploy_man_namespace: OpenShift project where the KServe
             InferenceService will be created. Must be the same namespace where
             your PVC is provisioned. Should have
@@ -144,7 +152,8 @@ def lora_grpo_pipeline(
             Example: ``my-ds-project``
         phase_02_train_man_model: HuggingFace model ID of the base model to
             fine-tune. If the model is gated, configure the ``hf-token`` secret.
-            Example: ``Qwen/Qwen3-4B`` or ``ibm-granite/granite-3.3-8b-instruct``
+            Examples: ``Qwen/Qwen3-4B`` or
+            ``ibm-granite/granite-3.3-8b-instruct``
         phase_02_train_man_num_iterations: Number of GRPO policy-gradient update
             steps. Each iteration generates ``group_size`` rollouts per prompt
             and updates the LoRA adapter. The promotion gate (stage 3) requires
@@ -169,16 +178,16 @@ def lora_grpo_pipeline(
             ``http://``, ``https://``, or the ``/api/model_registry/v1alpha3``
             path.
         phase_04_registry_man_name: Name to register the model under. Must be
-            unique within your Model Registry.
-            Example: ``qwen3-grpo-tool-call``
+            unique within your Model Registry. Defaults to ``grpo-model``;
+            override it with a unique name such as ``qwen3-grpo-tool-call``
+            for repeated or production runs.
         phase_04_registry_man_version: Version tag for this model revision.
             Use semantic versioning. Example: ``1.0.0``
         phase_02_train_opt_data_config: HuggingFace dataset config (split or
-            subset name). Only needed for multi-config datasets. Defaults to
-            ``Qwen3`` to match the default dataset
-            (``hf://Agent-Ark/Toucan-1.5M:Qwen3``). If you override
-            ``phase_01_dataset_man_data_uri`` with a single-config dataset,
-            set this to an empty string.
+            subset name). For example, use ``Qwen3`` with
+            ``hf://Agent-Ark/Toucan-1.5M:Qwen3``. If the selected dataset is
+            single-config, pass an empty string. The preparation task resolves
+            the effective config for direct HuggingFace loading.
         phase_02_train_opt_n_train: Maximum rows ART draws from the dataset
             per run. This is independent of the total dataset size.
             Example: ``200`` for quick tests, ``2000`` for a fuller run.
@@ -240,10 +249,11 @@ def lora_grpo_pipeline(
             the KServe predictor pod. Example: ``2``
         phase_05_deploy_opt_memory_requests: RAM requested and limited for the
             KServe predictor pod. Example: ``8Gi``
-        phase_05_deploy_opt_tokenizer_mode: vLLM tokenizer mode. ``auto`` uses
-            the fast tokenizer when available. Use ``slow`` when the model
-            requires its HuggingFace slow tokenizer. Use ``mistral`` for models
-            that require the ``mistral_common`` tokenizer. Default: ``auto``
+        phase_05_deploy_opt_tokenizer_mode: Required vLLM tokenizer mode.
+            Use ``auto`` when the fast tokenizer is compatible, ``slow`` when
+            the model requires its HuggingFace slow tokenizer (for example,
+            Qwen3 in the tested environment), or ``mistral`` for models that
+            require the ``mistral_common`` tokenizer. Do not leave it empty.
     """
 
     def configure_training_task(training_task):
@@ -281,12 +291,40 @@ def lora_grpo_pipeline(
     # =====================================================================
     # Stage 1: LoRA GRPO Training
     # =====================================================================
+    prepare_dataset_task = prepare_grpo_dataset(
+        dataset_uri=phase_01_dataset_man_data_uri,
+        pvc_mount_path=PVC_MOUNT_PATH,
+        dataset_config=phase_02_train_opt_data_config,
+        max_invalid_row_ratio=phase_01_dataset_opt_max_invalid_row_ratio,
+    )
+    prepare_dataset_task.set_caching_options(False)
+    kfp.kubernetes.set_image_pull_policy(prepare_dataset_task, "IfNotPresent")
+    kfp.kubernetes.mount_pvc(
+        task=prepare_dataset_task,
+        pvc_name=phase_00_infra_man_pvc_name,
+        mount_path=PVC_MOUNT_PATH,
+    )
+    # KFP attaches this secret reference when the pipeline is compiled. Keep
+    # it optional so HF, HTTP(S), and local/PVC inputs do not require a data
+    # connection; S3 inputs use the injected values when the Secret exists.
+    kfp.kubernetes.use_secret_as_env(
+        task=prepare_dataset_task,
+        secret_name=data_connection_name,
+        secret_key_to_env={
+            "AWS_ACCESS_KEY_ID": "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY": "AWS_SECRET_ACCESS_KEY",
+            "AWS_S3_ENDPOINT": "AWS_S3_ENDPOINT",
+            "AWS_DEFAULT_REGION": "AWS_DEFAULT_REGION",
+        },
+        optional=True,
+    )
+
     training_task = configure_training_task(
         train_model(
             pvc_path=PVC_MOUNT_PATH,
             training_run_id=dsl.PIPELINE_JOB_ID_PLACEHOLDER,
             training_base_model=phase_02_train_man_model,
-            training_data_path=phase_01_dataset_man_data_uri,
+            training_data_path=prepare_dataset_task.outputs["resolved_data_path"],
             training_num_iterations=phase_02_train_man_num_iterations,
             training_group_size=phase_02_train_man_group_size,
             training_prompt_batch_size=phase_02_train_man_prompt_batch_size,
@@ -294,7 +332,7 @@ def lora_grpo_pipeline(
             training_learning_rate=phase_02_train_opt_learning_rate,
             training_gpu_memory_utilization=phase_02_train_opt_gpu_memory_utilization,
             training_enforce_eager=phase_02_train_opt_enforce_eager,
-            training_data_config=phase_02_train_opt_data_config,
+            training_data_config=prepare_dataset_task.outputs["resolved_data_config"],
             training_lora_r=phase_02_train_man_lora_r,
             training_lora_alpha=phase_02_train_man_lora_alpha,
             training_envs=phase_02_train_opt_env_vars,
@@ -305,9 +343,10 @@ def lora_grpo_pipeline(
             training_metadata_annotations=phase_02_train_opt_annotations,
             training_runtime=phase_02_train_opt_runtime,
             training_pvc_name=phase_00_infra_man_pvc_name,
-            training_use_hf_direct=True,
+            training_use_hf_direct=prepare_dataset_task.outputs["use_hf_direct"],
         )
     )
+    training_task.after(prepare_dataset_task)
 
     training_results_path = training_task.outputs["Output"]
     training_model = training_task.outputs["output_model"]
