@@ -169,13 +169,14 @@ class TestLoRAGRPOComponentUnitTests:
         assert "training_job_timeout_seconds" not in params
 
     def test_worker_caches_are_pvc_backed(self):
-        """The worker cache paths and PVC mount must not use node-local storage."""
+        """Worker caches are PVC-backed and the Training Hub cache is run-scoped."""
         import inspect
 
         source = inspect.getsource(train_model.python_func)
 
         assert "worker_home = pvc_path" in source
-        assert '"HOME": worker_home' in source
+        assert 'run_home = os.path.join(worker_home, ".runs", run_id)' in source
+        assert '"HOME": run_home' in source
         assert '"HF_TOKEN_PATH": "/var/run/secrets/huggingface/token"' in source
         assert '"HF_HUB_CACHE": os.path.join(cache, "hub")' in source
         assert '"VLLM_CACHE_ROOT": os.path.join(worker_cache, "vllm")' in source

@@ -21,10 +21,10 @@ Pipeline ServiceAccount RBAC for KServe CRDs (required for stage 5).
 | `phase_05_deploy_man_namespace` | `str` | `None` | OpenShift project where the KServe InferenceService will be created. Must be the same namespace where your PVC is provisioned. Should have KServe enabled - typically your Data Science Project. Example: ``my-ds-project`` |
 | `phase_01_dataset_man_data_uri` | `str` | `None` | Dataset reference. Hugging Face references are loaded directly by Training Hub; local JSON/JSONL, PVC, S3, and HTTP(S) sources are normalized by the preparation component onto the shared PVC. For Hugging Face datasets, use ``hf://org/dataset`` or ``hf://org/dataset:config``; the ``hf://`` prefix is optional for repository IDs. Non-Hugging Face rows are converted to Training Hub's canonical ``messages`` and ``tools`` format. See the [Training Hub loader format](https://github.com/Red-Hat-AI-Innovation-Team/training_hub/blob/main/src/training_hub/algorithms/lora_grpo.py#L381-L387). |
 | `phase_02_train_man_model` | `str` | `None` | HuggingFace model ID of the base model to fine-tune. If the model is gated, configure the ``hf-token`` secret. Examples: ``Qwen/Qwen3-4B`` or ``ibm-granite/granite-3.3-8b-instruct`` |
-| `phase_02_train_opt_data_config` | `str` | `None` | HuggingFace dataset config (split or subset name). For example, use ``Qwen3`` with ``hf://Agent-Ark/Toucan-1.5M:Qwen3``. If the selected dataset is single-config, pass an empty string. The preparation task resolves the effective config for direct HuggingFace loading. |
+| `phase_02_train_opt_data_config` | `str` | `None` | Hugging Face dataset configuration name; split selection is not exposed. For example, use ``Qwen3`` with ``hf://Agent-Ark/Toucan-1.5M:Qwen3``. If the selected dataset is single-config, pass an empty string. The preparation task resolves the effective config for direct HuggingFace loading. |
 | `phase_05_deploy_opt_tokenizer_mode` | `str` | `None` | Required vLLM tokenizer mode. Use ``auto`` when the fast tokenizer is compatible, ``slow`` when the model requires its HuggingFace slow tokenizer (for example, Qwen3 in the tested environment), or ``mistral`` for models that require the ``mistral_common`` tokenizer. Do not leave it empty. |
 | `phase_01_dataset_opt_max_invalid_row_ratio` | `float` | `0.1` | Maximum fraction of invalid rows that the preparation component may skip for local, PVC, S3, and HTTP(S) sources before failing. Defaults to 10%; use ``0.0`` for strict validation. It is not applied to direct Hugging Face loading. |
-| `data_connection_name` | `str` | `s3-secret` | Name of the RHOAI data connection Secret used by the preparation task for private S3 input. It defaults to ``s3-secret`` and is optional for Hugging Face, HTTP(S), and local/PVC input. The Secret should provide ``AWS_ACCESS_KEY_ID``, ``AWS_SECRET_ACCESS_KEY``, and optionally ``AWS_S3_ENDPOINT`` and ``AWS_DEFAULT_REGION``. |
+| `phase_01_dataset_opt_data_connection_name` | `str` | `s3-secret` | Name of the RHOAI data connection Secret used by the preparation task for private S3 input. It defaults to ``s3-secret`` and is optional for Hugging Face, HTTP(S), and local/PVC input. The Secret should provide ``AWS_ACCESS_KEY_ID``, ``AWS_SECRET_ACCESS_KEY``, and optionally ``AWS_S3_ENDPOINT`` and ``AWS_DEFAULT_REGION``. |
 | `phase_02_train_man_num_iterations` | `int` | `50` | Number of GRPO policy-gradient update steps. Each iteration generates ``group_size`` rollouts per prompt and updates the LoRA adapter. The promotion gate (stage 3) requires ``final_reward > initial_reward`` - fewer than 30 iterations rarely pass it. Default 50 runs in ~1-2 hours on one A100 80GB with Qwen3-4B. Use 100+ for a production-quality training run. |
 | `phase_02_train_man_group_size` | `int` | `4` | Rollouts generated per prompt to estimate relative reward advantage. Higher = better gradient signal but more memory and time. Default 4 is suitable for single-GPU runs. |
 | `phase_02_train_man_prompt_batch_size` | `int` | `50` | Prompts processed per GRPO update step. Total rollout batch = ``prompt_batch_size x group_size`` (e.g., 50 x 4 = 200). Reduce if you hit out-of-memory errors. Example: ``50`` |
@@ -113,7 +113,7 @@ node-local KFP artifact directory.
 For a Hugging Face dataset with multiple configs, include the config in the
 URI, for example ``hf://Agent-Ark/Toucan-1.5M:Qwen3``, or set
 ``phase_02_train_opt_data_config`` separately. For private S3 input, set
-``data_connection_name`` to the RHOAI Connection Secret containing the AWS
+``phase_01_dataset_opt_data_connection_name`` to the RHOAI Connection Secret containing the AWS
 credentials. ``phase_01_dataset_opt_max_invalid_row_ratio`` defaults to 10%
 for non-Hugging Face sources and can be set to ``0.0`` for strict validation.
 ``phase_02_train_opt_n_train`` controls how many examples ART draws for
@@ -181,7 +181,7 @@ the other sources are normalized by the preparation component. Use
 ``hf://org/dataset`` or ``hf://org/dataset:config`` for Hugging Face data. The
 ``hf://`` prefix is optional when supplying a Hugging Face repository ID.
 
-For private S3 data, ``data_connection_name`` identifies the optional RHOAI
+For private S3 data, ``phase_01_dataset_opt_data_connection_name`` identifies the optional RHOAI
 Connection Secret. It defaults to ``s3-secret`` and is not needed for Hugging
 Face, HTTP(S), or local/PVC inputs.
 

@@ -95,8 +95,9 @@ def train_model(
     Args:
         pvc_path: Workspace PVC root path (use dsl.WORKSPACE_PATH_PLACEHOLDER).
         training_run_id: Unique identifier for this pipeline run. The pipeline
-            supplies the KFP run ID so checkpoints from previous runs are not
-            resumed accidentally on a persistent PVC. If empty, a UUID is used.
+            supplies the KFP run ID so checkpoints and Training Hub dataset
+            caches from previous runs are not reused accidentally on a
+            persistent PVC. If empty, a UUID is used.
         output_model: Output model artifact (merged model).
         output_metrics: Output training metrics artifact.
         dataset: Input training dataset artifact (tool-call traces).
@@ -148,16 +149,23 @@ def train_model(
 
     _api = init_k8s(log)
 
-    # Use the existing workspace mount as the worker's effective home. This
-    # keeps the worker on one PVC mount and avoids image-specific home paths.
+    run_id = training_run_id.strip() or uuid.uuid4().hex
+
+    # Use the existing workspace mount as the root for worker state. This keeps
+    # the worker on one PVC mount and avoids image-specific home paths.
     worker_home = pvc_path
     worker_cache = os.path.join(worker_home, ".cache")
     worker_tmp = os.path.join(worker_home, ".tmp")
     cache = os.path.join(worker_cache, "huggingface")
+    # Training Hub's built-in loader defaults to ~/.cache/training_hub/grpo_data
+    # and keys its files only by sample counts. Keep HOME run-scoped so
+    # successive TrainJobs on a shared PVC cannot reuse another run's samples.
+    run_home = os.path.join(worker_home, ".runs", run_id)
     os.makedirs(worker_cache, exist_ok=True)
     os.makedirs(worker_tmp, exist_ok=True)
+    os.makedirs(run_home, exist_ok=True)
     default_env: Dict[str, str] = {
-        "HOME": worker_home,
+        "HOME": run_home,
         "XDG_CACHE_HOME": worker_cache,
         "HF_HOME": cache,
         "HF_TOKEN_PATH": "/var/run/secrets/huggingface/token",
@@ -243,7 +251,6 @@ def train_model(
     if isinstance(training_base_model, str) and training_base_model.startswith("oci://"):
         resolved = download_oci_model(training_base_model, pvc_path, log)
 
-    run_id = training_run_id.strip() or uuid.uuid4().hex
     ckpt_dir = os.path.join(pvc_path, "checkpoints", run_id)
     os.makedirs(ckpt_dir, exist_ok=True)
 

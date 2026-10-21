@@ -62,7 +62,7 @@ def lora_grpo_pipeline(
     # =========================================================================
     # Dataset
     phase_01_dataset_opt_max_invalid_row_ratio: float = 0.10,
-    data_connection_name: str = "s3-secret",
+    phase_01_dataset_opt_data_connection_name: str = "s3-secret",
     # Stage 2: Training
     phase_02_train_man_num_iterations: int = 50,
     phase_02_train_man_group_size: int = 4,
@@ -139,8 +139,9 @@ def lora_grpo_pipeline(
             and HTTP(S) sources before failing. Defaults to 10%; use ``0.0``
             for strict validation. It is not applied to direct Hugging Face
             loading.
-        data_connection_name: Name of the RHOAI data connection Secret used by
-            the preparation task for private S3 input. It defaults to
+        phase_01_dataset_opt_data_connection_name: Name of the RHOAI data
+            connection Secret used by the preparation task for private S3
+            input. It defaults to
             ``s3-secret`` and is optional for Hugging Face, HTTP(S), and
             local/PVC input. The Secret should provide
             ``AWS_ACCESS_KEY_ID``, ``AWS_SECRET_ACCESS_KEY``, and optionally
@@ -183,8 +184,8 @@ def lora_grpo_pipeline(
             for repeated or production runs.
         phase_04_registry_man_version: Version tag for this model revision.
             Use semantic versioning. Example: ``1.0.0``
-        phase_02_train_opt_data_config: HuggingFace dataset config (split or
-            subset name). For example, use ``Qwen3`` with
+        phase_02_train_opt_data_config: Hugging Face dataset configuration
+            name; split selection is not exposed. For example, use ``Qwen3`` with
             ``hf://Agent-Ark/Toucan-1.5M:Qwen3``. If the selected dataset is
             single-config, pass an empty string. The preparation task resolves
             the effective config for direct HuggingFace loading.
@@ -309,7 +310,7 @@ def lora_grpo_pipeline(
     # connection; S3 inputs use the injected values when the Secret exists.
     kfp.kubernetes.use_secret_as_env(
         task=prepare_dataset_task,
-        secret_name=data_connection_name,
+        secret_name=phase_01_dataset_opt_data_connection_name,
         secret_key_to_env={
             "AWS_ACCESS_KEY_ID": "AWS_ACCESS_KEY_ID",
             "AWS_SECRET_ACCESS_KEY": "AWS_SECRET_ACCESS_KEY",

@@ -34,7 +34,8 @@ class TestLoraGrpoPipeline:
             assert inputs[required_input].default is None
             assert inputs[required_input].optional is False
         assert inputs["phase_01_dataset_opt_max_invalid_row_ratio"].default == 0.1
-        assert inputs["data_connection_name"].default == "s3-secret"
+        assert inputs["phase_01_dataset_opt_data_connection_name"].default == "s3-secret"
+        assert "data_connection_name" not in inputs
         assert "phase_01_dataset_man_data_split" not in inputs
         assert "phase_01_dataset_opt_subset" not in inputs
         assert "phase_01_dataset_opt_use_hf_direct" not in inputs
