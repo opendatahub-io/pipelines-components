@@ -140,6 +140,7 @@ def train_model(
     """
     import glob
     import os
+    import re
     import uuid
     from typing import Dict
 
@@ -154,6 +155,11 @@ def train_model(
     _api = init_k8s(log)
 
     run_id = training_run_id.strip() or uuid.uuid4().hex
+    if run_id in {".", ".."} or not re.fullmatch(r"[A-Za-z0-9._-]+", run_id):
+        raise ValueError(
+            "training_run_id must be a single path-safe segment containing "
+            "only letters, numbers, dots, underscores, and hyphens"
+        )
 
     # Use the existing workspace mount as the root for worker state. This keeps
     # the worker on one PVC mount and avoids image-specific home paths.

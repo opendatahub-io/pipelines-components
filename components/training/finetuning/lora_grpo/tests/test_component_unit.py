@@ -189,6 +189,16 @@ class TestLoRAGRPOComponentUnitTests:
         assert 'trainer_env = {key: value for key, value in merged_env.items() if key != "HF_TOKEN"}' in source
         assert '"ephemeral-storage"' not in source
 
+    def test_training_run_id_is_path_safe(self):
+        """Training run IDs are restricted to one safe path segment."""
+        import inspect
+
+        source = inspect.getsource(train_model.python_func)
+
+        assert 'run_id in {".", ".."}' in source
+        assert 're.fullmatch(r"[A-Za-z0-9._-]+", run_id)' in source
+        assert "training_run_id must be a single path-safe segment" in source
+
     def test_grpo_completion_wait_defaults_to_shared_30_minutes(self):
         """GRPO exposes the shared 30-minute completion wait default."""
         import inspect
