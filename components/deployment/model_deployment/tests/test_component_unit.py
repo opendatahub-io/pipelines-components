@@ -26,6 +26,7 @@ _DEFAULT_KWARGS = {
     "namespace": "test-ns",
     "model_dir": "org--Model-Name",
     "model_cache_pvc": "cache-pvc",
+    "model_run_id": "",
     "hardware_profile_name": "gpu-profile",
     "hardware_profile_namespace": "redhat-ods-applications",
     "min_replicas": 1,
@@ -95,6 +96,7 @@ def test_component_signature():
         "namespace",
         "model_dir",
         "model_cache_pvc",
+        "model_run_id",
         "hardware_profile_name",
         "hardware_profile_namespace",
         "min_replicas",
@@ -172,6 +174,7 @@ def test_creates_serving_runtime_when_not_found(mock_api_cls, mock_config, mock_
         **_DEFAULT_KWARGS,
         "genai_use_case": "text-generation",
         "tokenizer_mode": "slow",
+        "model_run_id": "run-123",
     }
     result = model_deployment.python_func(**kwargs)
 
@@ -186,6 +189,9 @@ def test_creates_serving_runtime_when_not_found(mock_api_cls, mock_config, mock_
     assert len(isvc_creates) == 1
     annotations = isvc_creates[0].kwargs["body"]["metadata"]["annotations"]
     assert annotations["opendatahub.io/genai-use-case"] == "text-generation"
+    assert isvc_creates[0].kwargs["body"]["spec"]["predictor"]["model"]["storageUri"] == (
+        "pvc://cache-pvc/org--Model-Name/run-123"
+    )
 
     # Verify patch was NOT called for serving runtimes
     patch_calls = mock_api.patch_namespaced_custom_object.call_args_list
@@ -289,6 +295,7 @@ def test_patches_isvc_in_place_by_default(mock_api_cls, mock_config, mock_sleep)
     isvc_patch = isvc_patches[0].kwargs["body"]
     patch_annotations = isvc_patch["metadata"]["annotations"]
     assert patch_annotations["opendatahub.io/genai-use-case"] is None
+    assert patch_annotations["serving.kserve.io/stop"] is None
 
     # No delete was issued
     mock_api.delete_namespaced_custom_object.assert_not_called()
