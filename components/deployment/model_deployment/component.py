@@ -90,7 +90,7 @@ def model_deployment(
     isvc_name = model_name.split("/")[-1].lower().replace(".", "-")
     effective_model_dir = model_dir.rstrip("/")
     if model_run_id:
-        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", model_run_id):
+        if model_run_id in {".", ".."} or not re.fullmatch(r"[A-Za-z0-9._-]+", model_run_id):
             raise ValueError(
                 "model_run_id must be a single path-safe segment containing "
                 "only letters, numbers, dots, underscores, and hyphens"
