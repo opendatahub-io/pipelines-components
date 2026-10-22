@@ -1,17 +1,13 @@
 """Dataset Download Component.
 
 This component downloads datasets from multiple sources (HuggingFace, S3, HTTP, local/PVC),
-validates the format, splits into train/eval, and saves to PVC as JSONL.
+validates the format for chat templates, splits into train/eval, and saves to PVC as JSONL.
 
 Supported URI schemes:
 - hf://dataset_name or dataset_name - HuggingFace datasets
 - s3://bucket/path/to/dataset.jsonl - AWS S3 datasets (JSONL format)
 - http://... or https://... - HTTP/HTTPS URLs (e.g., MinIO shared links)
 - pvc://path/to/dataset.jsonl or /absolute/path - Local/PVC file paths (JSONL format)
-
-Supported dataset formats (controlled by dataset_format parameter):
-- "chat" (default): Chat template format with messages/conversations containing role/content
-- "tool_call": Tool-call format for GRPO training (single-turn or multi-turn traces)
 """
 
 from kfp import dsl
@@ -28,15 +24,11 @@ def dataset_download(
     pvc_mount_path: str,
     train_split_ratio: float = 0.9,  # 1.0 = no eval split (all data for training)
     subset_count: int = 0,
-    dataset_format: str = "chat",
     shared_log_file: str = "pipeline_log.txt",
-    write_kfp_artifacts: bool = True,
 ):
     """Download and prepare datasets from multiple sources.
 
-    Validates dataset format based on the dataset_format parameter:
-    - "chat": Chat template format (messages/conversations with role/content)
-    - "tool_call": Tool-call format for GRPO training (single-turn or multi-turn traces)
+    Validates that datasets follow chat template format (messages/conversations with role/content).
 
     Args:
         train_dataset: Output artifact for training dataset (JSONL format)
@@ -45,45 +37,11 @@ def dataset_download(
         pvc_mount_path: Path where the shared PVC is mounted
         train_split_ratio: Train/eval split (0.9 = 90%/10%, 1.0 = no split, all for training)
         subset_count: Number of examples to use (0 = use all)
-        dataset_format: Validation format - "chat" (default) or "tool_call"
         shared_log_file: Name of the shared log file
-        write_kfp_artifacts: Whether to write full dataset files to the KFP
-            artifact paths. Set to False when downstream tasks consume the
-            PVC path directly; the KFP outputs then contain only a small
-            manifest.
     """
     import os
 
-    # Hugging Face defaults to the container's local home/cache directories.
-    # Those directories are backed by node ephemeral storage in KFP pods. Keep
-    # the complete dataset cache on the workspace PVC instead.
-    cache_root = os.path.join(pvc_mount_path, ".cache")
-    hf_home = os.path.join(cache_root, "huggingface")
-    hf_datasets_cache = os.path.join(hf_home, "datasets")
-    tmp_root = os.path.join(pvc_mount_path, ".tmp")
-    for path in (cache_root, hf_home, hf_datasets_cache, tmp_root):
-        os.makedirs(path, exist_ok=True)
-
-    os.environ.update(
-        {
-            "HOME": pvc_mount_path,
-            "XDG_CACHE_HOME": cache_root,
-            "HF_HOME": hf_home,
-            "HF_HUB_CACHE": os.path.join(hf_home, "hub"),
-            "HF_DATASETS_CACHE": hf_datasets_cache,
-            "HF_XET_CACHE": os.path.join(hf_home, "xet"),
-            "HF_ASSETS_CACHE": os.path.join(hf_home, "assets"),
-            "TMPDIR": tmp_root,
-            "TEMP": tmp_root,
-            "TMP": tmp_root,
-        }
-    )
-
     from datasets import Dataset, load_dataset
-
-    valid_formats = ("chat", "tool_call")
-    if dataset_format not in valid_formats:
-        raise ValueError(f"Unsupported dataset_format: '{dataset_format}'. Must be one of {valid_formats}.")
 
     # Prefer HF_TOKEN from the environment (typically injected via the `hf-token` Kubernetes secret).
     # This keeps authentication configuration in Kubernetes secrets instead of pipeline parameters.
@@ -173,103 +131,6 @@ def dataset_download(
         log_message(f"Dataset validated: {len(dataset)} examples in chat format")
         return True
 
-    def _has_tool_calls_in_messages(messages: list) -> bool:
-        """Check if any assistant message in the list contains tool_calls."""
-        for msg in messages:
-            if not isinstance(msg, dict) or msg.get("role") != "assistant":
-                continue
-            tool_calls = msg.get("tool_calls")
-            if isinstance(tool_calls, list) and tool_calls:
-                return True
-        return False
-
-    # Field name aliases accepted for the single-turn target-tool indicator.
-    # 'target_tool_name' is the canonical singular field; 'target_tools' is a
-    # common plural/list variant used by some tool-calling datasets (e.g.,
-    # Agent-Ark/Toucan-1.5M) to record one or more seed tools per example.
-    _TARGET_TOOL_FIELDS = ("target_tool_name", "target_tools")
-
-    def _get_target_tool_value(item: dict):
-        """Return the first non-empty target-tool field value, checking known aliases."""
-        for field in _TARGET_TOOL_FIELDS:
-            value = item.get(field)
-            if value:
-                return value
-        return None
-
-    def validate_tool_call_format_dataset(dataset: Dataset) -> bool:
-        """Validate that dataset follows tool-call format for GRPO training.
-
-        Detects format from the first sample and validates all checked samples match:
-        - Single-turn: each sample has a target-tool field (`target_tool_name` or
-          `target_tools`) and a 'question' field
-        - Multi-turn: each sample has 'messages' with at least one assistant tool_calls entry
-        """
-        if len(dataset) == 0:
-            raise ValueError("Dataset is empty")
-
-        num_to_check = min(100, len(dataset))
-        first = dataset[0]
-
-        # Detect format from first sample (use .get() because Arrow-backed
-        # datasets always contain all columns; missing values are None)
-        is_single_turn = bool(_get_target_tool_value(first)) and bool(first.get("question"))
-        first_messages = first.get("messages", None)
-        is_multi_turn = (
-            isinstance(first_messages, list) and len(first_messages) > 0 and _has_tool_calls_in_messages(first_messages)
-        )
-
-        if not is_single_turn and not is_multi_turn:
-            raise ValueError(
-                f"Item 0 does not match any supported tool-call format. "
-                f"Expected either (1) single-turn with a target-tool field "
-                f"({' or '.join(_TARGET_TOOL_FIELDS)}) and 'question' fields, "
-                f"or (2) multi-turn with 'messages' containing assistant tool_calls. "
-                f"Found keys: {list(first.keys())}"
-            )
-
-        if is_single_turn and is_multi_turn:
-            log_message(
-                "Item 0 matches both single-turn and multi-turn tool-call formats; using single-turn validation"
-            )
-
-        if is_single_turn:
-            for i in range(num_to_check):
-                item = dataset[i]
-                if not _get_target_tool_value(item):
-                    raise ValueError(
-                        f"Item {i}: none of {_TARGET_TOOL_FIELDS} is present or non-empty. "
-                        f"All samples must be single-turn format (detected from first sample)."
-                    )
-                if not item.get("question"):
-                    raise ValueError(
-                        f"Item {i}: 'question' is missing or empty. "
-                        f"All samples must be single-turn format (detected from first sample)."
-                    )
-            log_message(
-                f"Dataset validated: checked {num_to_check} of {len(dataset)} examples "
-                f"in tool-call format (single-turn)"
-            )
-        else:
-            for i in range(num_to_check):
-                item = dataset[i]
-                messages = item.get("messages", None)
-                if not isinstance(messages, list) or len(messages) == 0:
-                    raise ValueError(
-                        f"Item {i}: 'messages' must be a non-empty list. "
-                        f"All samples must be multi-turn format (detected from first sample)."
-                    )
-                if not _has_tool_calls_in_messages(messages):
-                    raise ValueError(
-                        f"Item {i}: no assistant message with 'tool_calls' found in 'messages'. "
-                        f"All samples must be multi-turn format (detected from first sample)."
-                    )
-            log_message(
-                f"Dataset validated: checked {num_to_check} of {len(dataset)} examples in tool-call format (multi-turn)"
-            )
-
-        return True
-
     def split_hf_id_and_config(dataset_path: str) -> tuple[str, str | None]:
         """Split an HF dataset identifier into (id, config) if a config suffix is provided.
 
@@ -309,7 +170,6 @@ def dataset_download(
         load_kwargs = {
             "path": ds_id,
             "split": "train",
-            "cache_dir": hf_datasets_cache,
         }
         if ds_config:
             load_kwargs["name"] = ds_config
@@ -329,7 +189,7 @@ def dataset_download(
 
                 # Load dataset info without specifying split
                 try:
-                    load_kwargs_no_split = {"path": ds_id, "cache_dir": hf_datasets_cache}
+                    load_kwargs_no_split = {"path": ds_id}
                     if ds_config:
                         load_kwargs_no_split["name"] = ds_config
                     if hf_token:
@@ -401,13 +261,7 @@ def dataset_download(
             log_message("No credentials found, using default AWS credential chain (IAM role, etc.)")
 
         # Load dataset directly from S3 (no temp file needed)
-        dataset = load_dataset(
-            "json",
-            data_files=f"s3://{s3_path}",
-            storage_options=storage_options,
-            split="train",
-            cache_dir=hf_datasets_cache,
-        )
+        dataset = load_dataset("json", data_files=f"s3://{s3_path}", storage_options=storage_options, split="train")
 
         log_message(f"Loaded {len(dataset)} examples from AWS S3")
         return dataset
@@ -417,7 +271,7 @@ def dataset_download(
         log_message(f"Loading from HTTP: {http_url}")
 
         # Load dataset directly from HTTP URL using datasets library
-        dataset = load_dataset("json", data_files=http_url, split="train", cache_dir=hf_datasets_cache)
+        dataset = load_dataset("json", data_files=http_url, split="train")
 
         log_message(f"Loaded {len(dataset)} examples from HTTP")
         return dataset
@@ -435,7 +289,7 @@ def dataset_download(
 
         # Load using datasets library (supports .json and .jsonl)
         if file_path.endswith(".jsonl") or file_path.endswith(".json"):
-            dataset = load_dataset("json", data_files=file_path, split="train", cache_dir=hf_datasets_cache)
+            dataset = load_dataset("json", data_files=file_path, split="train")
             log_message(f"Loaded {len(dataset)} examples from local file")
             return dataset
         else:
@@ -484,13 +338,9 @@ def dataset_download(
             else:
                 log_message(f"Subset count ({subset_count}) >= dataset size ({original_size}), using all examples")
 
-        # Validate dataset format (dataset_format already validated at top of component)
-        if dataset_format == "chat":
-            log_message("Validating chat template format...")
-            validate_chat_format_dataset(dataset)
-        elif dataset_format == "tool_call":
-            log_message("Validating tool-call format...")
-            validate_tool_call_format_dataset(dataset)
+        # Validate chat template format
+        log_message("Validating chat template format...")
+        validate_chat_format_dataset(dataset)
 
         # Split dataset (or use all for training if ratio is 1.0)
         log_message(f"Splitting dataset with {len(dataset)} examples...")
@@ -507,35 +357,12 @@ def dataset_download(
             eval_ds = split_dataset["test"]
             log_message(f"Split complete: {len(train_ds)} train, {len(eval_ds)} eval")
 
-        # Save datasets as JSONL files
-        import json as _json
+        # Save datasets as JSONL files to KFP artifacts
+        log_message(f"Saving train dataset to {train_dataset.path}")
+        train_ds.to_json(train_dataset.path, orient="records", lines=True)
 
-        def _write_jsonl(ds: Dataset, path: str):
-            """Write dataset to JSONL, normalizing tool-call message fields.
-
-            The 'messages' column can arrive in different shapes depending on
-            the source dataset's Arrow schema:
-            - A list of message dicts (already structured) - the common case.
-            - A list where individual messages are JSON-encoded strings
-              (datasets>=4.8 may type non-uniform message schemas this way).
-            - The entire messages column typed as a single JSON-encoded string
-              representing the whole array (e.g., some HF datasets store
-              complex nested fields as raw JSON strings).
-            This helper normalizes all of these to a list of dicts and strips
-            None-valued fields added by Arrow schema unification.
-            """
-            with open(path, "w") as f:
-                for row in ds:
-                    row = dict(row)
-                    if dataset_format == "tool_call" and "messages" in row and row["messages"]:
-                        messages = row["messages"]
-                        if isinstance(messages, str):
-                            messages = _json.loads(messages)
-                        row["messages"] = [
-                            {k: v for k, v in (_json.loads(m) if isinstance(m, str) else m).items() if v is not None}
-                            for m in messages
-                        ]
-                    f.write(_json.dumps(row) + "\n")
+        log_message(f"Saving eval dataset to {eval_dataset.path}")
+        eval_ds.to_json(eval_dataset.path, orient="records", lines=True)
 
         # Also save to shared PVC for next pipeline step
         pvc_dataset_dir = os.path.join(pvc_mount_path, "datasets")
@@ -545,36 +372,10 @@ def dataset_download(
         pvc_eval_path = os.path.join(pvc_dataset_dir, "eval.jsonl")
 
         log_message(f"Saving train dataset to PVC: {pvc_train_path}")
-        _write_jsonl(train_ds, pvc_train_path)
+        train_ds.to_json(pvc_train_path, orient="records", lines=True)
 
         log_message(f"Saving eval dataset to PVC: {pvc_eval_path}")
-        _write_jsonl(eval_ds, pvc_eval_path)
-
-        if write_kfp_artifacts:
-            log_message(f"Saving train dataset to {train_dataset.path}")
-            _write_jsonl(train_ds, train_dataset.path)
-
-            log_message(f"Saving eval dataset to {eval_dataset.path}")
-            _write_jsonl(eval_ds, eval_dataset.path)
-        else:
-            # Keep KFP output artifacts tiny. The lora-grpo pipeline consumes
-            # the stable PVC path directly, so serializing the full dataset a
-            # second time into KFP's node-local artifact scratch is unnecessary.
-            log_message("Writing PVC dataset manifests to KFP artifact paths")
-            for artifact_path, pvc_path, split, count in (
-                (train_dataset.path, pvc_train_path, "train", len(train_ds)),
-                (eval_dataset.path, pvc_eval_path, "eval", len(eval_ds)),
-            ):
-                with open(artifact_path, "w", encoding="utf-8") as artifact_file:
-                    _json.dump(
-                        {
-                            "dataset_uri": dataset_uri,
-                            "split": split,
-                            "num_examples": count,
-                            "pvc_path": pvc_path,
-                        },
-                        artifact_file,
-                    )
+        eval_ds.to_json(pvc_eval_path, orient="records", lines=True)
 
         # Save metadata
         train_dataset.metadata = {
