@@ -33,7 +33,7 @@ Pipeline ServiceAccount RBAC for KServe CRDs (required for stage 5).
 | `phase_04_registry_man_name` | `str` | `grpo-model` | Name to register the model under. Must be unique within your Model Registry. Defaults to ``grpo-model``; override it with a unique name such as ``qwen3-grpo-tool-call`` for repeated or production runs. |
 | `phase_04_registry_man_version` | `str` | `1.0.0` | Version tag for this model revision. Use semantic versioning. Example: ``1.0.0`` |
 | `phase_02_train_opt_n_train` | `int` | `200` | Maximum rows ART draws from the dataset per run. This is independent of the total dataset size. Example: ``200`` for quick tests, ``2000`` for a fuller run. |
-| `phase_02_train_opt_completion_timeout_seconds` | `int` | `1800` |  |
+| `phase_02_train_opt_completion_timeout_seconds` | `int` | `7200` | Maximum number of seconds to wait for the TrainJob to reach Complete or Failed after it starts. Defaults to ``7200`` seconds (2 hours). The wait returns immediately when the TrainJob completes; set a larger value for longer runs or a smaller value for smoke tests. |
 | `phase_02_train_opt_learning_rate` | `float` | `1e-05` |  |
 | `phase_02_train_opt_gpu_memory_utilization` | `float` | `0.45` |  |
 | `phase_02_train_opt_enforce_eager` | `bool` | `True` |  |
@@ -125,11 +125,12 @@ training.
 
 ## Training wait timeout
 
-The pipeline uses the shared training helper's 30-minute completion-wait
-default. Set ``phase_02_train_opt_completion_timeout_seconds`` to a larger
-value for unusually long runs, for example ``7200`` for two hours. This
-controls the wait after the TrainJob starts; the startup wait remains
-unchanged.
+The pipeline waits up to two hours (7200 seconds) for the TrainJob to reach
+``Complete`` or ``Failed``. The wait returns immediately when the TrainJob
+finishes; it does not force every run to last two hours. Set
+``phase_02_train_opt_completion_timeout_seconds`` to a smaller value for
+short smoke tests or a larger value for unusually long runs, for example
+``10800`` for three hours. The TrainJob startup wait remains unchanged.
 
 The timeout is measured in seconds.
 

@@ -45,6 +45,12 @@ class TestLoraGrpoPipeline:
         """The GRPO-specific timeout does not change the public pipeline interface."""
         assert "phase_02_train_opt_job_timeout_seconds" not in lora_grpo_pipeline.component_spec.inputs
 
+    def test_training_completion_timeout_defaults_to_two_hours(self):
+        """The pipeline allows up to two hours for TrainJob completion by default."""
+        parameter = lora_grpo_pipeline.component_spec.inputs["phase_02_train_opt_completion_timeout_seconds"]
+        assert parameter.default == 7200
+        assert parameter.optional is True
+
     def test_pipeline_compiles(self, tmp_path):
         """Test that the pipeline compiles successfully."""
         output_path = tmp_path / "pipeline.yaml"

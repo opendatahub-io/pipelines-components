@@ -76,7 +76,7 @@ def lora_grpo_pipeline(
     # =========================================================================
     # Stage 2
     phase_02_train_opt_n_train: int = 200,
-    phase_02_train_opt_completion_timeout_seconds: int = 1800,
+    phase_02_train_opt_completion_timeout_seconds: int = 7200,
     phase_02_train_opt_learning_rate: float = 1e-5,
     phase_02_train_opt_gpu_memory_utilization: float = 0.45,
     phase_02_train_opt_enforce_eager: bool = True,
@@ -199,8 +199,10 @@ def lora_grpo_pipeline(
             Example: ``200`` for quick tests, ``2000`` for a fuller run.
         phase_02_train_opt_completion_timeout_seconds: Maximum number of
             seconds to wait for the TrainJob to reach Complete or Failed after
-            it starts. Defaults to 1800 seconds (30 minutes). Increase this
-            for longer runs; the TrainJob startup wait remains unchanged.
+            it starts. Defaults to 7200 seconds (2 hours). The wait returns
+            immediately when the TrainJob completes. Set this to a larger
+            value for longer runs or a smaller value for smoke tests. The
+            TrainJob startup wait remains unchanged.
         phase_02_train_opt_learning_rate: AdamW learning rate for LoRA adapter
             updates. ``1e-5`` is a safe default; increase to ``5e-5`` if reward
             improvement is too slow.
