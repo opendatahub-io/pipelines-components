@@ -197,10 +197,10 @@ def lora_grpo_pipeline(
         phase_02_train_opt_n_train: Maximum rows ART draws from the dataset
             per run. This is independent of the total dataset size.
             Example: ``200`` for quick tests, ``2000`` for a fuller run.
-    phase_02_train_opt_completion_timeout_seconds: Maximum number of
-        seconds to wait for the TrainJob to reach Complete or Failed after
-        it starts. Defaults to 1800 seconds (30 minutes). Increase this
-        for longer runs; the TrainJob startup wait remains unchanged.
+        phase_02_train_opt_completion_timeout_seconds: Maximum number of
+            seconds to wait for the TrainJob to reach Complete or Failed after
+            it starts. Defaults to 1800 seconds (30 minutes). Increase this
+            for longer runs; the TrainJob startup wait remains unchanged.
         phase_02_train_opt_learning_rate: AdamW learning rate for LoRA adapter
             updates. ``1e-5`` is a safe default; increase to ``5e-5`` if reward
             improvement is too slow.

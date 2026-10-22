@@ -107,9 +107,9 @@ def train_model(
             Agent-Ark/Toucan-1.5M). When empty, uses the dataset artifact.
             When set, overrides the artifact.
         training_num_iterations: Number of GRPO training iterations.
-    training_completion_timeout_seconds: Maximum number of seconds to wait
-        for the TrainJob to reach Complete or Failed after it starts.
-        Defaults to 1800 seconds (30 minutes).
+        training_completion_timeout_seconds: Maximum number of seconds to wait
+            for the TrainJob to reach Complete or Failed after it starts.
+            Defaults to 1800 seconds (30 minutes).
         training_group_size: Number of rollouts per prompt for GRPO advantage estimation.
         training_prompt_batch_size: Number of prompts per training batch.
         training_n_train: Number of training samples to use from the dataset.
