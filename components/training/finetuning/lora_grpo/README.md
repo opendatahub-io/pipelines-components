@@ -24,25 +24,26 @@ After the TrainJob completes, this component reads the adapter checkpoints from 
 | `training_base_model` | `str` | `Qwen/Qwen3-4B` | Base model (HuggingFace ID or local path). |
 | `training_data_path` | `str` | `""` | Dataset path or HuggingFace ID (e.g., Agent-Ark/Toucan-1.5M). When empty, uses the dataset artifact. When set, overrides the artifact. |
 | `training_num_iterations` | `int` | `5` | Number of GRPO training iterations. |
-| `training_group_size` | `int` | `4` | Number of rollouts per prompt for GRPO advantage estimation. |
-| `training_prompt_batch_size` | `int` | `50` | Number of prompts per training batch. |
-| `training_n_train` | `int` | `200` | Number of training samples to use from the dataset. |
-| `training_learning_rate` | `Optional[float]` | `None` | Learning rate (default: 1e-5). |
-| `training_gpu_memory_utilization` | `float` | `0.45` | Fraction of GPU memory for vLLM (rest for training). |
-| `training_enforce_eager` | `bool` | `True` | Disable torch.compile/CUDAGraphs in vLLM (Qwen3 workaround). |
-| `training_data_config` | `str` | `Qwen3` | Dataset config name for HuggingFace datasets (e.g., Qwen3). |
-| `training_lora_r` | `int` | `16` | LoRA rank (controls adapter capacity). |
-| `training_lora_alpha` | `int` | `8` | LoRA scaling factor. |
-| `training_envs` | `str` | `""` | Environment overrides as KEY=VAL,KEY=VAL. |
-| `training_resource_cpu_per_worker` | `str` | `4` | CPU cores per worker. |
-| `training_resource_gpu_per_worker` | `int` | `1` | GPUs per worker (should be 1 for ART). |
-| `training_resource_memory_per_worker` | `str` | `64Gi` | Memory per worker (e.g., 64Gi). |
-| `training_metadata_labels` | `str` | `""` | Pod labels as key=value,key=value. |
-| `training_metadata_annotations` | `str` | `""` | Pod annotations as key=value,key=value. |
-| `training_runtime` | `str` | `training-hub` | Name of the ClusterTrainingRuntime to use. |
-| `training_pvc_name` | `str` | `""` | PVC name to mount on the TrainJob pod for shared storage. |
-| `training_use_hf_direct` | `bool` | `False` | Use the Hugging Face dataset loader directly. When true, training_data_path must be an ``hf://`` URI or a Hugging Face repository ID; the dataset materialization task is bypassed. |
-| `kubernetes_config` | `dsl.TaskConfig` | `None` | KFP TaskConfig for volumes/env/resources passthrough. |
+| `training_completion_timeout_seconds` | `int` | `1800` |  |
+| `training_group_size` | `int` | `4` |  |
+| `training_prompt_batch_size` | `int` | `50` |  |
+| `training_n_train` | `int` | `200` |  |
+| `training_learning_rate` | `Optional[float]` | `None` |  |
+| `training_gpu_memory_utilization` | `float` | `0.45` |  |
+| `training_enforce_eager` | `bool` | `True` |  |
+| `training_data_config` | `str` | `Qwen3` |  |
+| `training_lora_r` | `int` | `16` |  |
+| `training_lora_alpha` | `int` | `8` |  |
+| `training_envs` | `str` | `""` |  |
+| `training_resource_cpu_per_worker` | `str` | `4` |  |
+| `training_resource_gpu_per_worker` | `int` | `1` |  |
+| `training_resource_memory_per_worker` | `str` | `64Gi` |  |
+| `training_metadata_labels` | `str` | `""` |  |
+| `training_metadata_annotations` | `str` | `""` |  |
+| `training_runtime` | `str` | `training-hub` |  |
+| `training_pvc_name` | `str` | `""` |  |
+| `training_use_hf_direct` | `bool` | `False` |  |
+| `kubernetes_config` | `dsl.TaskConfig` | `None` |  |
 
 ## Outputs 📤
 
