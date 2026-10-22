@@ -19,7 +19,7 @@ After the TrainJob completes, this component reads the adapter checkpoints from 
 | `pvc_path` | `str` | `None` | Workspace PVC root path (use dsl.WORKSPACE_PATH_PLACEHOLDER). |
 | `output_model` | `dsl.Output[dsl.Model]` | `None` | Output model artifact (merged model). |
 | `output_metrics` | `dsl.Output[dsl.Metrics]` | `None` | Output training metrics artifact. |
-| `training_run_id` | `str` | `""` | Unique identifier for this pipeline run. The pipeline supplies the KFP run ID so checkpoints from previous runs are not resumed accidentally on a persistent PVC. If empty, a UUID is used. |
+| `training_run_id` | `str` | `""` | Unique identifier for this pipeline run. The pipeline supplies the KFP run ID so checkpoints and Training Hub dataset caches from previous runs are not reused accidentally on a persistent PVC. If empty, a UUID is used. |
 | `dataset` | `dsl.Input[dsl.Dataset]` | `None` | Input training dataset artifact (tool-call traces). |
 | `training_base_model` | `str` | `Qwen/Qwen3-4B` | Base model (HuggingFace ID or local path). |
 | `training_data_path` | `str` | `""` | Dataset path or HuggingFace ID (e.g., Agent-Ark/Toucan-1.5M). When empty, uses the dataset artifact. When set, overrides the artifact. |

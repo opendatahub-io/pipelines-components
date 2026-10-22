@@ -55,7 +55,6 @@ def lora_grpo_pipeline(
     phase_05_deploy_man_namespace: str,
     phase_01_dataset_man_data_uri: str,
     phase_02_train_man_model: str,
-    phase_02_train_opt_data_config: str,
     phase_05_deploy_opt_tokenizer_mode: str,
     # =========================================================================
     # KEY PARAMETERS - Sorted by stage
@@ -63,6 +62,7 @@ def lora_grpo_pipeline(
     # Dataset
     phase_01_dataset_opt_max_invalid_row_ratio: float = 0.10,
     phase_01_dataset_opt_data_connection_name: str = "s3-secret",
+    phase_02_train_opt_data_config: str = "",
     # Stage 2: Training
     phase_02_train_man_num_iterations: int = 50,
     phase_02_train_man_group_size: int = 4,
@@ -184,11 +184,15 @@ def lora_grpo_pipeline(
             for repeated or production runs.
         phase_04_registry_man_version: Version tag for this model revision.
             Use semantic versioning. Example: ``1.0.0``
-        phase_02_train_opt_data_config: Hugging Face dataset configuration
-            name; split selection is not exposed. For example, use ``Qwen3`` with
-            ``hf://Agent-Ark/Toucan-1.5M:Qwen3``. If the selected dataset is
-            single-config, pass an empty string. The preparation task resolves
-            the effective config for direct HuggingFace loading.
+        phase_02_train_opt_data_config: Optional Hugging Face dataset
+            configuration name. This is used only for Hugging Face sources.
+            Set it when a multi-configuration dataset does not include the
+            configuration in its URI, for example ``Qwen3`` with
+            ``hf://Agent-Ark/Toucan-1.5M``. Leave it empty when the URI already
+            includes ``:config``, when the Hugging Face dataset has one
+            configuration, or for local/PVC, S3, and HTTP(S) sources. Split
+            selection is not supported by this pipeline; do not use this
+            parameter to specify a split name.
         phase_02_train_opt_n_train: Maximum rows ART draws from the dataset
             per run. This is independent of the total dataset size.
             Example: ``200`` for quick tests, ``2000`` for a fuller run.

@@ -29,10 +29,11 @@ class TestLoraGrpoPipeline:
         for required_input in (
             "phase_01_dataset_man_data_uri",
             "phase_02_train_man_model",
-            "phase_02_train_opt_data_config",
         ):
             assert inputs[required_input].default is None
             assert inputs[required_input].optional is False
+        assert inputs["phase_02_train_opt_data_config"].default == ""
+        assert inputs["phase_02_train_opt_data_config"].optional is True
         assert inputs["phase_01_dataset_opt_max_invalid_row_ratio"].default == 0.1
         assert inputs["phase_01_dataset_opt_data_connection_name"].default == "s3-secret"
         assert "data_connection_name" not in inputs
@@ -67,7 +68,7 @@ class TestLoraGrpoPipeline:
         assert "resolved_data_path" in compiled
         assert "resolved_data_config" in compiled
         assert "training_use_hf_direct" in compiled
-        assert "Agent-Ark/Toucan-1.5M:Qwen3" in compiled
+        assert "componentInputParameter: phase_02_train_opt_data_config" in compiled
         assert "AWS_ACCESS_KEY_ID" in compiled
         assert "secretNameParameter" in compiled
         assert "LORA_GRPO_TRAINING_COMPLETION_TIMEOUT_SECONDS" in compiled
