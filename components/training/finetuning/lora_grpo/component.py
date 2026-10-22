@@ -481,7 +481,17 @@ def train_model(
 
     # persist_model targets the merged model directory directly so that
     # find_model_dir cannot accidentally pick an ART adapter's config.json.
-    persist_model(merged_dir, pvc_path, training_base_model, output_model, log)
+    # Keep each run's serving artifact isolated on a shared PVC. The
+    # deployment and registry stages receive this same subpath through the
+    # output model metadata.
+    persist_model(
+        merged_dir,
+        pvc_path,
+        training_base_model,
+        output_model,
+        log,
+        model_subpath=os.path.join("final_model", run_id),
+    )
 
     if adapter_ckpt_path:
         output_model.metadata["adapter_checkpoint"] = adapter_ckpt_path

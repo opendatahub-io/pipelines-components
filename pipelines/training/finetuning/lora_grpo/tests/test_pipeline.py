@@ -72,6 +72,8 @@ class TestLoraGrpoPipeline:
         assert "AWS_ACCESS_KEY_ID" in compiled
         assert "secretNameParameter" in compiled
         assert "LORA_GRPO_TRAINING_COMPLETION_TIMEOUT_SECONDS" in compiled
+        assert "model_run_id" in compiled
+        assert "final_model/{{$.pipeline_job_uuid}}" not in compiled
 
     def test_registry_sdk_pin_is_grpo_specific(self, tmp_path):
         """The GRPO artifact pins the registry SDK without changing the shared component."""

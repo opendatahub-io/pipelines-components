@@ -133,7 +133,7 @@ through the existing ``phase_02_train_opt_env_vars`` input:
 
 ## Model Registry setup
 
-The pipeline registers the trained model in the selected Model Registry and stores the persistent model location as ``pvc://<pvc-name>/final_model``. The registry does not need to run in the pipeline namespace, but the pipeline ServiceAccount must be authorized to access the registry Service.
+The pipeline registers the trained model in the selected Model Registry and stores the persistent model location under a run-scoped URI such as ``pvc://<pvc-name>/final_model/<pipeline-run-id>``. This prevents concurrent runs sharing a PVC from overwriting one another. The registry does not need to run in the pipeline namespace, but the pipeline ServiceAccount must be authorized to access the registry Service.
 
 For the initial pipeline test, select an available registry. The registry namespace is installation-specific; verify it in your cluster:
 

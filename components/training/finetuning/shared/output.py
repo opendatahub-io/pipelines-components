@@ -128,6 +128,7 @@ def persist_model(
     training_base_model: str,
     output_model,
     log: logging.Logger,
+    model_subpath: str = "final_model",
 ) -> None:
     """Persist trained model to PVC and output artifact.
 
@@ -137,12 +138,13 @@ def persist_model(
         training_base_model: Base model name.
         output_model: Output model artifact.
         log: Logger instance.
+        model_subpath: Relative model directory under the PVC root.
     """
     latest = find_model_dir(ckpt_dir)
     if not latest:
         raise RuntimeError(f"No model found in {ckpt_dir}")
     log.info(f"Model: {latest}")
-    pvc_out = os.path.join(pvc_path, "final_model")
+    pvc_out = os.path.join(pvc_path, model_subpath)
     if os.path.exists(pvc_out):
         shutil.rmtree(pvc_out, ignore_errors=True)
     shutil.copytree(latest, pvc_out, dirs_exist_ok=True)
@@ -153,6 +155,7 @@ def persist_model(
     output_model.metadata["model_name"] = training_base_model
     output_model.metadata["artifact_path"] = output_model.path
     output_model.metadata["pvc_model_dir"] = pvc_out
+    output_model.metadata["pvc_model_subpath"] = model_subpath
 
 
 def extract_metrics_from_jsonl(metrics_file: str) -> tuple[Dict, List[float]]:

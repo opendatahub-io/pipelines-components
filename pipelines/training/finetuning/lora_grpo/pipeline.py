@@ -413,6 +413,7 @@ def lora_grpo_pipeline(
             namespace=phase_05_deploy_man_namespace,
             model_dir="final_model",
             model_cache_pvc=phase_00_infra_man_pvc_name,
+            model_run_id=dsl.PIPELINE_JOB_ID_PLACEHOLDER,
             gpu_count=phase_05_deploy_opt_gpu_count,
             max_model_len=phase_05_deploy_opt_max_model_len,
             min_replicas=phase_05_deploy_opt_min_replicas,

@@ -162,6 +162,30 @@ class TestPersistModel:
         assert (pvc / "final_model" / "model.bin").exists()
         assert output_model.metadata["model_name"] == "MyModel"
         assert output_model.metadata["pvc_model_dir"] == str(pvc / "final_model")
+        assert output_model.metadata["pvc_model_subpath"] == "final_model"
+
+    def test_persists_model_to_run_scoped_subpath(self, tmp_path, log):
+        """Model persistence supports isolated subpaths on a shared PVC."""
+        ckpt = tmp_path / "ckpts" / "checkpoint-1"
+        ckpt.mkdir(parents=True)
+        (ckpt / "config.json").write_text("{}")
+        pvc = tmp_path / "pvc"
+        pvc.mkdir()
+        output_model = mock.MagicMock()
+        output_model.path = str(tmp_path / "artifact")
+        output_model.metadata = {}
+
+        persist_model(
+            str(tmp_path / "ckpts"),
+            str(pvc),
+            "MyModel",
+            output_model,
+            log,
+            model_subpath="final_model/run-123",
+        )
+
+        assert (pvc / "final_model" / "run-123" / "config.json").exists()
+        assert output_model.metadata["pvc_model_subpath"] == "final_model/run-123"
 
     def test_sets_artifact_name(self, tmp_path, log):
         """Artifact name is set from the base model name."""
