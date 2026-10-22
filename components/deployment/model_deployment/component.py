@@ -46,7 +46,10 @@ def model_deployment(
         namespace: Namespace to deploy into.
         model_dir: Sub-path on the PVC where model files are stored (output from download_model).
         model_cache_pvc: Name of the PVC containing cached model weights.
-        model_run_id: Optional run-specific subdirectory appended to model_dir.
+        model_run_id: Optional run-specific directory name appended to model_dir.
+            Must be one path-safe segment containing only letters, numbers,
+            dots, underscores, and hyphens. An empty value preserves the
+            existing model_dir path.
         hardware_profile_name: HardwareProfile CR name for GPU resources.
         hardware_profile_namespace: Namespace of the HardwareProfile CR.
         min_replicas: Minimum number of replicas.
@@ -71,6 +74,7 @@ def model_deployment(
     Returns:
         The inference endpoint URL.
     """
+    import re
     import time
 
     from kubernetes import client as kclient
@@ -83,13 +87,18 @@ def model_deployment(
         "094db84a1da5e8a575d0c9eade114fa30f4a2061064a338e3e032f3578f8082a"
     )
 
-    config.load_incluster_config()
-    custom_api = kclient.CustomObjectsApi()
-
     isvc_name = model_name.split("/")[-1].lower().replace(".", "-")
     effective_model_dir = model_dir.rstrip("/")
     if model_run_id:
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", model_run_id):
+            raise ValueError(
+                "model_run_id must be a single path-safe segment containing "
+                "only letters, numbers, dots, underscores, and hyphens"
+            )
         effective_model_dir = f"{effective_model_dir}/{model_run_id}"
+
+    config.load_incluster_config()
+    custom_api = kclient.CustomObjectsApi()
 
     # Look up the HardwareProfile resource version for the annotation
     try:

@@ -117,6 +117,18 @@ def test_component_signature():
     assert spec.inputs["tokenizer_mode"].default == "auto"
 
 
+@pytest.mark.parametrize(
+    "model_run_id",
+    ["../other-model", "run/nested", r"run\nested", ".", "..", "run?query"],
+)
+def test_rejects_unsafe_model_run_id(model_run_id):
+    """Run IDs cannot change the PVC path structure."""
+    kwargs = {**_DEFAULT_KWARGS, "model_run_id": model_run_id}
+
+    with pytest.raises(ValueError, match="single path-safe segment"):
+        model_deployment.python_func(**kwargs)
+
+
 def test_vllm_image_is_defined_inside_embedded_component():
     """The embedded executor source must not depend on module globals."""
     command = " ".join(model_deployment.component_spec.implementation.container.command)

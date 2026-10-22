@@ -16,7 +16,7 @@ Creates a vLLM NVIDIA GPU ServingRuntime and InferenceService matching the RHOAI
 | `namespace` | `str` | `None` | Namespace to deploy into. |
 | `model_dir` | `str` | `None` | Sub-path on the PVC where model files are stored (output from download_model). |
 | `model_cache_pvc` | `str` | `None` | Name of the PVC containing cached model weights. |
-| `model_run_id` | `str` | `""` | Optional run-specific subdirectory appended to model_dir. |
+| `model_run_id` | `str` | `""` | Optional run-specific directory name appended to model_dir. Must be one path-safe segment containing only letters, numbers, dots, underscores, and hyphens. An empty value preserves the existing model_dir path. |
 | `hardware_profile_name` | `str` | `gpu-profile` | HardwareProfile CR name for GPU resources. |
 | `hardware_profile_namespace` | `str` | `redhat-ods-applications` | Namespace of the HardwareProfile CR. |
 | `min_replicas` | `int` | `1` | Minimum number of replicas. |
