@@ -154,6 +154,7 @@ class TestLoRAGRPOComponentUnitTests:
 
         assert params["training_base_model"].default == "Qwen/Qwen3-4B"
         assert params["training_num_iterations"].default == 5
+        assert params["training_completion_timeout_seconds"].default == 1800
         assert params["training_group_size"].default == 4
         assert params["training_prompt_batch_size"].default == 50
         assert params["training_n_train"].default == 200
@@ -188,12 +189,14 @@ class TestLoRAGRPOComponentUnitTests:
         assert 'trainer_env = {key: value for key, value in merged_env.items() if key != "HF_TOKEN"}' in source
         assert '"ephemeral-storage"' not in source
 
-    def test_grpo_completion_wait_defaults_to_two_hours(self):
-        """GRPO uses a two-hour internal wait without changing the pipeline API."""
+    def test_grpo_completion_wait_defaults_to_shared_30_minutes(self):
+        """GRPO exposes the shared 30-minute completion wait default."""
         import inspect
 
         source = inspect.getsource(train_model.python_func)
-        assert "grpo_default_training_completion_timeout_seconds = 7200" in source
+        assert "training_completion_timeout_seconds <= 0" in source
+        assert "completion_timeout_seconds=training_completion_timeout_seconds" in source
+        assert "LORA_GRPO_TRAINING_COMPLETION_TIMEOUT_SECONDS" not in source
 
     def test_component_archive_contains_runtime_modules_only(self):
         """The lightweight component must not embed tests or bytecode caches."""

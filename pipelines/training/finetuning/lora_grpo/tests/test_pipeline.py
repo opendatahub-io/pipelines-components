@@ -71,7 +71,8 @@ class TestLoraGrpoPipeline:
         assert "componentInputParameter: phase_02_train_opt_data_config" in compiled
         assert "AWS_ACCESS_KEY_ID" in compiled
         assert "secretNameParameter" in compiled
-        assert "LORA_GRPO_TRAINING_COMPLETION_TIMEOUT_SECONDS" in compiled
+        assert "phase_02_train_opt_completion_timeout_seconds" in compiled
+        assert "LORA_GRPO_TRAINING_COMPLETION_TIMEOUT_SECONDS" not in compiled
         assert "model_run_id" in compiled
         assert "final_model/{{$.pipeline_job_uuid}}" not in compiled
 

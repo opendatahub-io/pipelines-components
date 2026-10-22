@@ -58,6 +58,7 @@ def train_model(
     training_base_model: str = "Qwen/Qwen3-4B",
     training_data_path: str = "",
     training_num_iterations: int = 5,
+    training_completion_timeout_seconds: int = 1800,
     training_group_size: int = 4,
     training_prompt_batch_size: int = 50,
     training_n_train: int = 200,
@@ -106,6 +107,9 @@ def train_model(
             Agent-Ark/Toucan-1.5M). When empty, uses the dataset artifact.
             When set, overrides the artifact.
         training_num_iterations: Number of GRPO training iterations.
+    training_completion_timeout_seconds: Maximum number of seconds to wait
+        for the TrainJob to reach Complete or Failed after it starts.
+        Defaults to 1800 seconds (30 minutes).
         training_group_size: Number of rollouts per prompt for GRPO advantage estimation.
         training_prompt_batch_size: Number of prompts per training batch.
         training_n_train: Number of training samples to use from the dataset.
@@ -196,21 +200,8 @@ def train_model(
     merged_env = configure_env(training_envs, default_env, log)
     setup_hf_token(merged_env, training_base_model, log)
 
-    grpo_training_completion_timeout_env = "LORA_GRPO_TRAINING_COMPLETION_TIMEOUT_SECONDS"
-    grpo_default_training_completion_timeout_seconds = 7200
-    try:
-        training_completion_timeout_seconds = int(
-            os.environ.get(
-                grpo_training_completion_timeout_env,
-                str(grpo_default_training_completion_timeout_seconds),
-            )
-        )
-    except ValueError as exc:
-        raise ValueError(
-            f"{grpo_training_completion_timeout_env} must be a positive integer number of seconds"
-        ) from exc
     if training_completion_timeout_seconds <= 0:
-        raise ValueError(f"{grpo_training_completion_timeout_env} must be a positive integer number of seconds")
+        raise ValueError("training_completion_timeout_seconds must be a positive integer number of seconds")
     log.info("TrainJob completion wait timeout configured to %s seconds", training_completion_timeout_seconds)
 
     ds_dir = os.path.join(pvc_path, "dataset", "train")

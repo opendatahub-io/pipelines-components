@@ -33,6 +33,7 @@ Pipeline ServiceAccount RBAC for KServe CRDs (required for stage 5).
 | `phase_04_registry_man_name` | `str` | `grpo-model` | Name to register the model under. Must be unique within your Model Registry. Defaults to ``grpo-model``; override it with a unique name such as ``qwen3-grpo-tool-call`` for repeated or production runs. |
 | `phase_04_registry_man_version` | `str` | `1.0.0` | Version tag for this model revision. Use semantic versioning. Example: ``1.0.0`` |
 | `phase_02_train_opt_n_train` | `int` | `200` | Maximum rows ART draws from the dataset per run. This is independent of the total dataset size. Example: ``200`` for quick tests, ``2000`` for a fuller run. |
+| `phase_02_train_opt_completion_timeout_seconds` | `int` | `1800` | Maximum number of seconds to wait for the TrainJob to reach Complete or Failed after it starts. Defaults to 1800 seconds (30 minutes). Increase this for longer runs; the TrainJob startup wait remains unchanged. |
 | `phase_02_train_opt_learning_rate` | `float` | `1e-05` | AdamW learning rate for LoRA adapter updates. ``1e-5`` is a safe default; increase to ``5e-5`` if reward improvement is too slow. |
 | `phase_02_train_opt_gpu_memory_utilization` | `float` | `0.45` | Fraction of GPU VRAM given to the vLLM rollout engine (remainder goes to the policy model and optimizer). Default 0.45 is tuned for Qwen3-4B on a 80GB A100. Reduce to 0.35 if you see OOM during rollout generation. |
 | `phase_02_train_opt_enforce_eager` | `bool` | `True` | Disables torch.compile and CUDA graph capture in vLLM. Must be True for Qwen3 models (known CUDAGraph incompatibility). Set False for other models for faster rollouts. |
@@ -124,12 +125,13 @@ training.
 
 ## Training wait timeout
 
-The shared training helper keeps its existing 30-minute default for other
-training components. GRPO uses an internal two-hour completion wait without
-adding another pipeline input. For an unusually long GRPO run, override it
-through the existing ``phase_02_train_opt_env_vars`` input:
+The pipeline uses the shared training helper's 30-minute completion-wait
+default. Set ``phase_02_train_opt_completion_timeout_seconds`` to a larger
+value for unusually long runs, for example ``7200`` for two hours. This
+controls the wait after the TrainJob starts; the startup wait remains
+unchanged.
 
-``LORA_GRPO_TRAINING_COMPLETION_TIMEOUT_SECONDS=21600``
+The timeout is measured in seconds.
 
 ## Model Registry setup
 
