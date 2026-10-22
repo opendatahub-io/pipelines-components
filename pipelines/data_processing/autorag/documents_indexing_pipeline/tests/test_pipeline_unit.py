@@ -42,6 +42,7 @@ class TestDocumentsIndexingPipelineUnit:
             "collection_name",
             "ocr_lang",
             "graph_extraction_config",
+            "preset",
         ):
             assert name in inputs
 
@@ -92,6 +93,20 @@ class TestDocumentsIndexingPipelineUnit:
         discovery_inputs = spec["root"]["dag"]["tasks"]["documents-discovery"]["inputs"]["parameters"]
 
         assert discovery_inputs["sampling_enabled"] == {"runtimeValue": {"constant": False}}
+
+    def test_compiled_pipeline_wires_preset_to_text_extraction(self, tmp_path):
+        """Indexing preserves the optimization preset instead of defaulting extraction to speed."""
+        tmp_file = tmp_path / "preset-indexing.yaml"
+        compiler.Compiler().compile(
+            pipeline_func=documents_indexing_pipeline,
+            package_path=str(tmp_file),
+        )
+        spec = load_pipeline_spec_document(tmp_file)
+        preset_input = spec["root"]["inputDefinitions"]["parameters"]["preset"]
+        extraction_inputs = spec["root"]["dag"]["tasks"]["text-extraction"]["inputs"]["parameters"]
+
+        assert preset_input["defaultValue"] == "speed"
+        assert extraction_inputs["preset"] == {"componentInputParameter": "preset"}
 
     def test_compiled_pipeline_wires_indexing_parameters(self):
         """Chunking and embedding pipeline inputs reach the indexing component."""

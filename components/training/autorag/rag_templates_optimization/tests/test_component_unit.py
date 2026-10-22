@@ -790,9 +790,10 @@ class TestRagTemplatesOptimizationRun:
         )
         assert indexing_notebook_call.kwargs["input_data_keys"] == []
 
+    @pytest.mark.parametrize("preset", ["speed", "balanced"])
     @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
-    def test_every_input_data_key_reaches_the_indexing_notebook(self, tmp_path):
-        """The generated notebook must reingest every location, not just the first.
+    def test_indexing_blueprint_preserves_preset_and_input_data_keys(self, tmp_path, preset):
+        """Deployment retains the extraction preset and every document location.
 
         The notebook is the manual route to the same corpus the pipeline built,
         so dropping locations here would silently produce a smaller index.
@@ -818,10 +819,12 @@ class TestRagTemplatesOptimizationRun:
                 input_data_bucket_name="bucket",
                 leaderboard=leaderboard_html,
                 input_data_keys=keys,
+                preset=preset,
             )
 
         pattern_json = json.loads((Path(rag_patterns.path) / "pattern_a" / "pattern.json").read_text(encoding="utf-8"))
         assert pattern_json["indexing"]["pipeline_spec"]["parameters"]["input_data_keys"] == keys
+        assert pattern_json["indexing"]["pipeline_spec"]["parameters"]["preset"] == preset
 
         indexing_notebook_call = next(
             call for call in mocks.generate_notebook_from_template.call_args_list if call.args[0] == "maas_indexing"
