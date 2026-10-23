@@ -6,8 +6,13 @@ from kfp import dsl
 
 
 @dsl.component(
-    base_image="quay.io/opendatahub/odh-th06-cpu-torch291-py312:odh-3.4",
-    packages_to_install=["datasets>=2.14.0", "s3fs>=2023.1.0"],
+    base_image="quay.io/opendatahub/odh-th-torch-cpu-py312:odh-3.6-ea.2",
+    install_kfp_package=False,
+    packages_to_install=[
+        "kfp==2.17.0",
+        "datasets>=2.14.0",
+        "s3fs>=2023.1.0",
+    ],
 )
 def prepare_grpo_dataset(
     dataset_uri: str,
