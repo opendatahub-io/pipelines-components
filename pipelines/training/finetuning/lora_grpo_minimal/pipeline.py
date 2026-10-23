@@ -94,11 +94,14 @@ def lora_grpo_minimal_pipeline(
         phase_01_dataset_man_data_uri: Dataset reference. Hugging Face
             references are loaded directly by Training Hub; local JSON/JSONL,
             PVC, S3, and HTTP(S) sources are normalized by the preparation
-            component onto the shared PVC. For Hugging Face datasets, use
-            ``hf://org/dataset:config``; the ``hf://`` prefix is optional for
-            repository IDs. Non-Hugging Face rows are
-            converted to Training Hub's canonical ``messages`` and ``tools``
-            format. See the [Training Hub loader format](https://github.com/Red-Hat-AI-Innovation-Team/training_hub/blob/main/src/training_hub/algorithms/lora_grpo.py#L381-L387).
+            component onto the shared PVC. Supported forms include
+            ``hf://org/dataset:config`` for Hugging Face, ``pvc://data.jsonl``
+            for a file on the shared PVC, ``s3://bucket/path/data.jsonl`` for
+            S3, and ``https://example.com/data.jsonl`` for HTTP(S). The
+            ``hf://`` prefix is optional for Hugging Face repository IDs.
+            Non-Hugging Face rows are converted to Training Hub's canonical
+            ``messages`` and ``tools`` format. See the [Training Hub loader
+            format](https://github.com/Red-Hat-AI-Innovation-Team/training_hub/blob/main/src/training_hub/algorithms/lora_grpo.py#L381-L387).
         phase_01_dataset_opt_max_invalid_row_ratio: Maximum fraction of invalid
             rows that the preparation component may skip for local, PVC, S3,
             and HTTP(S) sources before failing. Defaults to 10%; use ``0.0``
@@ -155,9 +158,11 @@ def lora_grpo_minimal_pipeline(
             updates. ``1e-5`` is a safe default; increase to ``5e-5`` if reward
             improvement is too slow.
         phase_02_train_opt_gpu_memory_utilization: Fraction of GPU VRAM given
-            to the vLLM rollout engine (remainder goes to the policy model and
-            optimizer). Default 0.45 is tuned for Qwen3-4B on a 80GB A100.
-            Reduce to 0.35 if you see OOM during rollout generation.
+            to the vLLM rollout engine. Enter a fraction between ``0.0`` and
+            ``1.0``; for example, enter ``0.50`` for 50%. The remainder goes to
+            the policy model and optimizer. Default 0.45 is tuned for Qwen3-4B
+            on a 80GB A100. Reduce to 0.35 if you see OOM during rollout
+            generation.
         phase_02_train_opt_enforce_eager: Disables torch.compile and CUDA graph
             capture in vLLM. Must be True for Qwen3 models (known CUDAGraph
             incompatibility). Set False for other models for faster rollouts.
