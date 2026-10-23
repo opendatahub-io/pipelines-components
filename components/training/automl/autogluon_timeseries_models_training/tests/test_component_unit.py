@@ -66,7 +66,8 @@ def isolated_sys_modules():
         _ensemble.AbstractTimeSeriesEnsembleModel = type("AbstractTimeSeriesEnsembleModel", (), {})
         _ensemble.__spec__ = None
         mocked_modules["autogluon.timeseries.models.ensemble"] = _ensemble
-        yield
+        with mock.patch("kfp_components.components.training.automl.shared.timeseries_refit.shutil.copytree"):
+            yield
 
 
 @pytest.fixture
@@ -138,6 +139,32 @@ def _mock_ts_df():
     return ts_df
 
 
+def _configure_predictor_api(predictor_cls, extra_models=None):
+    """Give SDK doubles explicit model identities and predictor reload behavior."""
+    predictors = list(predictor_cls.side_effect)
+    selection = predictors[0]
+    hyperparameters = selection.fit_summary.return_value["model_hyperparams"]
+    models = {}
+    for name, params in hyperparameters.items():
+        model = mock.MagicMock()
+        model._get_model_base.return_value = model
+        model.get_params.return_value = {"hyperparameters": params}
+        models[name] = model
+    models.update(extra_models or {})
+    selection._trainer.load_model.side_effect = models.__getitem__
+    remaining = iter(predictors)
+
+    def construct(**kwargs):
+        predictor = next(remaining)
+        predictor.path = kwargs["path"]
+        if predictor is not selection:
+            predictor.model_names.return_value = [Path(kwargs["path"]).name]
+        return predictor
+
+    predictor_cls.side_effect = construct
+    predictor_cls.load.side_effect = [p for p in predictors[1:] if p.fit.side_effect is None]
+
+
 class TestTimeseriesModelsTrainingUnitTests:
     """Unit tests for autogluon_timeseries_models_training behavior."""
 
@@ -174,6 +201,7 @@ class TestTimeseriesModelsTrainingUnitTests:
         mock_refit_predictor.evaluate.return_value = {"MASE": 0.5, "MSE": 1.0}
 
         mock_predictor_cls.side_effect = [mock_predictor, mock_refit_predictor, mock_refit_predictor]
+        _configure_predictor_api(mock_predictor_cls)
 
         extra_ts = _mock_ts_df()
         full_train_ts = _mock_ts_df()
@@ -233,15 +261,14 @@ class TestTimeseriesModelsTrainingUnitTests:
         assert mock_predictor.fit.call_args.kwargs["presets"] == "medium_quality"
         excluded_model_types = ["Chronos", "Toto", "Chronos2", "Toto2"]
         assert mock_predictor.fit.call_args.kwargs["excluded_model_types"] == excluded_model_types
-        assert all(
-            call.kwargs["excluded_model_types"] == excluded_model_types
-            for call in mock_refit_predictor.fit.call_args_list
-        )
+        assert all(call.kwargs["enable_ensemble"] is False for call in mock_refit_predictor.fit.call_args_list)
+        assert all(call.kwargs["skip_model_selection"] is True for call in mock_refit_predictor.fit.call_args_list)
         assert result.model_config["refit_time_limit_per_model"] == 300
         assert result.model_config["known_covariates_names"] == []
         assert result.model_config["num_models_trained"] == 3
         assert mock_refit_predictor.fit.call_count == 2
         assert all(call.kwargs["time_limit"] == 300 for call in mock_refit_predictor.fit.call_args_list)
+        assert [call.kwargs["model"] for call in mock_refit_predictor.evaluate.call_args_list] == ["DeepAR", "TFT"]
         # Verify full refit happened
         assert "model_names" in models_artifact.metadata
         assert "context" in models_artifact.metadata
@@ -260,6 +287,72 @@ class TestTimeseriesModelsTrainingUnitTests:
         assert "test_data_file_key" not in experiment_nb_source
         assert "kfp_components" not in experiment_nb_source
         assert "experiment_notebook" not in models_artifact.metadata["context"]
+
+    @mock.patch("pandas.read_parquet")
+    @mock.patch("pandas.concat")
+    @mock.patch("autogluon.timeseries.TimeSeriesDataFrame")
+    @mock.patch("autogluon.timeseries.TimeSeriesPredictor")
+    def test_ensemble_and_standalone_share_fit_and_identify_exported_models(
+        self, predictor_cls, ts_df_cls, concat, read_parquet, mock_artifacts, tmp_path
+    ):
+        """The reported top-N selection fits TFT once and labels evaluation and exports explicitly."""
+        abstract = sys.modules["autogluon.timeseries.models.ensemble"].AbstractTimeSeriesEnsembleModel
+        ensemble = mock.MagicMock(spec=abstract)
+        ensemble.name = "WeightedEnsemble"
+        ensemble.set_contexts = mock.MagicMock()
+        ensemble.model_names = ["TemporalFusionTransformer"]
+        ensemble.model_to_weight = {"TemporalFusionTransformer": 1.0}
+        selection = mock.MagicMock()
+        selection.leaderboard.return_value = _mock_leaderboard(["WeightedEnsemble", "TemporalFusionTransformer"])
+        selection.fit_summary.return_value = {"model_hyperparams": {"TemporalFusionTransformer": {"hidden_dim": 32}}}
+        refit = mock.MagicMock()
+        refit.evaluate.return_value = {"MASE": -0.5}
+        predictor_cls.side_effect = [selection, refit]
+        _configure_predictor_api(predictor_cls, {"WeightedEnsemble": ensemble})
+        predictor_cls.load.side_effect = None
+        predictor_cls.load.return_value = refit
+        ts_df_cls.from_data_frame.return_value = _mock_ts_df()
+        ts_df_cls.from_path.return_value = _mock_ts_df()
+        ts_df_cls.return_value = _mock_ts_df()
+        concat.return_value = mock.MagicMock()
+        read_parquet.side_effect = [mock.MagicMock(), mock.MagicMock()]
+        models_artifact, extra_path, html_artifact, notebook = mock_artifacts
+        result = autogluon_timeseries_models_training.python_func(
+            target="sales",
+            id_column="item_id",
+            timestamp_column="timestamp",
+            train_data_path="/tmp/train.parquet",
+            test_data=mock.MagicMock(path="/tmp/test.parquet"),
+            top_n=2,
+            workspace_path=str(tmp_path / "workspace"),
+            pipeline_name="ts-pipeline-123",
+            run_id="run-123",
+            models_artifact=models_artifact,
+            extra_train_data_path=extra_path,
+            html_artifact=html_artifact,
+            experiment_notebook=notebook,
+            component_status=_DEFAULT_COMPONENT_STATUS,
+        )
+        refit.fit.assert_called_once()
+        fit_args = refit.fit.call_args.kwargs
+        assert list(fit_args["hyperparameters"].values()) == [
+            {"hidden_dim": 32, "ag_args": {"name": "TemporalFusionTransformer"}}
+        ]
+        assert fit_args["time_limit"] == 600
+        assert fit_args["enable_ensemble"] is False
+        assert [call.kwargs["model"] for call in refit.evaluate.call_args_list] == [
+            "WeightedEnsemble",
+            "TemporalFusionTransformer",
+        ]
+        assert result.model_config["refit_base_models"] == ["TemporalFusionTransformer"]
+        assert len(result.model_config["refit_records"]) == 1
+        for name in result.top_models:
+            root = Path(models_artifact.path) / f"{name}_FULL"
+            metadata = json.loads((root / "predictor" / "predictor_metadata.json").read_text())
+            assert metadata["prediction_model"] == name
+            assert metadata["refit_base_models"] == ["TemporalFusionTransformer"]
+            model_metadata = json.loads((root / "model.json").read_text())
+            assert model_metadata["refit"]["prediction_model"] == name
 
     @mock.patch("pandas.read_parquet")
     @mock.patch("pandas.concat")
@@ -285,6 +378,7 @@ class TestTimeseriesModelsTrainingUnitTests:
         mock_refit_predictor.evaluate.return_value = {"MASE": 0.5}
 
         mock_predictor_cls.side_effect = [mock_predictor, mock_refit_predictor]
+        _configure_predictor_api(mock_predictor_cls)
         mock_ts_df_cls.from_data_frame.return_value = _mock_ts_df()
         mock_ts_df_cls.from_path.return_value = _mock_ts_df()
         mock_ts_df_cls.return_value = _mock_ts_df()
@@ -340,6 +434,7 @@ class TestTimeseriesModelsTrainingUnitTests:
         mock_refit_predictor = mock.MagicMock()
         mock_refit_predictor.evaluate.return_value = {"MASE": 0.5}
         mock_predictor_cls.side_effect = [mock_predictor, mock_refit_predictor]
+        _configure_predictor_api(mock_predictor_cls)
         mock_ts_df_cls.from_data_frame.return_value = _mock_ts_df()
         mock_ts_df_cls.from_path.return_value = _mock_ts_df()
         mock_ts_df_cls.return_value = _mock_ts_df()
@@ -396,6 +491,7 @@ class TestTimeseriesModelsTrainingUnitTests:
         mock_refit_predictor.evaluate.return_value = {"MASE": 0.5}
 
         mock_predictor_cls.side_effect = [mock_predictor, mock_refit_predictor]
+        _configure_predictor_api(mock_predictor_cls)
         # from_data_frame is called for: train, test, and once per model for build_predict_sample_artifact (1 model)
         mock_ts_df_cls.from_data_frame.return_value = _mock_ts_df()
         mock_ts_df_cls.from_path.return_value = _mock_ts_df()
@@ -680,6 +776,7 @@ class TestTimeseriesModelsTrainingUnitTests:
         }
 
         mock_predictor_cls.side_effect = [mock_predictor, mock_refit_predictor]
+        _configure_predictor_api(mock_predictor_cls)
         mock_ts_df_cls.from_data_frame.return_value = _mock_ts_df()
         mock_ts_df_cls.from_path.return_value = _mock_ts_df()
         mock_ts_df_cls.return_value = _mock_ts_df()
@@ -746,6 +843,7 @@ class TestTimeseriesModelsTrainingUnitTests:
         mock_refit_3.evaluate.return_value = {"MASE": 0.6, "MSE": 1.2}
 
         mock_predictor_cls.side_effect = [mock_predictor, mock_refit_1, mock_refit_2, mock_refit_3]
+        _configure_predictor_api(mock_predictor_cls)
         # from_data_frame: train, test, and successful refits (DeepAR, AutoARIMA) in build_predict_sample_artifact
         mock_ts_df_cls.from_data_frame.return_value = _mock_ts_df()
         mock_ts_df_cls.from_path.return_value = _mock_ts_df()
@@ -816,6 +914,7 @@ class TestTimeseriesModelsTrainingUnitTests:
         mock_refit_2.fit.side_effect = RuntimeError("CUDA error")
 
         mock_predictor_cls.side_effect = [mock_predictor, mock_refit_1, mock_refit_2]
+        _configure_predictor_api(mock_predictor_cls)
         mock_ts_df_cls.from_data_frame.return_value = _mock_ts_df()
         mock_ts_df_cls.from_path.return_value = _mock_ts_df()
         mock_ts_df_cls.return_value = _mock_ts_df()
@@ -942,6 +1041,7 @@ class TestTimeseriesModelsTrainingUnitTests:
         mock_refit_predictor.evaluate.return_value = {"MASE": 0.5, "MSE": 1.0}
 
         mock_predictor_cls.side_effect = [mock_predictor, mock_refit_predictor]
+        _configure_predictor_api(mock_predictor_cls)
         mock_ts_df_cls.from_data_frame.return_value = _mock_ts_df()
         mock_ts_df_cls.from_path.return_value = _mock_ts_df()
         mock_ts_df_cls.return_value = _mock_ts_df()
@@ -1000,6 +1100,7 @@ class TestTimeseriesModelsTrainingUnitTests:
         mock_refit_predictor.evaluate.return_value = {"WQL": 0.3, "MASE": 0.5}
 
         mock_predictor_cls.side_effect = [mock_predictor, mock_refit_predictor]
+        _configure_predictor_api(mock_predictor_cls)
         # from_data_frame: train, test, and once per model in build_predict_sample_artifact (1 model)
         mock_ts_df_cls.from_data_frame.return_value = _mock_ts_df()
         mock_ts_df_cls.from_path.return_value = _mock_ts_df()
@@ -1067,6 +1168,7 @@ class TestMetricsJsonSignConvention:
         mock_refit_predictor.evaluate.return_value = {"MASE": -0.42, "MSE": -1.0}
 
         mock_predictor_cls.side_effect = [mock_predictor, mock_refit_predictor]
+        _configure_predictor_api(mock_predictor_cls)
         # from_data_frame is called for: train, test, and once per model for build_predict_sample_artifact (1 model)
         mock_ts_df_cls.from_data_frame.return_value = _mock_ts_df()
         mock_ts_df_cls.from_path.return_value = _mock_ts_df()
@@ -1131,6 +1233,7 @@ class TestBackTestingArtifactFailure:
         mock_refit_predictor.evaluate.return_value = {"MASE": 0.5, "MSE": 1.0}
 
         mock_predictor_cls.side_effect = [mock_predictor, mock_refit_predictor]
+        _configure_predictor_api(mock_predictor_cls)
         # from_data_frame is called for: train, test, and once per model for build_predict_sample_artifact (1 model)
         mock_ts_df_cls.from_data_frame.return_value = _mock_ts_df()
         mock_ts_df_cls.from_path.return_value = _mock_ts_df()
@@ -1208,6 +1311,7 @@ class TestLeaderboardPhase:
         mock_refit_predictor = mock.MagicMock()
         mock_refit_predictor.evaluate.return_value = {"MASE": -0.42}
         mock_predictor_cls.side_effect = [mock_predictor, mock_refit_predictor]
+        _configure_predictor_api(mock_predictor_cls)
         mock_ts_df_cls.from_data_frame.side_effect = [_mock_ts_df(), _mock_ts_df(), _mock_ts_df()]
         mock_ts_df_cls.from_path.return_value = _mock_ts_df()
         mock_ts_df_cls.return_value = _mock_ts_df()
@@ -1287,6 +1391,7 @@ class TestLeaderboardPhase:
         mock_refit_predictor = mock.MagicMock()
         mock_refit_predictor.evaluate.return_value = {"MASE": -0.42}
         mock_predictor_cls.side_effect = [mock_predictor, mock_refit_predictor]
+        _configure_predictor_api(mock_predictor_cls)
         mock_ts_df_cls.from_data_frame.side_effect = [_mock_ts_df(), _mock_ts_df(), _mock_ts_df()]
         mock_ts_df_cls.from_path.return_value = _mock_ts_df()
         mock_ts_df_cls.return_value = _mock_ts_df()
@@ -1347,6 +1452,7 @@ class TestLeaderboardPhase:
         mock_refit_predictor = mock.MagicMock()
         mock_refit_predictor.evaluate.return_value = {"MASE": -0.30}
         mock_predictor_cls.side_effect = [mock_predictor, mock_refit_predictor]
+        _configure_predictor_api(mock_predictor_cls)
         mock_ts_df_cls.from_data_frame.side_effect = [_mock_ts_df(), _mock_ts_df(), _mock_ts_df()]
         mock_ts_df_cls.from_path.return_value = _mock_ts_df()
         mock_ts_df_cls.return_value = _mock_ts_df()
@@ -1404,6 +1510,7 @@ class TestPredictorMetadata:
         mock_refit_predictor.evaluate.return_value = {"MASE": 0.5}
 
         mock_predictor_cls.side_effect = [mock_predictor, mock_refit_predictor]
+        _configure_predictor_api(mock_predictor_cls)
         mock_ts_df_cls.from_data_frame.return_value = _mock_ts_df()
         mock_ts_df_cls.from_path.return_value = _mock_ts_df()
         mock_ts_df_cls.return_value = _mock_ts_df()
@@ -1438,6 +1545,9 @@ class TestPredictorMetadata:
         assert metadata == {
             "model_name": "DeepAR_FULL",
             "base_model": "DeepAR",
+            "prediction_model": "DeepAR",
+            "refit_base_models": ["DeepAR"],
+            "ensemble_dependencies": {},
             "prediction_length": 7,
             "eval_metric": "mean_absolute_scaled_error",
             "target": "sales",
@@ -1466,6 +1576,7 @@ class TestPredictorMetadata:
         mock_refit_predictor.evaluate.return_value = {"MASE": 0.5}
 
         mock_predictor_cls.side_effect = [mock_predictor, mock_refit_predictor]
+        _configure_predictor_api(mock_predictor_cls)
         mock_ts_df_cls.from_data_frame.return_value = _mock_ts_df()
         mock_ts_df_cls.from_path.return_value = _mock_ts_df()
         mock_ts_df_cls.return_value = _mock_ts_df()
@@ -1521,6 +1632,7 @@ class TestTimeseriesInferenceBlock:
         mock_refit_predictor.evaluate.return_value = {"MASE": 0.5}
 
         mock_predictor_cls.side_effect = [mock_predictor, mock_refit_predictor]
+        _configure_predictor_api(mock_predictor_cls)
 
         full_train_ts = _mock_ts_df()
         full_train_ts.columns = ["sales"]
@@ -1592,6 +1704,7 @@ class TestTimeseriesInferenceBlock:
         mock_refit_predictor.evaluate.return_value = {"MASE": 0.5}
 
         mock_predictor_cls.side_effect = [mock_predictor, mock_refit_predictor]
+        _configure_predictor_api(mock_predictor_cls)
 
         full_train_ts = _mock_ts_df()
         full_train_ts.columns = ["sales", "promo", "temperature"]
@@ -1699,6 +1812,7 @@ class TestTimeseriesInferenceBlock:
         mock_refit_predictor.evaluate.return_value = {"MASE": 0.5}
 
         mock_predictor_cls.side_effect = [mock_predictor, mock_refit_predictor]
+        _configure_predictor_api(mock_predictor_cls)
 
         full_train_ts = _mock_ts_df()
         full_train_ts.columns = ["sales"]
@@ -1774,6 +1888,7 @@ class TestTimeseriesInferenceBlock:
         mock_refit_predictor.evaluate.return_value = {"MASE": 0.5}
 
         mock_predictor_cls.side_effect = [mock_predictor, mock_refit_predictor]
+        _configure_predictor_api(mock_predictor_cls)
 
         full_train_ts = _mock_ts_df()
         full_train_ts.columns = ["sales", "promo"]

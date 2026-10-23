@@ -91,15 +91,15 @@ def add_split_profile(profile_path: Path, splits: dict, id_column: str, timestam
     for name, frame in splits.items():
         summary = frame.groupby(id_column)[timestamp_column].agg(["min", "max", "size"])
         summary.index = summary.index.map(str)
-        summaries[name] = summary
+        summaries[name] = summary.to_dict(orient="index")
     temporary = profile_path.with_suffix(".tmp")
     with profile_path.open(encoding="utf-8") as source, temporary.open("w", encoding="utf-8") as output:
         for line in source:
             record = json.loads(line)
             record["splits"] = {}
             for name, summary in summaries.items():
-                if record["series_id"] in summary.index:
-                    row = summary.loc[record["series_id"]]
+                row = summary.get(record["series_id"])
+                if row is not None:
                     record["splits"][name] = {
                         "rows": int(row["size"]),
                         "min_timestamp": str(row["min"]),
@@ -333,13 +333,15 @@ def sample_latest_timeseries(
             return pd.DataFrame(), {"truncated": False, "cap_reached": False, "scanned_rows": 0}
         if spool is None:
             source = pd.concat(buffered, ignore_index=True)
-            source_counts = source.groupby(id_column, sort=False).size()
+            source_counts = source.groupby(id_column, sort=False).size().to_dict()
             frame = source.drop_duplicates([id_column, timestamp_column], keep="last")
             unique_rows = len(frame)
-            source_ranges = frame.groupby(id_column)[timestamp_column].agg(["min", "max", "size"])
+            source_ranges = (
+                frame.groupby(id_column)[timestamp_column].agg(["min", "max", "size"]).to_dict(orient="index")
+            )
             source_stats = (
                 (str(series), int(source_counts[series]), int(row["size"]), row["min"], row["max"])
-                for series, row in source_ranges.iterrows()
+                for series, row in source_ranges.items()
             )
         else:
             locations = spool.plan(minimum_rows_per_series)
@@ -358,10 +360,11 @@ def sample_latest_timeseries(
         frame = _trim_to_budget(frame, id_column, timestamp_column, max_size_bytes, minimum_rows_per_series)
         retained = frame.groupby(id_column)[timestamp_column].agg(["min", "max", "size"])
         retained.index = retained.index.map(str)
+        retained = retained.to_dict(orient="index")
         profile_path.parent.mkdir(parents=True, exist_ok=True)
         with profile_path.open("w", encoding="utf-8") as profile:
             for series, source_rows, n_unique, first, last in source_stats:
-                row = retained.loc[series]
+                row = retained[series]
                 profile.write(
                     json.dumps(
                         {

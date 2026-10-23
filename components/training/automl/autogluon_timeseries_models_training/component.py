@@ -50,7 +50,9 @@ def autogluon_timeseries_models_training(
     This component combines model generation and full-refit into one step to avoid
     pipeline-level ``ParallelFor``. It trains multiple AutoGluon TimeSeries models on
     the selection training data, ranks them on the test set, then sequentially refits
-    the top N models on full train data (selection split + extra split).
+    the unique base dependencies of the top N models on full train data (selection
+    split + extra split). Selected ensembles retain their learned weights and
+    dependency configurations; shared dependencies are trained only once.
 
     Refit outputs for all selected models are written under one ``models_artifact``,
     and a ranked HTML leaderboard is written to ``html_artifact``.
@@ -269,16 +271,19 @@ def autogluon_timeseries_models_training(
             )
 
         top_models = leaderboard.head(top_n)["model"].values.tolist()
+        from kfp_components.components.training.automl.shared.timeseries_refit import TimeSeriesRefitPlan
+
+        refit_plan = TimeSeriesRefitPlan(predictor, top_models, time_limit)
         # Refit is a separate stage, so give it one preset-sized budget in total,
-        # divided fairly between selected models. Without this, every selected model
-        # received the entire selection budget and top_n multiplied wall-clock time.
-        refit_time_limit = max(1, time_limit // len(top_models))
+        # divided between unique base configurations, including ensemble dependencies.
+        refit_time_limit = refit_plan.time_limit_per_model
         status.record(
             "model_selection",
             "completed",
             metrics={
                 "top_n": top_n,
                 "selected_models": top_models,
+                "refit_base_models": list(refit_plan.base_models),
                 "refit_time_limit_per_model_seconds": refit_time_limit,
             },
         )
@@ -299,13 +304,12 @@ def autogluon_timeseries_models_training(
             "presets": preset,
             "time_limit": time_limit,
             "refit_time_limit_per_model": refit_time_limit,
+            "refit_base_models": list(refit_plan.base_models),
             "known_covariates_names": known_covariates_names or [],
             "num_models_trained": len(leaderboard),
         }
 
         # Stage 2: Full refit of selected models on full train data (selection + extra).
-        from autogluon.timeseries.models.ensemble import AbstractTimeSeriesEnsembleModel
-
         selection_ts_df = train_ts
         extra_train_ts_df = TimeSeriesDataFrame.from_path(
             path=extra_train_data_path,
@@ -313,7 +317,6 @@ def autogluon_timeseries_models_training(
             timestamp_column=timestamp_column,
         )
         full_train_ts_df = TimeSeriesDataFrame(pd.concat([selection_ts_df, extra_train_ts_df], axis=0))
-        model_hyperparams = predictor.fit_summary()["model_hyperparams"]
 
         sample_row_list = json.loads(sample_rows or "[]")
         if not isinstance(sample_row_list, list):
@@ -463,30 +466,23 @@ def autogluon_timeseries_models_training(
                     output_path.mkdir(parents=True, exist_ok=True)
                     predictor_output = output_path / "predictor"
 
-                    model_type = predictor._trainer.get_model_attribute(model_name, "type")
-                    is_ensemble = issubclass(model_type, AbstractTimeSeriesEnsembleModel)
-                    hyperparams_option = "ensemble_hyperparameters" if is_ensemble else "hyperparameters"
-                    additional_fit_params = {hyperparams_option: {model_name: model_hyperparams[model_name]}}
-
-                    predictor_refit = TimeSeriesPredictor(
-                        prediction_length=prediction_length,
-                        target=target,
-                        eval_metric=eval_metric,
-                        path=predictor_output,
-                        verbosity=2,
-                        known_covariates_names=known_covariates_names,
-                    )
-                    # fit() automatically saves the predictor to path specified in constructor
-                    refit_start_time = time.perf_counter()
-                    predictor_refit.fit(
+                    refit_plan.fit_base_models(
+                        model_name,
                         train_data=full_train_ts_df,
-                        **additional_fit_params,
-                        time_limit=refit_time_limit,
-                        excluded_model_types=EXCLUDED_MODEL_TYPES,
+                        path=Path(workspace_path) / "timeseries_refit",
+                        predictor_kwargs={
+                            "prediction_length": prediction_length,
+                            "target": target,
+                            "eval_metric": eval_metric,
+                            "verbosity": 2,
+                            "known_covariates_names": known_covariates_names,
+                        },
                     )
-                    total_fit_time_seconds += time.perf_counter() - refit_start_time
+                    predictor_refit = refit_plan.export(model_name, predictor_output)
                     evaluation_started = time.perf_counter()
-                    metrics = predictor_refit.evaluate(test_ts, metrics=list(AVAILABLE_METRICS.keys()))
+                    metrics = predictor_refit.evaluate(
+                        test_ts, model=model_name, metrics=list(AVAILABLE_METRICS.keys())
+                    )
                     logger.info(
                         "Test evaluation for %s took %.3f seconds",
                         model_name_full,
@@ -525,6 +521,7 @@ def autogluon_timeseries_models_training(
                         "timestamp_column": timestamp_column,
                         "known_covariates_names": known_covariates_names or [],
                         "uses_synthetic_id": uses_synthetic_id,
+                        **refit_plan.metadata(model_name),
                     }
                     predictor_output.mkdir(parents=True, exist_ok=True)
                     with (predictor_output / "predictor_metadata.json").open("w", encoding="utf-8") as f:
@@ -602,6 +599,7 @@ def autogluon_timeseries_models_training(
 
                     model_metadata = {
                         "name": model_name_full,
+                        "refit": refit_plan.metadata(model_name),
                         "location": model_location,
                         "metrics": {
                             "test_data": metrics_dict,
@@ -629,6 +627,9 @@ def autogluon_timeseries_models_training(
                     failed_models.append(model_name)
 
             # Report partial failures
+            total_fit_time_seconds += refit_plan.fit_time_seconds
+            model_config["refit_records"] = refit_plan.refit_records
+            models_artifact.metadata["refit_records"] = refit_plan.refit_records
             if failed_models:
                 logger.warning("The following models failed refit: %s", failed_models)
 
@@ -639,7 +640,12 @@ def autogluon_timeseries_models_training(
             status.record(
                 "refit_and_evaluate",
                 "completed",
-                metrics={"model_count": len(model_names_full), "eval_metric": eval_metric},
+                metrics={
+                    "model_count": len(model_names_full),
+                    "eval_metric": eval_metric,
+                    "refit_base_models": list(refit_plan.fitted),
+                    "refit_fit_time_seconds": refit_plan.fit_time_seconds,
+                },
             )
 
             # Phase C: leaderboard generation - uses models_metadata already built in the refit loop

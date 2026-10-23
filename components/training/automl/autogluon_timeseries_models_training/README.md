@@ -6,8 +6,8 @@
 
 Train, select, and full-refit top N AutoGluon timeseries models.
 
-This component combines model generation and full-refit into one step to avoid pipeline-level ``ParallelFor``. It trains multiple AutoGluon TimeSeries models on the selection training data, ranks them on the test set, then sequentially refits the top N models on full train data (selection split +
-extra split).
+This component combines model generation and full-refit into one step to avoid pipeline-level ``ParallelFor``. It trains multiple AutoGluon TimeSeries models on the selection training data, ranks them on the test set, then sequentially refits the unique base dependencies of the top N models on full
+train data (selection split + extra split). Selected ensembles retain their learned weights and dependency configurations; shared dependencies are trained only once.
 
 Refit outputs for all selected models are written under one ``models_artifact``, and a ranked HTML leaderboard is written to ``html_artifact``.
 
@@ -120,7 +120,7 @@ def example_pipeline(
   - timeseries
   - automl
   - model-selection
-- **Last Verified**: 2026-10-22 00:00:00+00:00
+- **Last Verified**: 2026-10-23 00:00:00+00:00
 - **Owners**:
   - No Parent Owners: Yes
   - Approvers:
