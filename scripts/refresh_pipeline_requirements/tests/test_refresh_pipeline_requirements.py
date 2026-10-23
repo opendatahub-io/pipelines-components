@@ -543,6 +543,49 @@ class TestCompilePipelineRequirements:
 
         assert lockfile.read_text(encoding="utf-8") == "requests==2.0.0\n"
 
+    def test_failed_compile_restores_original_lockfile(self, tmp_path: Path):
+        """Restores the pre-strip lockfile when the compile command fails."""
+        pipeline_dir = tmp_path / "pipeline"
+        _write_requirements_in(pipeline_dir)
+        lockfile = pipeline_dir / "requirements.txt"
+        original = "requests==2.0.0 \\\n    --hash=sha256:abc\n"
+        lockfile.write_text(original, encoding="utf-8")
+
+        with (
+            mock.patch(
+                "scripts.refresh_pipeline_requirements.refresh_pipeline_requirements.resolve_container_runtime",
+                return_value="docker",
+            ),
+            mock.patch("subprocess.run", side_effect=subprocess.CalledProcessError(returncode=2, cmd=["uv"])),
+            mock.patch("builtins.print"),
+        ):
+            with pytest.raises(subprocess.CalledProcessError):
+                compile_pipeline_requirements(pipeline_dir, container_runtime="docker", upgrade=False, verify=False)
+
+        assert lockfile.read_text(encoding="utf-8") == original
+
+    def test_missing_runtime_leaves_lockfile_untouched(self, tmp_path: Path):
+        """Never strips hashes when container runtime resolution fails first."""
+        pipeline_dir = tmp_path / "pipeline"
+        _write_requirements_in(pipeline_dir)
+        lockfile = pipeline_dir / "requirements.txt"
+        original = "requests==2.0.0 \\\n    --hash=sha256:abc\n"
+        lockfile.write_text(original, encoding="utf-8")
+
+        with (
+            mock.patch(
+                "scripts.refresh_pipeline_requirements.refresh_pipeline_requirements.resolve_container_runtime",
+                side_effect=RuntimeError("no container runtime found"),
+            ),
+            mock.patch("subprocess.run") as run_mock,
+            mock.patch("builtins.print"),
+        ):
+            with pytest.raises(RuntimeError, match="no container runtime found"):
+                compile_pipeline_requirements(pipeline_dir, container_runtime=None, upgrade=False, verify=False)
+
+        run_mock.assert_not_called()
+        assert lockfile.read_text(encoding="utf-8") == original
+
     def test_upgrade_keeps_existing_hashes(self, tmp_path: Path):
         """Leaves the existing lockfile untouched before an upgrade compile."""
         pipeline_dir = tmp_path / "pipeline"

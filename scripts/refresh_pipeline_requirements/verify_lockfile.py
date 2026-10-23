@@ -25,6 +25,8 @@ See: https://peps.python.org/pep-0691/ (simple index JSON API).
 
 from __future__ import annotations
 
+import base64
+import http.client
 import json
 import re
 import threading
@@ -35,6 +37,7 @@ from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 
 from packaging.markers import InvalidMarker, Marker, default_environment
 from packaging.version import InvalidVersion, Version
@@ -72,6 +75,16 @@ _WHEEL_FILENAME_RE = re.compile(
 _SDIST_SUFFIXES = (".tar.gz", ".tar.bz2", ".tar.xz", ".zip", ".tar")
 
 _ARCH_CHECK_MODES = ("error", "warn")
+
+#: Matches "//user:password@" URL userinfo so it can be stripped without parsing.
+_URL_USERINFO_RE = re.compile(r"//[^/@]*@")
+
+_SUPPORTED_SCHEMES = ("http", "https")
+
+
+def redact_url_userinfo(url: str) -> str:
+    """Remove URL userinfo credentials without parsing (safe for malformed URLs)."""
+    return _URL_USERINFO_RE.sub("//", url)
 
 
 class IndexLookupError(Exception):
@@ -238,9 +251,34 @@ class SimpleIndexClient:
     def __init__(self, index_url: str, *, timeout: float = 30.0) -> None:
         """Store the index base URL and per-request timeout."""
         self.index_url = index_url.rstrip("/")
+        self._redacted_index_url = redact_url_userinfo(self.index_url)
         self.timeout = timeout
         self._cache: dict[str, list[IndexFile]] = {}
         self._lock = threading.Lock()
+
+    def _request_parts(self, canonical: str) -> tuple[str, dict[str, str]]:
+        """Build the credentials-free request URL and headers for one package.
+
+        Userinfo embedded in the index URL is moved into a Basic Authorization
+        header so the request URL (and every error message built from it) stays
+        free of credentials. Only http and https indexes are supported.
+
+        Raises:
+            IndexLookupError: If the index URL uses an unsupported scheme.
+            ValueError: If the index URL is malformed (propagated to the caller).
+        """
+        parts = urlsplit(f"{self.index_url}/{canonical}/")
+        netloc = parts.hostname or ""
+        if parts.port is not None:
+            netloc = f"{netloc}:{parts.port}"
+        url = urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
+        if parts.scheme not in _SUPPORTED_SCHEMES:
+            raise IndexLookupError(f"{url}: unsupported URL scheme {parts.scheme!r}; only http and https are supported")
+        headers = {"Accept": "application/vnd.pypi.simple.v1+json"}
+        if parts.username is not None:
+            credentials = f"{parts.username}:{parts.password or ''}"
+            headers["Authorization"] = "Basic " + base64.b64encode(credentials.encode()).decode()
+        return url, headers
 
     def files(self, package: str) -> list[IndexFile]:
         """Return every file the index publishes for a package (all versions)."""
@@ -250,22 +288,32 @@ class SimpleIndexClient:
         if cached is not None:
             return cached
 
-        url = f"{self.index_url}/{canonical}/"
-        request = urllib.request.Request(url, headers={"Accept": "application/vnd.pypi.simple.v1+json"})
+        try:
+            url, headers = self._request_parts(canonical)
+            request = urllib.request.Request(url, headers=headers)
+        except ValueError as exc:
+            # Malformed URLs (for example an invalid IPv6 literal or port).
+            raise IndexLookupError(f"{self._redacted_index_url}: invalid index URL: {exc}") from exc
+
         last_error: Exception | None = None
         for attempt in range(_FETCH_ATTEMPTS):
             try:
                 with urllib.request.urlopen(request, timeout=self.timeout) as response:
                     payload = json.load(response)
                 break
-            except (urllib.error.URLError, TimeoutError, OSError) as exc:
-                # Transient network blips (DNS hiccups, resets) fail the whole
-                # verification otherwise; retry before giving up.
+            except (urllib.error.URLError, TimeoutError, OSError, http.client.HTTPException) as exc:
+                # Transient failures (DNS hiccups, resets, malformed status
+                # lines) would fail the whole verification otherwise; retry
+                # before giving up.
                 last_error = exc
                 if attempt + 1 < _FETCH_ATTEMPTS:
                     time.sleep(1)
             except json.JSONDecodeError as exc:
                 raise IndexLookupError(f"{url}: index did not return JSON: {exc}") from exc
+            except ValueError as exc:
+                # Deterministic URL problems (for example invalid ports) must
+                # not escape as a raw ValueError and crash the verification.
+                raise IndexLookupError(f"{url}: {exc}") from exc
         else:
             raise IndexLookupError(f"{url}: {last_error}") from last_error
 

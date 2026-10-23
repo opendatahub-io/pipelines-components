@@ -1,6 +1,8 @@
 """Tests for lockfile verification against the simple index."""
 
+import base64
 import hashlib
+import http.client
 import io
 import json
 import urllib.error
@@ -477,3 +479,84 @@ class TestSimpleIndexClient:
         with mock.patch("urllib.request.urlopen", return_value=response):
             with pytest.raises(IndexLookupError, match="pillow"):
                 client.files("pillow")
+
+    def test_rejects_non_http_schemes(self):
+        """Rejects index URLs outside http(s) instead of opening arbitrary schemes."""
+        client = SimpleIndexClient("file:///srv/mirror/simple")
+
+        with mock.patch("urllib.request.urlopen") as urlopen_mock:
+            with pytest.raises(IndexLookupError, match="unsupported URL scheme 'file'"):
+                client.files("pillow")
+
+        urlopen_mock.assert_not_called()
+
+    def test_moves_userinfo_into_authorization_header(self):
+        """Embeds index URL credentials as a Basic Authorization header, not in the URL."""
+        client = SimpleIndexClient("https://user:secret@example.com/simple")
+
+        response = self._response({"meta": {}, "files": []})
+        with mock.patch("urllib.request.urlopen", return_value=response) as urlopen_mock:
+            client.files("pillow")
+
+        request = urlopen_mock.call_args.args[0]
+        assert request.full_url == "https://example.com/simple/pillow/"
+        expected = "Basic " + base64.b64encode(b"user:secret").decode()
+        assert request.headers.get("Authorization") == expected
+
+    def test_error_messages_redact_credentials(self):
+        """Network failure messages never contain the index URL credentials."""
+        client = SimpleIndexClient("https://user:secret@example.com/simple")
+
+        with (
+            mock.patch("urllib.request.urlopen", side_effect=urllib.error.URLError("connection refused")),
+            mock.patch("time.sleep"),
+        ):
+            with pytest.raises(IndexLookupError) as excinfo:
+                client.files("pillow")
+
+        assert "user:secret" not in str(excinfo.value)
+        assert "example.com/simple/pillow" in str(excinfo.value)
+
+    def test_invalid_index_url_is_reported_not_raised(self):
+        """Malformed index URLs surface as IndexLookupError instead of ValueError."""
+        client = SimpleIndexClient("https://exa[mple.com/simple")
+
+        with mock.patch("urllib.request.urlopen") as urlopen_mock:
+            with pytest.raises(IndexLookupError, match="invalid index URL"):
+                client.files("pillow")
+
+        urlopen_mock.assert_not_called()
+
+    def test_http_exceptions_are_retried(self):
+        """http.client errors during fetch are retried like transient network failures."""
+        payload = {"meta": {}, "files": []}
+        client = SimpleIndexClient("https://example.com/simple")
+        failures = [http.client.IncompleteRead(10), None]
+
+        def flaky_urlopen(_request, timeout):  # noqa: ARG001
+            failure = failures.pop(0)
+            if failure is not None:
+                raise failure
+            return self._response(payload)
+
+        with (
+            mock.patch("urllib.request.urlopen", side_effect=flaky_urlopen),
+            mock.patch("time.sleep"),
+        ):
+            files = client.files("pillow")
+
+        assert files == []
+        assert failures == []  # both attempts were consumed
+
+    def test_value_errors_from_urlopen_do_not_retry(self):
+        """ValueErrors escaping urlopen are wrapped as IndexLookupError without retries."""
+        client = SimpleIndexClient("https://example.com/simple")
+
+        with (
+            mock.patch("urllib.request.urlopen", side_effect=ValueError("invalid port 'not-a-port'")),
+            mock.patch("time.sleep") as sleep_mock,
+        ):
+            with pytest.raises(IndexLookupError, match="invalid port"):
+                client.files("pillow")
+
+        sleep_mock.assert_not_called()

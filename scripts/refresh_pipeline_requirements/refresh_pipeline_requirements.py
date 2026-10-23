@@ -355,11 +355,6 @@ def compile_pipeline_requirements(
     if index_url is None:
         raise RefreshRequirementsError(f"{requirements_in} must declare --index-url for RHOAI package resolution")
 
-    if not dry_run and not upgrade:
-        requirements_txt = pipeline_dir / _REQUIREMENTS_TXT
-        if requirements_txt.is_file():
-            strip_lockfile_hashes(requirements_txt)
-
     runtime = resolve_container_runtime(container_runtime)
     command = build_container_command(
         runtime=runtime,
@@ -370,6 +365,14 @@ def compile_pipeline_requirements(
         verbose=verbose,
     )
 
+    # Strip hashes only once the runtime resolved; keep the original content so
+    # a failed compile restores the lockfile instead of leaving it hash-less.
+    requirements_txt = pipeline_dir / _REQUIREMENTS_TXT
+    original_lockfile: str | None = None
+    if not dry_run and not upgrade and requirements_txt.is_file():
+        original_lockfile = requirements_txt.read_text(encoding="utf-8")
+        strip_lockfile_hashes(requirements_txt)
+
     print(f"Refreshing {pipeline_dir / _REQUIREMENTS_TXT}")
     print(f"  index-url: {sanitize_index_url_for_log(index_url)}")
     print(f"  runtime: {runtime}")
@@ -378,7 +381,12 @@ def compile_pipeline_requirements(
     if not verbose:
         run_kwargs["stdout"] = subprocess.DEVNULL
         run_kwargs["stderr"] = subprocess.DEVNULL
-    subprocess.run(command, **run_kwargs)
+    try:
+        subprocess.run(command, **run_kwargs)
+    except BaseException:
+        if original_lockfile is not None:
+            requirements_txt.write_text(original_lockfile, encoding="utf-8")
+        raise
 
     if not dry_run:
         apply_environment_markers(requirements_in, pipeline_dir / _REQUIREMENTS_TXT)
