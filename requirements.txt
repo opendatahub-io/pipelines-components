@@ -1,7 +1,7 @@
 --index-url https://packages.redhat.com/api/pypi/public-rhai/cpu-torch2.13-el9.8-test/simple
 
-certifi==2026.7.22 \
-    --hash=sha256:e5fe15bb588e1de8f8caef013fbcf10c5e61c7f2a96ecba518df6c4d9acbdd7b
+certifi==2026.10.19 \
+    --hash=sha256:2a02938297c395b7a3c77cb1399d3e5e6305536ae7dd7a3db9f8ace1ac77f155
 cffi==2.1.1 \
     --hash=sha256:01cb95e51c71957cc17c2b71a6bea76a8a9fd5c4e444e6f69e69aacd100910f6 \
     --hash=sha256:7123bebb7e015332260e23440f5dbf77da6a21fd386855ef304c368047209e8b \
@@ -28,8 +28,8 @@ google-auth==2.62.0 \
     --hash=sha256:bbd3cdda6938c2a20b1ba7e2f0db32922366b07f2e27e36f4ebf021fa931a7a2
 google-cloud-core==2.8.0 \
     --hash=sha256:47d5994749fc90788c14ea3eb7563500445cbae61fba122cbf8192c9734c3233
-google-cloud-storage==3.17.0 \
-    --hash=sha256:696ae29930a18ed21a4cb08168cf0f6cf12b5b21b75e0b1b9b39140b1201022b
+google-cloud-storage==3.17.1 \
+    --hash=sha256:78e58eac53ad5deb87ec1b116d2a0d17661c2a20a6003604dcefe436cb2b35a2
 google-crc32c==1.9.0 \
     --hash=sha256:3e4547329e9a45b760d6d9c5664aea5800bd5c4fbf59270b8b01ae4eedb4170d
 google-resumable-media==2.11.0 \
