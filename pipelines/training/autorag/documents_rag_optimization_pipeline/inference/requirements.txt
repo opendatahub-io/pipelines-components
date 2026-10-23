@@ -464,6 +464,7 @@ protobuf==7.36.2 \
     # via pymilvus
 pyarrow==26.0.0 \
     --hash=sha256:085eda8610513a9ecfd85303ea51e13a86789e2b1ab91d77725a19ac40d5bb7d \
+    --hash=sha256:1560937cb43420d4d9f8919d318a37e4952ec9d8c32bc634f8eb381c97f4d25e \
     --hash=sha256:163d42abbdd9e2a051659d18c23a79f4815148e9a8ad1adc23614bd786d76df0 \
     --hash=sha256:1fa4d870e0c347925fd2320f3ca65675a435338e246649ba716860c5a6080dab \
     --hash=sha256:3e2ddec0f7641461375d94eee18cc66db1adc3bd29a88e9fa09e3bc74e799f2d \
@@ -643,6 +644,7 @@ sniffio==1.3.1 \
     #   langsmith
     #   openai
 sqlalchemy==2.1.5 \
+    --hash=sha256:14060860dd095a70bc78cc2f497df39bc333aec5da5aef733aa3b92b6ce46812 \
     --hash=sha256:4a28924bdc41bc57dd1b24a0008a237c92f6f5ec22118bf62256826a48f3fe3a \
     --hash=sha256:56a81481ed05256120e1dfb42e26c706ede3e754c3d01489507fb803cd8f90e9 \
     --hash=sha256:616b66494ecc90028e46121ea5ac60e536c7b36763ae09ecfe5fb4b46a6baa5a
