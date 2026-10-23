@@ -8,6 +8,8 @@ RAG Templates Optimization component.
 
 Runs search-space construction, evaluator setup, and the optimization experiment directly against ``ai4rag`` primitives (``AI4RAGSearchSpace``, ``AI4RAGExperiment``, and the ``ragas``/``unitxt`` evaluators), since ``ai4rag`` no longer ships a single orchestration entry point for this flow.
 
+Generated indexing specs forward ``settings.generation.language.code`` as ``ocr_lang`` so production extraction uses the optimization run's OCR language.
+
 ## Inputs 📥
 
 | Parameter | Type | Default | Description |
@@ -108,7 +110,7 @@ def example_pipeline(
   - autorag
   - optimization
   - rag-patterns
-- **Last Verified**: 2026-10-22 00:00:00+00:00
+- **Last Verified**: 2026-10-23 00:00:00+00:00
 - **Owners**:
   - No Parent Owners: Yes
   - Approvers:

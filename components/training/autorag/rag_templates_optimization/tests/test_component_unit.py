@@ -791,9 +791,12 @@ class TestRagTemplatesOptimizationRun:
         assert indexing_notebook_call.kwargs["input_data_keys"] == []
 
     @pytest.mark.parametrize("preset", ["speed", "balanced"])
+    @pytest.mark.parametrize("language_code", ["en", "zh", None])
     @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
-    def test_indexing_blueprint_preserves_preset_and_input_data_keys(self, tmp_path, preset):
-        """Deployment retains the extraction preset and every document location.
+    def test_indexing_blueprint_preserves_extraction_settings_and_input_data_keys(
+        self, tmp_path, preset, language_code
+    ):
+        """Deployment retains the extraction preset, OCR language and every document location.
 
         The notebook is the manual route to the same corpus the pipeline built,
         so dropping locations here would silently produce a smaller index.
@@ -803,6 +806,10 @@ class TestRagTemplatesOptimizationRun:
         mocks.KFPEventHandler.return_value.patterns = [
             {"payload": _pattern_payload("pattern_a"), "evaluation_results": []},
         ]
+        if language_code is not None:
+            mocks.KFPEventHandler.return_value.patterns[0]["payload"]["settings"]["generation"]["language"] = {
+                "code": language_code,
+            }
         rag_patterns, leaderboard_html = _artifacts(tmp_path)
         keys = ["data/manuals/", "data/reports/"]
 
@@ -825,6 +832,7 @@ class TestRagTemplatesOptimizationRun:
         pattern_json = json.loads((Path(rag_patterns.path) / "pattern_a" / "pattern.json").read_text(encoding="utf-8"))
         assert pattern_json["indexing"]["pipeline_spec"]["parameters"]["input_data_keys"] == keys
         assert pattern_json["indexing"]["pipeline_spec"]["parameters"]["preset"] == preset
+        assert pattern_json["indexing"]["pipeline_spec"]["parameters"]["ocr_lang"] == language_code
 
         indexing_notebook_call = next(
             call for call in mocks.generate_notebook_from_template.call_args_list if call.args[0] == "maas_indexing"

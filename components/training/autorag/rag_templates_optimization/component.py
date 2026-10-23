@@ -43,6 +43,9 @@ def rag_templates_optimization(
     ``AI4RAGExperiment``, and the ``ragas``/``unitxt`` evaluators), since
     ``ai4rag`` no longer ships a single orchestration entry point for this flow.
 
+    Generated indexing specs forward ``settings.generation.language.code`` as
+    ``ocr_lang`` so production extraction uses the optimization run's OCR language.
+
     Args:
         extracted_text: Path to extracted text documents.
         test_data: Path to benchmark test data JSON.
@@ -237,6 +240,7 @@ def rag_templates_optimization(
                             "input_data_keys": indexing_pipeline_params.get("input_data_keys"),
                             "batch_size": indexing_pipeline_params.get("batch_size"),
                             "preset": indexing_pipeline_params["preset"],
+                            "ocr_lang": (settings["generation"].get("language") or {}).get("code"),
                             "provider_type": store_binding["provider_type"],
                             "collection_name": store_binding["collection_name"],
                             "embedding_model_id": settings["embedding"]["model_id"],
