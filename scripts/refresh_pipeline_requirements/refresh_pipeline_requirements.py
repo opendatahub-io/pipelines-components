@@ -12,6 +12,12 @@ lockfile afterwards. ``uv pip compile`` evaluates markers for the container host
 and would otherwise drop ones that are true there (for example
 ``platform_machine != 's390x'`` on x86_64).
 
+After compiling, the lockfile is verified against the index (see
+``verify_lockfile``): every wheel the index publishes for a pinned version must
+carry a ``--hash`` entry, and architecture-specific packages must cover all
+supported Linux architectures unless a ``platform_machine`` marker excludes
+some. This detects lockfiles compiled while the RHAI index was incomplete.
+
 See: https://hermetoproject.github.io/hermeto/pip/#requirementstxt
 """
 
@@ -28,6 +34,7 @@ from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
 from ..lib.discovery import get_repo_root
+from .verify_lockfile import SimpleIndexClient, verify_lockfile_coverage
 
 DEFAULT_CONTAINER_IMAGE = "registry.access.redhat.com/ubi9/python-312:9.8"
 DEFAULT_PIPELINES: tuple[str, ...] = (
@@ -155,6 +162,87 @@ def sanitize_index_url_for_log(url: str) -> str:
     return urlunsplit((parts.scheme, host, "", "", parts.fragment))
 
 
+def verify_pipeline_lockfile(pipeline_dir: Path, *, arch_check: str = "error") -> None:
+    """Verify a pipeline's requirements.txt against the index it was resolved from.
+
+    Raises ``RefreshRequirementsError`` when any error-severity finding is reported
+    (missing hashes, stale hashes, or incomplete index architecture coverage).
+    """
+    requirements_in = pipeline_dir / _REQUIREMENTS_IN
+    requirements_txt = pipeline_dir / _REQUIREMENTS_TXT
+    index_url = read_index_url(requirements_in)
+    if index_url is None:
+        raise RefreshRequirementsError(f"{requirements_in} must declare --index-url for lockfile verification")
+    if not requirements_txt.is_file():
+        raise RefreshRequirementsError(f"Missing {_REQUIREMENTS_TXT}: {requirements_txt}")
+
+    print(f"Verifying {requirements_txt}")
+    print(f"  index-url: {sanitize_index_url_for_log(index_url)}")
+    findings = verify_lockfile_coverage(
+        requirements_txt,
+        client=SimpleIndexClient(index_url),
+        input_markers=read_requirement_markers(requirements_in),
+        arch_check=arch_check,
+    )
+    errors = 0
+    for finding in findings:
+        print(f"  {finding.severity}: {finding.package}: {finding.message}", flush=True)
+        if finding.severity == "error":
+            errors += 1
+    if errors:
+        raise RefreshRequirementsError(
+            f"lockfile verification failed with {errors} error(s); the lockfile is out of sync with the index "
+            "(it was likely compiled while the index was incomplete) - re-run the refresh once the index is complete"
+        )
+    if findings:
+        print(f"  {len(findings)} warning(s); lockfile otherwise in sync with the index")
+
+
+def verify_pipeline_requirements(
+    pipelines: Sequence[str | Path],
+    *,
+    repo_root: Path | None = None,
+    arch_check: str = "error",
+) -> None:
+    """Verify existing requirements.txt lockfiles without recompiling them.
+
+    Every pipeline is verified even when earlier ones fail; the error is raised
+    only after all findings have been reported.
+    """
+    if repo_root is None:
+        repo_root = get_repo_root()
+
+    failures: list[str] = []
+    for pipeline in pipelines:
+        try:
+            pipeline_dir = resolve_pipeline_dir(repo_root, pipeline)
+            verify_pipeline_lockfile(pipeline_dir, arch_check=arch_check)
+        except RefreshRequirementsError as exc:
+            print(f"error: {pipeline}: {exc}", file=sys.stderr)
+            failures.append(str(pipeline))
+    if failures:
+        raise RefreshRequirementsError(
+            f"lockfile verification failed for {len(failures)} of {len(pipelines)} pipeline(s); see findings above"
+        )
+
+
+def strip_lockfile_hashes(requirements_txt: Path) -> None:
+    """Remove ``--hash`` entries from a lockfile in place.
+
+    ``uv pip compile`` without ``--upgrade`` keeps the hash entries of unchanged
+    pins from the existing output file, so a no-upgrade refresh cannot repair a
+    hash set that was compiled against an incomplete index. Stripping the hashes
+    first forces uv to regenerate them from the current index while keeping the
+    pinned versions.
+    """
+    lines = requirements_txt.read_text(encoding="utf-8").splitlines()
+    # Drop hash lines, then remove the now dangling "\" continuations from the
+    # pin lines that carried them (only hash lines followed a continuation).
+    kept = [line for line in lines if not line.lstrip().startswith("--hash=")]
+    kept = [line[:-2].rstrip() if line.endswith(" \\") else line for line in kept]
+    requirements_txt.write_text("\n".join(kept) + "\n", encoding="utf-8")
+
+
 def resolve_pipeline_dir(repo_root: Path, pipeline: str | Path) -> Path:
     """Resolve a pipeline directory and validate required input files exist."""
     pipeline_dir = Path(pipeline)
@@ -258,12 +346,19 @@ def compile_pipeline_requirements(
     upgrade: bool = True,
     dry_run: bool = False,
     verbose: bool = True,
+    verify: bool = True,
+    arch_check: str = "error",
 ) -> None:
     """Compile ``requirements.in`` to ``requirements.txt`` for one pipeline."""
     requirements_in = pipeline_dir / _REQUIREMENTS_IN
     index_url = read_index_url(requirements_in)
     if index_url is None:
         raise RefreshRequirementsError(f"{requirements_in} must declare --index-url for RHOAI package resolution")
+
+    if not dry_run and not upgrade:
+        requirements_txt = pipeline_dir / _REQUIREMENTS_TXT
+        if requirements_txt.is_file():
+            strip_lockfile_hashes(requirements_txt)
 
     runtime = resolve_container_runtime(container_runtime)
     command = build_container_command(
@@ -287,6 +382,8 @@ def compile_pipeline_requirements(
 
     if not dry_run:
         apply_environment_markers(requirements_in, pipeline_dir / _REQUIREMENTS_TXT)
+        if verify:
+            verify_pipeline_lockfile(pipeline_dir, arch_check=arch_check)
 
 
 def refresh_pipeline_requirements(
@@ -298,6 +395,8 @@ def refresh_pipeline_requirements(
     upgrade: bool = True,
     dry_run: bool = False,
     verbose: bool = True,
+    verify: bool = True,
+    arch_check: str = "error",
 ) -> None:
     """Refresh requirements.txt for all given pipeline directories."""
     if repo_root is None:
@@ -312,6 +411,8 @@ def refresh_pipeline_requirements(
             upgrade=upgrade,
             dry_run=dry_run,
             verbose=verbose,
+            verify=verify,
+            arch_check=arch_check,
         )
 
 
@@ -352,6 +453,22 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Suppress live uv pip compile progress output",
     )
+    parser.add_argument(
+        "--verify-only",
+        action="store_true",
+        help="Verify existing requirements.txt files against the index without recompiling (no container needed)",
+    )
+    parser.add_argument(
+        "--no-verify",
+        action="store_true",
+        help="Skip lockfile verification after compiling",
+    )
+    parser.add_argument(
+        "--arch-check",
+        choices=("error", "warn"),
+        default="error",
+        help=("Severity when the index lacks wheels for some architectures of a pinned package (default: error)"),
+    )
     return parser.parse_args(argv)
 
 
@@ -361,14 +478,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     pipelines = args.pipelines or list(DEFAULT_PIPELINES)
 
     try:
-        refresh_pipeline_requirements(
-            pipelines,
-            container_image=args.image,
-            container_runtime=args.runtime,
-            upgrade=not args.no_upgrade,
-            dry_run=args.dry_run,
-            verbose=not args.quiet,
-        )
+        if args.verify_only:
+            verify_pipeline_requirements(pipelines, arch_check=args.arch_check)
+        else:
+            refresh_pipeline_requirements(
+                pipelines,
+                container_image=args.image,
+                container_runtime=args.runtime,
+                upgrade=not args.no_upgrade,
+                dry_run=args.dry_run,
+                verbose=not args.quiet,
+                verify=not args.no_verify,
+                arch_check=args.arch_check,
+            )
     except (RefreshRequirementsError, subprocess.CalledProcessError, FileNotFoundError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

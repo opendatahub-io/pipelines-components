@@ -36,8 +36,10 @@ Agents typically interact with this repository in three modes. Use the mode to d
   - `make pipeline CATEGORY=<cat> NAME=<name> [SUBCATEGORY=<sub>] [NO_TESTS=true] [CREATE_SHARED=true]`
   - `make tests TYPE=component|pipeline CATEGORY=<cat> NAME=<name> [SUBCATEGORY=<sub>]`
   - `make readme TYPE=component|pipeline CATEGORY=<cat> NAME=<name> [SUBCATEGORY=<sub>]`
-  - `make pipeline-requirements [PIPELINE=path] [RUNTIME=podman|docker] [NO_UPGRADE=true] [DRY_RUN=true] [QUIET=true]` — refresh
-    Hermeto-compatible `requirements.txt` for RHOAI pipelines (see [`scripts/refresh_pipeline_requirements/`](scripts/refresh_pipeline_requirements/))
+  - `make pipeline-requirements [PIPELINE=path] [RUNTIME=podman|docker] [NO_UPGRADE=true] [DRY_RUN=true] [QUIET=true] [VERIFY_ONLY=true] [NO_VERIFY=true] [ARCH_CHECK=error|warn]` — refresh
+    Hermeto-compatible `requirements.txt` for RHOAI pipelines (see [`scripts/refresh_pipeline_requirements/`](scripts/refresh_pipeline_requirements/));
+    verifies lockfile hash/architecture coverage against the RHAI index afterwards (`VERIFY_ONLY=true` checks
+    existing lockfiles without recompiling)
 - **Validate like CI**: follow [`CONTRIBUTING.md` (Testing and Quality)](docs/CONTRIBUTING.md#testing-and-quality) and
   reference the workflows under `.github/workflows/` (example: [`.github/workflows/python-lint.yml`](.github/workflows/python-lint.yml)).
 - **New assets require approval**: for initial contributions (introducing a new component/pipeline to the catalog),

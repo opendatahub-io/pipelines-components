@@ -108,7 +108,9 @@ sync-packages:
 
 AIPCC_INDEX_URL := https://packages.redhat.com/api/pypi/public-rhai/cpu-torch2.13-el9.8-test/simple
 # Refresh Hermeto-compatible requirements.txt for RHOAI pipelines (requires Podman or Docker)
-# Usage: make pipeline-requirements [PIPELINE=path/to/pipeline] [RUNTIME=podman|docker] [IMAGE=...] [NO_UPGRADE=true] [DRY_RUN=true] [QUIET=true]
+# Verifies lockfile hash/architecture coverage against the index afterwards; see scripts/refresh_pipeline_requirements/README.md
+# Usage: make pipeline-requirements [PIPELINE=path/to/pipeline] [RUNTIME=podman|docker] [IMAGE=...] [NO_UPGRADE=true] [DRY_RUN=true] [QUIET=true] [NO_VERIFY=true] [ARCH_CHECK=error|warn]
+# Verify existing lockfiles only (no container needed): make pipeline-requirements VERIFY_ONLY=true [ARCH_CHECK=error|warn]
 pipeline-requirements:
 	@export PIPELINE="$(PIPELINE)" IMAGE="$(IMAGE)" RUNTIME="$(RUNTIME)"; \
 	if [ -n "$$RUNTIME" ] && [ "$$RUNTIME" != "podman" ] && [ "$$RUNTIME" != "docker" ]; then \
@@ -118,6 +120,9 @@ pipeline-requirements:
 		$(if $(filter true,$(NO_UPGRADE)),--no-upgrade,) \
 		$(if $(filter true,$(DRY_RUN)),--dry-run,) \
 		$(if $(filter true,$(QUIET)),--quiet,) \
+		$(if $(filter true,$(VERIFY_ONLY)),--verify-only,) \
+		$(if $(filter true,$(NO_VERIFY)),--no-verify,) \
+		$(if $(ARCH_CHECK),--arch-check "$(ARCH_CHECK)",) \
 		$${RUNTIME:+--runtime "$$RUNTIME"} \
 		$${IMAGE:+--image "$$IMAGE"} \
 		$${PIPELINE:+"$$PIPELINE"}

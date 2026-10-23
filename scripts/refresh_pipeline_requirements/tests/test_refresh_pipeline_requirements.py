@@ -18,7 +18,11 @@ from ..refresh_pipeline_requirements import (
     resolve_container_runtime,
     resolve_pipeline_dir,
     sanitize_index_url_for_log,
+    strip_lockfile_hashes,
+    verify_pipeline_lockfile,
+    verify_pipeline_requirements,
 )
+from ..verify_lockfile import Finding
 
 
 def _write_requirements_in(directory: Path, index_url: str = "https://example.com/simple") -> None:
@@ -364,7 +368,7 @@ class TestCompilePipelineRequirements:
             mock.patch("subprocess.run") as run_mock,
             mock.patch("builtins.print"),
         ):
-            compile_pipeline_requirements(pipeline_dir, container_runtime="docker", verbose=False)
+            compile_pipeline_requirements(pipeline_dir, container_runtime="docker", verbose=False, verify=False)
 
         run_kwargs = run_mock.call_args.kwargs
         assert run_kwargs["stdout"] is subprocess.DEVNULL
@@ -383,7 +387,7 @@ class TestCompilePipelineRequirements:
             mock.patch("subprocess.run") as run_mock,
             mock.patch("builtins.print") as print_mock,
         ):
-            compile_pipeline_requirements(pipeline_dir, container_runtime="docker")
+            compile_pipeline_requirements(pipeline_dir, container_runtime="docker", verify=False)
 
         run_mock.assert_called_once()
         command = run_mock.call_args.args[0]
@@ -426,7 +430,7 @@ class TestCompilePipelineRequirements:
             mock.patch("subprocess.run", side_effect=fake_run),
             mock.patch("builtins.print"),
         ):
-            compile_pipeline_requirements(pipeline_dir, container_runtime="docker")
+            compile_pipeline_requirements(pipeline_dir, container_runtime="docker", verify=False)
 
         assert (pipeline_dir / "requirements.txt").read_text(encoding="utf-8") == (
             "triton==3.6.0 ; platform_machine != 's390x' \\\n    --hash=sha256:abc\n"
@@ -452,6 +456,133 @@ class TestCompilePipelineRequirements:
         run_mock.assert_called_once()
         assert lockfile.read_text(encoding="utf-8") == "requests==2.0.0\n"
 
+    def test_verifies_lockfile_after_compile(self, tmp_path: Path):
+        """Verifies the compiled lockfile against the index after markers are applied."""
+        pipeline_dir = tmp_path / "pipeline"
+        _write_requirements_in(pipeline_dir)
+
+        def fake_run(*_args, **_kwargs):
+            (pipeline_dir / "requirements.txt").write_text("requests==2.0.0\n", encoding="utf-8")
+            return mock.MagicMock(returncode=0)
+
+        with (
+            mock.patch(
+                "scripts.refresh_pipeline_requirements.refresh_pipeline_requirements.resolve_container_runtime",
+                return_value="docker",
+            ),
+            mock.patch("subprocess.run", side_effect=fake_run),
+            mock.patch(
+                "scripts.refresh_pipeline_requirements.refresh_pipeline_requirements.verify_pipeline_lockfile"
+            ) as verify_mock,
+            mock.patch("builtins.print"),
+        ):
+            compile_pipeline_requirements(pipeline_dir, container_runtime="docker", arch_check="warn")
+
+        verify_mock.assert_called_once_with(pipeline_dir, arch_check="warn")
+
+    def test_no_verify_skips_verification(self, tmp_path: Path):
+        """Skips lockfile verification when verify is disabled."""
+        pipeline_dir = tmp_path / "pipeline"
+        _write_requirements_in(pipeline_dir)
+
+        def fake_run(*_args, **_kwargs):
+            (pipeline_dir / "requirements.txt").write_text("requests==2.0.0\n", encoding="utf-8")
+            return mock.MagicMock(returncode=0)
+
+        with (
+            mock.patch(
+                "scripts.refresh_pipeline_requirements.refresh_pipeline_requirements.resolve_container_runtime",
+                return_value="docker",
+            ),
+            mock.patch("subprocess.run", side_effect=fake_run),
+            mock.patch(
+                "scripts.refresh_pipeline_requirements.refresh_pipeline_requirements.verify_pipeline_lockfile"
+            ) as verify_mock,
+            mock.patch("builtins.print"),
+        ):
+            compile_pipeline_requirements(pipeline_dir, container_runtime="docker", verify=False)
+
+        verify_mock.assert_not_called()
+
+    def test_dry_run_skips_verification(self, tmp_path: Path):
+        """Skips lockfile verification in dry-run mode since no lockfile is written."""
+        pipeline_dir = tmp_path / "pipeline"
+        _write_requirements_in(pipeline_dir)
+
+        with (
+            mock.patch(
+                "scripts.refresh_pipeline_requirements.refresh_pipeline_requirements.resolve_container_runtime",
+                return_value="docker",
+            ),
+            mock.patch("subprocess.run"),
+            mock.patch(
+                "scripts.refresh_pipeline_requirements.refresh_pipeline_requirements.verify_pipeline_lockfile"
+            ) as verify_mock,
+            mock.patch("builtins.print"),
+        ):
+            compile_pipeline_requirements(pipeline_dir, container_runtime="docker", dry_run=True)
+
+        verify_mock.assert_not_called()
+
+    def test_no_upgrade_strips_hashes_before_compile(self, tmp_path: Path):
+        """Strips existing hashes before a no-upgrade compile so uv regenerates them."""
+        pipeline_dir = tmp_path / "pipeline"
+        _write_requirements_in(pipeline_dir)
+        lockfile = pipeline_dir / "requirements.txt"
+        lockfile.write_text("requests==2.0.0 \\\n    --hash=sha256:abc\n", encoding="utf-8")
+
+        with (
+            mock.patch(
+                "scripts.refresh_pipeline_requirements.refresh_pipeline_requirements.resolve_container_runtime",
+                return_value="docker",
+            ),
+            mock.patch("subprocess.run"),
+            mock.patch("builtins.print"),
+        ):
+            compile_pipeline_requirements(pipeline_dir, container_runtime="docker", upgrade=False, verify=False)
+
+        assert lockfile.read_text(encoding="utf-8") == "requests==2.0.0\n"
+
+    def test_upgrade_keeps_existing_hashes(self, tmp_path: Path):
+        """Leaves the existing lockfile untouched before an upgrade compile."""
+        pipeline_dir = tmp_path / "pipeline"
+        _write_requirements_in(pipeline_dir)
+        lockfile = pipeline_dir / "requirements.txt"
+        original = "requests==2.0.0 \\\n    --hash=sha256:abc\n"
+        lockfile.write_text(original, encoding="utf-8")
+
+        with (
+            mock.patch(
+                "scripts.refresh_pipeline_requirements.refresh_pipeline_requirements.resolve_container_runtime",
+                return_value="docker",
+            ),
+            mock.patch("subprocess.run"),
+            mock.patch("builtins.print"),
+        ):
+            compile_pipeline_requirements(pipeline_dir, container_runtime="docker", verify=False)
+
+        assert lockfile.read_text(encoding="utf-8") == original
+
+    def test_dry_run_does_not_strip_hashes(self, tmp_path: Path):
+        """Leaves the lockfile untouched in dry-run mode even without an upgrade."""
+        pipeline_dir = tmp_path / "pipeline"
+        _write_requirements_in(pipeline_dir)
+        lockfile = pipeline_dir / "requirements.txt"
+        original = "requests==2.0.0 \\\n    --hash=sha256:abc\n"
+        lockfile.write_text(original, encoding="utf-8")
+
+        with (
+            mock.patch(
+                "scripts.refresh_pipeline_requirements.refresh_pipeline_requirements.resolve_container_runtime",
+                return_value="docker",
+            ),
+            mock.patch("subprocess.run"),
+            mock.patch("builtins.print"),
+        ):
+            compile_pipeline_requirements(pipeline_dir, container_runtime="docker", upgrade=False, dry_run=True)
+
+        assert lockfile.read_text(encoding="utf-8") == original
+
 
 class TestRefreshPipelineRequirements:
     """Tests for refresh_pipeline_requirements."""
@@ -474,3 +605,161 @@ class TestRefreshPipelineRequirements:
             )
 
         assert compile_mock.call_count == 2
+
+
+class TestStripLockfileHashes:
+    """Tests for strip_lockfile_hashes."""
+
+    def test_strips_hashes_and_dangling_continuations(self, tmp_path: Path):
+        r"""Removes --hash lines and the "\" continuations that pointed at them."""
+        requirements_txt = tmp_path / "requirements.txt"
+        requirements_txt.write_text(
+            "--index-url https://example.com/simple\n"
+            "\n"
+            "pillow==13.0.0 \\\n"
+            "    --hash=sha256:1111 \\\n"
+            "    --hash=sha256:2222\n"
+            "    # via\n"
+            "    #   fsspec\n"
+            'triton==3.6.0 ; platform_machine != "s390x" \\\n'
+            "    --hash=sha256:3333\n"
+            "aiohttp==3.14.5 \\\n"
+            "    --hash=sha256:4444\n",
+            encoding="utf-8",
+        )
+
+        strip_lockfile_hashes(requirements_txt)
+
+        assert requirements_txt.read_text(encoding="utf-8") == (
+            "--index-url https://example.com/simple\n"
+            "\n"
+            "pillow==13.0.0\n"
+            "    # via\n"
+            "    #   fsspec\n"
+            'triton==3.6.0 ; platform_machine != "s390x"\n'
+            "aiohttp==3.14.5\n"
+        )
+
+    def test_is_idempotent(self, tmp_path: Path):
+        """Leaves an already-stripped lockfile unchanged."""
+        requirements_txt = tmp_path / "requirements.txt"
+        stripped = "--index-url https://example.com/simple\n\npillow==13.0.0\n    # via fsspec\n"
+        requirements_txt.write_text(stripped, encoding="utf-8")
+
+        strip_lockfile_hashes(requirements_txt)
+        strip_lockfile_hashes(requirements_txt)
+
+        assert requirements_txt.read_text(encoding="utf-8") == stripped
+
+
+class TestVerifyPipelineLockfile:
+    """Tests for verify_pipeline_lockfile."""
+
+    def _write_pipeline(self, tmp_path: Path) -> Path:
+        """Create a pipeline directory with requirements.in and requirements.txt."""
+        pipeline_dir = tmp_path / "pipeline"
+        _write_requirements_in(pipeline_dir)
+        (pipeline_dir / "requirements.txt").write_text("pillow==13.0.0\n", encoding="utf-8")
+        return pipeline_dir
+
+    def test_raises_on_error_findings(self, tmp_path: Path):
+        """Raises RefreshRequirementsError when verification reports errors."""
+        pipeline_dir = self._write_pipeline(tmp_path)
+        findings = [
+            Finding("error", "pillow==13.0.0", "missing --hash for pillow-13.0.0-1-cp312-cp312-linux_ppc64le.whl")
+        ]
+
+        with (
+            mock.patch("scripts.refresh_pipeline_requirements.refresh_pipeline_requirements.SimpleIndexClient"),
+            mock.patch(
+                "scripts.refresh_pipeline_requirements.refresh_pipeline_requirements.verify_lockfile_coverage",
+                return_value=findings,
+            ),
+            mock.patch("builtins.print"),
+        ):
+            with pytest.raises(RefreshRequirementsError, match="verification failed with 1 error"):
+                verify_pipeline_lockfile(pipeline_dir)
+
+    def test_warns_but_passes_on_warning_findings(self, tmp_path: Path):
+        """Prints warnings but does not raise when findings are warnings only."""
+        pipeline_dir = self._write_pipeline(tmp_path)
+        findings = [Finding("warning", "xgboost==3.3.0", "index publishes wheels only for x86_64, aarch64")]
+
+        with (
+            mock.patch("scripts.refresh_pipeline_requirements.refresh_pipeline_requirements.SimpleIndexClient"),
+            mock.patch(
+                "scripts.refresh_pipeline_requirements.refresh_pipeline_requirements.verify_lockfile_coverage",
+                return_value=findings,
+            ) as coverage_mock,
+            mock.patch("builtins.print") as print_mock,
+        ):
+            verify_pipeline_lockfile(pipeline_dir, arch_check="warn")
+
+        assert coverage_mock.call_args.kwargs["arch_check"] == "warn"
+        printed = [str(call.args[0]) for call in print_mock.call_args_list]
+        assert any("warning: xgboost==3.3.0" in line for line in printed)
+
+    def test_requires_index_url(self, tmp_path: Path):
+        """Raises when requirements.in declares no index URL."""
+        pipeline_dir = tmp_path / "pipeline"
+        pipeline_dir.mkdir()
+        (pipeline_dir / "requirements.in").write_text("requests\n", encoding="utf-8")
+        (pipeline_dir / "requirements.txt").write_text("requests==2.0.0\n", encoding="utf-8")
+
+        with pytest.raises(RefreshRequirementsError, match="must declare --index-url"):
+            verify_pipeline_lockfile(pipeline_dir)
+
+    def test_requires_lockfile(self, tmp_path: Path):
+        """Raises when the pipeline directory has no requirements.txt."""
+        pipeline_dir = tmp_path / "pipeline"
+        _write_requirements_in(pipeline_dir)
+
+        with pytest.raises(RefreshRequirementsError, match="Missing requirements.txt"):
+            verify_pipeline_lockfile(pipeline_dir)
+
+
+class TestVerifyPipelineRequirements:
+    """Tests for verify_pipeline_requirements."""
+
+    def test_verifies_each_pipeline(self, tmp_path: Path):
+        """Verifies the lockfile of every requested pipeline directory."""
+        pipelines = [
+            tmp_path / "pipelines/training/automl/demo",
+            tmp_path / "pipelines/training/autorag/demo",
+        ]
+        for pipeline_dir in pipelines:
+            _write_requirements_in(pipeline_dir)
+
+        with mock.patch(
+            "scripts.refresh_pipeline_requirements.refresh_pipeline_requirements.verify_pipeline_lockfile"
+        ) as verify_mock:
+            verify_pipeline_requirements(
+                [str(p.relative_to(tmp_path)) for p in pipelines],
+                repo_root=tmp_path,
+                arch_check="warn",
+            )
+
+        assert verify_mock.call_count == 2
+        assert all(call.kwargs == {"arch_check": "warn"} for call in verify_mock.call_args_list)
+
+    def test_verifies_remaining_pipelines_after_failure(self, tmp_path: Path):
+        """Reports failures from every pipeline instead of stopping at the first one."""
+        pipelines = [
+            tmp_path / "pipelines/training/automl/demo",
+            tmp_path / "pipelines/training/autorag/demo",
+        ]
+        for pipeline_dir in pipelines:
+            _write_requirements_in(pipeline_dir)
+
+        def failing_verify(pipeline_dir, **_kwargs):
+            raise RefreshRequirementsError(f"verification failed for {pipeline_dir.name}")
+
+        with (
+            mock.patch(
+                "scripts.refresh_pipeline_requirements.refresh_pipeline_requirements.verify_pipeline_lockfile",
+                side_effect=failing_verify,
+            ),
+            mock.patch("builtins.print"),
+        ):
+            with pytest.raises(RefreshRequirementsError, match="failed for 2 of 2"):
+                verify_pipeline_requirements([str(p) for p in pipelines], repo_root=tmp_path)
