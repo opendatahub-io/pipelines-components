@@ -107,7 +107,10 @@ Use `component_id` (and stage `id` fields inside each file) to correlate artifac
 
 Canonical component ids are defined in the pipeline JSON templates under
 [`run_status_templates/pipelines/`](../../../components/training/autorag/shared/run_status_templates/pipelines/)
-(e.g. `documents-rag-optimization-pipeline.json`).
+(`documents-rag-optimization-pipeline.json` for Milvus/PGVector and
+`documents-rag-optimization-pipeline-graph.json` for Neo4j). The publisher selects the
+template using the database connection, preserving the same component and stage IDs.
+Only the Neo4j template includes `graph_extraction` and knowledge-graph descriptions.
 
 ## Breaking Changes (ai4rag 0.8.0)
 

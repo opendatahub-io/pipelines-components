@@ -130,6 +130,25 @@ class TestDocumentsRagOptimizationPipelineUnit:
         assert content.count("envVar: NEO4J_CA_CERT") == 2
         assert content.count("secretKey: NEO4J_CA_CERT") == 2
 
+    def test_stage_map_publisher_receives_only_database_provider_selectors(self, tmp_path):
+        """Expose provider selectors without database passwords."""
+        import yaml
+
+        output_path = tmp_path / "pipeline.yaml"
+        compiler.Compiler().compile(documents_rag_optimization_pipeline, package_path=str(output_path))
+        documents = list(yaml.safe_load_all(output_path.read_text(encoding="utf-8")))
+        platform_spec = next(doc for doc in documents if "platforms" in doc)
+        executor = platform_spec["platforms"]["kubernetes"]["deploymentSpec"]["executors"][
+            "exec-publish-component-stage-map"
+        ]
+        assert executor["secretAsEnv"] == [
+            {
+                "keyToEnv": [{"envVar": key, "secretKey": key} for key in ("MILVUS_URI", "PGVECTOR_HOST", "NEO4J_URI")],
+                "optional": True,
+                "secretNameParameter": {"componentInputParameter": "db_secret_name"},
+            }
+        ]
+
     def test_compiled_pipeline_declares_component_resource_tiers(self):
         """Every AutoRAG optimization step declares the expected CPU/memory tier."""
         from kfp_components.utils.pipeline_task_resources import (

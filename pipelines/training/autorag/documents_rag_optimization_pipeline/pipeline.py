@@ -22,7 +22,7 @@ from kfp_components.components.training.autorag.search_space_preparation.compone
 MAX_CPUS = "32"
 MAX_MEMORY = "64Gi"
 
-# Must match run_status_templates/pipelines/<name>.json
+# Template name; Neo4j uses the -graph variant.
 PIPELINE_NAME = "documents-rag-optimization-pipeline"
 
 # Inference credentials exposed by the MaaS secret.
@@ -260,6 +260,12 @@ def documents_rag_optimization_pipeline(
     }
     use_secret_as_env(search_space_preparation_task, db_secret_name, _VECTOR_DB_SECRET_KEYS, optional=True)
     use_secret_as_env(rag_optimization_task, db_secret_name, _VECTOR_DB_SECRET_KEYS, optional=True)
+    use_secret_as_env(
+        component_stage_map_task,
+        db_secret_name,
+        {key: key for key in ("MILVUS_URI", "PGVECTOR_HOST", "NEO4J_URI")},
+        optional=True,
+    )
 
 
 if __name__ == "__main__":

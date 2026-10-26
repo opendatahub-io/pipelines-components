@@ -46,6 +46,54 @@ class TestPublishComponentStageMap:
         assert component_stage_map_artifact.metadata["pipeline_id"] == PIPELINE_RAG_OPTIMIZATION
         assert component_stage_map_artifact.metadata["component_count"] == len(document["components"])
 
+    @pytest.mark.parametrize(
+        ("provider_env", "is_graph"),
+        [
+            ({}, False),
+            ({"MILVUS_URI": "http://milvus:19530"}, False),
+            ({"PGVECTOR_HOST": "postgres"}, False),
+            ({"NEO4J_URI": "neo4j://neo4j:7687"}, True),
+            ({"NEO4J_URI": "neo4j://neo4j:7687", "MILVUS_URI": "http://milvus:19530"}, False),
+            ({"NEO4J_URI": "neo4j://neo4j:7687", "PGVECTOR_HOST": "postgres"}, False),
+        ],
+    )
+    def test_publishes_provider_specific_stages_and_descriptions(
+        self, component_stage_map_artifact, monkeypatch, provider_env, is_graph
+    ):
+        """Select graph steps and descriptions only for Neo4j."""
+        for key in ("MILVUS_URI", "PGVECTOR_HOST", "NEO4J_URI"):
+            monkeypatch.delenv(key, raising=False)
+        for key, value in provider_env.items():
+            monkeypatch.setenv(key, value)
+
+        publish_component_stage_map.python_func(
+            pipeline_id=PIPELINE_RAG_OPTIMIZATION,
+            run_id="run-provider",
+            component_stage_map=component_stage_map_artifact,
+        )
+        document = json.loads(
+            (Path(component_stage_map_artifact.path) / "component_stage_map.json").read_text(encoding="utf-8")
+        )
+        assert document["pipeline_id"] == PIPELINE_RAG_OPTIMIZATION
+        assert [c["id"] for c in document["components"]] == [
+            "documents_discovery",
+            "search_space_preparation",
+            "text_extraction",
+            "models_pre_selector",
+            "rag_templates_optimization",
+        ]
+        optimization = document["components"][-1]
+        assert [s["id"] for s in optimization["stages"]] == ["optimize_templates", "build_leaderboard"]
+        expected_steps = ["chunking", "embedding", "retrieval", "generation", "evaluation"]
+        if is_graph:
+            expected_steps.insert(2, "graph_extraction")
+            assert "Neo4j" in document["description"]
+            assert "knowledge graph" in optimization["stages"][0]["description"]
+        else:
+            assert "graph" not in json.dumps(document).lower()
+            assert "vector retrieval" in optimization["stages"][0]["description"]
+        assert optimization["stages"][0]["steps"] == expected_steps
+
     def test_rejects_empty_pipeline_id(self, component_stage_map_artifact):
         """Reject blank pipeline_id."""
         with pytest.raises(ValueError, match="pipeline_id"):

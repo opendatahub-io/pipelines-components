@@ -27,6 +27,7 @@ def publish_component_stage_map(
 
     Reads the static JSON template from the embedded artifact
     (``run_status_templates/pipelines/``) and publishes it as a KFP artifact.
+    Neo4j optimization runs use the graph template; other providers use the vector template.
     Dashboards use this map to show expected components, stages, and steps before
     pipeline execution begins. An ``mlflow`` block is added from the platform-injected
     ``KFP_MLFLOW_CONFIG``, so the dashboard can deep-link the run into the MLflow UI
@@ -98,11 +99,20 @@ def publish_component_stage_map(
         raise ValueError(f"Invalid pipeline_id '{pipeline_id}': must be a simple identifier without path separators")
 
     templates_root = Path(embedded_artifact.path) if embedded_artifact is not None else None
-    manifest_path = templates_root / "pipelines" / f"{pipeline_id}.json" if templates_root is not None else None
+    template_name = pipeline_id
+    # Match search_space_preparation's provider precedence.
+    if (
+        pipeline_id == "documents-rag-optimization-pipeline"
+        and "NEO4J_URI" in os.environ
+        and "MILVUS_URI" not in os.environ
+        and "PGVECTOR_HOST" not in os.environ
+    ):
+        template_name += "-graph"
+    manifest_path = templates_root / "pipelines" / f"{template_name}.json" if templates_root is not None else None
     if manifest_path is None or not manifest_path.is_file():
         raise FileNotFoundError(
             f"Component stage map not found or empty for pipeline_id='{pipeline_id}'. "
-            f"Expected embedded template at pipelines/{pipeline_id}.json."
+            f"Expected embedded template at pipelines/{template_name}.json."
         )
 
     with manifest_path.open("r", encoding="utf-8") as f:
