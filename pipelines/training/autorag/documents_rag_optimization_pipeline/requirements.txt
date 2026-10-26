@@ -5,8 +5,8 @@ accelerate==1.15.0 \
     # via
     #   docling-ibm-models
     #   docling-slim
-ai4rag==0.24.0 \
-    --hash=sha256:8fcba41597d25117a52516982d3af6d719e25b6a3c078d40afa55736ec1ffd9b
+ai4rag==0.25.1 \
+    --hash=sha256:ff5f652a43f128bab6dca1d4e0ad8fd53cded7c0014485dc98fc94f4f0af333e
     # via -r requirements.in
 aiohappyeyeballs==2.7.1 \
     --hash=sha256:6c06961fde24f3f847939e288b8e6398973752c358a58cdc067115f8fe87a35d
@@ -65,21 +65,21 @@ av==13.1.0 \
 beautifulsoup4==4.15.0 \
     --hash=sha256:77680c0dcb3dcd496c20ced477582e2f9c307ec5b9b73dcc8e5acc7e8f65d8ee
     # via docling-slim
-boto3==1.43.114 \
-    --hash=sha256:c1181f74fa87789b715513ddb48ccd459a4ada4d5e1ca71c895dae222ecc72dd
+boto3==1.43.118 \
+    --hash=sha256:31ec220555971f1058951630fe0d08e86964eb73bae4d6dfe142ea8f480b6968
     # via ai4rag
-botocore==1.43.114 \
-    --hash=sha256:2f37d80085b160d007eb4228e10a4157a7955990a5b0ab36c4779d8515f95c98
+botocore==1.43.118 \
+    --hash=sha256:6bbad7f2276761efc2fc1fb994c029e7f735c7978e6ef0a8779cf91f4143fab5
     # via
     #   boto3
     #   s3transfer
-cachetools==7.2.3 \
-    --hash=sha256:08257b7031acd955acfd147b453c26c14ec7880e74e1b44352d0db9d831e779a
+cachetools==7.2.4 \
+    --hash=sha256:81eac8cea366215628c7ed53d84413f6f78e6a206cb672fa6b67e7b3d32157d6
     # via
     #   mlflow-skinny
     #   pymilvus
-certifi==2026.7.22 \
-    --hash=sha256:e5fe15bb588e1de8f8caef013fbcf10c5e61c7f2a96ecba518df6c4d9acbdd7b
+certifi==2026.10.19 \
+    --hash=sha256:2a02938297c395b7a3c77cb1399d3e5e6305536ae7dd7a3db9f8ace1ac77f155
     # via
     #   docling-slim
     #   httpcore
@@ -124,14 +124,14 @@ cryptography==50.0.2 \
     --hash=sha256:e5097277695b839c7d2051ff52a127bb9c5d9d5d1454438c7275599fab83b7a7 \
     --hash=sha256:e85e81c317f2b77bb0035a09de7a28e3eed14bfa504b109842c0e56d78ab5114
     # via google-auth
-ctranslate2==4.8.2 \
-    --hash=sha256:0792246346465a47dd87ec4e2878ca00e045ab847ad75a397e25a07f63d9cb97 \
-    --hash=sha256:340db280b70e709f0f763387d7df3be5ed0a2bbd5b4b3bfd31fb577f93d14e4f \
-    --hash=sha256:64406ff5201f1d3dbe5df49db7fc78180e77c754f7b8874884afe1adbb366f10 \
-    --hash=sha256:826ca81e3c78905c6dafce6d2b0fefabd5226aae7b3886b26ddb00d92f742be0
+ctranslate2==4.8.3 \
+    --hash=sha256:531825a95152d8bc93dbabad710ad12084189cf5d3227fe00234fed00344fe17 \
+    --hash=sha256:7060b3ffe0888c4ff4d3044ff96de5b66c44a1910671421a683b096db05bb6d2 \
+    --hash=sha256:ca1894a424a3db35a21aecb53f5081e40f19657a88a573c1f693b9a710c9c6ce \
+    --hash=sha256:de7a417093562deb7081d8227b717bbf7c0546667226639098712ab2822d8259
     # via whisper-s2t-reborn
-databricks-sdk==0.153.0 \
-    --hash=sha256:8d54c94e741bfe79ce0196f16322b5f42cae75051a411da0e6df515ab6873f2d
+databricks-sdk==0.156.0 \
+    --hash=sha256:e777b2cd265b8518e16f554cd2e36e67bba3a659d176e66b5d04ba9c003fd59c
     # via mlflow-skinny
 dataclasses-json==0.6.7 \
     --hash=sha256:2b6dbf6190a132695ca5e6c78e8a090059ecb184ea7bf547bafbe2de3aaaf015
@@ -207,11 +207,11 @@ faiss-cpu==1.12.0 \
 faker==40.43.0 \
     --hash=sha256:ec907f0366f059756c74e789f7ef4a62632bc4f0015c24bbe930d48b20c541fe
     # via polyfactory
-fastapi==0.143.3 \
-    --hash=sha256:b062cc940f7c85e8d6f773bbd6283a43879ffb79dbabe8ece03594b2e663d467
+fastapi==0.161.1 \
+    --hash=sha256:150f75e7794822c56c084debcd12822fde0ecf1827945a8a71f72ac5b7b96052
     # via mlflow-skinny
-filelock==4.2.1 \
-    --hash=sha256:c2776aa3c936b9f0e9e2997c1fa27b66b582f81dc2d22993f633b53950619fe6
+filelock==4.2.4 \
+    --hash=sha256:3d723ed8b277d7f85b3c581d40b5a0a1b168ce93a200899ef2885ab68a39e9f4
     # via
     #   datasets
     #   huggingface-hub
@@ -244,8 +244,8 @@ gitdb==4.0.12 \
 gitpython==3.2.1 \
     --hash=sha256:779c7e2c3842e3b7ff8290e2456384b9d8e9c92af9152e0a42d317ba5c0808d4
     # via mlflow-skinny
-google-api-core==2.42.0 \
-    --hash=sha256:ec15113ae7ddd039268caccb046bef903c33027a8b293394bc3ae02d7a4fd6ea
+google-api-core==2.43.0 \
+    --hash=sha256:fc0cd77f6ae2e41fd2b1800555a6bfe09ade939107cdb424be955f12d31dc44d
     # via
     #   google-cloud-core
     #   google-cloud-storage
@@ -272,18 +272,14 @@ google-crc32c==1.9.0 \
 google-resumable-media==2.11.0 \
     --hash=sha256:ed03a2f8dcf7cb3c1abcfa73366d37532b1eaa49abd526af23d6f9431e0da577
     # via google-cloud-storage
-googleapis-common-protos==1.75.5 \
-    --hash=sha256:7b8585560e55a7c51bb42627bd5c5638e6e7039d45859d5e042c3082138c3364
+googleapis-common-protos==1.76.0 \
+    --hash=sha256:6486c1374148ca704e166f4e25044c2d6af4bcf50914f361bbe154db613d8615
     # via google-api-core
-grpcio==1.84.0 \
-    --hash=sha256:05ec8079bf3e9f05f3a8c100149943a90c6fa5bdd2a715f09dd15e98ccdef327 \
-    --hash=sha256:0ac33ac2f322d6f5765a61f5689b7605afec74ed1da82b8ba9198aee0a0b1c80 \
-    --hash=sha256:2f2684261301273500b9ccac71c35b6c79b4eeee84cb75be41070391dab4202a \
-    --hash=sha256:442c0aeea1a062e225ba4b9c4f6296aef0386a0764c86cd2005790ee38e6eed8 \
-    --hash=sha256:5eacf1a43c95efeea9cbb7bcb7a7731dbc310a8625c5dd97d82cec674b3bdd1c \
-    --hash=sha256:6967c0cd37070c800eaf0af83ad14a9013697dcd6bdb674eac79adb83dea5c62 \
-    --hash=sha256:e278f2e85fb69cb1904303c5d79019a25c82bc6a3895885135b4568efc0b7295 \
-    --hash=sha256:f15a3bb96079d251e0987c0add18b535d78749c89474e719355041f1ad09f103
+grpcio==1.84.1 \
+    --hash=sha256:647fcf147248cf6546507ef489eecadc60d130e6240458d859a72ddd69c9a87f \
+    --hash=sha256:85278dcb2a732941d86224bc5489d4a0c239072a2784b54b1d8e5b92c19407e6 \
+    --hash=sha256:b64fe8229c49c206e7b159b06bb24fda214136067ac54b8b6f62ce109cbbec9c \
+    --hash=sha256:cffc9ced029da10165e37963dc7f9da73a0866dd5f5d87c634ec6afc9c4e2f29
     # via
     #   milvus-lite
     #   pymilvus
@@ -302,8 +298,8 @@ hf-xet==1.7.0 \
 httpcore==1.0.9 \
     --hash=sha256:b59e28c75717c4fcae87682302106837ff0b75ed1c598445cf21e50068bea322
     # via httpx
-httpcore2==2.13.1 \
-    --hash=sha256:8236a2f2ec1691e209a4217c61740491480a4d8773ed104031e6da030b1fd410
+httpcore2==2.16.0 \
+    --hash=sha256:b6a9375275b711211e0f76ab4e285b939c253410be2fcb653a35af57a73ba77e
     # via httpx2
 httpx==0.28.1 \
     --hash=sha256:be1d92ea099c115bb7171e2efc5f89a2269886f986c9185144861c675e116220
@@ -316,13 +312,14 @@ httpx==0.28.1 \
 httpx-sse==0.4.3 \
     --hash=sha256:9f990cc13082ab50e3570028593abf85ff0d27f4e2be24d964a732ed0d49cd9e
     # via langchain-community
-httpx2==2.13.1 \
-    --hash=sha256:84e4e36dcb2ba0c2bceed60363b2a794ea4ec015e1e4f1b5d67f3ffc1b212e56
+httpx2==2.16.0 \
+    --hash=sha256:4120697d7b792a5ae7a06a0a78a2938e7ccfe2ab047e05db4dff24759de81ff6
     # via langsmith
 huggingface-hub==1.33.0 \
     --hash=sha256:64651b2d3e6ce696a0f5b7ed7dd935f535798dc9ee5d121e65de33902146eca2
     # via
     #   accelerate
+    #   ai4rag
     #   datasets
     #   docling-ibm-models
     #   docling-slim
@@ -339,8 +336,8 @@ idna==3.20 \
     #   instructor
     #   requests
     #   yarl
-importlib-metadata==9.0.1 \
-    --hash=sha256:d7e9f0febcff74e3f9000abe34d51ad4c59c70907989a1a09fc6af313e8b902d
+importlib-metadata==9.1.0 \
+    --hash=sha256:fa0c6175a390d51bc4b9dea7c5f565d25ab2832c9dc0ee707c3b0b4afe0ddf81
     # via mlflow-skinny
 instructor==1.17.0 \
     --hash=sha256:7d3e3607162683c6561eb8827bea33549ffef4aba2649c51df00d6d1fef9574a
@@ -366,17 +363,17 @@ jmespath==1.1.0 \
 joblib==1.6.0 \
     --hash=sha256:53e5065c037fa756f073f98ba71a66861260e8efbdd0131ea1b6d4c78a088ce0
     # via scikit-learn
-json-repair==0.64.0 \
-    --hash=sha256:3f9f8bd6609413fa6350985c01ff74d3215144472e7dba39da1a88675c3266bc
+json-repair==0.64.1 \
+    --hash=sha256:7b6e0e4ad945018ea0a4b66cf43e503e6930cc0ebfff63ebfec56eb808ec137d
     # via neo4j-graphrag
 jsonlines==4.0.0 \
     --hash=sha256:249c87e882f8795f4ce70be86d131f343379dd9ccc4fc3aacd56a4b0c202cb37
     # via docling-ibm-models
-jsonpatch==1.35 \
-    --hash=sha256:84bf67e0dfd18d930f1d10b7b0b904fec87ff528804bc1e9e2e1009bfec3a910
+jsonpatch==1.36 \
+    --hash=sha256:f31c4211409b30de826efecb556287d8423aa07c538ac2fcb0b323378b2789d7
     # via langchain-core
-jsonpointer==3.2.1 \
-    --hash=sha256:e08372d975f636d96346dabe4d9df63e321636da31d23e0bd0b1a3f6c4cfa5a6
+jsonpointer==3.4 \
+    --hash=sha256:ee620504dff9aa1e61fa32be51b14891bf0672ec7963d70a735d1721c602a938
     # via jsonpatch
 jsonref==1.1.0 \
     --hash=sha256:0083f53bae4b8961c2e588d08db77dc20fc43513886c645c8cd5fb6ff433d579
@@ -390,17 +387,17 @@ jsonschema-specifications==2025.9.1 \
 kfp==2.17.0 \
     --hash=sha256:347b04df10fd9987faea18f1523d6045ec907454e088be05070b422e2fedd758
     # via -r requirements.in
-kfp-pipeline-spec==2.17.0 \
-    --hash=sha256:76afd2709e559c87bc3845e15124a025454aa1712c19082496aa3113732174b2
+kfp-pipeline-spec==2.17.3 \
+    --hash=sha256:79d9f65c1d20c2bb0d84c36ebedc43daf7186873e5425caebbffcda31a83072b
     # via kfp
-kfp-server-api==2.17.0 \
-    --hash=sha256:9a7b13c5757d932404e449adb5c80c9cc33fd4990ad2af032aa0786c3bd58839
+kfp-server-api==2.17.3 \
+    --hash=sha256:a1c0d3f7f2f950992ee44b7f75340f02f53a7c59be8fbdc7306f24a051aabfc4
     # via kfp
 kubernetes==36.0.3 \
     --hash=sha256:5f918d191dc94f58d645b98e28442ea68089fb7c342c15992acb41fad080ef31
     # via kfp
-langchain==1.4.6 \
-    --hash=sha256:fa4eae3b763eeadf50a7dda8bc8eacf3bbaaf40fe67a2252af2ed0aab7d07c38
+langchain==1.4.7 \
+    --hash=sha256:c0f589cafd117686df35911844a3b06a8c35c935fccad55e5bafd629af0ddb3d
     # via
     #   ai4rag
     #   ragas
@@ -412,8 +409,8 @@ langchain-community==0.4.1 \
     # via
     #   ai4rag
     #   ragas
-langchain-core==1.6.12 \
-    --hash=sha256:d33b5e22cb70a48d5d4e1b54fcd39c1295fd4d00c187e95b8711f6569191436f
+langchain-core==1.7.0 \
+    --hash=sha256:34160856dbdf6114f235747f983081257b44aa25db5fb8f9d83d8b26c9c35877
     # via
     #   langchain
     #   langchain-classic
@@ -430,8 +427,8 @@ langchain-openai==1.7.2 \
     # via
     #   ai4rag
     #   ragas
-langchain-protocol==0.0.19 \
-    --hash=sha256:ac3653c4273b6cde3f061569286b704ffaf1e27a9df184fb6ad5af0db0fdf917
+langchain-protocol==0.0.20 \
+    --hash=sha256:04e1effe20d923b46b9fe2024b15c5bab52d870662b6a7bc3b87faf269561a22
     # via
     #   langchain-core
     #   langgraph-sdk
@@ -454,8 +451,8 @@ langgraph-prebuilt==1.1.1 \
 langgraph-sdk==0.4.8 \
     --hash=sha256:7064c915ad18ab682de9e4c0e2ac92f245d7c0a9fbfa22e31d89b7471c5c3468
     # via langgraph
-langsmith==0.14.11 \
-    --hash=sha256:d4110cd69cce5256fbb613c1d02a2ada7fd9d1f3892fc75c684a1d3c06499968
+langsmith==0.14.12 \
+    --hash=sha256:41f2fefe2c2b81807ad5b0b6227007a6958e5ed6c6c8b12ceb43adc9a3af138b
     # via
     #   langchain-classic
     #   langchain-community
@@ -594,8 +591,8 @@ numpy==2.5.4 \
 oauthlib==4.0.0 \
     --hash=sha256:f2c8de845577d608844a0b282946e04acbd8a89a9e96cf756dab31226a3c2a45
     # via requests-oauthlib
-odfdo==3.27.1 \
-    --hash=sha256:87131e7d8cd6c4315b269d753239ac6254405a3fc903681cfed46ffd2ca22660
+odfdo==3.27.2 \
+    --hash=sha256:3a064440c1a98bb7c946804aad4a16b67f0fd8b007ab00a715ae25101b60bf9d
     # via docling-slim
 olefile==0.47 \
     --hash=sha256:96ffe3c426acbb23186c830d09b4a82bee9c9c904745681d335062a77d924087
@@ -654,11 +651,11 @@ orjson==3.13.0 \
     #   langgraph-sdk
     #   langsmith
     #   pymilvus
-ormsgpack==1.12.2 \
-    --hash=sha256:24a8629a54c10e1e0b5baf0c71cfc3adb723ab8664090f482698a9695c1e2633 \
-    --hash=sha256:2d15dc64a09a49f7885aad35762b6fe66646ed534ddec2b31426cf4aeb6308d9 \
-    --hash=sha256:e7b392b136db2ed9bbf044b1a7509458dd3c413d4ce15ca199cf918205d28318 \
-    --hash=sha256:f30b282043110f45b9a7bde649c53c4f550392bf5053801047f29787b8b72c93
+ormsgpack==1.13.0 \
+    --hash=sha256:0ab2d2f5da30d9c9030535f812af45da1d037e02b22e18b42fc8a8fedb7aca00 \
+    --hash=sha256:1ceaeed097c90b8b1e36329734d38683a94ef147a1f7306341c213c03c348994 \
+    --hash=sha256:a0eddec2357c124cda6651859bd5c4353f6fbc3f24b485e2bfc4e897f1b3b328 \
+    --hash=sha256:a5312911a4576ee6f8c52bd140ba6b3b2e40c60e1005286f199800191a5d47bf
     # via langgraph-checkpoint
 packaging==26.3 \
     --hash=sha256:4351cc62d6fddd97665746370cd5d662b3ecf6b18de686db4d704acbedda7a15
@@ -702,14 +699,14 @@ pillow==12.3.0 \
     #   ragas
     #   rapidocr
     #   torchvision
-platformdirs==4.13.4 \
-    --hash=sha256:8be8d255b0f37cbe23b1b8706da233246436aaa8fa61f8f74205a71118f89802
+platformdirs==4.13.5 \
+    --hash=sha256:decad47d7d7e6fd721d285d90a9dc3aed28cbbbad894f4c73acd57bdc81daf07
     # via whisper-s2t-reborn
 pluggy==1.7.0 \
     --hash=sha256:8c98a99ed52fae71bd3a7f020036b2a2b70b116f1ebe2d2915a9421331073a5d
     # via docling-slim
-polyfactory==3.3.0 \
-    --hash=sha256:20c2d589a159c2304c53cd7fc240b96bb190eb79550c48b985da90d4b3ba23c0
+polyfactory==3.5.0 \
+    --hash=sha256:b482c16baa193a8733c3b8c61468e8bff766e2862e02528ec9c7f634022bfd70
     # via docling-slim
 progressbar2==4.6.0 \
     --hash=sha256:3b5a1a78e7f53f288ce6d706b152b53ac75f5bd4df35601faa6e60096a83b3e4
@@ -771,8 +768,8 @@ pyclipper==1.4.0 \
     --hash=sha256:83ebe9d36aebb2415553d71e771f6c61d0b204977bcf36950b566650cdfeb421 \
     --hash=sha256:d2971556d29f9b3f2adfa84c7436e269b8955121465bf3a522456e86803085d8
     # via rapidocr
-pycparser==3.11 \
-    --hash=sha256:257403a3b6f5fde41f6e39ebde5ebbe937c2ab0b9545324446f1d2f1e26094f4
+pycparser==3.12 \
+    --hash=sha256:4d9e76c9a9bb4ff0cc899113045b8c35810f70dee6cc979abbe6edfa73bca1a8
     # via cffi
 pydantic==2.11.10 \
     --hash=sha256:919a938875b2cb8006dc0ddfe45be6d21fa93b475e96fbca7191c60d34979ba3
@@ -802,8 +799,8 @@ pydantic-core==2.33.2 \
     # via
     #   instructor
     #   pydantic
-pydantic-settings==2.16.0 \
-    --hash=sha256:42d10e4bfc669f3b0aa92035c4a18f9c338ed00e39595919cacb9841f2587148
+pydantic-settings==2.16.1 \
+    --hash=sha256:28dcb5ba81b64a4fc741e39e71d7425077045c0cb5488ffdf59e869b3ae9f55c
     # via
     #   docling-core
     #   docling-slim
@@ -822,8 +819,8 @@ pylatexenc==2.11 \
 pymilvus==3.0.2 \
     --hash=sha256:a8baae29646e0b6cafa11509b6288e79b0a15584315121f860e42b04d57e0fe5
     # via ai4rag
-pypdf==6.21.1 \
-    --hash=sha256:ed0be56f840c85ef16a3873e57c6f9ca8b7b397913716d1d47ef3f68c096e48e
+pypdf==6.21.2 \
+    --hash=sha256:87cfd91b67980b2cfa51a29b4aee3cdbe04637e875fc0fb2614e235ac475a3ac
     # via neo4j-graphrag
 pypdfium2==5.14.0 \
     --hash=sha256:1ef9824c4df3e919fbb39d475940a7972476d7b803f5b4dcb92a985fe4f59183
@@ -851,8 +848,8 @@ python-oxmsg==0.0.2 \
 python-pptx==1.0.2 \
     --hash=sha256:81339d78f17256056d5c60a9fa8fc16a1d1bd3157af799c42a13c238041983d6
     # via docling-slim
-python-utils==4.1.2 \
-    --hash=sha256:8f4a0aabc69f10c3efe2dab01fd044f161c347aea0fcbaedb383ec5194c86411
+python-utils==4.1.4 \
+    --hash=sha256:0ba69b2eb6d45f9aae1bf5eca425642120fdce1addd41bb95845e9d7d625d775
     # via progressbar2
 pytz==2026.5 \
     --hash=sha256:16fd4b52bac878d0e56e23092876cbfb78de5b85394f9de9143d7bf1c1fe8e64
@@ -955,8 +952,8 @@ rtree==1.4.1 \
     # via
     #   docling-ibm-models
     #   docling-slim
-s3transfer==0.19.2 \
-    --hash=sha256:4616a09fbe2d4c80fec9ab4556c09950d491fd201772c8ee70591f30ff53ba68
+s3transfer==0.19.3 \
+    --hash=sha256:a41f253d73b84f62c47f60a893402de2dcb5208ef5a58e008b286d24ea8a23f8
     # via boto3
 safetensors==0.8.0 \
     --hash=sha256:57639bd76c4c5023b1c5579645e22109ab3ab35da4ec9e4903c14efe37d3bbd5 \
@@ -994,8 +991,8 @@ scipy==1.16.3 \
 semchunk==3.2.5 \
     --hash=sha256:75ed88c9d83e6ea53d3504a3dd2297fffca6fb1dd02cdd72a777cd0f3a48f45c
     # via docling-core
-setuptools==84.0.0 \
-    --hash=sha256:54551c2da1e47baf2c91b9c2ff07d616ae51cbc1c6c65e5f73103a826824c954
+setuptools==84.2.1 \
+    --hash=sha256:36ef5cc277e2e4d09f5bc43a619ac2bd1511439a4983fab408ea16a179b073d9
     # via torch
 shapely==2.2.0 \
     --hash=sha256:0d448e9633a2488bed77f928f305e33dc3d0aa0922981d429b2112526ae5c61d \
@@ -1021,22 +1018,22 @@ sniffio==1.3.1 \
     # via
     #   langsmith
     #   openai
-soupsieve==3.0.3 \
-    --hash=sha256:095e023248bfb4bd7896cd2638f2a1f6d7a1dde573801a31a7b9bb1f40eb010f
+soupsieve==3.0.4 \
+    --hash=sha256:bb0b97f3270bec0c09c2d5cc4b000a2accbd29219191b2184bd0e74602b61ec3
     # via beautifulsoup4
-sqlalchemy==2.1.5 \
-    --hash=sha256:14060860dd095a70bc78cc2f497df39bc333aec5da5aef733aa3b92b6ce46812 \
-    --hash=sha256:4a28924bdc41bc57dd1b24a0008a237c92f6f5ec22118bf62256826a48f3fe3a \
-    --hash=sha256:56a81481ed05256120e1dfb42e26c706ede3e754c3d01489507fb803cd8f90e9 \
-    --hash=sha256:616b66494ecc90028e46121ea5ac60e536c7b36763ae09ecfe5fb4b46a6baa5a
+sqlalchemy==2.1.6 \
+    --hash=sha256:1a2ba3aebc25bf172f8bd526ba971c842552a6b39a85ff0282d34987a84dd48a \
+    --hash=sha256:c9f7aba6e216f6e0009444f4161f8b32eab70187b0466e5a5a7f88fc25e98083 \
+    --hash=sha256:e01bd21545ba018afdfba955d1e2f61cd436e523eae5664f1f516df0bec331ba \
+    --hash=sha256:ebd618e13bdf9d7e6b193a54c1c08d0957faa9d7df35149657e7a83795c2c1d1
     # via
     #   langchain-classic
     #   langchain-community
 sqlparse==0.6.0 \
     --hash=sha256:40572d4c4e2a83fec7d24a3cb588811e087c81fd0a2d6d492efba61a9cd27a65
     # via mlflow-skinny
-starlette==1.8.0 \
-    --hash=sha256:c60461b90a7f7f13c2b88e727994af83cdd7a7233d2a84e3cbc9f8367c865031
+starlette==1.9.0 \
+    --hash=sha256:33d78109a9f1b707e87fbabe23839ee858de2671652a5a58a71f58f6287623cf
     # via
     #   fastapi
     #   mlflow-skinny
@@ -1121,8 +1118,8 @@ tqdm==4.70.1 \
     #   semchunk
     #   transformers
     #   whisper-s2t-reborn
-transformers==5.20.1 \
-    --hash=sha256:c96e641841ff96e3920b37185ffeba7db0703b24f7a6cfb08d2c90ea7b00fbb4
+transformers==5.20.2 \
+    --hash=sha256:52f31568a4586889e500669c3d24a01817b4e3facb63f6adbf6eb0438f883638
     # via
     #   docling-core
     #   docling-ibm-models
@@ -1238,11 +1235,11 @@ urllib3==2.7.0 \
     #   kfp-server-api
     #   kubernetes
     #   requests
-uuid-utils==0.17.1 \
-    --hash=sha256:068de8b61597f5087fc39ada6b70f8e2f6e29de06c7f2f772409fdd9b19d4fb7 \
-    --hash=sha256:97428fcde132b114fb80e0264c046d660aa7fd3c5888a8b48d64f1d08e5e126a \
-    --hash=sha256:b8c15c9af06023c350501b17ae668b400145bd312b7d8ad88a80a67388c00a97 \
-    --hash=sha256:f0482e8b4e484f63c121133bfb314a268f4343b4511eec609bb2b3176f3049f7
+uuid-utils==0.18.0 \
+    --hash=sha256:10109e3cafe806c3c58f105bbcf31fc91caf2205807e78ad970a474869dc2c53 \
+    --hash=sha256:9452bab50bdaf08d5db506dfe2aac68abaf2c76cf78ca9b354f9074eb463d24b \
+    --hash=sha256:b97c882829ccf4d409e69d5ef00eaec9033a818e05bd18c334636a6201be0fc8 \
+    --hash=sha256:be14155ffddfbc2d5e1410f6039d8bd0c0e3a2703ea89fa9cd98360ab209d650
     # via
     #   langchain-core
     #   langsmith
@@ -1264,14 +1261,14 @@ websockets==16.1.1 \
 whisper-s2t-reborn==1.8.0 \
     --hash=sha256:56e10eb92aaf4f93ded8d37b982bd0c381d3d9861322f6829e0a48fdd2416257
     # via docling-slim
-xlsxwriter==3.2.9 \
-    --hash=sha256:00a5b4f3b92c9dfbd985d0e66163a30fde3bee475085551af3c8c290e9cf48d6
+xlsxwriter==3.3.0 \
+    --hash=sha256:cb6bab310cc2a4ab3bbfea353e689d44917818c8585f64c42a998e88ead2bb7c
     # via python-pptx
-xxhash==4.0.1 \
-    --hash=sha256:03dbe51aa4d57f2a7464e388211f0e5f8f81c3e5dfdb83fcd1cdff5dc3e59b42 \
-    --hash=sha256:877a0a513e6397dfd1608c81904e9c0834092deace67434dbd8196487323f7df \
-    --hash=sha256:cf548cffd908fd95f07975472aeacf7b31cfb673cf9ed1c3c2bdab66485984e7 \
-    --hash=sha256:e925b4b9e88d391893f7ece3df4ddc801db89932cb49a2f1b77660a24a59ce31
+xxhash==4.0.2 \
+    --hash=sha256:18429d34a46f474b450d5b2fc093659706344ca7afb6195786e851eb89683d43 \
+    --hash=sha256:2ffe1076e56f9da87a1d3fafc0aa3426f54b7e049e7dbda44a31cd2a4c5a8a5d \
+    --hash=sha256:9a8992b42eb7ce46d333df859386c010b0b40eff7e26e278a62a41045ebd2da0 \
+    --hash=sha256:d8251e3faea24a4180ae9b3e0518eb4fd6339edf620bc5142e2e3430f98a8e9f
     # via
     #   datasets
     #   evaluate
@@ -1283,8 +1280,8 @@ yarl==1.25.1 \
     --hash=sha256:4bab4682e60b3f10095bcf98d0545c0e1156480db48cc84f8a0f77774678f5c8 \
     --hash=sha256:7ed7a23a71123c566393068331379494d1a90d84ce3702b8ca78c8a679b2acd2
     # via aiohttp
-zipp==4.1.1 \
-    --hash=sha256:546483fd16e875fb8eab006cf189066e205808657e7e48cdc16ccf979da694bf
+zipp==4.1.2 \
+    --hash=sha256:27dc6dd853280d0868759f9d63274f3c825a8533d3eff3f4b0dc8097d4e7230c
     # via importlib-metadata
 zstandard==0.25.0 \
     --hash=sha256:7a6269e04ae9d86d74e6893f3abc027ce7ec4a25803122e67fb19746921f8db2 \

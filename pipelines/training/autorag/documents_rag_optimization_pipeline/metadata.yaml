@@ -8,7 +8,7 @@ dependencies:
       version: '==2.17.0'
   external_services:
     - name: ai4rag
-      version: "~=0.24.0"
+      version: "~=0.25.1"
     - name: MaaS
       version: ">=1.0.0"
     - name: RHOAI Connections API
@@ -24,4 +24,4 @@ tags:
   - pipeline
   - autorag
   - rag-optimization
-lastVerified: 2026-10-19T00:00:00Z
+lastVerified: 2026-10-26T00:00:00Z

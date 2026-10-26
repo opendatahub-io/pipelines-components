@@ -57,11 +57,13 @@ def example_pipeline():
 - **Dependencies**:
   - Kubeflow:
     - Name: Pipelines, Version: >=2.15.2
+  - External Services:
+    - Name: ai4rag, Version: ~=0.25.1
 - **Tags**:
   - data-processing
   - autorag
   - text-extraction
-- **Last Verified**: 2026-09-15 00:00:00+00:00
+- **Last Verified**: 2026-10-26 00:00:00+00:00
 - **Owners**:
   - No Parent Owners: Yes
   - Approvers:
