@@ -8,8 +8,8 @@ Run the complete quick-start LoRA GRPO workflow.
 
 The pipeline prepares the dataset, submits a single-GPU ART TrainJob, evaluates reward improvement, and registers and deploys the merged model only when the promotion gate passes.
 
-Private S3 dataset inputs use the optional RHOAI data connection Secret specified by ``p08_dataset_data_connection_name``. It defaults to ``s3-secret``. The Secret should provide ``AWS_ACCESS_KEY_ID``, ``AWS_SECRET_ACCESS_KEY``, and ``AWS_DEFAULT_REGION``; it may provide ``AWS_S3_ENDPOINT``. Hugging Face,
-HTTP(S), and local/PVC inputs do not require this Secret.
+Private S3 dataset inputs use the optional RHOAI data connection Secret specified by ``p08_dataset_data_connection_name``. It defaults to ``s3-secret``. The Secret should provide ``AWS_ACCESS_KEY_ID``, ``AWS_SECRET_ACCESS_KEY``, and ``AWS_DEFAULT_REGION``; it may provide ``AWS_S3_ENDPOINT``. Hugging
+Face, HTTP(S), and local/PVC inputs do not require this Secret.
 
 The following implementation details are intentionally fixed for the minimal variant: the Training Hub runtime, one training GPU, 4 CPU cores, 64Gi worker memory, empty TrainJob labels/annotations, the PyTorch model format, and the standard registry/deployment metadata defaults.
 
@@ -18,7 +18,7 @@ The following implementation details are intentionally fixed for the minimal var
 | Parameter | Type | Default | Description |
 | --------- | ---- | ------- | ----------- |
 | `p01_persistent_pvc` | `str` | `None` | (Required) Name of the ReadWriteMany PVC used for training checkpoints and model serving. To create one: in RHOAI open your Data Science Project -> Cluster Storage -> Create storage, select ReadWriteMany access mode, minimum 50Gi. Enter only the PVC name (not a path). Example: ``grpo-pipeline-pvc`` |
-| `p02_dataset_uri` | `str` | `None` | (Required) Dataset reference.<br>Supported sources:<br>• Hugging Face: ``hf://org/dataset:config``. References are loaded directly by Training Hub.<br>• Local/PVC: ``pvc://data.jsonl``<br>• S3: ``s3://bucket/path/data.jsonl``<br>• HTTP(S): ``https://example.com/data.jsonl``<br>Local JSON/JSONL, PVC, S3, and HTTP(S) sources are normalized by the preparation component onto the shared PVC. Non-Hugging Face rows are converted to Training Hub's canonical ``messages`` and ``tools`` format. See the [Training Hub loader format](https://github.com/Red-Hat-AI-Innovation-Team/training_hub/blob/main/src/training_hub/algorithms/lora_grpo.py#L381-L387). |
+| `p02_dataset_uri` | `str` | `None` | (Required) Dataset reference. Supported sources: • Hugging Face: ``hf://org/dataset:config``. References are loaded   directly by Training Hub. • Local/PVC: ``pvc://data.jsonl`` • S3: ``s3://bucket/path/data.jsonl`` • HTTP(S): ``https://example.com/data.jsonl`` Local JSON/JSONL, PVC, S3, and HTTP(S) sources are normalized by the preparation component onto the shared PVC. Non-Hugging Face rows are converted to Training Hub's canonical ``messages`` and ``tools`` format. See the [Training Hub loader format](https://github.com/Red-Hat-AI-Innovation-Team/training_hub/blob/main/src/training_hub/algorithms/lora_grpo.py#L381-L387). |
 | `p03_training_model` | `str` | `None` | (Required) HuggingFace model ID of the base model to fine-tune. If the model is gated, configure the ``hf-token`` secret. Examples: ``Qwen/Qwen3-4B`` or ``ibm-granite/granite-3.3-8b-instruct`` |
 | `p04_model_registry_address` | `str` | `None` | (Required) Hostname or IP address of the Model Registry service. Pass only the host or IP, without ``http://``, ``https://``, or the ``/api/model_registry/v1alpha3`` path. |
 | `p05_serving_namespace` | `str` | `None` | (Required) OpenShift project where the KServe InferenceService will be created. Must be the same namespace where your PVC is provisioned. Should have KServe enabled - typically your Data Science Project. Example: ``my-ds-project`` |
