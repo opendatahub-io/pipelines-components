@@ -14,7 +14,9 @@ class TestLoraGrpoMinimalPipeline:
 
     def test_completion_timeout_is_exposed_with_quick_start_default(self):
         """Users can adjust the TrainJob completion wait for their workload."""
-        parameter = lora_grpo_minimal_pipeline.component_spec.inputs["phase_02_train_opt_completion_timeout_seconds"]
+        parameter = lora_grpo_minimal_pipeline.component_spec.inputs[
+            "p14_training_completion_timeout_seconds"
+        ]
         assert parameter.default == 7200
 
     def test_dataset_config_is_combined_with_dataset_uri(self):
