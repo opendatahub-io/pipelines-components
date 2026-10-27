@@ -14,18 +14,17 @@ class TestLoraGrpoMinimalPipeline:
 
     def test_completion_timeout_is_exposed_with_quick_start_default(self):
         """Users can adjust the TrainJob completion wait for their workload."""
-        parameter = lora_grpo_minimal_pipeline.component_spec.inputs[
-            "p14_training_completion_timeout_seconds"
-        ]
+        parameter = lora_grpo_minimal_pipeline.component_spec.inputs["p15_training_completion_timeout_seconds"]
         assert parameter.default == 7200
 
     def test_dataset_config_is_combined_with_dataset_uri(self):
         """The minimal interface uses the inline Hugging Face URI config."""
         assert "phase_02_train_opt_data_config" not in lora_grpo_minimal_pipeline.component_spec.inputs
 
-    def test_s3_connection_secret_uses_the_quick_start_name(self):
-        """The minimal interface uses the conventional RHOAI S3 Secret."""
-        assert "phase_01_dataset_opt_data_connection_name" not in lora_grpo_minimal_pipeline.component_spec.inputs
+    def test_s3_connection_secret_is_configurable(self):
+        """The minimal interface keeps the conventional RHOAI S3 default."""
+        parameter = lora_grpo_minimal_pipeline.component_spec.inputs["p08_dataset_data_connection_name"]
+        assert parameter.default == "s3-secret"
 
     def test_minimum_deployment_replicas_are_fixed_for_quick_start(self):
         """The quick-start deployment keeps one predictor replica warm."""
