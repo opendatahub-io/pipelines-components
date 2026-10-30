@@ -48,6 +48,7 @@ def autogluon_timeseries_training_pipeline(
     preset: str = "speed",
     test_data_bucket_name: str = "",
     test_data_file_key: str = "",
+    freq: str = "",
 ):
     """AutoGluon time series training pipeline.
 
@@ -128,6 +129,9 @@ def autogluon_timeseries_training_pipeline(
         timestamp_column: Name of the column containing the timestamp/datetime for each observation.
             Passed as ``timestamp_column`` when constructing TimeSeriesDataFrame; result uses
             ``timestamp`` as the second index level.
+        freq: Optional pandas frequency (e.g. "D", "B", "h"). Empty tries AutoGluon
+            inference, then a shared grid inferred from gaps. Ambiguous data requires
+            explicit freq; prediction_length counts periods at the resolved frequency.
         id_column: Name of the column that identifies each time series (e.g. product_id, store_id).
             Pass an empty string ("") for single-series two-column datasets (timestamp + target only);
             the loader will inject a synthetic ID column. Passed as ``id_column`` when constructing
@@ -221,6 +225,7 @@ def autogluon_timeseries_training_pipeline(
             id_column=data_loader_task.outputs["effective_id_column"],
             timestamp_column=timestamp_column,
             train_data_path=data_loader_task.outputs["models_selection_train_data_path"],
+            freq=freq,
             test_data=data_loader_task.outputs["sampled_test_dataset"],
             top_n=top_n,
             workspace_path=dsl.WORKSPACE_PATH_PLACEHOLDER,

@@ -55,6 +55,7 @@ to a single combined ``models_artifact``.
 | `preset` | `str` | `speed` | Training quality tier. ``"speed"`` (default, 4 vCPU / 16 GiB, AutoGluon ``medium_quality``), ``"balanced"`` (8 vCPU / 32 GiB, AutoGluon ``high_quality``), or ``"quality"`` (two-hour selection budget, 16 vCPU / 64 GiB, AutoGluon ``best_quality``). |
 | `test_data_bucket_name` | `str` | `""` | Optional S3-compatible bucket name for a user-provided test dataset. Default: empty string (use the per-series holdout split from training data). |
 | `test_data_file_key` | `str` | `""` | Optional S3 object key for a user-provided test CSV file. Default: empty string (use the per-series holdout split from training data). |
+| `freq` | `str` | `""` | Optional pandas frequency (e.g. "D", "B", "h"). Empty tries AutoGluon inference, then a shared grid inferred from gaps. Ambiguous data requires explicit freq; prediction_length counts periods at the resolved frequency. |
 
 ## Metadata 🗂️
 

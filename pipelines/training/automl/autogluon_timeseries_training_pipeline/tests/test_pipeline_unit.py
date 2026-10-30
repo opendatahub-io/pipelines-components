@@ -56,6 +56,7 @@ class TestAutogluonTimeseriesTrainingPipelineUnitTests:
             "eval_metric",
             "test_data_bucket_name",
             "test_data_file_key",
+            "freq",
         }
         inputs = autogluon_timeseries_training_pipeline.component_spec.inputs
         params = set(inputs.keys())
@@ -68,6 +69,20 @@ class TestAutogluonTimeseriesTrainingPipelineUnitTests:
         assert inputs["eval_metric"].default == "mean_absolute_scaled_error"
         assert inputs["test_data_bucket_name"].default == ""
         assert inputs["test_data_file_key"].default == ""
+        assert inputs["freq"].default == ""
+
+    def test_frequency_reaches_training_in_every_preset(self):
+        """Each preset forwards the optional frequency to training."""
+        training = [
+            task
+            for component in autogluon_timeseries_training_pipeline.pipeline_spec.components.values()
+            for task in component.dag.tasks.values()
+            if task.component_ref.name.startswith("comp-autogluon-timeseries-models-training")
+        ]
+        assert len(training) == 3
+        assert all(
+            task.inputs.parameters["freq"].component_input_parameter == "pipelinechannel--freq" for task in training
+        )
 
     def test_compiled_pipeline_has_expected_inputs(self):
         """Test that compiled pipeline YAML contains expected pipeline input names."""
