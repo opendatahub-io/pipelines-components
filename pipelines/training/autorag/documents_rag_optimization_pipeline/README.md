@@ -53,14 +53,12 @@ deployment settings), executable notebooks, and evaluation results.
   - No Parent Owners: Yes
   - Approvers:
     - LukaszCmielowski
-    - DorotaDR
     - Mateusz-Switala
-    - filip-komarzyniec
     - jakub-walaszczyk
   - Reviewers:
-    - filip-komarzyniec
     - jakub-walaszczyk
-    - MichalSteczko
+    - Wojciech-Rebisz
+    - Mateusz-Switala
 
 <!-- custom-content -->
 

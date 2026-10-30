@@ -92,12 +92,11 @@ The pipeline leverages AutoGluon's unique ensembling strategy that combines mult
   - Approvers:
     - mateusz-szewczyk-dev
     - LukaszCmielowski
-    - DorotaDR
     - Mateusz-Switala
+    - jakub-walaszczyk
   - Reviewers:
     - mateusz-szewczyk-dev
     - Mateusz-Switala
-    - DorotaDR
 
 <!-- custom-content -->
 

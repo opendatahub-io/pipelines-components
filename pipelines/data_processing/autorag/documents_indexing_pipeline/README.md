@@ -54,10 +54,9 @@ Discovers documents from object storage, extracts text, and indexes chunks into 
   - No Parent Owners: Yes
   - Approvers:
     - LukaszCmielowski
-    - DorotaDR
     - Mateusz-Switala
-    - filip-komarzyniec
     - jakub-walaszczyk
   - Reviewers:
     - LukaszCmielowski
-    - DorotaDR
+    - Wojciech-Rebisz
+    - Mateusz-Switala

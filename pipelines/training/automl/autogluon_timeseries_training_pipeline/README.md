@@ -75,11 +75,10 @@ to a single combined ``models_artifact``.
   - No Parent Owners: Yes
   - Approvers:
     - mateusz-szewczyk-dev
-    - DorotaDR
     - Mateusz-Switala
+    - jakub-walaszczyk
   - Reviewers:
     - mateusz-szewczyk-dev
-    - DorotaDR
 
 <!-- custom-content -->
 
