@@ -68,7 +68,7 @@ def documents_indexing(
             by other vector stores.
         chunking_method: Chunking strategy: ``"recursive"`` (LangChain) or
             ``"hybrid"`` (Docling structure-aware).
-        chunk_size: Maximum chunk size in tokens (128--2048).
+        chunk_size: Maximum chunk size in tokens (128--1024).
         chunk_overlap: Token overlap between consecutive chunks (recursive
             method only).
         batch_size: Number of documents loaded and processed per batch.

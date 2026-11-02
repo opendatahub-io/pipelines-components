@@ -58,7 +58,7 @@ def _make_ai4rag_mocks():
     mock_ChunkingConstraints = mock.MagicMock()
     mock_ChunkingConstraints.METHODS = ("recursive", "hybrid")
     mock_ChunkingConstraints.MIN_CHUNK_SIZE = 128
-    mock_ChunkingConstraints.MAX_CHUNK_SIZE = 2048
+    mock_ChunkingConstraints.MAX_CHUNK_SIZE = 1024
 
     modules = {
         "ai4rag": mock.MagicMock(),
@@ -231,12 +231,13 @@ class TestDocumentsIndexingValidation:
                 _call_component(tmp_path, modules, mocks, chunking_method="semantic")
 
     @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
-    def test_chunk_size_out_of_range_raises(self, tmp_path):
+    @pytest.mark.parametrize("chunk_size", [64, 1025, 2048])
+    def test_chunk_size_out_of_range_raises(self, tmp_path, chunk_size):
         """Out-of-range chunk_size raises ValueError."""
         modules, mocks = _make_ai4rag_mocks()
         with mock.patch.dict("sys.modules", modules):
-            with pytest.raises(ValueError, match="chunk_size must be an integer in the range"):
-                _call_component(tmp_path, modules, mocks, chunk_size=64)
+            with pytest.raises(ValueError, match="chunk_size must be an integer in the range 128 to 1024"):
+                _call_component(tmp_path, modules, mocks, chunk_size=chunk_size)
 
     @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
     def test_negative_batch_size_raises(self, tmp_path):

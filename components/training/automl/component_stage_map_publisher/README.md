@@ -38,12 +38,11 @@ Reads the static JSON template from the package (``run_status_templates/pipeline
   - Approvers:
     - mateusz-szewczyk-dev
     - LukaszCmielowski
-    - DorotaDR
     - Mateusz-Switala
+    - jakub-walaszczyk
   - Reviewers:
     - mateusz-szewczyk-dev
     - Mateusz-Switala
-    - DorotaDR
 
 <!-- custom-content -->
 

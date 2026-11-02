@@ -79,6 +79,17 @@ def online_draft_model_training(
     """Extract and train a draft model with a managed vLLM sidecar."""
     from pathlib import Path
 
+    # Pre-strip params consumed by inline logic below; all string inputs are also
+    # stripped centrally in run_speculator.
+    verifier_model = verifier_model.strip()
+    output_dir = output_dir.strip()
+    pvc_path = pvc_path.strip()
+    dataset_name = dataset_name.strip()
+    if persistent_pvc != persistent_pvc.strip():
+        raise ValueError(f"persistent_pvc must not contain leading or trailing whitespace (got {persistent_pvc!r}).")
+    persistent_mount_path = persistent_mount_path.strip()
+    verifier_model_pvc = verifier_model_pvc.strip() if verifier_model_pvc else verifier_model_pvc
+
     def resolve_local_dataset_path(dataset_uri: str) -> str:
         if not dataset_uri:
             return dataset_uri

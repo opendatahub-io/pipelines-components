@@ -69,7 +69,7 @@ def documents_indexing_pipeline(
             and ``max_completion_tokens``) for Neo4j graph extraction. Supplied by an
             optimized graph-mode pattern; ignored by non-Neo4j stores.
         chunking_method: Chunking method (e.g. "recursive").
-        chunk_size: Maximum chunk size in tokens (128--2048).
+        chunk_size: Maximum chunk size in tokens (128--1024).
         chunk_overlap: Token overlap between consecutive chunks (recursive method only).
         batch_size: Number of documents per batch. Defaults to ``20``; ``0`` processes all
             documents in a single batch.

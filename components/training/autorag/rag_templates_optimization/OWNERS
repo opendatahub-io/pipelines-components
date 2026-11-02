@@ -1,11 +1,9 @@
 no_parent_owners: true
 approvers:
   - LukaszCmielowski
-  - DorotaDR
   - Mateusz-Switala
-  - filip-komarzyniec
   - jakub-walaszczyk
 reviewers:
-  - filip-komarzyniec
   - jakub-walaszczyk
-  - MichalSteczko
+  - Wojciech-Rebisz
+  - Mateusz-Switala

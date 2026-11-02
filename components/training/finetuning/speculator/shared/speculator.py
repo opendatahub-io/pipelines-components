@@ -128,6 +128,17 @@ def run_speculator(mode: str, values: dict[str, Any]) -> str:
         from shared.training import select_runtime, wait_for_training_job
 
     log = create_logger(f"speculator_{mode}")
+    # persistent_pvc is used verbatim as a Kubernetes PVC name, so reject stray
+    # whitespace with a clear error instead of silently fixing it.
+    pvc_value = values.get("persistent_pvc")
+    if isinstance(pvc_value, str) and pvc_value != pvc_value.strip():
+        raise ValueError(f"persistent_pvc must not contain leading or trailing whitespace (got {pvc_value!r}).")
+    # Strip leading/trailing whitespace from every other string input before use;
+    # this covers all string params for all modes (data_only, train_only, online).
+    values = {
+        key: value.strip() if isinstance(value, str) and key != "persistent_pvc" else value
+        for key, value in values.items()
+    }
     pvc_path = values["pvc_path"]
     persistent_pvc = values.get("persistent_pvc") or None
     persistent_mount_path = values.get("persistent_mount_path", "/mnt/persistent")

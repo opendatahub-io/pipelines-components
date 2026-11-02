@@ -37,7 +37,7 @@ deployment settings), executable notebooks, and evaluation results.
   - Kubeflow:
     - Name: Pipelines, Version: ==2.17.0
   - External Services:
-    - Name: ai4rag, Version: ~=0.25.1
+    - Name: ai4rag, Version: ~=0.25.3
     - Name: MaaS, Version: >=1.0.0
     - Name: RHOAI Connections API, Version: >=1.0.0
     - Name: Milvus, Version: >=2.0.0
@@ -48,19 +48,17 @@ deployment settings), executable notebooks, and evaluation results.
   - pipeline
   - autorag
   - rag-optimization
-- **Last Verified**: 2026-10-26 00:00:00+00:00
+- **Last Verified**: 2026-10-29 00:00:00+00:00
 - **Owners**:
   - No Parent Owners: Yes
   - Approvers:
     - LukaszCmielowski
-    - DorotaDR
     - Mateusz-Switala
-    - filip-komarzyniec
     - jakub-walaszczyk
   - Reviewers:
-    - filip-komarzyniec
     - jakub-walaszczyk
-    - MichalSteczko
+    - Wojciech-Rebisz
+    - Mateusz-Switala
 
 <!-- custom-content -->
 

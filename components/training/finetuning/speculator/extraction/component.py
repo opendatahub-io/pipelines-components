@@ -132,6 +132,26 @@ def extract_hidden_states(
     """
     from pathlib import Path
 
+    # Pre-strip params consumed by inline logic below; all string inputs are also
+    # stripped centrally in run_speculator.
+    verifier_model = verifier_model.strip()
+    output_dir = output_dir.strip()
+    pvc_path = pvc_path.strip()
+    dataset_name = dataset_name.strip()
+    speculator_type = speculator_type.strip()
+    vllm_resource_memory = vllm_resource_memory.strip()
+    training_envs = training_envs.strip()
+    training_runtime = training_runtime.strip()
+    if persistent_pvc != persistent_pvc.strip():
+        raise ValueError(f"persistent_pvc must not contain leading or trailing whitespace (got {persistent_pvc!r}).")
+    persistent_mount_path = persistent_mount_path.strip()
+    verifier_model_pvc = verifier_model_pvc.strip() if verifier_model_pvc else verifier_model_pvc
+    downloaded_dataset_uri = downloaded_dataset_uri.strip() if downloaded_dataset_uri else downloaded_dataset_uri
+    hidden_states_path = hidden_states_path.strip() if hidden_states_path else hidden_states_path
+    target_layer_ids = target_layer_ids.strip() if target_layer_ids else target_layer_ids
+    packages_to_install = packages_to_install.strip() if packages_to_install else packages_to_install
+    pip_index_urls = pip_index_urls.strip() if pip_index_urls else pip_index_urls
+
     def resolve_local_dataset_path(dataset_uri: str) -> str:
         if not dataset_uri:
             return dataset_uri

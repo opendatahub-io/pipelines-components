@@ -38,10 +38,8 @@ pipeline execution begins. An ``mlflow`` block is added from the platform-inject
 - **Owners**:
   - Approvers:
     - LukaszCmielowski
-    - DorotaDR
     - Mateusz-Switala
-    - filip-komarzyniec
     - jakub-walaszczyk
   - Reviewers:
     - Mateusz-Switala
-    - DorotaDR
+    - Wojciech-Rebisz

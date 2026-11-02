@@ -25,7 +25,7 @@ Individual document failures (corrupt JSON, chunking errors) are recorded in the
 | `foundation_model_id` | `Optional[str]` | `None` | Optional generation model ID used to extract entities when indexing into Neo4j. Set this from a graph-mode optimized pattern to reproduce its knowledge graph; ignored by other vector stores. |
 | `foundation_model_params` | `Optional[dict]` | `None` | Optional generation parameters (for example, ``temperature`` and ``max_completion_tokens``) used with ``foundation_model_id`` for Neo4j entity extraction. Set this from a graph-mode optimized pattern to reproduce its knowledge graph; ignored by other vector stores. |
 | `chunking_method` | `str` | `recursive` | Chunking strategy: ``"recursive"`` (LangChain) or ``"hybrid"`` (Docling structure-aware). |
-| `chunk_size` | `int` | `1024` | Maximum chunk size in tokens (128--2048). |
+| `chunk_size` | `int` | `1024` | Maximum chunk size in tokens (128--1024). |
 | `chunk_overlap` | `int` | `0` | Token overlap between consecutive chunks (recursive method only). |
 | `batch_size` | `int` | `20` | Number of documents loaded and processed per batch. Controls peak memory usage, not API payload sizes. Defaults to ``20``; ``0`` processes all documents in a single batch. |
 | `collection_name` | `Optional[str]` | `None` | Vector store collection to reuse (matches ``pattern.json`` ``settings.store_binding.collection_name``). Omit to create a new collection. |
@@ -84,23 +84,21 @@ def example_pipeline(
     - Name: Pipelines, Version: >=2.15.2
   - External Services:
     - Name: RHOAI Connections API, Version: >=1.0.0
-    - Name: ai4rag, Version: ~=0.25.1
+    - Name: ai4rag, Version: ~=0.25.3
     - Name: MaaS, Version: >=1.0.0
     - Name: Milvus, Version: >=2.0.0
     - Name: PGVector, Version: >=0.5.0
 - **Tags**:
   - data-indexing
   - autorag
-- **Last Verified**: 2026-10-26 00:00:00+00:00
+- **Last Verified**: 2026-10-29 00:00:00+00:00
 - **Owners**:
   - No Parent Owners: Yes
   - Approvers:
     - LukaszCmielowski
-    - DorotaDR
     - Mateusz-Switala
-    - filip-komarzyniec
     - jakub-walaszczyk
   - Reviewers:
-    - filip-komarzyniec
     - jakub-walaszczyk
-    - MichalSteczko
+    - Wojciech-Rebisz
+    - Mateusz-Switala
