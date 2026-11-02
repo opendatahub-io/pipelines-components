@@ -38,7 +38,7 @@ Discovers documents from object storage, extracts text, and indexes chunks into 
     - Name: Pipelines, Version: >=2.15.2
   - External Services:
     - Name: boto3, Version: >=1.42.34
-    - Name: ai4rag, Version: ~=0.25.3
+    - Name: ai4rag, Version: ~=0.25.4
     - Name: RHOAI Connections API, Version: >=1.0.0
     - Name: MaaS, Version: >=1.0.0
     - Name: Milvus, Version: >=2.0.0
@@ -49,7 +49,7 @@ Discovers documents from object storage, extracts text, and indexes chunks into 
   - documents_discovery
   - data_indexing
   - autorag
-- **Last Verified**: 2026-10-29 00:00:00+00:00
+- **Last Verified**: 2026-11-02 00:00:00+00:00
 - **Owners**:
   - No Parent Owners: Yes
   - Approvers:

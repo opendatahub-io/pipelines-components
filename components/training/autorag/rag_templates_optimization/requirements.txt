@@ -1,4 +1,4 @@
-ai4rag==0.25.3
+ai4rag==0.25.4
 kfp[kubernetes] ~= 2.14
 PyYAML
 langchain-text-splitters
