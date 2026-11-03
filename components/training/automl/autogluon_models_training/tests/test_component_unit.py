@@ -1,7 +1,10 @@
 """Unit tests for the autogluon_models_training component."""
 
+import ast
 import json
+import os
 import sys
+import threading
 from contextlib import contextmanager
 from pathlib import Path
 from unittest import mock
@@ -268,6 +271,57 @@ class TestAutogluonModelsTrainingUnitTests:
         "template_name",
         ["classification_notebook.ipynb", "regression_notebook.ipynb", "timeseries_notebook.ipynb"],
     )
+    @pytest.mark.parametrize(
+        ("ca_bundle", "retry_fails"),
+        [
+            (None, False),
+            ("", False),
+            (" \t", False),
+            ("/test/ca.pem", False),
+            (" /test/ca.pem ", False),
+            ("/test/ca.pem", True),
+        ],
+    )
+    def test_notebook_template_tls_failure_keeps_verification_enabled(
+        self, template_name, ca_bundle, retry_fails, monkeypatch
+    ):
+        """TLS failures either stop the download or retry once with an explicit CA bundle."""
+        notebook = json.loads((_NOTEBOOK_TEMPLATES_DIR / template_name).read_text(encoding="utf-8"))
+        source = next(
+            "".join(cell["source"])
+            for cell in notebook["cells"]
+            if "def _download_model(" in "".join(cell.get("source", []))
+        )
+        retry = next(node for node in ast.parse(source).body if isinstance(node, ast.Try))
+        tls_error_class = type("SSLError", (Exception,), {})
+        tls_error = tls_error_class("TLS verification failed")
+        retry_result = tls_error_class("Invalid CA bundle") if retry_fails else "run/model"
+        download = mock.Mock(side_effect=[tls_error, retry_result])
+        namespace = {"os": os, "SSLError": tls_error_class, "_download_model": download}
+        if ca_bundle is None:
+            monkeypatch.delenv("AWS_CA_BUNDLE", raising=False)
+        else:
+            monkeypatch.setenv("AWS_CA_BUNDLE", ca_bundle)
+
+        code = compile(ast.Module(body=[retry], type_ignores=[]), template_name, "exec")
+        if not ca_bundle or not ca_bundle.strip():
+            with pytest.raises(RuntimeError, match="AWS_CA_BUNDLE") as raised:
+                exec(code, namespace)
+            assert raised.value.__cause__ is tls_error
+            download.assert_called_once_with()
+        else:
+            if retry_fails:
+                with pytest.raises(tls_error_class, match="Invalid CA bundle"):
+                    exec(code, namespace)
+            else:
+                exec(code, namespace)
+                assert namespace["best_model_path"] == "run/model"
+            assert download.call_args_list == [mock.call(), mock.call(verify=ca_bundle.strip())]
+
+    @pytest.mark.parametrize(
+        "template_name",
+        ["classification_notebook.ipynb", "regression_notebook.ipynb", "timeseries_notebook.ipynb"],
+    )
     def test_notebook_template_documents_pip_index(self, template_name):
         """Templates must direct AutoGluon installation to one trusted package index."""
         notebook = json.loads((_NOTEBOOK_TEMPLATES_DIR / template_name).read_text(encoding="utf-8"))
@@ -285,7 +339,7 @@ class TestAutogluonModelsTrainingUnitTests:
             and "The AutoGluon version used in this notebook" in "".join(cell["source"])
             and "PIP_INDEX_URL" in "".join(cell["source"])
             and "Red Hat package index" in "".join(cell["source"])
-            and "%env PIP_INDEX_URL=https://console.redhat.com/api/pypi/public-rhai/rhoai/3.6/cpu-ubi9-test/simple/"
+            and "%env PIP_INDEX_URL=https://packages.redhat.com/api/pypi/public-rhai/cpu-torch2.13-el9.8-test/simple"
             in "".join(cell["source"])
             and "If your notebook environment does not already provide it" in "".join(cell["source"])
             and "PIP_EXTRA_INDEX_URL" not in "".join(cell["source"])
@@ -407,13 +461,23 @@ class TestAutogluonModelsTrainingUnitTests:
         # evaluate_predictions called per model (not evaluate())
         assert mock_predictor_clone.evaluate_predictions.call_count == 2
 
-        # feature_importance called per model with model= and subsample_size=2000
+        # feature_importance called per model, one shuffle set, after metrics
         assert mock_predictor_clone.feature_importance.call_count == 2
         mock_predictor_clone.feature_importance.assert_any_call(
-            mock_test_df, model="LightGBM_BAG_L1_FULL", subsample_size=2000
+            mock_test_df,
+            model="LightGBM_BAG_L1_FULL",
+            subsample_size=2000,
+            num_shuffle_sets=1,
+            include_confidence_band=False,
+            max_memory_ratio=0.02,
         )
         mock_predictor_clone.feature_importance.assert_any_call(
-            mock_test_df, model="NeuralNetFastAI_BAG_L1_FULL", subsample_size=2000
+            mock_test_df,
+            model="NeuralNetFastAI_BAG_L1_FULL",
+            subsample_size=2000,
+            num_shuffle_sets=1,
+            include_confidence_band=False,
+            max_memory_ratio=0.02,
         )
 
         # set_model_best called per model before clone_for_deployment
@@ -571,6 +635,7 @@ class TestAutogluonModelsTrainingUnitTests:
             label_column="target",
             task_type="regression",
             top_n=1,
+            preset="balanced",
             train_data_path="/tmp/train.parquet",
             test_data=mock.MagicMock(path="/tmp/test.parquet"),
             workspace_path=workspace_path,
@@ -579,7 +644,6 @@ class TestAutogluonModelsTrainingUnitTests:
             sample_row=SAMPLE_ROW,
             models_artifact=mock_models_artifact,
             html_artifact=_make_html_artifact(tmp_path),
-            preset="balanced",
             experiment_notebook=_make_experiment_notebook_artifact(tmp_path),
             component_status=_make_component_status_artifact(tmp_path),
         )
@@ -1088,11 +1152,10 @@ class TestAutogluonModelsTrainingUnitTests:
     @mock.patch("pandas.read_parquet")
     @mock.patch("autogluon.tabular.TabularPredictor")
     def test_operations_called_in_correct_order(self, mock_predictor_class, mock_read_parquet, mock_rmtree, tmp_path):
-        """Verify call order for a single model: fit → clone → refit_full → Phase A (predict → evaluate → fi) → Phase B (set_model_best → clone_for_deployment) → rmtree.
+        """Verify call order for a single model: fit → clone → refit_full → Phase A (predict → evaluate) → feature importance → Phase B (set_model_best → clone_for_deployment) → rmtree.
 
-        Phase A (metrics + notebook) runs via ThreadPoolExecutor across models, but within
-        a single model's _process_model the calls are always sequential: predict first, then
-        evaluate_predictions, then feature_importance.  Phase B always follows Phase A.
+        Phase A (metrics + notebook) runs via ThreadPoolExecutor across models. Permutation
+        feature importance follows Phase A, one model at a time. Phase B always follows that.
         """  # noqa: E501
         call_order = []
         mock_predictor = mock.MagicMock()
@@ -1109,7 +1172,7 @@ class TestAutogluonModelsTrainingUnitTests:
             call_order.append("evaluate_predictions"),
             {"r2": 0.9},
         )[1]
-        mock_predictor_clone.feature_importance.side_effect = lambda df, model, subsample_size: (
+        mock_predictor_clone.feature_importance.side_effect = lambda *args, **kwargs: (
             call_order.append("feature_importance"),
             mock.MagicMock(to_dict=lambda: {"f": 0.1}),
         )[1]
@@ -1159,6 +1222,119 @@ class TestAutogluonModelsTrainingUnitTests:
         assert call_order[6] == "set_model_best"
         assert call_order[7] == "clone_for_deployment"
         assert call_order[-1] == "rmtree"
+
+    @mock.patch("shutil.rmtree")
+    @mock.patch("pandas.read_parquet")
+    @mock.patch("autogluon.tabular.TabularPredictor")
+    def test_feature_importance_for_wide_tables_runs_sequentially(
+        self, mock_predictor_class, mock_read_parquet, mock_rmtree, tmp_path
+    ):
+        """Wide tables calculate importances serially to limit peak memory."""
+        mock_predictor = mock.MagicMock()
+        mock_predictor_clone = mock.MagicMock()
+        mock_predictor_class.return_value.fit.return_value = mock_predictor
+        mock_predictor.clone.return_value = mock_predictor_clone
+        feature_importance_threads = []
+        mock_predictor_clone.feature_importance.side_effect = lambda *args, **kwargs: (
+            feature_importance_threads.append(threading.current_thread().name),
+            mock.MagicMock(to_dict=lambda: {"f0": 0.1}),
+        )[1]
+        mock_predictor.problem_type = "regression"
+        mock_predictor.label = "target"
+        mock_predictor.eval_metric = "r2"
+        _mock_leaderboard_top_models(mock_predictor, ["LightGBM_BAG_L1", "NeuralNetFastAI_BAG_L1"])
+        wide_columns = tuple(f"f{index}" for index in range(250))
+        test_df = _mock_parquet_frame(feature_cols=wide_columns)
+        mock_read_parquet.side_effect = [_mock_parquet_frame(), test_df]
+
+        workspace_path = str(tmp_path / "ws")
+        Path(workspace_path).mkdir()
+        models_output_dir = str(tmp_path / "out")
+        Path(models_output_dir).mkdir()
+        mock_models_artifact = mock.MagicMock()
+        mock_models_artifact.path = models_output_dir
+        mock_models_artifact.metadata = {}
+
+        autogluon_models_training.python_func(
+            label_column="target",
+            task_type="regression",
+            top_n=2,
+            preset="balanced",
+            train_data_path="/tmp/train.parquet",
+            test_data=mock.MagicMock(path="/tmp/test.parquet"),
+            workspace_path=workspace_path,
+            pipeline_name=PIPELINE_NAME,
+            run_id=RUN_ID,
+            sample_row=SAMPLE_ROW,
+            models_artifact=mock_models_artifact,
+            experiment_notebook=_make_experiment_notebook_artifact(tmp_path),
+            component_status=_make_component_status_artifact(tmp_path),
+            html_artifact=_make_html_artifact(tmp_path),
+        )
+
+        assert mock_predictor_clone.feature_importance.call_count == 2
+        assert feature_importance_threads == [threading.current_thread().name] * 2
+        assert mock_predictor_clone.feature_importance.call_args_list[0].kwargs == {
+            "model": "LightGBM_BAG_L1_FULL",
+            "subsample_size": 2000,
+            "num_shuffle_sets": 1,
+            "include_confidence_band": False,
+            "max_memory_ratio": 0.02,
+        }
+        assert (
+            mock_predictor_clone.feature_importance.call_args_list[1].kwargs["model"] == "NeuralNetFastAI_BAG_L1_FULL"
+        )
+
+    @mock.patch("pandas.read_parquet")
+    @mock.patch("autogluon.tabular.TabularPredictor")
+    def test_feature_importance_json_replaces_non_finite_values(
+        self, mock_predictor_class, mock_read_parquet, tmp_path
+    ):
+        """One shuffle set emits only the usable importance values as strict JSON."""
+        mock_predictor = mock.MagicMock()
+        mock_predictor_clone = mock.MagicMock()
+        mock_predictor_class.return_value.fit.return_value = mock_predictor
+        mock_predictor.clone.return_value = mock_predictor_clone
+        mock_predictor.problem_type = "regression"
+        mock_predictor.label = "target"
+        mock_predictor.eval_metric = "r2"
+        _mock_leaderboard_top_models(mock_predictor, ["LightGBM_BAG_L1"])
+        mock_predictor_clone.evaluate_predictions.return_value = {"r2": 0.9}
+        mock_predictor_clone.predict.return_value = mock.MagicMock()
+        mock_predictor_clone.feature_importance.return_value = mock.MagicMock(
+            to_dict=lambda: {
+                "importance": {"f0": 0.2, "f1": -0.1, "f2": float("nan"), "f3": float("inf")},
+                "stddev": {"f0": float("nan"), "f1": float("nan")},
+                "p_value": {"f0": float("nan"), "f1": float("inf")},
+                "n": {"f0": 1, "f1": 1},
+                "p99_high": {"f0": float("nan"), "f1": float("nan")},
+                "p99_low": {"f0": float("-inf"), "f1": float("nan")},
+            }
+        )
+        mock_read_parquet.side_effect = [_mock_parquet_frame(), _mock_parquet_frame(), _mock_parquet_frame()]
+
+        workspace_path = str(tmp_path / "ws")
+        Path(workspace_path).mkdir()
+        models_output_dir = str(tmp_path / "out")
+        Path(models_output_dir).mkdir()
+        mock_models_artifact = mock.MagicMock()
+        mock_models_artifact.path = models_output_dir
+        mock_models_artifact.metadata = {}
+        mock_test_data = mock.MagicMock()
+        mock_test_data.path = "/tmp/test.parquet"
+
+        autogluon_models_training.python_func(
+            **_base_call_kwargs(workspace_path, mock_models_artifact, mock_test_data, tmp_path),
+        )
+
+        importance_path = Path(models_output_dir) / "LightGBM_BAG_L1_FULL" / "metrics" / "feature_importance.json"
+        raw = importance_path.read_text(encoding="utf-8")
+
+        def _reject_nonstandard_json(constant: str) -> None:
+            raise ValueError(constant)
+
+        payload = json.loads(raw, parse_constant=_reject_nonstandard_json)
+        assert payload == {"importance": {"f0": 0.2, "f1": -0.1, "f2": None, "f3": None}}
 
     @mock.patch("shutil.rmtree")
     @mock.patch("pandas.read_parquet")

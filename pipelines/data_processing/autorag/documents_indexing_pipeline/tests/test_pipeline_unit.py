@@ -46,6 +46,7 @@ class TestDocumentsIndexingPipelineUnit:
             "chunk_overlap",
             "collection_name",
             "ocr_lang",
+            "graph_extraction_config",
             "preset",
             "gpu_acceleration",
         ):
@@ -90,6 +91,37 @@ class TestDocumentsIndexingPipelineUnit:
         finally:
             Path(tmp_path).unlink(missing_ok=True)
 
+    def test_compiled_pipeline_disables_document_sampling(self, tmp_path):
+        """Production indexing discovers the full corpus without the default size cap."""
+        tmp_file = tmp_path / "full-corpus-indexing.yaml"
+        compiler.Compiler().compile(
+            pipeline_func=documents_indexing_pipeline,
+            package_path=str(tmp_file),
+        )
+        spec = load_pipeline_spec_document(tmp_file)
+        discovery_inputs = spec["root"]["dag"]["tasks"]["documents-discovery"]["inputs"]["parameters"]
+
+        assert discovery_inputs["sampling_enabled"] == {"runtimeValue": {"constant": False}}
+
+    def test_compiled_pipeline_wires_preset_to_text_extraction(self, tmp_path):
+        """Indexing preserves the optimization preset instead of defaulting extraction to speed."""
+        tmp_file = tmp_path / "preset-indexing.yaml"
+        compiler.Compiler().compile(
+            pipeline_func=documents_indexing_pipeline,
+            package_path=str(tmp_file),
+        )
+        spec = load_pipeline_spec_document(tmp_file)
+        preset_input = spec["root"]["inputDefinitions"]["parameters"]["preset"]
+        extraction_inputs = spec["root"]["dag"]["tasks"]["text-extraction"]["inputs"]["parameters"]
+
+        assert preset_input["defaultValue"] == "speed"
+        assert extraction_inputs["preset"] == {
+            "taskOutputParameter": {
+                "producerTask": "prepare-extraction-inputs",
+                "outputParameterKey": "preset",
+            }
+        }
+
     def test_compiled_pipeline_wires_indexing_parameters(self):
         """Chunking and embedding pipeline inputs reach the indexing component."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as tmp:
@@ -106,9 +138,29 @@ class TestDocumentsIndexingPipelineUnit:
         assert "componentInputParameter: chunk_size" in content
         assert "componentInputParameter: chunk_overlap" in content
         assert "componentInputParameter: embedding_model_id" in content
+        assert "componentInputParameter: foundation_model_id" in content
+        assert "componentInputParameter: foundation_model_params" in content
         assert "componentInputParameter: collection_name" in content
         assert "componentInputParameter: preset" in content
         assert "comp-documents-indexing:" in content
+
+    def test_compiled_pipeline_wires_graph_extraction_config(self, tmp_path):
+        """The pattern's public graph settings reach the indexing component unchanged."""
+        tmp_file = tmp_path / "graph-indexing.yaml"
+        compiler.Compiler().compile(
+            pipeline_func=documents_indexing_pipeline,
+            package_path=str(tmp_file),
+        )
+        spec = load_pipeline_spec_document(tmp_file)
+        root_inputs = spec["root"]["inputDefinitions"]["parameters"]
+        component_inputs = spec["components"]["comp-documents-indexing"]["inputDefinitions"]["parameters"]
+        task_inputs = spec["root"]["dag"]["tasks"]["documents-indexing"]["inputs"]["parameters"]
+
+        assert root_inputs["graph_extraction_config"]["parameterType"] == "STRUCT"
+        assert component_inputs["graph_extraction_config"]["parameterType"] == "STRUCT"
+        assert task_inputs["graph_extraction_config"] == {"componentInputParameter": "graph_extraction_config"}
+        for inputs in (root_inputs, component_inputs, task_inputs):
+            assert "kg_extraction_config" not in inputs
 
     def test_compiled_pipeline_wires_ocr_lang_to_text_extraction(self):
         """ocr_lang reaches text extraction so indexing OCRs the corpus the way the experiment did."""
@@ -184,6 +236,8 @@ class TestDocumentsIndexingPipelineUnit:
         # Union of vector-DB backends is mapped as optional env vars.
         assert "MILVUS_URI" in content
         assert "PGVECTOR_HOST" in content
+        assert "NEO4J_URI" in content
+        assert "NEO4J_CA_CERT" in content
 
     def test_compiled_pipeline_declares_component_resource_tiers(self):
         """All indexing pipeline steps declare the workload CPU/memory tier."""

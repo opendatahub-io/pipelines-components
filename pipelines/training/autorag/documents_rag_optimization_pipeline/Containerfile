@@ -2,7 +2,7 @@
 
 ARG DOCLING_OGX_MODELCAR="registry.redhat.io/rhai/modelcar-redhatai-ogx-distribution:3.0@sha256:63f710736cbd083ffeeb8bd90686727c63cc5ab8be373dcf1b202a5411909d77"
 ARG WHISPER_MODELCAR="registry.redhat.io/rhai/modelcar-redhatai-whisper-tiny:3.0"
-ARG BASE_IMAGE="quay.io/aipcc/base-images/cpu-el9.8:3.6.0"
+ARG BASE_IMAGE=quay.io/aipcc/base-images/cpu-torch2.13-el9.8:1793124049
 # Source of the CUDA 13 userspace runtime (see COPY below). Red Hat does not publish
 # the CUDA runtime as pip wheels, so the locked GPU wheels get it from this image.
 ARG CUDA_RUNTIME_IMAGE="quay.io/opendatahub/odh-base-image-cuda-py312-c9s:v13.0@sha256:6f8fcdd89279fd7217a53a76b912ff5a563600aff0d16faba15caa8f14600cd7"
@@ -16,7 +16,7 @@ FROM ${BASE_IMAGE}
 # wheels (torch/torchvision/onnxruntime-gpu/triton) link against it, while the final
 # image keeps the required CPU base image. Both are OCI build inputs, so the build
 # stays hermetic (no network). The toolkit libs (libcudart/libcublas/libcufft/...) go
-# under the CUDA path; cuDNN 9, NCCL and cuSPARSELt live in the system lib dir.
+# under the CUDA path; cuDNN 9, NCCL, cuSPARSELt and cuDSS live in the system lib dir.
 # ldconfig puts them on the loader path so torch's global-deps load finds libcudart.so.13.
 USER root
 # Copy only the fully-versioned library files (two or more version segments); the
@@ -26,6 +26,7 @@ COPY --from=cuda-runtime /usr/local/cuda-13.0/targets/x86_64-linux/lib/ /usr/loc
 COPY --from=cuda-runtime /usr/lib64/libcudnn*.so.*.* /usr/lib64/
 COPY --from=cuda-runtime /usr/lib64/libnccl.so.*.* /usr/lib64/
 COPY --from=cuda-runtime /usr/lib64/libcusparseLt.so.*.* /usr/lib64/
+COPY --from=cuda-runtime /usr/lib64/libcudss/13/*.so.*.* /usr/lib64/
 RUN printf '%s\n' /usr/local/cuda-13.0/targets/x86_64-linux/lib > /etc/ld.so.conf.d/cuda-13.conf && \
     ldconfig
 USER default
@@ -54,14 +55,18 @@ RUN ORIGIN_FILE="$(python -c 'import inspect; from docling_core.types.doc.common
 # raises FileNotFoundError when they are absent.
 # Must match DOCLING_ARTIFACTS_PATH. Do not use /opt/docling-artifacts on aipcc: non-root RUN cannot mkdir there.
 ENV DOCLING_ARTIFACTS_PATH=/opt/app-root/docling-artifacts/models
+ENV HF_MODEL_DIR=/opt/app-root/models/whisper-tiny
 USER root
-RUN mkdir -p /opt/app-root/docling-artifacts/models
+RUN mkdir -p /opt/app-root/docling-artifacts/models /opt/app-root/models/whisper-tiny
 COPY --from=docling-ogx-modelcar \
      /models/docling/models/ \
      /opt/app-root/docling-artifacts/models/
+# The Whisper modelcar ships a complete Transformers snapshot under /models.
+# Keep it outside Docling's artifact directory and expose the exact local-only
+# path consumed by ai4rag's LocalHuggingFaceAsrPipeline.
 COPY --from=whisper-modelcar \
      /models/ \
-     /opt/app-root/docling-artifacts/models/
-RUN chown -R 1001:0 /opt/app-root/docling-artifacts && \
-    chmod -R g+rw /opt/app-root/docling-artifacts
+     /opt/app-root/models/whisper-tiny/
+RUN chown -R 1001:0 /opt/app-root/docling-artifacts /opt/app-root/models && \
+    chmod -R g+rX /opt/app-root/docling-artifacts /opt/app-root/models
 USER default

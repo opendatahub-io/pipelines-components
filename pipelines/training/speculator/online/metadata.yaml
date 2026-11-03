@@ -1,0 +1,36 @@
+---
+name: speculator_online_pipeline
+description: >-
+  Cache a verifier model on a shared PVC, train an Eagle3 draft in one online
+  Speculator Trainer job with a managed vLLM sidecar, evaluate it, optionally
+  register it, and serve it.
+stability: alpha
+dependencies:
+  kubeflow:
+    - name: Pipelines
+      version: '>=2.15.2'
+    - name: Trainer
+      version: '>=0.1.0'
+  external_services:
+    - name: Kubernetes
+      version: '>=1.28.0'
+    - name: HuggingFace Hub
+      version: '>=0.20.0'
+    - name: Model Registry
+      version: '>=0.3.4'
+    - name: OpenShift AI (KServe)
+      version: '>=2.10.0'
+    - name: vLLM ServingRuntime
+      version: '>=0.24.0'
+    - name: vLLM
+      version: '>=0.9.0'
+    - name: GuideLLM
+      version: '~=0.7.1'
+tags:
+  - training
+  - speculator
+  - speculative_decoding
+  - pipeline
+lastVerified: 2026-10-21T00:00:00Z
+links:
+  documentation: https://github.com/kubeflow/trainer

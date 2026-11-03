@@ -8,3 +8,4 @@ This directory contains pipelines in the **Training** category:
 - [AutoRAG](./autorag/README.md)
 - [Finetuning](./finetuning/README.md)
 - [Finetuning Evalhub](./finetuning_evalhub/README.md)
+- [Speculator](./speculator/README.md)

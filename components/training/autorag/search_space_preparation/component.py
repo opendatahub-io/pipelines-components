@@ -10,7 +10,7 @@ _AUTORAG_SHARED = Path(__file__).parents[1] / "shared"
 
 @dsl.component(
     base_image=AUTORAG_IMAGE,  # noqa: E501
-    embedded_artifact_path=str(_AUTORAG_SHARED / "component_status.py"),
+    embedded_artifact_path=str(_AUTORAG_SHARED / "runtime_embed" / "component_status.py"),
     install_kfp_package=False,
 )
 def search_space_preparation(
@@ -66,7 +66,7 @@ def search_space_preparation(
 
     VALID_PRESETS = {"speed", "balanced"}
     PRESET_CHUNKING_METHODS = {"speed": ["recursive"], "balanced": ["recursive", "hybrid"]}
-    PRESET_CHUNK_SIZES = {"speed": [128, 256, 512], "balanced": [512, 1024, 2048]}
+    PRESET_CHUNK_SIZES = {"speed": [128, 256, 512], "balanced": [512, 1024]}
     PRESET_CHUNK_OVERLAPS = {"speed": [32, 64], "balanced": [0, 128, 256]}
 
     if preset not in VALID_PRESETS:
@@ -77,16 +77,6 @@ def search_space_preparation(
             raise ValueError(f"{name} must be a non-empty list of non-empty model identifiers.")
 
     chunking_methods = PRESET_CHUNKING_METHODS[preset]
-    chunk_sizes = PRESET_CHUNK_SIZES[preset]
-    chunk_overlaps = PRESET_CHUNK_OVERLAPS[preset]
-
-    logging.info(
-        "Preset %r: chunking_methods=%s, chunk_sizes=%s, chunk_overlaps=%s",
-        preset,
-        chunking_methods,
-        chunk_sizes,
-        chunk_overlaps,
-    )
 
     if component_status is None:
         from kfp_components.components.training.autorag.shared.component_status import (  # pyright: ignore[reportMissingImports]
@@ -115,13 +105,45 @@ def search_space_preparation(
                 api_key=os.environ["MAAS_API_KEY"],
             )
 
+            if "MILVUS_URI" in os.environ:
+                vector_store_type = "milvus"
+            elif "PGVECTOR_HOST" in os.environ:
+                vector_store_type = "pgvector"
+            elif "NEO4J_URI" in os.environ:
+                vector_store_type = "neo4j"
+            else:
+                vector_store_type = "milvus"
+                logging.warning(
+                    "No MILVUS_URI, PGVECTOR_HOST, or NEO4J_URI environment variable found; defaulting to milvus."
+                )
+            logging.info("Detected vector store type: %s", vector_store_type)
+
             payload = {
                 "foundation_models": [{"model_id": gm} for gm in generation_models],
                 "embedding_models": [{"model_id": em} for em in embedding_models],
                 "chunking_methods": chunking_methods,
-                "chunk_sizes": chunk_sizes,
-                "chunk_overlaps": chunk_overlaps,
             }
+            if vector_store_type == "neo4j":
+                # Neo4j owns its chunk geometry. Do not let a generic quality
+                # preset override ai4rag's graph-safe defaults (1024 tokens and
+                # its supported overlaps).
+                logging.info(
+                    "Preset %r: chunking_methods=%s; using ai4rag Neo4j chunk defaults.",
+                    preset,
+                    chunking_methods,
+                )
+            else:
+                chunk_sizes = PRESET_CHUNK_SIZES[preset]
+                chunk_overlaps = PRESET_CHUNK_OVERLAPS[preset]
+                payload["chunk_sizes"] = chunk_sizes
+                payload["chunk_overlaps"] = chunk_overlaps
+                logging.info(
+                    "Preset %r: chunking_methods=%s, chunk_sizes=%s, chunk_overlaps=%s",
+                    preset,
+                    chunking_methods,
+                    chunk_sizes,
+                    chunk_overlaps,
+                )
 
             benchmark_df = pd.read_json(test_data.path)
 
@@ -129,6 +151,7 @@ def search_space_preparation(
                 payload,
                 client=maas_client,
                 benchmark_data=benchmark_df,
+                vector_store_type=vector_store_type,
             )
 
             build_search_space_report(search_space).save_json(search_space_report.path)

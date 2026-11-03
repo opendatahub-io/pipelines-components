@@ -95,8 +95,12 @@ def autogluon_timeseries_training_pipeline(
     0. **Component stage map**: Publishes the static component-to-stage-to-step map as a KFP
        artifact for dashboards before data loading.
 
-    1. **Data loading & splitting** (``timeseries_data_loader``): Loads CSV from S3 (up to 100 MiB
-       for the "speed" preset, up to 1 GiB for "balanced", and up to 10 GiB for "quality"),
+    1. **Data loading & splitting** (``timeseries_data_loader``): Scans the entire CSV from S3,
+       retaining the latest observations per series (up to 100 MiB of pandas data for "speed",
+       up to 1 GiB for "balanced", and up to 10 GiB for "quality"). Large sources use a temporary
+       Parquet/SQLite spool in the workspace, so unsorted inputs do not require loading the
+       entire source into RAM or downloading it twice. Per-series source, retained and split
+       ranges/counts are recorded in the loader status artifact. The loader
        replaces ``+/-inf`` with NaN (missing targets stay for AutoGluon), requires parseable timestamps
        and non-null ids (or injects ``__synthetic_item_id`` for two-column datasets when ``id_column=""``),
        deduplicates ``(id_column, timestamp_column)``, then applies a two-stage
@@ -115,7 +119,7 @@ def autogluon_timeseries_training_pipeline(
             (e.g. AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_S3_ENDPOINT, AWS_DEFAULT_REGION).
             Used for training data and optional user-provided external test data.
         train_data_bucket_name: S3-compatible bucket name containing the time series data file.
-        train_data_file_key: S3 object key of the data file (CSV or Parquet). When ``id_column`` is
+        train_data_file_key: S3 object key of the CSV data file. When ``id_column`` is
             provided, file must include columns for id, timestamp, and target. When ``id_column=""``
             (single-series mode), file must have exactly timestamp and target columns (the loader injects
             ``__synthetic_item_id``). Optional columns for known covariates.
@@ -137,8 +141,9 @@ def autogluon_timeseries_training_pipeline(
         eval_metric: Metric for model ranking in snake_case (e.g. ``"mean_absolute_scaled_error"``,
             ``"weighted_quantile_loss"``) or legacy uppercase acronym form. Defaults to
             ``"mean_absolute_scaled_error"``.
-        preset: Training quality tier. ``"speed"`` (default, 4 vCPU / 16 GiB),
-            ``"balanced"`` (8 vCPU / 32 GiB), or ``"quality"`` (two-hour selection budget,
+        preset: Training quality tier. ``"speed"`` (default, 4 vCPU / 16 GiB,
+            AutoGluon ``medium_quality``), ``"balanced"`` (8 vCPU / 32 GiB,
+            AutoGluon ``high_quality``), or ``"quality"`` (two-hour selection budget,
             16 vCPU / 64 GiB, AutoGluon ``best_quality``).
         test_data_bucket_name: Optional S3-compatible bucket name for a user-provided test dataset.
             Default: empty string (use the per-series holdout split from training data).

@@ -67,6 +67,8 @@ def compute_nproc(
 
 
 _SEPARATOR = "─" * 50
+DEFAULT_TRAINING_START_TIMEOUT_SECONDS = 900
+DEFAULT_TRAINING_COMPLETION_TIMEOUT_SECONDS = 1800
 
 
 def _log_job_details(client, train_job, log: logging.Logger, has_node_0: bool) -> None:
@@ -105,7 +107,12 @@ def _log_job_details(client, train_job, log: logging.Logger, has_node_0: bool) -
     log.info(_SEPARATOR)
 
 
-def wait_for_training_job(client, job: str, log: logging.Logger) -> None:
+def wait_for_training_job(
+    client,
+    job: str,
+    log: logging.Logger,
+    completion_timeout_seconds: int = DEFAULT_TRAINING_COMPLETION_TIMEOUT_SECONDS,
+) -> None:
     """Wait for a training job to complete and raise on failure.
 
     After the job reaches Running status, logs TrainJob details (name,
@@ -116,11 +123,13 @@ def wait_for_training_job(client, job: str, log: logging.Logger) -> None:
         client: TrainerClient instance.
         job: Job name/identifier.
         log: Logger instance.
+        completion_timeout_seconds: Maximum number of seconds to wait for the
+            TrainJob to reach ``Complete`` or ``Failed`` after it starts.
 
     Raises:
         RuntimeError: If job fails or ends in unexpected status.
     """
-    client.wait_for_job_status(name=job, status={"Running"}, timeout=900)
+    client.wait_for_job_status(name=job, status={"Running"}, timeout=DEFAULT_TRAINING_START_TIMEOUT_SECONDS)
 
     # Fetch the TrainJob once and reuse for both logging and node-0 check.
     try:
@@ -159,7 +168,11 @@ def wait_for_training_job(client, job: str, log: logging.Logger) -> None:
                 else:
                     log.warning(f"Log streaming failed after {max_retries} attempts: {e}")
 
-    client.wait_for_job_status(name=job, status={"Complete", "Failed"}, timeout=1800)
+    client.wait_for_job_status(
+        name=job,
+        status={"Complete", "Failed"},
+        timeout=int(completion_timeout_seconds),
+    )
 
     j = client.get_job(name=job)
     if train_job:

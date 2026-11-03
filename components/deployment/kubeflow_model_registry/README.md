@@ -13,6 +13,7 @@ Uses the upstream model artifact (input_model) produced by training, or falls ba
 | Parameter | Type | Default | Description |
 | --------- | ---- | ------- | ----------- |
 | `pvc_mount_path` | `str` | `None` | PVC mount path for workspace storage. |
+| `model_pvc_name` | `str` | `""` | Name of the persistent PVC containing the model. |
 | `input_model` | `dsl.Input[dsl.Model]` | `None` | Model artifact from training step. |
 | `input_metrics` | `dsl.Input[dsl.Metrics]` | `None` | Training metrics. |
 | `eval_metrics` | `dsl.Input[dsl.Metrics]` | `None` | Evaluation metrics from lm-eval. |
@@ -51,7 +52,7 @@ Uses the upstream model artifact (input_model) produced by training, or falls ba
   - model_registry
   - registration
   - kubeflow
-- **Last Verified**: 2026-01-15 00:00:00+00:00
+- **Last Verified**: 2026-10-20 00:00:00+00:00
 - **Owners**:
   - No Parent Owners: Yes
   - Approvers:

@@ -187,6 +187,16 @@ class TestSetupHfToken:
             setup_hf_token(menv, "some/model", log)
         assert menv["HF_TOKEN"] == "tok123"
 
+    def test_propagates_token_without_logging_value(self):
+        """Token propagation logs status only, never the token value."""
+        menv = {}
+        log = mock.Mock()
+        with mock.patch.dict(os.environ, {"HF_TOKEN": "tok123"}, clear=True):
+            setup_hf_token(menv, "some/model", log)
+
+        assert "tok123" not in repr(log.mock_calls)
+        log.info.assert_called_once_with("HF_TOKEN propagated")
+
     def test_no_token_warns_for_hf_model(self, log):
         """Warning is emitted when HF_TOKEN is missing for an HF model."""
         menv = {}

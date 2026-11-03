@@ -1,10 +1,10 @@
---index-url https://console.redhat.com/api/pypi/public-rhai/rhoai/3.6/cpu-ubi9-test/simple
+--index-url https://packages.redhat.com/api/pypi/public-rhai/cpu-torch2.13-el9.8-test/simple
 
 packaging==26.3 \
-    --hash=sha256:deb834ee2fe51e528b40cca13dd998c438ba0f0ba890d86c7ef1918afe4a9dbb
+    --hash=sha256:4351cc62d6fddd97665746370cd5d662b3ecf6b18de686db4d704acbedda7a15
 pip==26.2.1 \
-    --hash=sha256:2a1b3c7e4d6c9c0c3bf9b35edef19aa4cdd786efff27f68b99e3027919e9afe2
+    --hash=sha256:8af708c57f9184350014a29925c07b6541c9e5b5de90a36d8693320dea7720d4
 setuptools==84.0.0 \
-    --hash=sha256:d3a096864c3017b2b537f98876fb7c795958f7bb4e2fb1204ec98cf1850c0db2
+    --hash=sha256:54551c2da1e47baf2c91b9c2ff07d616ae51cbc1c6c65e5f73103a826824c954
 wheel==0.48.0 \
-    --hash=sha256:8e1ee97885839daa5e0923360ed6be076d3483e655ec4dee79b1e49cc41eddbc
+    --hash=sha256:c6d4bd2d0224ddba5b3b3d773566bffe64b9be5cf956be3e5223757ffa6e16f1

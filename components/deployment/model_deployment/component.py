@@ -20,6 +20,7 @@ def model_deployment(
     namespace: str,
     model_dir: str,
     model_cache_pvc: str,
+    model_run_id: str = "",
     hardware_profile_name: str = "gpu-profile",
     hardware_profile_namespace: str = "redhat-ods-applications",
     min_replicas: int = 1,
@@ -45,6 +46,10 @@ def model_deployment(
         namespace: Namespace to deploy into.
         model_dir: Sub-path on the PVC where model files are stored (output from download_model).
         model_cache_pvc: Name of the PVC containing cached model weights.
+        model_run_id: Optional run-specific directory name appended to model_dir.
+            Must be one path-safe segment containing only letters, numbers,
+            dots, underscores, and hyphens. An empty value preserves the
+            existing model_dir path.
         hardware_profile_name: HardwareProfile CR name for GPU resources.
         hardware_profile_namespace: Namespace of the HardwareProfile CR.
         min_replicas: Minimum number of replicas.
@@ -69,6 +74,7 @@ def model_deployment(
     Returns:
         The inference endpoint URL.
     """
+    import re
     import time
 
     from kubernetes import client as kclient
@@ -81,10 +87,18 @@ def model_deployment(
         "094db84a1da5e8a575d0c9eade114fa30f4a2061064a338e3e032f3578f8082a"
     )
 
+    isvc_name = model_name.split("/")[-1].lower().replace(".", "-")
+    effective_model_dir = model_dir.rstrip("/")
+    if model_run_id:
+        if model_run_id in {".", ".."} or not re.fullmatch(r"[A-Za-z0-9._-]+", model_run_id):
+            raise ValueError(
+                "model_run_id must be a single path-safe segment containing "
+                "only letters, numbers, dots, underscores, and hyphens"
+            )
+        effective_model_dir = f"{effective_model_dir}/{model_run_id}"
+
     config.load_incluster_config()
     custom_api = kclient.CustomObjectsApi()
-
-    isvc_name = model_name.split("/")[-1].lower().replace(".", "-")
 
     # Look up the HardwareProfile resource version for the annotation
     try:
@@ -238,7 +252,7 @@ def model_deployment(
                     "modelFormat": {"name": "vLLM"},
                     "name": "",
                     "runtime": serving_runtime_name,
-                    "storageUri": f"pvc://{model_cache_pvc}/{model_dir}",
+                    "storageUri": f"pvc://{model_cache_pvc}/{effective_model_dir}",
                     "resources": resources,
                 },
             },
@@ -291,6 +305,11 @@ def model_deployment(
     if existing:
         if not genai_use_case:
             isvc["metadata"]["annotations"]["opendatahub.io/genai-use-case"] = None
+        # An existing InferenceService may have been stopped from the
+        # dashboard or by a previous deployment. A merge patch omitting the
+        # annotation does not remove it, so explicitly delete the stale stop
+        # marker when this component is asked to deploy the service.
+        isvc["metadata"]["annotations"]["serving.kserve.io/stop"] = None
         custom_api.patch_namespaced_custom_object(
             group="serving.kserve.io",
             version="v1beta1",

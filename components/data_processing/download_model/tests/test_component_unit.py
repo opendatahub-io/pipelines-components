@@ -20,10 +20,24 @@ def test_component_signature():
     """Verify the component exposes the expected input parameters."""
     spec = download_model.component_spec
     input_names = set(spec.inputs.keys())
-    assert input_names == {"model_name", "model_cache_pvc", "model_cache_mount"}
+    assert input_names == {
+        "model_name",
+        "model_cache_pvc",
+        "model_cache_mount",
+        "download_enabled",
+        "existing_model_path",
+        "output_prefix",
+    }
 
 
-def _run_download(tmp_path, model_name="mistralai/Mistral-7B", pre_cached=False):
+def _run_download(
+    tmp_path,
+    model_name="mistralai/Mistral-7B",
+    pre_cached=False,
+    download_enabled=True,
+    existing_model_path="",
+    output_prefix="",
+):
     """Invoke download_model.python_func with huggingface_hub mocked via sys.modules."""
     model_dir_name = model_name.replace("/", "--")
     model_path = tmp_path / model_dir_name
@@ -45,6 +59,9 @@ def _run_download(tmp_path, model_name="mistralai/Mistral-7B", pre_cached=False)
             model_name=model_name,
             model_cache_pvc="my-pvc",
             model_cache_mount=str(tmp_path),
+            download_enabled=download_enabled,
+            existing_model_path=existing_model_path,
+            output_prefix=output_prefix,
         )
 
     return result, mock_hf, model_path
@@ -80,3 +97,38 @@ def test_sentinel_contains_model_name(tmp_path):
     """Verify sentinel file content equals the original model name."""
     _, _, model_path = _run_download(tmp_path)
     assert (model_path / ".download_complete").read_text() == "mistralai/Mistral-7B"
+
+
+def test_download_can_be_disabled(tmp_path):
+    """Verify disabled downloads return the expected path without importing HF."""
+    result, mock_hf, model_path = _run_download(tmp_path, download_enabled=False)
+
+    assert result == "mistralai--Mistral-7B"
+    mock_hf.snapshot_download.assert_not_called()
+    assert not model_path.exists()
+
+
+def test_output_prefix_prepended_on_download(tmp_path):
+    """Verify output_prefix is prepended to the model directory name."""
+    result, _, _ = _run_download(tmp_path, output_prefix="models")
+    assert result == "models/mistralai--Mistral-7B"
+
+
+def test_output_prefix_empty_returns_dir_name(tmp_path):
+    """Verify empty output_prefix returns just the directory name."""
+    result, _, _ = _run_download(tmp_path, output_prefix="")
+    assert result == "mistralai--Mistral-7B"
+
+
+def test_disabled_download_returns_existing_model_path(tmp_path):
+    """A PVC path is passed through when model downloads are disabled."""
+    existing_path = "pvc://my-pvc/models/verifier"
+    result, mock_hf, _ = _run_download(
+        tmp_path,
+        model_name="",
+        download_enabled=False,
+        existing_model_path=existing_path,
+    )
+
+    assert result == existing_path
+    mock_hf.snapshot_download.assert_not_called()

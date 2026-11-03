@@ -206,9 +206,11 @@ class MockedDataFrame:
         Mask._column = getattr(self, "_last_column", None)
         return Mask
 
-    def value_counts(self):
-        """Return value counts for the column (used via MockedSeries)."""
+    def value_counts(self, dropna=True):
+        """Return value counts for a one-column frame used as a mock Series."""
         col = getattr(self, "_value_counts_column", None)
+        if col is None and len(self._columns) == 1:
+            col = self._columns[0]
         if col is not None:
             return self._value_counts_for_column(col)
         return MockedValueCounts({})
@@ -269,7 +271,7 @@ class MockedColumn(MockedDataFrame):
         self._parent = parent_df
         self._column_name = column_name
 
-    def value_counts(self):
+    def value_counts(self, dropna=True):
         """Return value counts for this column."""
         return self._parent._value_counts_for_column(self._column_name)
 
@@ -290,6 +292,10 @@ class MockedValueCounts:
     def __init__(self, count_dict):
         """Store a mapping of value -> count."""
         self._counts = dict(count_dict)
+
+    def items(self):
+        """Iterate over labels and their counts like a pandas value_counts Series."""
+        return self._counts.items()
 
     @property
     def index(self):

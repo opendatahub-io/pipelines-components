@@ -1,7 +1,5 @@
 # Autogluon Tabular Training Pipeline ✨
 
-> ⚠️ **Stability: beta** — This asset is not yet stable and may change.
-
 ## Overview 🧾
 
 AutoGluon Tabular Training Pipeline.
@@ -77,7 +75,7 @@ The pipeline leverages AutoGluon's unique ensembling strategy that combines mult
 ## Metadata 🗂️
 
 - **Name**: autogluon-tabular-training-pipeline
-- **Stability**: beta
+- **Stability**: stable
 - **Managed**: Yes
 - **Dependencies**:
   - Kubeflow:
@@ -88,16 +86,17 @@ The pipeline leverages AutoGluon's unique ensembling strategy that combines mult
   - pipeline
   - automl
   - autogluon-tabular-training-pipeline
-- **Last Verified**: 2026-06-10 12:00:00+00:00
+- **Last Verified**: 2026-10-13 00:00:00+00:00
 - **Owners**:
   - No Parent Owners: Yes
   - Approvers:
+    - mateusz-szewczyk-dev
     - LukaszCmielowski
-    - DorotaDR
     - Mateusz-Switala
+    - jakub-walaszczyk
   - Reviewers:
+    - mateusz-szewczyk-dev
     - Mateusz-Switala
-    - DorotaDR
 
 <!-- custom-content -->
 

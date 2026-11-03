@@ -154,6 +154,7 @@ class TestLoRAGRPOComponentUnitTests:
 
         assert params["training_base_model"].default == "Qwen/Qwen3-4B"
         assert params["training_num_iterations"].default == 5
+        assert params["training_completion_timeout_seconds"].default == 1800
         assert params["training_group_size"].default == 4
         assert params["training_prompt_batch_size"].default == 50
         assert params["training_n_train"].default == 200
@@ -165,6 +166,64 @@ class TestLoRAGRPOComponentUnitTests:
         assert params["training_resource_memory_per_worker"].default == "64Gi"
         assert params["training_resource_cpu_per_worker"].default == "4"
         assert params["training_resource_gpu_per_worker"].default == 1
+        assert "training_resource_ephemeral_storage_per_worker" not in params
+        assert "training_job_timeout_seconds" not in params
+
+    def test_worker_caches_are_pvc_backed(self):
+        """Worker caches are PVC-backed and the Training Hub cache is run-scoped."""
+        import inspect
+
+        source = inspect.getsource(train_model.python_func)
+
+        assert "worker_home = pvc_path" in source
+        assert 'run_home = os.path.join(worker_home, ".runs", run_id)' in source
+        assert '"HOME": run_home' in source
+        assert '"HF_TOKEN_PATH": "/var/run/secrets/huggingface/token"' in source
+        assert '"HF_HUB_CACHE": os.path.join(cache, "hub")' in source
+        assert '"VLLM_CACHE_ROOT": os.path.join(worker_cache, "vllm")' in source
+        assert '"TRITON_CACHE_DIR": os.path.join(worker_cache, "triton")' in source
+        assert '"TORCHINDUCTOR_CACHE_DIR": os.path.join(worker_cache, "torchinductor")' in source
+        assert '"name": "hf-token"' in source
+        assert '"mountPath": "/var/run/secrets/huggingface"' in source
+        assert '"TMPDIR": worker_tmp' in source
+        assert 'trainer_env = {key: value for key, value in merged_env.items() if key != "HF_TOKEN"}' in source
+        assert '"ephemeral-storage"' not in source
+
+    def test_training_run_id_is_path_safe(self):
+        """Training run IDs are restricted to one safe path segment."""
+        import inspect
+
+        source = inspect.getsource(train_model.python_func)
+
+        assert 'run_id in {".", ".."}' in source
+        assert 're.fullmatch(r"[A-Za-z0-9._-]+", run_id)' in source
+        assert "training_run_id must be a single path-safe segment" in source
+
+    def test_grpo_completion_wait_defaults_to_shared_30_minutes(self):
+        """GRPO exposes the shared 30-minute completion wait default."""
+        import inspect
+
+        source = inspect.getsource(train_model.python_func)
+        assert "training_completion_timeout_seconds <= 0" in source
+        assert "completion_timeout_seconds=training_completion_timeout_seconds" in source
+        assert "LORA_GRPO_TRAINING_COMPLETION_TIMEOUT_SECONDS" not in source
+
+    def test_component_archive_contains_runtime_modules_only(self):
+        """The lightweight component must not embed tests or bytecode caches."""
+        import base64
+        import gzip
+        import io
+        import re
+        import tarfile
+
+        command = train_model.component_spec.implementation.container.command[-1]
+        match = re.search(r"__KFP_EMBEDDED_ARCHIVE_B64 = '([^']+)'", command)
+        assert match is not None
+
+        archive = tarfile.open(fileobj=io.BytesIO(gzip.decompress(base64.b64decode(match.group(1)))))
+        members = {member.name for member in archive.getmembers()}
+
+        assert members == {".", "./data.py", "./output.py", "./setup.py", "./training.py"}
 
     def test_component_return_type(self):
         """Test that the component is annotated to return a string."""

@@ -325,8 +325,8 @@ class TestEmbeddedStatusBootstrap:
 
     def test_bootstrap_status_tracker_from_shared_dir(self, tmp_path: Path) -> None:
         """bootstrap_status_tracker loads from a directory embedded artifact path."""
-        shared_dir = Path(__file__).resolve().parents[1]
-        embedded = type("Embedded", (), {"path": str(shared_dir)})()
+        embed_dir = Path(__file__).resolve().parents[1] / "runtime_embed"
+        embedded = type("Embedded", (), {"path": str(embed_dir)})()
         status = bootstrap_status_tracker(embedded, type("Status", (), {"path": str(tmp_path)})(), "test_data_loader")
         status.record("load_benchmark", "completed")
         status.save()
@@ -334,14 +334,15 @@ class TestEmbeddedStatusBootstrap:
 
     def test_load_embedded_module_from_file_path(self) -> None:
         """load_embedded_component_status_module accepts a file embedded artifact path."""
-        module_path = Path(__file__).resolve().parents[1] / "component_status.py"
+        module_path = Path(__file__).resolve().parents[1] / "runtime_embed" / "component_status.py"
         embedded = type("Embedded", (), {"path": str(module_path)})()
         module = load_embedded_component_status_module(embedded)
         assert hasattr(module, "bootstrap_status_tracker")
 
     def test_bootstrap_status_tracker_returns_noop_when_component_status_is_none(self) -> None:
         """Notebook-style invocations without component_status use a no-op tracker."""
-        embedded = type("Embedded", (), {"path": str(Path(__file__).resolve().parents[1])})()
+        embed_dir = Path(__file__).resolve().parents[1] / "runtime_embed"
+        embedded = type("Embedded", (), {"path": str(embed_dir)})()
         status = bootstrap_status_tracker(embedded, None, "documents_discovery")
         assert isinstance(status, NullComponentStatusTracker)
         with status:

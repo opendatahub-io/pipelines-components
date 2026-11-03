@@ -4,12 +4,15 @@ from typing import Any, Optional
 from kfp import dsl
 from kfp_components.utils.consts import AUTORAG_IMAGE  # pyright: ignore[reportMissingImports]
 
+# Shared embed root (status + MLflow helpers). Committed under shared/ so DSPA can
+# compile managed pipelines from a read-only site-packages install without
+# import-time staging, and so there is a single source for those modules.
 _AUTORAG_SHARED = Path(__file__).parents[1] / "shared"
 
 
 @dsl.component(
     base_image=AUTORAG_IMAGE,
-    embedded_artifact_path=str(_AUTORAG_SHARED / "component_status.py"),
+    embedded_artifact_path=str(_AUTORAG_SHARED / "runtime_embed"),
     install_kfp_package=False,
 )
 def rag_templates_optimization(
@@ -29,6 +32,9 @@ def rag_templates_optimization(
     input_data_keys: Optional[list[str]] = None,
     component_status: dsl.Output[dsl.Artifact] = None,
     preset: str = "speed",
+    pipeline_name: str = "",
+    run_id: str = "",
+    run_name: str = "",
 ):
     """RAG Templates Optimization component.
 
@@ -36,6 +42,9 @@ def rag_templates_optimization(
     experiment directly against ``ai4rag`` primitives (``AI4RAGSearchSpace``,
     ``AI4RAGExperiment``, and the ``ragas``/``unitxt`` evaluators), since
     ``ai4rag`` no longer ships a single orchestration entry point for this flow.
+
+    Generated indexing specs forward ``settings.generation.language.code`` as
+    ``ocr_lang`` so production extraction uses the optimization run's OCR language.
 
     Args:
         extracted_text: Path to extracted text documents.
@@ -48,15 +57,15 @@ def rag_templates_optimization(
             ``pattern.json`` indexing spec for downstream deployment.
         db_secret_name: Name of the K8s secret holding the database
             configuration. Its keys select the backend: ``MILVUS_*`` keys use
-            Milvus, ``PGVECTOR_*`` keys use PGVector. Propagated into each
-            generated ``pattern.json`` indexing spec.
+            Milvus, ``PGVECTOR_*`` keys use PGVector, ``NEO4J_*`` keys use Neo4j.
+            Propagated into each generated ``pattern.json`` indexing spec.
         input_data_secret_name: Name of the K8s secret with S3 credentials for
             input data.
         input_data_bucket_name: S3 bucket containing input documents.
         leaderboard: Output HTML artifact; the leaderboard table is written to
             leaderboard_html.path (single file).
-        starter_kit: Output ZIP artifact named ``starter_kit.zip``; currently an
-            empty placeholder.
+        starter_kit: Output ZIP artifact containing the generated starter kit for
+            the best-performing RAG pattern.
         component_status: Output artifact containing stage-level progress tracking.
         embedded_artifact: Embedded ``autorag.shared`` helpers injected by KFP at runtime.
         optimization_settings: Additional experiment settings. The
@@ -68,23 +77,44 @@ def rag_templates_optimization(
         preset: Pipeline quality tier. "speed" (default) uses 10 benchmark query
             threads. "balanced" uses 4 threads (reduced due to larger per-request
             context).
+        pipeline_name: Pipeline identifier, logged to MLflow as a param and tag.
+        run_id: KFP run ID (``dsl.PIPELINE_JOB_ID_PLACEHOLDER``), logged to MLflow.
+        run_name: KFP run name (``dsl.PIPELINE_JOB_NAME_PLACEHOLDER``). Logged to
+            MLflow, and used to name the fallback experiment/run when the platform
+            supplies no parent run.
+    MLflow logging:
+        Tracking is server-configured, not parameter-driven: it activates only when the
+        platform injects ``KFP_MLFLOW_CONFIG`` into the step (RHOAI supplies the
+        endpoint, workspace, experiment, and parent run). When it is absent, or the
+        ``mlflow`` package is missing from the image, optimization runs unchanged and
+        nothing is logged. When it is present, the parent KFP run is resumed and each
+        RAG pattern gets a nested child run written *as the optimizer evaluates it*,
+        so the experiment fills in live rather than in one batch at the end.
 
     Environment variables (required):
         MAAS_BASE_URL, MAAS_API_KEY for inference. Plus the vector database
         configuration injected from ``db_secret_name``: ``MILVUS_*`` keys
         (at least ``MILVUS_URI``) select Milvus, ``PGVECTOR_*`` keys select
-        PGVector.
+        PGVector, ``NEO4J_*`` keys (at least ``NEO4J_URI`` and ``NEO4J_PASSWORD``)
+        select Neo4j.
+
+    Environment variables (optional):
+        KFP_MLFLOW_CONFIG, injected by the platform MLflow integration. See
+        "MLflow logging" above.
     """
     import importlib.util
     import json
     import logging
     import os
+    import shutil
+    import sys
+    import tempfile
     from pathlib import Path
     from zipfile import ZipFile
 
     import pandas as pd
     from ai4rag import handler
-    from ai4rag.assets_generator import build_leaderboard_html, generate_notebook_from_template
+    from ai4rag.assets_generator import build_leaderboard_html, generate_notebook_from_template, generate_starter_kit
     from ai4rag.core.experiment.experiment import AI4RAGExperiment
     from ai4rag.core.hpo.gam_opt import GAMOptSettings
     from ai4rag.evaluator import BaseEvaluator, RagasEvaluator, UnitxtEvaluator
@@ -122,6 +152,23 @@ def rag_templates_optimization(
             "fields_to_balance": ["foundation_model", "embedding_model", "chunking_method"],
         },
     }
+    PRESET_KG_EXTRACTION_CONFIG = {
+        "speed": {"mode": "constrained"},
+        "balanced": {
+            "mode": "free",
+            "max_entities_per_chunk": 5,
+            "max_relationships_per_chunk": 5,
+        },
+    }
+    PRESET_GRAPH_RETRIEVAL_CONFIG = {
+        # Use AI4RAG's Neo4j graph-retrieval defaults for the speed preset.
+        "speed": {},
+        "balanced": {
+            "entity_pivot_limit": 3,
+            "entity_relationship_hops": 2,
+            "relationship_neighbor_limit": 5,
+        },
+    }
 
     def _build_evaluators(
         foundation_models: list[OpenAIFoundationModel],
@@ -147,6 +194,19 @@ def rag_templates_optimization(
             evaluators.append(RagasEvaluator(model=ragas_model, embedding_model=embedding_models[0]))
         return evaluators
 
+    def _optimization_score(pattern_data: dict) -> float:
+        """Return the mean score of the metric selected for optimization."""
+        evaluation = pattern_data.get("evaluation") or {}
+        metrics = evaluation.get("metrics", []) if isinstance(evaluation, dict) else []
+        for metric in metrics:
+            if not isinstance(metric, dict) or not metric.get("optimization_metric"):
+                continue
+            scores = metric.get("scores") or {}
+            score = scores.get("mean") if isinstance(scores, dict) else None
+            if score is not None:
+                return float(score)
+        return float("-inf")
+
     def _generate_output_artifacts(
         patterns_raw: list[dict],
         output_dir: Path,
@@ -162,9 +222,13 @@ def rag_templates_optimization(
             patt_dir.mkdir(parents=True, exist_ok=True)
 
             pattern_data = pattern.get("payload")
+            settings = pattern_data["settings"]
+            # Retry with excerpts after a context-window overflow so a large
+            # retrieval result does not make the deployed agent unusable.
+            settings.setdefault("agentic", {})["enable_context_compression"] = True
+            store_binding = settings["store_binding"]
+            is_graph_pattern = store_binding["provider_type"] == "neo4j"
             if indexing_pipeline_params:
-                settings = pattern_data["settings"]
-                store_binding = settings["store_binding"]
                 pattern_data["indexing"] = {
                     "pipeline_spec": {
                         "pipeline_name": indexing_pipeline_params.get("pipeline_name", "documents-indexing-pipeline"),
@@ -175,11 +239,17 @@ def rag_templates_optimization(
                             "input_data_bucket_name": indexing_pipeline_params.get("input_data_bucket_name"),
                             "input_data_keys": indexing_pipeline_params.get("input_data_keys"),
                             "batch_size": indexing_pipeline_params.get("batch_size"),
-                            "preset": indexing_pipeline_params.get("preset", "speed"),
+                            "preset": indexing_pipeline_params["preset"],
+                            "ocr_lang": (settings["generation"].get("language") or {}).get("code"),
                             "provider_type": store_binding["provider_type"],
                             "collection_name": store_binding["collection_name"],
                             "embedding_model_id": settings["embedding"]["model_id"],
                             "embedding_params": settings["embedding"]["embedding_params"],
+                            "foundation_model_id": settings["generation"]["model_id"],
+                            "foundation_model_params": {
+                                "temperature": settings["generation"]["temperature"],
+                                "max_completion_tokens": settings["generation"]["max_completion_tokens"],
+                            },
                             "chunking_method": settings["chunking"]["method"],
                             "chunk_size": settings["chunking"]["chunk_size"],
                             "chunk_overlap": settings["chunking"]["chunk_overlap"],
@@ -193,16 +263,32 @@ def rag_templates_optimization(
                         ],
                     }
                 }
+                if is_graph_pattern:
+                    pattern_data["indexing"]["pipeline_spec"]["parameters"]["graph_extraction_config"] = settings[
+                        "graph_extraction"
+                    ]
+
+            # Neo4j patterns build and query a knowledge graph, rather than a
+            # plain embedding index.  Their notebooks therefore need the graph
+            # construction and graph-retrieval flows; other providers retain
+            # the standard MaaS notebook pair.
+            is_knowledge_graph_pattern = is_graph_pattern
+            indexing_notebook_template = (
+                "mass_creating_knowledge_graph" if is_knowledge_graph_pattern else "maas_indexing"
+            )
+            inference_notebook_template = (
+                "mass_inference_knowledge_graph" if is_knowledge_graph_pattern else "maas_inference"
+            )
 
             generate_notebook_from_template(
-                "maas_indexing",
+                indexing_notebook_template,
                 pattern_data,
                 patt_dir / "indexing.ipynb",
                 input_data_keys=input_data_keys,
                 test_data_key=test_data_key,
             )
             generate_notebook_from_template(
-                "maas_inference",
+                inference_notebook_template,
                 pattern_data,
                 patt_dir / "inference.ipynb",
                 test_data_key=test_data_key,
@@ -213,6 +299,11 @@ def rag_templates_optimization(
 
             with (patt_dir / "evaluation_results.json").open("w", encoding="utf-8") as f:
                 json.dump(pattern.get("evaluation_results", []), f, indent=2, ensure_ascii=False)
+
+            conversations = pattern.get("conversations")
+            if conversations:
+                with (patt_dir / "conversations.json").open("w", encoding="utf-8") as f:
+                    json.dump(conversations, f, indent=2, ensure_ascii=False)
 
             patterns.append(pattern_data)
 
@@ -323,7 +414,45 @@ def rag_templates_optimization(
     active_evaluators = PRESET_EVALUATORS[preset]
     preset_cfg = PRESET_SETTINGS[preset]
     inference_max_threads = preset_cfg["inference_max_threads"]
-    logging.info("Preset %r: inference_max_threads=%d", preset, inference_max_threads)
+    kg_extraction_config = PRESET_KG_EXTRACTION_CONFIG[preset]
+    graph_retrieval_config = PRESET_GRAPH_RETRIEVAL_CONFIG[preset]
+    logging.info(
+        "Preset %r: inference_max_threads=%d, KG extraction=%s",
+        preset,
+        inference_max_threads,
+        kg_extraction_config,
+    )
+
+    def _load_embedded_module(module_filename: str, module_alias: str) -> Any:
+        """Load one module from the embedded AutoRAG helpers.
+
+        KFP mounts the staged embed as a directory. A single-file mount is also
+        tolerated, for compatibility with embeds carrying only ``component_status.py``.
+        """
+        embedded_root = Path(embedded_artifact.path)
+        if embedded_root.is_file():
+            if embedded_root.name != module_filename:
+                raise FileNotFoundError(f"Embedded artifact {embedded_root} does not provide {module_filename}.")
+            module_path = embedded_root
+        else:
+            module_path = embedded_root / module_filename
+        spec = importlib.util.spec_from_file_location(module_alias, module_path)
+        if spec is None or spec.loader is None:
+            raise ValueError(f"Cannot load embedded module from {module_path}")
+        module = importlib.util.module_from_spec(spec)
+        # Register before exec_module: @dataclass resolves string annotations (these
+        # modules use `from __future__ import annotations`) through sys.modules[__module__],
+        # which raises AttributeError if the module is not there yet.
+        sys.modules[module_alias] = module
+        spec.loader.exec_module(module)
+        return module
+
+    if embedded_artifact is None:
+        from kfp_components.components.training.autorag.shared import (  # pyright: ignore[reportMissingImports]
+            mlflow_tracking as _mlflow_tracking,
+        )
+    else:
+        _mlflow_tracking = _load_embedded_module("mlflow_tracking.py", "_autorag_mlflow_tracking")
 
     if component_status is None:
         from kfp_components.components.training.autorag.shared.component_status import (  # pyright: ignore[reportMissingImports]
@@ -332,17 +461,17 @@ def rag_templates_optimization(
 
         status = null_component_status_tracker()
     else:
-        _embedded_path = Path(embedded_artifact.path)
-        _module_path = _embedded_path if _embedded_path.is_file() else _embedded_path / "component_status.py"
-        _spec = importlib.util.spec_from_file_location("_autorag_component_status", _module_path)
-        if _spec is None or _spec.loader is None:
-            raise ValueError(f"Cannot load embedded module from {_module_path}")
-        _status_module = importlib.util.module_from_spec(_spec)
-        _spec.loader.exec_module(_status_module)
-        status = _status_module.bootstrap_status_tracker(
-            embedded_artifact, component_status, "rag_templates_optimization"
-        )
-    with status:
+        _status_module = _load_embedded_module("component_status.py", "_autorag_component_status")
+        status = _status_module.tracker_from_embedded(embedded_artifact, component_status, "rag_templates_optimization")
+
+    # MLflow logging is best-effort and self-disabling: when the platform injects no
+    # KFP_MLFLOW_CONFIG, run_logger is a no-op and optimization proceeds unchanged.
+    with (
+        status,
+        _mlflow_tracking.experiment_run_logger(
+            run_name=run_name or pipeline_name,
+        ) as run_logger,
+    ):
         if component_status is not None:
             status.set_metadata(display_name="RAG Templates Optimization Status")
             component_status.metadata["display_name"] = "RAG Templates Optimization Status"
@@ -352,13 +481,15 @@ def rag_templates_optimization(
                 api_key=os.environ["MAAS_API_KEY"],
             )
 
-            if any(k.startswith("MILVUS") for k in os.environ):
+            if "MILVUS_URI" in os.environ:
                 provider = "milvus"
-            elif any(k.startswith("PGVECTOR") for k in os.environ):
+            elif "PGVECTOR_HOST" in os.environ:
                 provider = "pgvector"
+            elif "NEO4J_URI" in os.environ:
+                provider = "neo4j"
             else:
                 raise ValueError(
-                    "No vector database configuration found. Expected MILVUS_* or PGVECTOR_* "
+                    "No vector database configuration found. Expected MILVUS_*, PGVECTOR_*, or NEO4J_* "
                     "environment variables injected from db_secret_name."
                 )
             vector_store_config = get_vector_store_config(provider)
@@ -413,7 +544,7 @@ def rag_templates_optimization(
                     values = embedding_models
                 params.append(Parameter(param_name, "C", values=values))
 
-            search_space = AI4RAGSearchSpace(params=params)
+            search_space = AI4RAGSearchSpace(params=params, vector_store_type=provider)
 
             evaluators = _build_evaluators(
                 foundation_models=foundation_models,
@@ -433,7 +564,24 @@ def rag_templates_optimization(
                 fields_to_balance=preset_cfg.get("fields_to_balance"),
             )
 
-            event_handler = KFPEventHandler()
+            run_logger.log_header(
+                pipeline_name=pipeline_name,
+                kfp_run_id=run_id,
+                kfp_run_name=run_name,
+                preset=preset,
+                optimization_metric=f"{optimization_metric.evaluator}:{optimization_metric.name}",
+                max_rag_patterns=max_rag_patterns,
+                active_evaluators=active_evaluators,
+                embedding_models=search_space_raw.get("embedding_model", []),
+                generation_models=search_space_raw.get("foundation_model", []),
+                test_data_key=test_data_key,
+                input_data_bucket_name=input_data_bucket_name,
+                input_data_keys=input_data_keys or [],
+            )
+
+            # Wrapped so every evaluated pattern is mirrored into a nested MLflow child run
+            # the moment ai4rag emits it, rather than in one batch after search() returns.
+            event_handler = _mlflow_tracking.MlflowPatternEventHandler(KFPEventHandler(), run_logger)
 
             rag_exp = AI4RAGExperiment(
                 event_handler=event_handler,
@@ -444,6 +592,8 @@ def rag_templates_optimization(
                 documents=documents,
                 optimization_metric=optimization_metric,
                 inference_max_threads=inference_max_threads,
+                kg_extraction_config=kg_extraction_config,
+                graph_retrieval_config=graph_retrieval_config,
                 evaluators=evaluators,
             )
 
@@ -455,11 +605,15 @@ def rag_templates_optimization(
             output_dir.mkdir(parents=True, exist_ok=True)
 
             patterns = _generate_output_artifacts(
-                patterns_raw=event_handler.patterns[:max_rag_patterns],
+                patterns_raw=event_handler.patterns,
                 output_dir=output_dir,
                 input_data_keys=input_data_keys or [],
                 test_data_key=test_data_key,
                 indexing_pipeline_params=indexing_pipeline_params,
+            )
+            run_logger.log_pattern_artifact_pointers(
+                str(rag_patterns.uri),
+                [str(pattern.get("name", "")) for pattern in patterns],
             )
 
             # Keep the ZIP in the task artifact directory, next to the
@@ -476,11 +630,14 @@ def rag_templates_optimization(
             starter_kit.uri = f"{artifact_root_uri}/starter_kit/starter_kit.zip"
             starter_kit.set_path(str(starter_kit_path))
 
-            # Keep the output contract available before ai4rag ships its
-            # starter-kit generator. The empty archive is intentionally a
-            # valid ZIP so clients can download it already.
-            with ZipFile(starter_kit_path, "w"):
-                pass
+            if patterns:
+                best_pattern = max(patterns, key=_optimization_score)
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    generated_zip = generate_starter_kit(best_pattern, temp_dir)
+                    shutil.copyfile(generated_zip, starter_kit_path)
+            else:
+                with ZipFile(starter_kit_path, "w"):
+                    pass
             starter_kit.metadata["display_name"] = "starter_kit.zip"
 
             status.record(
@@ -507,6 +664,24 @@ def rag_templates_optimization(
             with open(leaderboard.path, "w", encoding="utf-8") as f:
                 f.write(html_content)
             leaderboard.metadata["display_name"] = "autorag_leaderboard"
+
+        with status.stage("log_mlflow_results"):
+            # Child runs were already written live during search(); this closes out the
+            # parent with job-level aggregates. KFP owns output artifacts in S3, so
+            # MLflow records metrics and metadata only, without copying those files.
+            run_logger.finalize()
+            mlflow_logged, mlflow_tracking_info = run_logger.result()
+            for _key, _value in mlflow_tracking_info.items():
+                rag_patterns.metadata[_key] = _value
+            status.record(
+                "log_mlflow_results",
+                "completed",
+                metrics={
+                    "mlflow_tracking_enabled": run_logger.configured,
+                    "mlflow_logged": mlflow_logged,
+                    **mlflow_tracking_info,
+                },
+            )
 
 
 if __name__ == "__main__":

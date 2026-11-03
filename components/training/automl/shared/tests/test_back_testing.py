@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from time import perf_counter
 from unittest import mock
 
 import pandas as pd
@@ -11,6 +12,7 @@ import pytest
 from ..back_testing import (
     _build_series_analysis,
     _forecast_data_for_item,
+    _forecast_rows,
     _holdout_frame,
     _item_window_metrics,
     _mean_prediction_column,
@@ -51,6 +53,16 @@ class TestSerialization:
         assert normalized == {"MASE": 0.42, "MAPE": 5.0, "RMSE": 10.5, "MAE": 3.2}
         # All values positive (natural error form)
         assert all(v > 0 for v in normalized.values())
+
+    def test_filter_finite_metrics_normalizes_autogluon_1_6_losses(self):
+        """MAEB, WAPEB, and MQL are restored to positive losses; signed BIAS is unchanged."""
+        assert filter_finite_metrics({"MAEB": -1.5, "WAPEB": -0.2, "MQL": -0.8, "BIAS": 0.4}) == {
+            "MAEB": 1.5,
+            "WAPEB": 0.2,
+            "MQL": 0.8,
+            "BIAS": 0.4,
+        }
+        assert filter_finite_metrics({"BIAS": -0.3}) == {"BIAS": -0.3}
 
     def test_back_testing_normalizes_autogluon_signs(self):
         """back_testing.json converts AutoGluon negated error metrics to natural positive form."""
@@ -291,6 +303,41 @@ class TestSeriesRanking:
 class TestSeriesAnalysis:
     """Tests for series analysis payload construction."""
 
+    @pytest.mark.parametrize("num_series", [1000, 4000])
+    def test_wide_panel_builds_lookups_once_per_window(self, num_series, record_property):
+        """Work on full panels stays constant per window as series coverage grows."""
+        from .. import back_testing
+
+        index = pd.MultiIndex.from_product(
+            [range(num_series), pd.date_range("2025-01-01", periods=30)],
+            names=["item_id", "timestamp"],
+        )
+        # Wide past-covariate panels must be reduced to the target before grouping.
+        targets = pd.DataFrame(100.0, index=index, columns=["target", *[f"cov_{i}" for i in range(64)]])
+        holdout = _holdout_frame(targets[["target"]], 2)
+        predictions = pd.DataFrame({"mean": 101.0, "0.1": 99.0, "0.9": 103.0}, index=holdout.index)
+        started = perf_counter()
+        with (
+            mock.patch.object(back_testing, "_holdout_frame", wraps=_holdout_frame) as holdouts,
+            mock.patch.object(back_testing, "_grouped_items", wraps=back_testing._grouped_items) as groups,
+        ):
+            analysis = _build_series_analysis(
+                [predictions, predictions],
+                [targets, targets],
+                target="target",
+                prediction_length=2,
+                eval_metric="mean_absolute_error",
+            )
+        record_property("report_seconds", perf_counter() - started)
+        assert holdouts.call_count == 2
+        assert groups.call_count == 4
+        assert all(call.args[0].columns.tolist() == ["target"] for call in holdouts.call_args_list)
+        assert analysis["num_series_evaluated"] == num_series
+        for performer in (analysis["best_performer"], analysis["worst_performer"]):
+            assert performer["avg_metrics"]["mean_absolute_error"] == 1.0
+            assert len(performer["windows"]) == 2
+            assert len(performer["windows"][0]["forecast_data"]) == 2
+
     def test_no_performers_when_no_series_metrics(self):
         """Best/worst performers are omitted when no series metrics are available."""
         analysis = _build_series_analysis([], [], target="target", prediction_length=2, eval_metric="MAPE")
@@ -334,7 +381,7 @@ class TestSeriesAnalysis:
         assert worst == "B"
 
     def test_build_series_analysis_caches_computation(self):
-        """Series analysis generates forecast data once per (item, window), not twice."""
+        """Series analysis generates forecast rows once per (item, window)."""
         from unittest.mock import patch
 
         timestamps = ["2025-01-01", "2025-01-02", "2025-01-03", "2025-01-04"]
@@ -344,10 +391,10 @@ class TestSeriesAnalysis:
         bad_preds = pd.DataFrame({"mean": [200.0, 210.0]}, index=window_targets.loc["bad"].index)
         predictions = pd.concat({"good": good_preds, "bad": bad_preds}, names=["item_id", "timestamp"])
 
-        # Patch the expensive forecast generation function to count calls
+        # Patch row generation to detect recomputation for best/worst performers.
         with patch(
-            "components.training.automl.shared.back_testing._forecast_data_for_item",
-            wraps=_forecast_data_for_item,
+            "components.training.automl.shared.back_testing._forecast_rows",
+            wraps=_forecast_rows,
         ) as mock_forecast:
             analysis = _build_series_analysis(
                 [predictions],
@@ -357,7 +404,7 @@ class TestSeriesAnalysis:
                 eval_metric="mean_absolute_percentage_error",
             )
 
-            # _forecast_data_for_item should be called exactly once per (item, window) pair
+            # Forecast rows should be generated exactly once per (item, window) pair
             # 2 items × 1 window = 2 calls total
             # WITHOUT optimization, it would be called 4 times:
             #   - 2 calls in first pass (computing metrics)

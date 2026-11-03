@@ -1,0 +1,33 @@
+---
+name: speculator_offline_pipeline
+description: >-
+  Extract verifier hidden states for speculative decoding training with external
+  vLLM, train and evaluate the draft, optionally register it, then serve it.
+stability: alpha
+dependencies:
+  kubeflow:
+    - name: Pipelines
+      version: '>=2.15.2'
+    - name: Trainer
+      version: '>=0.1.0'
+  external_services:
+    - name: Kubernetes
+      version: ">=1.28.0"
+    - name: Model Registry
+      version: ">=0.3.4"
+    - name: OpenShift AI (KServe)
+      version: ">=2.10.0"
+    - name: vLLM ServingRuntime
+      version: ">=0.24.0"
+    - name: vLLM
+      version: ">=0.9.0"
+    - name: GuideLLM
+      version: "~=0.7.1"
+tags:
+  - training
+  - speculator
+  - speculative_decoding
+  - pipeline
+lastVerified: 2026-10-21T00:00:00Z
+links:
+  documentation: https://github.com/kubeflow/trainer

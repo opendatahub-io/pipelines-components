@@ -116,6 +116,41 @@ class TestDocumentsRagOptimizationPipelineUnit:
         finally:
             Path(tmp_path).unlink(missing_ok=True)
 
+    def test_compiled_pipeline_wires_neo4j_ca_cert_to_ai4rag_tasks(self):
+        """The optional private CA reaches both tasks that initialize Neo4j."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as tmp:
+            tmp_path = tmp.name
+        try:
+            compiler.Compiler().compile(
+                pipeline_func=documents_rag_optimization_pipeline,
+                package_path=tmp_path,
+            )
+            content = Path(tmp_path).read_text(encoding="utf-8")
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
+
+        assert content.count("envVar: NEO4J_CA_CERT") == 2
+        assert content.count("secretKey: NEO4J_CA_CERT") == 2
+
+    def test_stage_map_publisher_receives_only_database_provider_selectors(self, tmp_path):
+        """Expose provider selectors without database passwords."""
+        import yaml
+
+        output_path = tmp_path / "pipeline.yaml"
+        compiler.Compiler().compile(documents_rag_optimization_pipeline, package_path=str(output_path))
+        documents = list(yaml.safe_load_all(output_path.read_text(encoding="utf-8")))
+        platform_spec = next(doc for doc in documents if "platforms" in doc)
+        executor = platform_spec["platforms"]["kubernetes"]["deploymentSpec"]["executors"][
+            "exec-publish-component-stage-map"
+        ]
+        assert executor["secretAsEnv"] == [
+            {
+                "keyToEnv": [{"envVar": key, "secretKey": key} for key in ("MILVUS_URI", "PGVECTOR_HOST", "NEO4J_URI")],
+                "optional": True,
+                "secretNameParameter": {"componentInputParameter": "db_secret_name"},
+            }
+        ]
+
     def test_compiled_pipeline_declares_component_resource_tiers(self):
         """Every AutoRAG optimization step declares the expected CPU/memory tier."""
         from kfp_components.utils.pipeline_task_resources import (
@@ -130,3 +165,24 @@ class TestDocumentsRagOptimizationPipelineUnit:
             AUTORAG_OPTIMIZATION_EXECUTOR_RESOURCES,
             pipeline_name="documents_rag_optimization_pipeline",
         )
+
+
+class TestDocumentsRagOptimizationPipelineMlflow:
+    """MLflow tracking wiring at the pipeline level."""
+
+    def test_optimization_receives_run_identity_placeholders(self):
+        """The optimization step gets the KFP run identity MLflow logging records."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as tmp:
+            tmp_path = tmp.name
+        try:
+            compiler.Compiler().compile(
+                pipeline_func=documents_rag_optimization_pipeline,
+                package_path=tmp_path,
+            )
+            spec = load_pipeline_spec_document(Path(tmp_path))
+            params = spec["root"]["dag"]["tasks"]["rag-templates-optimization"]["inputs"]["parameters"]
+            assert params["pipeline_name"]["runtimeValue"]["constant"] == "documents-rag-optimization-pipeline"
+            assert params["run_id"]["runtimeValue"]["constant"] == "{{$.pipeline_job_uuid}}"
+            assert params["run_name"]["runtimeValue"]["constant"] == "{{$.pipeline_job_name}}"
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)

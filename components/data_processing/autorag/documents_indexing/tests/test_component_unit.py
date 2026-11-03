@@ -58,7 +58,7 @@ def _make_ai4rag_mocks():
     mock_ChunkingConstraints = mock.MagicMock()
     mock_ChunkingConstraints.METHODS = ("recursive", "hybrid")
     mock_ChunkingConstraints.MIN_CHUNK_SIZE = 128
-    mock_ChunkingConstraints.MAX_CHUNK_SIZE = 2048
+    mock_ChunkingConstraints.MAX_CHUNK_SIZE = 1024
 
     modules = {
         "ai4rag": mock.MagicMock(),
@@ -70,6 +70,10 @@ def _make_ai4rag_mocks():
         "ai4rag.rag.embedding": mock.MagicMock(),
         "ai4rag.rag.embedding.openai_model": _make_module_mock(
             OpenAIEmbeddingModel=mock_OpenAIEmbeddingModel, OpenAIEmbeddingParams=mock_OpenAIEmbeddingParams
+        ),
+        "ai4rag.rag.foundation_models": mock.MagicMock(),
+        "ai4rag.rag.foundation_models.openai_model": _make_module_mock(
+            OpenAIFoundationModel=mock.MagicMock(name="OpenAIFoundationModel")
         ),
         "ai4rag.rag.vector_store": _make_module_mock(
             get_vector_store=mock_get_vector_store, get_vector_store_config=mock_get_vector_store_config
@@ -87,6 +91,7 @@ def _make_ai4rag_mocks():
         "LangChainChunker": mock_LangChainChunker,
         "OpenAIEmbeddingModel": mock_OpenAIEmbeddingModel,
         "OpenAIEmbeddingParams": mock_OpenAIEmbeddingParams,
+        "OpenAIFoundationModel": modules["ai4rag.rag.foundation_models.openai_model"].OpenAIFoundationModel,
         "get_vector_store": mock_get_vector_store,
         "get_vector_store_config": mock_get_vector_store_config,
         "vector_store": mock_store,
@@ -226,12 +231,13 @@ class TestDocumentsIndexingValidation:
                 _call_component(tmp_path, modules, mocks, chunking_method="semantic")
 
     @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
-    def test_chunk_size_out_of_range_raises(self, tmp_path):
+    @pytest.mark.parametrize("chunk_size", [64, 1025, 2048])
+    def test_chunk_size_out_of_range_raises(self, tmp_path, chunk_size):
         """Out-of-range chunk_size raises ValueError."""
         modules, mocks = _make_ai4rag_mocks()
         with mock.patch.dict("sys.modules", modules):
-            with pytest.raises(ValueError, match="chunk_size must be an integer in the range"):
-                _call_component(tmp_path, modules, mocks, chunk_size=64)
+            with pytest.raises(ValueError, match="chunk_size must be an integer in the range 128 to 1024"):
+                _call_component(tmp_path, modules, mocks, chunk_size=chunk_size)
 
     @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
     def test_negative_batch_size_raises(self, tmp_path):
@@ -252,7 +258,11 @@ class TestDocumentsIndexingValidation:
     def test_missing_vector_db_env_raises_value_error(self, tmp_path):
         """Absent MILVUS_*/PGVECTOR_* env vars raise a descriptive ValueError."""
         modules, mocks = _make_ai4rag_mocks()
-        maas_only = {"MAAS_BASE_URL": "https://maas.example.com/v1", "MAAS_API_KEY": "test-api-key"}
+        maas_only = {
+            "MAAS_BASE_URL": "https://maas.example.com/v1",
+            "MAAS_API_KEY": "test-api-key",
+            "NEO4J_HOME": "/opt/neo4j",
+        }
         with mock.patch.dict("os.environ", maas_only, clear=True):
             with mock.patch.dict("sys.modules", modules):
                 with pytest.raises(ValueError, match="No vector database configuration found"):
@@ -294,6 +304,23 @@ class TestDocumentsIndexingProcessing:
         mocks["LangChainChunker"].return_value.split_documents.return_value = []
         _call_component(tmp_path, modules, mocks, filenames=["a.json"])
         mocks["get_vector_store_config"].assert_called_once_with("pgvector")
+
+    @mock.patch.dict(
+        "os.environ",
+        {
+            "MAAS_BASE_URL": "https://maas.example.com/v1",
+            "MAAS_API_KEY": "test-api-key",
+            "NEO4J_URI": "neo4j://neo4j.example.com:7687",
+            "NEO4J_PASSWORD": "s3cr3t",
+        },
+        clear=True,
+    )
+    def test_neo4j_provider_detected_from_env(self, tmp_path):
+        """NEO4J_* env vars select the neo4j backend when no MILVUS_* or PGVECTOR_* keys are set."""
+        modules, mocks = _make_ai4rag_mocks()
+        mocks["LangChainChunker"].return_value.split_documents.return_value = []
+        _call_component(tmp_path, modules, mocks, filenames=["a.json"])
+        mocks["get_vector_store_config"].assert_called_once_with("neo4j")
 
     @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
     def test_recursive_chunker_selected(self, tmp_path):
@@ -424,6 +451,85 @@ class TestDocumentsIndexingProcessing:
         _call_component(tmp_path, modules, mocks, filenames=["a.json"], collection_name=None)
         call_kwargs = mocks["get_vector_store"].call_args.kwargs
         assert call_kwargs["collection_name"] is None
+
+    @mock.patch.dict(
+        "os.environ",
+        {
+            "MAAS_BASE_URL": "https://maas.example.com/v1",
+            "MAAS_API_KEY": "test-api-key",
+            "NEO4J_URI": "neo4j://host:7687",
+            "NEO4J_PASSWORD": "secret",
+        },
+        clear=True,
+    )
+    def test_neo4j_gets_foundation_model_for_graph_indexing(self, tmp_path):
+        """A graph-mode blueprint rebuilds Neo4j entities with its selected model."""
+        modules, mocks = _make_ai4rag_mocks()
+        _call_component(
+            tmp_path,
+            modules,
+            mocks,
+            filenames=["a.json"],
+            foundation_model_id="fm-0",
+            foundation_model_params={"temperature": 0.3, "max_completion_tokens": 1024},
+            graph_extraction_config={"mode": "constrained"},
+        )
+
+        assert mocks["get_vector_store"].call_args.kwargs["kg_extraction_config"] == {"mode": "constrained"}
+
+        mocks["OpenAIFoundationModel"].assert_called_once_with(
+            client=mocks["create_maas_client"].return_value,
+            model_id="fm-0",
+            params={"temperature": 0.3, "max_completion_tokens": 1024},
+        )
+        assert (
+            mocks["get_vector_store"].call_args.kwargs["foundation_model"]
+            is mocks["OpenAIFoundationModel"].return_value
+        )
+
+    @mock.patch.dict(
+        "os.environ",
+        {
+            "MAAS_BASE_URL": "https://maas.example.com/v1",
+            "MAAS_API_KEY": "test-api-key",
+            "NEO4J_URI": "neo4j://host:7687",
+            "NEO4J_PASSWORD": "secret",
+        },
+        clear=True,
+    )
+    def test_neo4j_graph_extraction_requires_foundation_model(self, tmp_path):
+        """Configured Neo4j graph extraction cannot silently run without an LLM."""
+        modules, mocks = _make_ai4rag_mocks()
+
+        with pytest.raises(ValueError, match="foundation_model_id is required.*graph_extraction_config"):
+            _call_component(
+                tmp_path,
+                modules,
+                mocks,
+                filenames=["a.json"],
+                graph_extraction_config={"mode": "constrained"},
+            )
+
+        mocks["OpenAIFoundationModel"].assert_not_called()
+        mocks["get_vector_store"].assert_not_called()
+
+    @mock.patch.dict(
+        "os.environ",
+        {
+            "MAAS_BASE_URL": "https://maas.example.com/v1",
+            "MAAS_API_KEY": "test-api-key",
+            "NEO4J_URI": "neo4j://host:7687",
+            "NEO4J_PASSWORD": "secret",
+        },
+        clear=True,
+    )
+    def test_neo4j_vector_indexing_allows_no_foundation_model(self, tmp_path):
+        """Vector-only Neo4j indexing remains valid without graph extraction settings."""
+        modules, mocks = _make_ai4rag_mocks()
+        _call_component(tmp_path, modules, mocks, filenames=["a.json"])
+
+        mocks["OpenAIFoundationModel"].assert_not_called()
+        assert mocks["get_vector_store"].call_args.kwargs["foundation_model"] is None
 
     @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
     def test_default_parameters(self, tmp_path):

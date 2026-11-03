@@ -21,7 +21,8 @@ def example_pipeline(
         test_data_key: Key for the test data.
         maas_secret_name: Name of the K8s secret with MaaS inference credentials.
         db_secret_name: Name of the K8s secret with the vector database
-            configuration (MILVUS_* selects Milvus, PGVECTOR_* selects PGVector).
+            configuration (MILVUS_* selects Milvus, PGVECTOR_* selects PGVector,
+            NEO4J_* selects Neo4j).
         input_data_secret_name: Name of the K8s secret with S3 credentials.
         input_data_bucket_name: S3 bucket containing input documents.
         input_data_keys: Up to ten input path prefixes. They are all propagated to

@@ -133,7 +133,21 @@ def build_predict_sample_artifact(
 
     Includes historical sample rows and, when required, known covariates for the
     forecast horizon so the notebook only loads data and calls ``predict()``.
+    An empty preview returns metadata with no history or forecast covariates.
     """
+    covariate_names = known_covariates_names or []
+    payload = {
+        "id_column": id_column,
+        "timestamp_column": timestamp_column,
+        "known_covariates_names": covariate_names,
+        "history": [],
+        "known_covariates": None,
+    }
+    # sample_rows defaults to "[]" in the training component. There is no
+    # timestamp column or forecast horizon to build when that preview is absent.
+    if not sample_data:
+        return payload
+
     from autogluon.timeseries import TimeSeriesDataFrame
 
     score_df = _coerce_sample_timestamps(pd.DataFrame(sample_data), timestamp_column)
@@ -143,22 +157,15 @@ def build_predict_sample_artifact(
         timestamp_column=timestamp_column,
     )
 
-    covariate_names = known_covariates_names or []
-    known_covariates_records = None
     if covariate_names:
         missing = [col for col in covariate_names if col not in score_df.columns]
         if not missing:
             future_cov = predictor.make_future_data_frame(ts_df)
             known_df = fill_known_covariates_on_future_frame(future_cov, ts_df, covariate_names)
-            known_covariates_records = _json_records(known_df)
+            payload["known_covariates"] = _json_records(known_df)
 
-    return {
-        "id_column": id_column,
-        "timestamp_column": timestamp_column,
-        "known_covariates_names": covariate_names,
-        "history": _json_records(score_df),
-        "known_covariates": known_covariates_records,
-    }
+    payload["history"] = _json_records(score_df)
+    return payload
 
 
 def notebook_timeseries_sample_helpers_source() -> str:

@@ -1,3 +1,4 @@
+---
 name: kubeflow_model_registry
 stability: experimental
 dependencies:
@@ -12,6 +13,6 @@ tags:
   - model_registry
   - registration
   - kubeflow
-lastVerified: 2026-01-15T00:00:00Z
+lastVerified: 2026-10-20T00:00:00Z
 links:
   documentation: https://github.com/kubeflow/model-registry

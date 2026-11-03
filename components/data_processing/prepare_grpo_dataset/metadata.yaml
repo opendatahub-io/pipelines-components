@@ -1,0 +1,21 @@
+---
+name: prepare_grpo_dataset
+stability: experimental
+dependencies:
+  kubeflow:
+    - name: Pipelines
+      version: '>=2.15.2'
+  external_services:
+    - name: HuggingFace Datasets
+      version: ">=2.14.0"
+    - name: AWS S3
+      version: ">=1.0.0"
+tags:
+  - data_processing
+  - dataset
+  - grpo
+  - huggingface
+  - s3
+lastVerified: 2026-10-15T00:00:00Z
+links:
+  documentation: https://github.com/kubeflow/pipelines-components

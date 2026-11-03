@@ -115,6 +115,7 @@ class TestSearchSpacePreparationUnitTests:
         assert payload["chunking_methods"] == ["recursive"]
         assert m.prepare.call_args.kwargs["client"] is client
         assert "benchmark_data" in m.prepare.call_args.kwargs
+        assert m.prepare.call_args.kwargs["vector_store_type"] == "milvus"
 
         m.build.assert_called_once_with(search_space)
         report.save_json.assert_called_once_with(str(tmp_path / "report.json"))
@@ -211,10 +212,50 @@ class TestSearchSpacePreparationUnitTests:
                 )
 
     @pytest.mark.parametrize(
+        ("env_vars", "expected_vector_store_type", "expects_fallback_warning"),
+        [
+            ({"MILVUS_URI": "http://milvus:19530"}, "milvus", False),
+            ({"PGVECTOR_HOST": "pg-host"}, "pgvector", False),
+            ({"NEO4J_URI": "neo4j://neo4j:7687", "NEO4J_PASSWORD": "s3cr3t"}, "neo4j", False),
+            ({}, "milvus", True),
+            ({"NEO4J_HOME": "/opt/neo4j"}, "milvus", True),
+        ],
+    )
+    def test_vector_db_env_selects_ai4rag_backend(
+        self, tmp_path, caplog, env_vars, expected_vector_store_type, expects_fallback_warning
+    ):
+        """Only underscore-qualified database-secret keys select an ai4rag backend."""
+        m = _make_ai4rag_mocks()
+        m.create_maas_client.return_value = mock.MagicMock()
+        m.prepare.return_value = mock.MagicMock()
+        m.build.return_value = mock.MagicMock()
+
+        test_data = mock.MagicMock()
+        test_data.path = str(tmp_path / "test.json")
+        report = mock.MagicMock()
+        report.path = str(tmp_path / "report.json")
+
+        full_env = {**MOCKED_ENV_VARIABLES, **env_vars}
+        with mock.patch.dict("os.environ", full_env, clear=True):
+            with mock.patch.dict("sys.modules", m.modules):
+                search_space_preparation.python_func(
+                    test_data=test_data,
+                    search_space_report=report,
+                    embedding_models=["embed-1"],
+                    generation_models=["gen-1"],
+                )
+
+        assert m.prepare.call_args.kwargs["vector_store_type"] == expected_vector_store_type
+        if expects_fallback_warning:
+            assert "defaulting to milvus" in caplog.text
+        else:
+            assert "defaulting to milvus" not in caplog.text
+
+    @pytest.mark.parametrize(
         ("preset_value", "expected_chunking", "expected_chunk_sizes", "expected_chunk_overlaps"),
         [
             ("speed", ["recursive"], [128, 256, 512], [32, 64]),
-            ("balanced", ["recursive", "hybrid"], [512, 1024, 2048], [0, 128, 256]),
+            ("balanced", ["recursive", "hybrid"], [512, 1024], [0, 128, 256]),
         ],
     )
     @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
@@ -267,6 +308,41 @@ class TestSearchSpacePreparationUnitTests:
                     generation_models=["gen-1"],
                 )
         return result.detected_ocr_lang
+
+    @pytest.mark.parametrize("preset_value", ["speed", "balanced"])
+    def test_neo4j_delegates_backend_defaults_to_ai4rag(self, tmp_path, preset_value):
+        """Neo4j preserves ai4rag chunk defaults regardless of preset."""
+        m = _make_ai4rag_mocks()
+        m.create_maas_client.return_value = mock.MagicMock()
+        m.prepare.return_value = mock.MagicMock()
+        m.build.return_value = mock.MagicMock()
+
+        test_data = mock.MagicMock()
+        test_data.path = str(tmp_path / "test.json")
+        report = mock.MagicMock()
+        report.path = str(tmp_path / "report.json")
+
+        neo4j_env = {
+            **MOCKED_ENV_VARIABLES,
+            "NEO4J_URI": "neo4j://neo4j:7687",
+            "NEO4J_PASSWORD": "s3cr3t",
+        }
+        with mock.patch.dict("os.environ", neo4j_env, clear=True):
+            with mock.patch.dict("sys.modules", m.modules):
+                search_space_preparation.python_func(
+                    test_data=test_data,
+                    search_space_report=report,
+                    embedding_models=["embed-1"],
+                    generation_models=["gen-1"],
+                    preset=preset_value,
+                )
+
+        payload = m.prepare.call_args.args[0]
+        assert m.prepare.call_args.kwargs["vector_store_type"] == "neo4j"
+        expected_methods = ["recursive"] if preset_value == "speed" else ["recursive", "hybrid"]
+        assert payload["chunking_methods"] == expected_methods
+        assert "chunk_sizes" not in payload
+        assert "chunk_overlaps" not in payload
 
     @pytest.mark.parametrize(("code", "expected"), [("en", "en"), ("ZH", "zh"), (" pl ", "pl")])
     def test_detected_language_is_returned_normalized(self, tmp_path, code, expected):

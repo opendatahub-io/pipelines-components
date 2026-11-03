@@ -46,6 +46,54 @@ class TestPublishComponentStageMap:
         assert component_stage_map_artifact.metadata["pipeline_id"] == PIPELINE_RAG_OPTIMIZATION
         assert component_stage_map_artifact.metadata["component_count"] == len(document["components"])
 
+    @pytest.mark.parametrize(
+        ("provider_env", "is_graph"),
+        [
+            ({}, False),
+            ({"MILVUS_URI": "http://milvus:19530"}, False),
+            ({"PGVECTOR_HOST": "postgres"}, False),
+            ({"NEO4J_URI": "neo4j://neo4j:7687"}, True),
+            ({"NEO4J_URI": "neo4j://neo4j:7687", "MILVUS_URI": "http://milvus:19530"}, False),
+            ({"NEO4J_URI": "neo4j://neo4j:7687", "PGVECTOR_HOST": "postgres"}, False),
+        ],
+    )
+    def test_publishes_provider_specific_stages_and_descriptions(
+        self, component_stage_map_artifact, monkeypatch, provider_env, is_graph
+    ):
+        """Select graph steps and descriptions only for Neo4j."""
+        for key in ("MILVUS_URI", "PGVECTOR_HOST", "NEO4J_URI"):
+            monkeypatch.delenv(key, raising=False)
+        for key, value in provider_env.items():
+            monkeypatch.setenv(key, value)
+
+        publish_component_stage_map.python_func(
+            pipeline_id=PIPELINE_RAG_OPTIMIZATION,
+            run_id="run-provider",
+            component_stage_map=component_stage_map_artifact,
+        )
+        document = json.loads(
+            (Path(component_stage_map_artifact.path) / "component_stage_map.json").read_text(encoding="utf-8")
+        )
+        assert document["pipeline_id"] == PIPELINE_RAG_OPTIMIZATION
+        assert [c["id"] for c in document["components"]] == [
+            "documents_discovery",
+            "search_space_preparation",
+            "text_extraction",
+            "models_pre_selector",
+            "rag_templates_optimization",
+        ]
+        optimization = document["components"][-1]
+        assert [s["id"] for s in optimization["stages"]] == ["optimize_templates", "build_leaderboard"]
+        expected_steps = ["chunking", "embedding", "retrieval", "generation", "evaluation"]
+        if is_graph:
+            expected_steps.insert(2, "graph_extraction")
+            assert "Neo4j" in document["description"]
+            assert "knowledge graph" in optimization["stages"][0]["description"]
+        else:
+            assert "graph" not in json.dumps(document).lower()
+            assert "vector retrieval" in optimization["stages"][0]["description"]
+        assert optimization["stages"][0]["steps"] == expected_steps
+
     def test_rejects_empty_pipeline_id(self, component_stage_map_artifact):
         """Reject blank pipeline_id."""
         with pytest.raises(ValueError, match="pipeline_id"):
@@ -100,3 +148,76 @@ class TestPublishComponentStageMap:
                 run_id="run-1",
                 component_stage_map=component_stage_map_artifact,
             )
+
+
+class TestPublishComponentStageMapMlflow:
+    """The `mlflow` block the odh-dashboard BFF uses to deep-link the run."""
+
+    def _publish(self, artifact):
+        publish_component_stage_map.python_func(
+            pipeline_id=PIPELINE_RAG_OPTIMIZATION,
+            run_id="run-abc",
+            component_stage_map=artifact,
+        )
+        return json.loads((Path(artifact.path) / "component_stage_map.json").read_text(encoding="utf-8"))
+
+    def test_reports_tracking_disabled_without_platform_config(self, component_stage_map_artifact, monkeypatch):
+        """No KFP_MLFLOW_CONFIG means the dashboard hides the MLflow link."""
+        monkeypatch.delenv("KFP_MLFLOW_CONFIG", raising=False)
+        document = self._publish(component_stage_map_artifact)
+        assert document["mlflow"] == {"tracking_enabled": False}
+        assert component_stage_map_artifact.metadata["mlflow_tracking_enabled"] == "False"
+
+    def test_publishes_deep_link_from_platform_config(self, component_stage_map_artifact, monkeypatch):
+        """The injected blob becomes a run URL the dashboard can link to."""
+        monkeypatch.setenv(
+            "KFP_MLFLOW_CONFIG",
+            json.dumps(
+                {
+                    "endpoint": "https://mlflow.example.com/",
+                    "experimentId": "7",
+                    "parentRunId": "parent-run-1",
+                    "workspacesEnabled": True,
+                    "workspace": "ns-autorag",
+                }
+            ),
+        )
+        document = self._publish(component_stage_map_artifact)
+        assert document["mlflow"] == {
+            "tracking_enabled": True,
+            "tracking_uri": "https://mlflow.example.com/",
+            "experiment_id": "7",
+            "run_id": "parent-run-1",
+            "workspace": "ns-autorag",
+            "run_url": "https://mlflow.example.com/#/experiments/7/runs/parent-run-1",
+        }
+        assert component_stage_map_artifact.metadata["mlflow_tracking_enabled"] == "True"
+
+    def test_malformed_config_disables_tracking(self, component_stage_map_artifact, monkeypatch):
+        """A broken blob degrades to tracking-off instead of failing the pipeline."""
+        monkeypatch.setenv("KFP_MLFLOW_CONFIG", "{not json")
+        assert self._publish(component_stage_map_artifact)["mlflow"] == {"tracking_enabled": False}
+
+    def test_kubernetes_auth_on_http_disables_tracking(self, component_stage_map_artifact, monkeypatch):
+        """Match the optimizer: do not deep-link when a bearer token would travel over HTTP."""
+        monkeypatch.setenv(
+            "KFP_MLFLOW_CONFIG",
+            json.dumps(
+                {
+                    "endpoint": "http://mlflow.example.com",
+                    "authType": "kubernetes",
+                    "experimentId": "7",
+                    "parentRunId": "parent-run-1",
+                }
+            ),
+        )
+        document = self._publish(component_stage_map_artifact)
+        assert document["mlflow"] == {"tracking_enabled": False}
+        assert component_stage_map_artifact.metadata["mlflow_tracking_enabled"] == "False"
+
+    def test_template_omits_mlflow_stage(self, component_stage_map_artifact, monkeypatch):
+        """MLflow bookkeeping is not presented as an optimization stage."""
+        monkeypatch.delenv("KFP_MLFLOW_CONFIG", raising=False)
+        document = self._publish(component_stage_map_artifact)
+        optimization = next(c for c in document["components"] if c["id"] == "rag_templates_optimization")
+        assert "log_mlflow_results" not in {stage["id"] for stage in optimization["stages"]}

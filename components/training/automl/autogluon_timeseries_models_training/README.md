@@ -6,8 +6,8 @@
 
 Train, select, and full-refit top N AutoGluon timeseries models.
 
-This component combines model generation and full-refit into one step to avoid pipeline-level ``ParallelFor``. It trains multiple AutoGluon TimeSeries models on the selection training data, ranks them on the test set, then sequentially refits the top N models on full train data (selection split +
-extra split).
+This component combines model generation and full-refit into one step to avoid pipeline-level ``ParallelFor``. It trains multiple AutoGluon TimeSeries models on the selection training data, ranks them on the test set, then sequentially refits the unique base dependencies of the top N models on full
+train data (selection split + extra split). Selected ensembles retain their learned weights and dependency configurations; shared dependencies are trained only once.
 
 Refit outputs for all selected models are written under one ``models_artifact``, and a ranked HTML leaderboard is written to ``html_artifact``.
 
@@ -35,7 +35,7 @@ Refit outputs for all selected models are written under one ``models_artifact``,
 | `split_config` | `Optional[dict]` | `None` | Optional split config stored in artifact metadata. |
 | `prediction_length` | `int` | `1` | Forecast horizon (number of timesteps). |
 | `known_covariates_names` | `Optional[List[str]]` | `None` | Optional list of known covariate column names. |
-| `preset` | `str` | `speed` | Training quality tier. ``"speed"`` (default), ``"balanced"``, or ``"quality"`` (two-hour selection budget with AutoGluon ``best_quality``). |
+| `preset` | `str` | `speed` | Training quality tier. ``"speed"`` (default, AutoGluon ``medium_quality``), ``"balanced"`` (AutoGluon ``high_quality``), or ``"quality"`` (two-hour selection budget with AutoGluon ``best_quality``). |
 | `eval_metric` | `str` | `mean_absolute_scaled_error` | Metric for model ranking (e.g. ``"mean_absolute_scaled_error"``, ``"weighted_quantile_loss"``). Defaults to ``"mean_absolute_scaled_error"``. Legacy uppercase acronyms (e.g. ``"MASE"``) are accepted and normalized to snake_case. |
 | `run_name` | `str` | `""` | Per-execution MLflow run name recorded as a tag on child runs. Falls back to ``pipeline_name`` when empty. |
 | `test_data_bucket_name` | `str` | `""` | Optional S3 bucket for user-provided external test data. |
@@ -120,16 +120,17 @@ def example_pipeline(
   - timeseries
   - automl
   - model-selection
-- **Last Verified**: 2026-07-08 12:00:00+00:00
+- **Last Verified**: 2026-10-23 00:00:00+00:00
 - **Owners**:
   - No Parent Owners: Yes
   - Approvers:
+    - mateusz-szewczyk-dev
     - LukaszCmielowski
-    - DorotaDR
     - Mateusz-Switala
+    - jakub-walaszczyk
   - Reviewers:
+    - mateusz-szewczyk-dev
     - Mateusz-Switala
-    - DorotaDR
 
 <!-- custom-content -->
 

@@ -23,6 +23,7 @@ def timeseries_data_loader(
     test_data_bucket_name: str = "",
     test_data_file_key: str = "",
     preset: str = "speed",
+    ssl_cert_path: Optional[str] = None,
 ) -> NamedTuple(
     "outputs",
     sample_config=dict,
@@ -35,12 +36,18 @@ def timeseries_data_loader(
 ):
     """Load and split timeseries data from S3 for AutoGluon training.
 
-    This component loads time series data from S3, samples it (up to 100 MiB for the
+    This component scans the entire CSV from S3 and retains the latest observations
+    per series (up to 100 MiB of pandas data for the
     ``"speed"`` preset, up to 1 GiB for ``"balanced"``, and up to 10 GiB for
     ``"quality"``),
     applies light **cleansing** (replace ``+/-inf`` with NaN so AutoGluon can apply its
     own missing-value logic; require parseable timestamps and non-null ids; drop
-    exact duplicate ``(id_column, timestamp_column)`` rows, keep last), then performs a two-stage
+    duplicate ``(id_column, timestamp_column)`` keys, keeping the last file occurrence).
+    Timestamp order determines recency even for unsorted inputs. Small sources stay
+    in RAM; larger sources use temporary Parquet files and a SQLite timestamp index
+    on the workspace. No second S3 download is required. Source/retained counts and
+    timestamp ranges per series are saved as JSONL profiles in ``component_status``.
+    The component then performs a two-stage
     **per-series temporal** split for efficient AutoGluon training:
     1. Primary split (default 80/20): for each distinct ``id_column`` value, the earliest
        (1 - test_size) fraction of rows by ``timestamp_column`` goes to the train portion and
@@ -69,8 +76,9 @@ def timeseries_data_loader(
         sampled_test_dataset: Output dataset artifact for the test split.
         component_status: Output artifact containing stage-level progress tracking for this component.
         selection_train_size: Fraction of train portion for model selection (default: 0.3).
-        prediction_length: Forecast horizon used downstream (default: 1). Only used to
-            fail fast when a user-provided test series is too short to be evaluated.
+        prediction_length: Forecast horizon used downstream (default: 1). Sampling preserves
+            enough history for the temporal splits and at least one internal validation
+            window when the source provides it. Also validates external test series length.
         known_covariates_names: Covariate columns known in advance downstream (default: none).
             Only used to fail fast when a user-provided test dataset omits one of them.
         test_data_bucket_name: S3 bucket name for user-provided test dataset (default: empty string).
@@ -79,6 +87,11 @@ def timeseries_data_loader(
             (default) samples up to 100 MiB; ``"balanced"`` samples up to 1 GiB; and
             ``"quality"`` samples up to 10 GiB. User-provided test datasets are capped
             at 50 MiB, 100 MiB, and 1 GiB respectively.
+        ssl_cert_path: Optional path to a PEM-encoded CA bundle used to verify the S3
+            endpoint. The filename extension is not significant; ``.pem`` and ``.crt``
+            are both common. It overrides ``AWS_CA_BUNDLE`` for this component; when
+            neither is set, the system trust bundle is used. TLS verification is never
+            disabled.
 
     Raises:
         ValueError: If a required parameter is empty or invalid, if only one of the
@@ -94,6 +107,7 @@ def timeseries_data_loader(
     import io
     import json
     import logging
+    import os
     from pathlib import Path
 
     import boto3
@@ -125,6 +139,14 @@ def timeseries_data_loader(
 
     from kfp_components.components.training.automl.shared.component_status import ComponentStatusTracker
     from kfp_components.components.training.automl.shared.parquet_utils import stringify_mixed_object_columns
+    from kfp_components.components.training.automl.shared.timeseries_sampling import (
+        PANDAS_CHUNK_SIZE,
+        PRESET_MAX_SIZE_BYTES,
+        PRESET_TEST_DATA_MAX_SIZE_BYTES,
+        add_split_profile,
+        minimum_retained_rows,
+        sample_latest_timeseries,
+    )
     from kfp_components.components.training.automl.shared.user_test_data import (
         raise_if_test_data_empty,
         report_test_data_truncation,
@@ -136,21 +158,7 @@ def timeseries_data_loader(
     )
 
     VALID_PRESETS = {"speed", "balanced", "quality"}
-    # Sampling budget per quality tier: "speed" stays small for fast runs,
-    # "balanced" allows the default supported dataset size, while
-    # "quality" is sized for the higher-memory training profile.
-    PRESET_MAX_SIZE_BYTES = {
-        "speed": 100 * 1024 * 1024,  # 100 MiB
-        "balanced": 1024 * 1024 * 1024,  # 1 GiB
-        "quality": 10 * 1024 * 1024 * 1024,  # 10 GiB
-    }
-    PRESET_TEST_DATA_MAX_SIZE_BYTES = {
-        "speed": 50 * 1024 * 1024,  # 50 MiB
-        "balanced": 100 * 1024 * 1024,  # 100 MiB
-        "quality": 1024 * 1024 * 1024,  # 1 GiB
-    }
     MIN_VALID_RECORDS_AFTER_CLEANSING = 100
-    PANDAS_CHUNK_SIZE = 10000  # Rows per batch for streaming read
     DEFAULT_TEST_SIZE = 0.2
 
     if preset not in VALID_PRESETS:
@@ -179,7 +187,7 @@ def timeseries_data_loader(
         raise ValueError(
             "id_column must be an empty string or a non-empty column name (whitespace-only values are not allowed)."
         )
-    if selection_train_size <= 0 or selection_train_size >= 1:
+    if not 0 < selection_train_size < 1:
         raise ValueError("selection_train_size must be in a range 0 to 1.")
 
     if file_key.startswith("/") or file_key.endswith("/") or "//" in file_key:
@@ -199,7 +207,7 @@ def timeseries_data_loader(
             f"{workspace_path!r} -> {workspace_path_resolved}"
         )
 
-    if prediction_length <= 0:
+    if not isinstance(prediction_length, int) or prediction_length <= 0:
         raise ValueError("prediction_length must be greater than 0.")
 
     test_data_bucket_name, test_data_file_key = validate_test_data_params(test_data_bucket_name, test_data_file_key)
@@ -217,8 +225,15 @@ def timeseries_data_loader(
             MAX_SIZE_BYTES / (1024**2),
         )
 
-        def get_s3_client(verify=True):
-            """Create and return an S3 client using credentials from environment variables."""
+        effective_ssl_cert_path = (ssl_cert_path or os.environ.get("AWS_CA_BUNDLE") or "").strip() or None
+
+        def get_s3_client():
+            """Create and return an S3 client using credentials from environment variables.
+
+            TLS certificate verification is always enabled: the client uses the PEM CA
+            bundle from ``ssl_cert_path`` or ``AWS_CA_BUNDLE`` when set and the system
+            trust bundle otherwise.
+            """
             credentials = resolve_s3_env_credentials()
             validate_s3_env_credentials(credentials)
 
@@ -228,108 +243,8 @@ def timeseries_data_loader(
                 region_name=credentials["region_name"],
                 aws_access_key_id=credentials["access_key"],
                 aws_secret_access_key=credentials["secret_key"],
-                verify=verify,
+                verify=effective_ssl_cert_path or True,
             )
-
-        def load_timeseries_data_truncate(
-            bucket_name,
-            file_key,
-            max_size_bytes,
-            chunk_size,
-            truncation_report=None,
-            fail_on_partial_read: bool = False,
-        ):
-            """Load time series CSV from S3, truncating to max_size_bytes while preserving order.
-
-            When ``truncation_report`` is a dict:
-            - ``"cap_reached"`` is True only when the size limit stopped the read (including the
-              conservative case where accumulated rows hit exactly ``max_size_bytes``).
-            - ``"truncated"`` is True when the returned frame may be incomplete for any reason
-              (cap exhaustion or mid-stream read error with partial recovery).
-
-            When ``fail_on_partial_read`` is True, a mid-stream error is fatal. If no rows were
-            read, an empty dataframe is returned so the caller can report an empty test dataset.
-            """
-            from botocore.exceptions import SSLError
-
-            s3_client = get_s3_client()
-            try:
-                response = s3_client.get_object(Bucket=bucket_name, Key=file_key)
-            except SSLError:
-                logger.warning(
-                    "SSL error when downloading s3://%s/%s, retrying with verify=False",
-                    bucket_name,
-                    file_key,
-                )
-                no_verify_client = get_s3_client(verify=False)
-                response = no_verify_client.get_object(Bucket=bucket_name, Key=file_key)
-            text_stream = io.TextIOWrapper(response["Body"], encoding="utf-8")
-
-            chunk_list = []
-            accumulated_size = 0
-            total_rows_read = 0
-
-            def _mark_cap_reached():
-                if truncation_report is not None:
-                    truncation_report["truncated"] = True
-                    truncation_report["cap_reached"] = True
-
-            def _mark_partial_read():
-                if truncation_report is not None:
-                    truncation_report["truncated"] = True
-
-            try:
-                for chunk_df in pd.read_csv(text_stream, chunksize=chunk_size):
-                    chunk_memory = chunk_df.memory_usage(deep=True).sum()
-
-                    if accumulated_size + chunk_memory > max_size_bytes:
-                        _mark_cap_reached()
-                        remaining_bytes = max_size_bytes - accumulated_size
-                        if remaining_bytes <= 0:
-                            break
-                        bytes_per_row = chunk_memory / len(chunk_df) if len(chunk_df) > 0 else 0
-                        if bytes_per_row > 0:
-                            rows_to_take = int(remaining_bytes / bytes_per_row)
-                            if rows_to_take > 0:
-                                chunk_df = chunk_df.head(rows_to_take)
-                                chunk_list.append(chunk_df)
-                                total_rows_read += len(chunk_df)
-                        break
-
-                    chunk_list.append(chunk_df)
-                    accumulated_size += chunk_memory
-                    total_rows_read += len(chunk_df)
-
-                    if accumulated_size >= max_size_bytes:
-                        _mark_cap_reached()
-                        break
-
-            except Exception as e:
-                if not chunk_list or fail_on_partial_read:
-                    raise ValueError(f"Error reading CSV from S3: {str(e)}") from e
-                logger.warning(
-                    "Partial CSV read from s3://%s/%s, keeping the %s row(s) read so far: %s",
-                    bucket_name,
-                    file_key,
-                    total_rows_read,
-                    e,
-                )
-                _mark_partial_read()
-
-            if not chunk_list:
-                if fail_on_partial_read:
-                    # A header-only CSV yields no chunks at all, so the header is gone
-                    # too. Return an empty frame and let the caller report it as an
-                    # empty test dataset rather than as an inaccessible file.
-                    return pd.DataFrame()
-                raise ValueError("No data was loaded from S3. The file may be empty or inaccessible.")
-
-            logger.debug(
-                "S3 chunk read: %s rows (~%.2f MiB)",
-                total_rows_read,
-                accumulated_size / (1024**2),
-            )
-            return pd.concat(chunk_list, ignore_index=True)
 
         def _clean_timeseries_dataframe(data, id_col, ts_col, log):
             """Prepare panel data without dropping rows for missing targets (AutoGluon handles NaNs).
@@ -340,11 +255,10 @@ def timeseries_data_loader(
             handling per model family.
 
             This step: replace ``+/-inf`` with NaN; parse timestamps and **fail** if any are invalid;
-            **fail** if any ``id_col`` or timestamp is null; ``drop_duplicates`` on ``(id_col, ts_col)``
-            (keep last) only for true duplicate keys.
+            **fail** if any ``id_col`` or timestamp is null. The sampler deduplicates
+            keys across the entire source after this normalization.
             """
-            rows_in = len(data)
-            if rows_in == 0:
+            if len(data) == 0:
                 return data
 
             out = data.replace([float("inf"), float("-inf")], float("nan"))
@@ -409,26 +323,8 @@ def timeseries_data_loader(
                     "AutoGluon frequency inference (set TimeSeriesPredictor(freq=...) or regularize upstream)."
                 )
 
-            # Sort by (id, timestamp) BEFORE deduplication so that keep="last" means
-            # "keep the last row in chronological order" (after sorting), not "keep the last row in file order".
-            # This ensures we retain the chronologically latest observation for each (id, timestamp) pair.
-            out = out.sort_values(by=[id_col, ts_col])
-            before_dedupe = len(out)
-            out = out.drop_duplicates(subset=[id_col, ts_col], keep="last")
-            dropped_dupes = before_dedupe - len(out)
-            if dropped_dupes:
-                log.info(
-                    "Timeseries cleansing: dropped %s duplicate rows on (%s, %s), keep=last.",
-                    dropped_dupes,
-                    id_col,
-                    ts_col,
-                )
-
-            rows_out = len(out)
-            log.info("Timeseries cleansing: rows in=%s out=%s (target NaNs retained for AutoGluon).", rows_in, rows_out)
-            if rows_out == 0:
-                raise ValueError("After removing duplicate (id, timestamp) pairs, the dataset has no rows left.")
-
+            # Deduplication and ordering happen across the complete source in the
+            # sampler. Doing this per chunk loses cross-chunk duplicates and order.
             return out.reset_index(drop=True)
 
         status.record(
@@ -436,70 +332,96 @@ def timeseries_data_loader(
             "running",
             metrics={"source": f"s3://{bucket_name}/{file_key}"},
         )
-        sampling_report = {}
-        df = load_timeseries_data_truncate(
-            bucket_name,
-            file_key,
-            MAX_SIZE_BYTES,
-            PANDAS_CHUNK_SIZE,
-            truncation_report=sampling_report,
-        )
-
-        # Reject collision with reserved synthetic-ID column (CWE-20)
-        # Check if any user-specified column uses the reserved name before we try to inject it.
-        reserved_columns = {timestamp_column, target}
-        if id_column:
-            reserved_columns.add(id_column)
+        reserved_columns = {timestamp_column, target, id_column}
         if SYNTHETIC_ITEM_ID_COLUMN in reserved_columns:
             raise ValueError(
                 f"Column name {SYNTHETIC_ITEM_ID_COLUMN!r} is reserved for synthetic ID injection. "
-                f"Please rename your timestamp, target, or id_column to avoid collision."
+                "Please rename your timestamp, target, or id_column to avoid collision."
             )
-
-        uses_synthetic_id = False
-        if id_column == "":
-            # Two-column mode: dataset must have exactly timestamp + target columns.
-            required_columns = {timestamp_column, target}
-            missing_columns = required_columns - set(df.columns)
-            if missing_columns:
-                raise ValueError(
-                    f"Missing required columns in dataset: {missing_columns}. Available columns: {list(df.columns)}"
-                )
-            if len(df.columns) != 2:
-                raise ValueError(
-                    f"When id_column is not provided, the dataset must have exactly 2 columns "
-                    f"(timestamp + target), but found {len(df.columns)} columns: {list(df.columns)}. "
-                    f"Provide id_column to identify the series column for datasets with more than 2 columns."
-                )
-            # Check for collision with existing columns in the dataset
-            if SYNTHETIC_ITEM_ID_COLUMN in df.columns:
-                raise ValueError(
-                    f"Dataset already contains a column named {SYNTHETIC_ITEM_ID_COLUMN!r}. "
-                    f"This name is reserved for synthetic ID injection. Please rename the existing column."
-                )
-            df[SYNTHETIC_ITEM_ID_COLUMN] = SYNTHETIC_ITEM_ID_VALUE
+        uses_synthetic_id = id_column == ""
+        if uses_synthetic_id:
             id_column = SYNTHETIC_ITEM_ID_COLUMN
-            uses_synthetic_id = True
-            logger.info(
-                "Two-column dataset detected; injected synthetic item ID column %r with value %r.",
-                SYNTHETIC_ITEM_ID_COLUMN,
-                SYNTHETIC_ITEM_ID_VALUE,
+
+        def _load_latest(bucket, key, budget, profile_name, *, is_test=False):
+            from botocore.exceptions import SSLError
+
+            try:
+                response = get_s3_client().get_object(Bucket=bucket, Key=key)
+            except SSLError as exc:
+                certificate_source = effective_ssl_cert_path or "the system trust bundle"
+                raise RuntimeError(
+                    "S3 TLS certificate validation failed when downloading "
+                    f"s3://{bucket}/{key}. Verify that ssl_cert_path="
+                    f"{certificate_source!r} is a PEM CA bundle that trusts the S3 endpoint. "
+                    "Do not disable certificate verification."
+                ) from exc
+
+            def _prepared_chunks(stream):
+                try:
+                    reader = pd.read_csv(
+                        stream,
+                        chunksize=PANDAS_CHUNK_SIZE,
+                        dtype=None if uses_synthetic_id else {id_column: str},
+                    )
+                except pd.errors.EmptyDataError:
+                    return
+                with reader:
+                    while True:
+                        try:
+                            chunk = next(reader)
+                        except StopIteration:
+                            return
+                        except Exception as exc:
+                            # A partial scan cannot establish the latest observations.
+                            raise ValueError(f"Error reading CSV from S3: {exc}") from exc
+                        if not len(chunk):
+                            continue
+                        required_columns = {timestamp_column, target}
+                        if not uses_synthetic_id:
+                            required_columns.add(id_column)
+                        missing = required_columns - set(chunk.columns)
+                        if missing:
+                            kind = "test dataset" if is_test else "dataset"
+                            raise ValueError(
+                                f"Missing required columns in {kind}: {missing}. "
+                                f"Available columns: {list(chunk.columns)}"
+                            )
+                        if uses_synthetic_id:
+                            if not is_test and len(chunk.columns) != 2:
+                                raise ValueError(
+                                    "When id_column is not provided, the dataset must have exactly 2 columns "
+                                    f"(timestamp + target), but found {len(chunk.columns)} columns: "
+                                    f"{list(chunk.columns)}. Provide id_column for panel datasets."
+                                )
+                            if SYNTHETIC_ITEM_ID_COLUMN in chunk.columns:
+                                raise ValueError(
+                                    f"Dataset already contains a column named {SYNTHETIC_ITEM_ID_COLUMN!r}. "
+                                    "This name is reserved for synthetic ID injection."
+                                )
+                            chunk[id_column] = SYNTHETIC_ITEM_ID_VALUE
+                        chunk = _clean_timeseries_dataframe(chunk, id_column, timestamp_column, logger)
+                        stringify_mixed_object_columns(chunk)
+                        yield chunk
+
+            minimum_rows = (
+                prediction_length + 1
+                if is_test
+                else minimum_retained_rows(prediction_length, selection_train_size, bool(test_data_file_key))
             )
-        else:
-            required_columns = {id_column, timestamp_column, target}
-            missing_columns = required_columns - set(df.columns)
-            if missing_columns:
-                raise ValueError(
-                    f"Missing required columns in dataset: {missing_columns}. Available columns: {list(df.columns)}"
+            with io.TextIOWrapper(response["Body"], encoding="utf-8") as stream:
+                return sample_latest_timeseries(
+                    _prepared_chunks(stream),
+                    id_column=id_column,
+                    timestamp_column=timestamp_column,
+                    max_size_bytes=budget,
+                    workspace_path=workspace_path_resolved,
+                    profile_path=Path(component_status.path) / profile_name,
+                    minimum_rows_per_series=minimum_rows,
                 )
 
+        df, sampling_report = _load_latest(bucket_name, file_key, MAX_SIZE_BYTES, "training_series_profile.jsonl")
         if len(df) == 0:
-            raise ValueError(
-                "The loaded dataset has no data rows. Provide at least one row per time series "
-                f"with columns {sorted({id_column, timestamp_column, target})}."
-            )
-
-        df = _clean_timeseries_dataframe(df, id_column, timestamp_column, logger)
+            raise ValueError("No data was loaded from S3. The file may be empty or inaccessible.")
         stringify_mixed_object_columns(df)
         _log_dataset_stats("loaded (after cleansing)", df)
 
@@ -520,7 +442,8 @@ def timeseries_data_loader(
                 "sampled_in_memory_bytes": int(df.memory_usage(deep=True).sum()),
                 "sample_cap_bytes": MAX_SIZE_BYTES,
                 "sample_cap_reached": bool(sampling_report.get("cap_reached")),
-                "sampling_method": "first_n_rows",
+                **sampling_report,
+                "sampling_method": "latest_per_series",
                 "preset": preset,
             },
         )
@@ -533,30 +456,14 @@ def timeseries_data_loader(
         datasets_dir = workspace_path_resolved / "datasets"
         datasets_dir.mkdir(parents=True, exist_ok=True)
 
-        # Stable ordering for downstream I/O (redundant if cleanse already sorted; kept for clarity)
-        df = df.sort_values(by=[id_column, timestamp_column]).reset_index(drop=True)
-
-        def _early_late_split(group: pd.DataFrame, early_fraction: float) -> tuple[pd.DataFrame, pd.DataFrame]:
-            """Split one series by time: first ``early_fraction`` of rows (by time) vs remainder.
-
-            Ensures at least one row in each side when len >= 2. A single-row series is kept
-            entirely in the early (train/selection) part.
-            """
-            g = group.sort_values(by=timestamp_column)
-            n = len(g)
-            if n == 0:
-                return g.iloc[:0].copy(), g.iloc[:0].copy()
-            if n == 1:
-                return g.copy(), g.iloc[:0].copy()
-            split_idx = int(n * early_fraction)
-            split_idx = max(1, min(split_idx, n - 1))
-            return g.iloc[:split_idx].copy(), g.iloc[split_idx:].copy()
-
-        def _concat_sorted(parts: list, sort_by: list) -> pd.DataFrame:
-            if not parts:
-                return pd.DataFrame(columns=df.columns)
-            out = pd.concat(parts, ignore_index=True)
-            return out.sort_values(by=sort_by).reset_index(drop=True)
+        def _temporal_split(frame: pd.DataFrame, early_fraction: float):
+            """Split already sorted series in vectorized operations; singletons stay in train."""
+            groups = frame.groupby(id_column, sort=False)
+            sizes = groups[timestamp_column].transform("size")
+            cutoffs = (sizes * early_fraction).astype(int).clip(lower=1)
+            cutoffs = cutoffs.where(cutoffs < sizes, (sizes - 1).clip(lower=1))
+            early = groups.cumcount() < cutoffs
+            return frame[early].copy(), frame[~early].copy()
 
         has_user_test_data = bool(test_data_file_key)
 
@@ -564,15 +471,13 @@ def timeseries_data_loader(
             test_data_source = test_data_source_uri(test_data_bucket_name, test_data_file_key)
 
             # Download user test data from S3 (AC5: distinguishable error message)
-            truncation_report = {}
             try:
-                user_test_df = load_timeseries_data_truncate(
+                user_test_df, truncation_report = _load_latest(
                     test_data_bucket_name,
                     test_data_file_key,
                     TEST_DATA_MAX_SIZE_BYTES,
-                    PANDAS_CHUNK_SIZE,
-                    truncation_report=truncation_report,
-                    fail_on_partial_read=True,
+                    "test_series_profile.jsonl",
+                    is_test=True,
                 )
             except Exception as e:
                 raise test_data_load_error(test_data_source, e) from e
@@ -608,9 +513,6 @@ def timeseries_data_loader(
                     f"Missing known covariate column(s) in test dataset: {missing_covariates}. "
                     f"Available columns: {list(user_test_df.columns)}"
                 )
-
-            # Apply same cleansing
-            user_test_df = _clean_timeseries_dataframe(user_test_df, id_column, timestamp_column, logger)
 
             if not user_test_df[target].notna().any():
                 raise ValueError(
@@ -661,15 +563,7 @@ def timeseries_data_loader(
             user_test_df.to_parquet(sampled_test_dataset.path, index=False)
 
             # Skip primary temporal split -- use ALL data for secondary split
-            selection_parts = []
-            extra_parts = []
-            for _, series_df in df.groupby(id_column, sort=False):
-                sel, ext = _early_late_split(series_df, selection_train_size)
-                selection_parts.append(sel)
-                extra_parts.append(ext)
-
-            selection_train_df = _concat_sorted(selection_parts, [id_column, timestamp_column])
-            extra_train_df = _concat_sorted(extra_parts, [id_column, timestamp_column])
+            selection_train_df, extra_train_df = _temporal_split(df, selection_train_size)
 
             if len(selection_train_df) == 0:
                 raise ValueError(
@@ -688,25 +582,8 @@ def timeseries_data_loader(
         else:
             test_size = DEFAULT_TEST_SIZE
 
-            train_parts: list = []
-            test_parts: list = []
-            for _, series_df in df.groupby(id_column, sort=False):
-                tr, te = _early_late_split(series_df, 1.0 - test_size)
-                train_parts.append(tr)
-                test_parts.append(te)
-
-            train_df = _concat_sorted(train_parts, [id_column, timestamp_column])
-            test_df = _concat_sorted(test_parts, [id_column, timestamp_column])
-
-            selection_parts: list = []
-            extra_parts: list = []
-            for _, series_train in train_df.groupby(id_column, sort=False):
-                sel, ext = _early_late_split(series_train, selection_train_size)
-                selection_parts.append(sel)
-                extra_parts.append(ext)
-
-            selection_train_df = _concat_sorted(selection_parts, [id_column, timestamp_column])
-            extra_train_df = _concat_sorted(extra_parts, [id_column, timestamp_column])
+            train_df, test_df = _temporal_split(df, 1.0 - test_size)
+            selection_train_df, extra_train_df = _temporal_split(train_df, selection_train_size)
 
             # Validate split outputs:
             if len(train_df) == 0:
@@ -732,6 +609,23 @@ def timeseries_data_loader(
                 "test_size": test_size,
                 "selection_train_size": selection_train_size,
             }
+
+        profile_splits = {"selection_train": selection_train_df, "extra_train": extra_train_df}
+        if not has_user_test_data:
+            profile_splits["test"] = test_data_for_sample
+        add_split_profile(
+            Path(component_status.path) / sampling_report["series_profile"],
+            profile_splits,
+            id_column,
+            timestamp_column,
+        )
+        if has_user_test_data:
+            add_split_profile(
+                Path(component_status.path) / truncation_report["series_profile"],
+                {"test": user_test_df},
+                id_column,
+                timestamp_column,
+            )
 
         _log_dataset_stats("split: selection_train", selection_train_df)
         _log_dataset_stats("split: extra_train", extra_train_df)
@@ -774,7 +668,9 @@ def timeseries_data_loader(
         else:
             sample_rows = sample_tail.to_json(orient="records")
 
-        sample_config = {"sampling_method": "first_n_rows", "total_rows_loaded": len(df), "sampled_rows": len(df)}
+        sample_config = dict(sampling_report)
+        if has_user_test_data:
+            sample_config["test_sampling"] = truncation_report
 
         logger.info(
             "Timeseries loader: %s rows from s3://%s/%s; split selection=%s extra=%s test=%s",

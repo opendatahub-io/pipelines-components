@@ -1,6 +1,6 @@
 {
   "pipeline_id": "documents-rag-optimization-pipeline",
-  "description": "AutoRAG pipeline: discover documents and load test data, prepare and validate the search space, extract text, pre-select models, optimize RAG templates, and build a leaderboard.",
+  "description": "AutoRAG vector RAG pipeline: discover documents and load test data, prepare a vector search space, extract text, pre-select models, optimize vector retrieval and generation, and build a leaderboard.",
   "components": [
     {
       "id": "documents_discovery",
@@ -18,11 +18,11 @@
     },
     {
       "id": "search_space_preparation",
-      "description": "Prepare and validate the AutoRAG search space.",
+      "description": "Prepare and validate the AutoRAG search space for vector retrieval with Milvus or PGVector.",
       "stages": [
         {
           "id": "prepare_search_space",
-          "description": "Resolve and validate the requested models, build the search space, and write the report."
+          "description": "Resolve and validate the requested models, build the vector RAG search space, and write the report."
         }
       ]
     },
@@ -48,11 +48,11 @@
     },
     {
       "id": "rag_templates_optimization",
-      "description": "Run ai4rag optimization and emit RAG pattern artifacts.",
+      "description": "Run ai4rag optimization and emit agentic_rag pattern artifacts.",
       "stages": [
         {
           "id": "optimize_templates",
-          "description": "Validate settings, run ai4rag optimization, and write pattern directories, metrics, and notebooks.",
+          "description": "Validate settings, optimize chunking, embedding, vector retrieval, and generation, and write pattern directories, metrics, and notebooks.",
           "steps": [
             "chunking",
             "embedding",
