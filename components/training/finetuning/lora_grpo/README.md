@@ -19,10 +19,12 @@ After the TrainJob completes, this component reads the adapter checkpoints from 
 | `pvc_path` | `str` | `None` | Workspace PVC root path (use dsl.WORKSPACE_PATH_PLACEHOLDER). |
 | `output_model` | `dsl.Output[dsl.Model]` | `None` | Output model artifact (merged model). |
 | `output_metrics` | `dsl.Output[dsl.Metrics]` | `None` | Output training metrics artifact. |
+| `training_run_id` | `str` | `""` | Unique identifier for this pipeline run. The pipeline supplies the KFP run ID so checkpoints and Training Hub dataset caches from previous runs are not reused accidentally on a persistent PVC. If empty, a UUID is used. |
 | `dataset` | `dsl.Input[dsl.Dataset]` | `None` | Input training dataset artifact (tool-call traces). |
 | `training_base_model` | `str` | `Qwen/Qwen3-4B` | Base model (HuggingFace ID or local path). |
-| `training_data_path` | `str` | `""` | Dataset path or HuggingFace ID (e.g., Agent-Ark/Toucan-1.5M). When empty, uses dataset artifact. When set, overrides the artifact. |
+| `training_data_path` | `str` | `""` | Dataset path or HuggingFace ID (e.g., Agent-Ark/Toucan-1.5M). When empty, uses the dataset artifact. When set, overrides the artifact. |
 | `training_num_iterations` | `int` | `5` | Number of GRPO training iterations. |
+| `training_completion_timeout_seconds` | `int` | `1800` | Maximum number of seconds to wait for the TrainJob to reach Complete or Failed after it starts. Defaults to 1800 seconds (30 minutes). |
 | `training_group_size` | `int` | `4` | Number of rollouts per prompt for GRPO advantage estimation. |
 | `training_prompt_batch_size` | `int` | `50` | Number of prompts per training batch. |
 | `training_n_train` | `int` | `200` | Number of training samples to use from the dataset. |
@@ -40,13 +42,14 @@ After the TrainJob completes, this component reads the adapter checkpoints from 
 | `training_metadata_annotations` | `str` | `""` | Pod annotations as key=value,key=value. |
 | `training_runtime` | `str` | `training-hub` | Name of the ClusterTrainingRuntime to use. |
 | `training_pvc_name` | `str` | `""` | PVC name to mount on the TrainJob pod for shared storage. |
+| `training_use_hf_direct` | `bool` | `False` | Use the Hugging Face dataset loader directly. When true, training_data_path must be an ``hf://`` URI or a Hugging Face repository ID; the dataset materialization task is bypassed. |
 | `kubernetes_config` | `dsl.TaskConfig` | `None` | KFP TaskConfig for volumes/env/resources passthrough. |
 
 ## Outputs 📤
 
 | Name | Type | Description |
 | ---- | ---- | ----------- |
-| Output | `str` |  |
+| Output | `str` | The path to this run's ``training_results.json`` on the shared PVC. |
 
 ## Metadata 🗂️
 

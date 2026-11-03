@@ -7,6 +7,7 @@ import pytest
 from kfp import compiler
 from kfp_components.utils.pipeline_dag_tasks import (
     assert_compiled_pipeline_root_dag_task_ids,
+    load_pipeline_spec_document,
 )
 
 from ..pipeline import autogluon_timeseries_training_pipeline
@@ -146,7 +147,7 @@ class TestAutogluonTimeseriesTrainingPipelineUnitTests:
         assert "condition-branches-1" in content
 
     def test_compiled_pipeline_wires_mlflow_inputs_to_training(self):
-        """MLflow inputs are forwarded into the training task.
+        """Run identity and selected image reach MLflow in every preset branch.
 
         The training task now logs to MLflow; the standalone mlflow-logger step no longer exists.
         """
@@ -158,12 +159,16 @@ class TestAutogluonTimeseriesTrainingPipelineUnitTests:
                 package_path=tmp_path,
             )
             content = Path(tmp_path).read_text(encoding="utf-8")
+            spec = load_pipeline_spec_document(tmp_path)
         finally:
             Path(tmp_path).unlink(missing_ok=True)
 
         assert "automl-mlflow-logger" not in content
-        assert "exec-autogluon-timeseries-models-training:" in content
-        assert "exec-autogluon-timeseries-models-training-2:" in content
+        executors = spec["deploymentSpec"]["executors"]
+        for suffix in ("", "-2", "-3"):
+            container = executors[f"exec-autogluon-timeseries-models-training{suffix}"]["container"]
+            env = {item["name"]: item["value"] for item in container["env"]}
+            assert env["RELATED_IMAGE_ODH_AUTOML_IMAGE"] == container["image"]
 
     def test_compiled_pipeline_declares_speed_and_balanced_resource_tiers(self):
         """Speed and balanced preset branches request different training CPU/memory."""

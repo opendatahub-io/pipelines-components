@@ -1,0 +1,20 @@
+[
+  "notebook_templates/maas_indexing_template.ipynb",
+  "notebook_templates/maas_inference_template.ipynb",
+  "notebook_templates/mass_creating_knowledge_graph_template.ipynb",
+  "notebook_templates/mass_inference_knowledge_graph_template.ipynb",
+  "starter_kit_templates/agentic_rag/Containerfile.openshell",
+  "starter_kit_templates/agentic_rag/Makefile",
+  "starter_kit_templates/agentic_rag/README.md",
+  "starter_kit_templates/agentic_rag/agent_config.json",
+  "starter_kit_templates/agentic_rag/auth_wrapper.py",
+  "starter_kit_templates/agentic_rag/main.py",
+  "starter_kit_templates/agentic_rag/proxychains_entrypoint.py",
+  "starter_kit_templates/agentic_rag/pyproject.toml",
+  "starter_kit_templates/agentic_rag/src/agentic_rag/__init__.py",
+  "starter_kit_templates/agentic_rag/src/agentic_rag/agent.py",
+  "starter_kit_templates/agentic_rag/src/agentic_rag/config.py",
+  "starter_kit_templates/agentic_rag/src/agentic_rag/tools.py",
+  "starter_kit_templates/agentic_rag/uv.lock",
+  "starter_kit_templates/agentic_rag/values.yaml"
+]

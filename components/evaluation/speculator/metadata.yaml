@@ -1,0 +1,21 @@
+---
+name: speculator
+stability: experimental
+dependencies:
+  kubeflow:
+    - name: Pipelines
+      version: ">=2.15.2"
+  external_services:
+    - name: vLLM
+      version: ">=0.9.0"
+    - name: GuideLLM
+      version: "~=0.7.1"
+tags:
+  - evaluation
+  - llm
+  - speculator
+  - speculative-decoding
+  - metrics
+lastVerified: 2026-10-15T00:00:00Z
+links:
+  documentation: https://docs.vllm.ai/projects/speculators/en/latest/user_guide/tutorials/evaluating_performance/

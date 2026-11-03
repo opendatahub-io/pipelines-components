@@ -22,6 +22,7 @@ def automl_data_loader(  # noqa: D417
     test_data_bucket_name: str = "",
     test_data_file_key: str = "",
     preset: str = "speed",
+    ssl_cert_path: Optional[str] = None,
 ) -> NamedTuple(
     "outputs",
     sample_config=dict,
@@ -86,6 +87,11 @@ def automl_data_loader(  # noqa: D417
             (default) samples up to 100 MiB; ``"balanced"`` samples up to 1 GiB; and
             ``"quality"`` samples up to 10 GiB. User-provided test datasets are capped at
             50 MiB, 100 MiB, and 1 GiB respectively.
+        ssl_cert_path: Optional path to a PEM-encoded CA bundle used to verify the S3
+            endpoint. The filename extension is not significant; ``.pem`` and ``.crt``
+            are both common. It overrides ``AWS_CA_BUNDLE`` for this component; when
+            neither is set, the system trust bundle is used. TLS verification is never
+            disabled.
 
     Raises:
         ValueError: If sampling_method, task_type, or preset is invalid, if required parameters are missing,
@@ -244,8 +250,15 @@ def automl_data_loader(  # noqa: D417
                 )
             logger.info("Performing sampling: method=%s", sampling_method)
 
-        def get_s3_client(verify=True):
-            """Create and return an S3 client using credentials from environment variables."""
+        effective_ssl_cert_path = (ssl_cert_path or os.environ.get("AWS_CA_BUNDLE") or "").strip() or None
+
+        def get_s3_client():
+            """Create and return an S3 client using credentials from environment variables.
+
+            TLS certificate verification is always enabled: the client uses the PEM CA
+            bundle from ``ssl_cert_path`` or ``AWS_CA_BUNDLE`` when set and the system
+            trust bundle otherwise.
+            """
             credentials = resolve_s3_env_credentials()
             validate_s3_env_credentials(credentials)
 
@@ -255,7 +268,7 @@ def automl_data_loader(  # noqa: D417
                 region_name=credentials["region_name"],
                 aws_access_key_id=credentials["access_key"],
                 aws_secret_access_key=credentials["secret_key"],
-                verify=verify,
+                verify=effective_ssl_cert_path or True,
             )
 
         def _sample_first_n_rows(
@@ -530,13 +543,14 @@ def automl_data_loader(  # noqa: D417
             transfer_started = time.monotonic()
             try:
                 response = s3_client.get_object(Bucket=bucket_name, Key=file_key)
-            except SSLError:
-                logger.warning(
-                    "SSL error when downloading s3://%s/%s, retrying with verify=False",
-                    bucket_name,
-                    file_key,
-                )
-                response = get_s3_client(verify=False).get_object(Bucket=bucket_name, Key=file_key)
+            except SSLError as exc:
+                certificate_source = effective_ssl_cert_path or "the system trust bundle"
+                raise RuntimeError(
+                    "S3 TLS certificate validation failed when downloading "
+                    f"s3://{bucket_name}/{file_key}. Verify that ssl_cert_path="
+                    f"{certificate_source!r} is a PEM CA bundle that trusts the S3 endpoint. "
+                    "Do not disable certificate verification."
+                ) from exc
 
             if "source_bytes" not in io_metrics:
                 source_bytes = response.get("ContentLength")
@@ -731,6 +745,9 @@ def automl_data_loader(  # noqa: D417
 
         split_config = split_config or {}
         test_size = split_config.get("test_size", DEFAULT_TEST_SIZE)
+        if test_size is None:
+            # sklearn used 0.25 when an explicit None reached train_test_split.
+            test_size = 0.25
         random_state = split_config.get("random_state", DEFAULT_SPLIT_RANDOM_STATE)
 
         if not sampled_test_dataset.uri or not sampled_test_dataset.uri.endswith(".parquet"):
@@ -740,6 +757,86 @@ def automl_data_loader(  # noqa: D417
         datasets_dir = Path(workspace_path) / "datasets"
         datasets_dir.mkdir(parents=True, exist_ok=True)
         stratify_effective = task_type != "regression" and split_config.get("stratify", True)
+
+        def _assert_stratified_split_viable(y, *, test_size, stage):
+            """Check sklearn's class and split-size requirements before splitting."""
+            if not stratify_effective:
+                return
+
+            class_counts = {label: int(count) for label, count in y.value_counts(dropna=False).items()}
+            n_classes = len(class_counts)
+            # sklearn rounds a fractional test_size up before allocating classes.
+            test_rows = math.ceil(len(y) * test_size)
+            train_rows = len(y) - test_rows
+            min_per_class = 2
+            class_sizes = sorted(class_counts.values(), reverse=True)
+            failing_class_counts = sorted(count for count in class_sizes if count < min_per_class)
+            viable = not failing_class_counts and train_rows >= n_classes and test_rows >= n_classes
+            logger.info(
+                "Stratified split viability [%s]: class_counts=%s, test_size=%s, "
+                "selection_train_size=%s, minimum_per_class=%s, n_classes=%s, "
+                "train_rows=%s, test_rows=%s, viable=%s",
+                stage,
+                class_sizes,
+                test_size,
+                selection_train_size,
+                min_per_class,
+                n_classes,
+                train_rows,
+                test_rows,
+                viable,
+            )
+            if not viable:
+                raise ValueError(
+                    f"Stratified {stage} split is not viable: class_counts={class_sizes}, "
+                    f"test_size={test_size}, selection_train_size={selection_train_size}, "
+                    f"minimum_per_class={min_per_class}, n_classes={n_classes}, "
+                    f"train_rows={train_rows}, test_rows={test_rows}, "
+                    f"failing_class_counts={failing_class_counts}. "
+                    "Add data or increase rare-class counts, "
+                    "or set split_config.stratify=false explicitly."
+                )
+            return class_counts
+
+        def _assert_stratified_split_coverage(class_counts, first_y, second_y, *, test_size, stage, sides):
+            """Check the classes actually allocated by the stratified split."""
+            if not stratify_effective:
+                return
+
+            first_counts = {label: int(count) for label, count in first_y.value_counts(dropna=False).items()}
+            second_counts = {label: int(count) for label, count in second_y.value_counts(dropna=False).items()}
+            failing_allocations = [
+                {
+                    "class_count": count,
+                    sides[0]: first_counts.get(label, 0),
+                    sides[1]: second_counts.get(label, 0),
+                }
+                for label, count in class_counts.items()
+                if not first_counts.get(label, 0) or not second_counts.get(label, 0)
+            ]
+            class_sizes = sorted(class_counts.values(), reverse=True)
+            first_sizes = sorted(first_counts.values(), reverse=True)
+            second_sizes = sorted(second_counts.values(), reverse=True)
+            logger.info(
+                "Stratified split allocation [%s]: n_classes=%s, %s_class_counts=%s, %s_class_counts=%s, viable=%s",
+                stage,
+                len(class_counts),
+                sides[0],
+                first_sizes,
+                sides[1],
+                second_sizes,
+                not failing_allocations,
+            )
+            if failing_allocations:
+                raise ValueError(
+                    f"Stratified {stage} split is not viable after allocation: "
+                    f"class_counts={class_sizes}, test_size={test_size}, "
+                    f"selection_train_size={selection_train_size}, "
+                    f"{sides[0]}_class_counts={first_sizes}, {sides[1]}_class_counts={second_sizes}, "
+                    f"failing_class_allocations={failing_allocations}. "
+                    "Each class needs at least one row on both sides. "
+                    "Add data or increase rare-class counts, or set split_config.stratify=false explicitly."
+                )
 
         has_user_test_data = bool(test_data_file_key)
 
@@ -828,12 +925,16 @@ def automl_data_loader(  # noqa: D417
             X = sampled_dataframe.drop(columns=[label_column], inplace=False)
             y = sampled_dataframe[label_column]
 
+            class_counts = _assert_stratified_split_viable(y, test_size=test_size, stage="holdout")
             X_train, X_test, y_train, y_test = train_test_split(
                 X,
                 y,
                 test_size=test_size,
                 stratify=(y if stratify_effective else None),
                 random_state=random_state,
+            )
+            _assert_stratified_split_coverage(
+                class_counts, y_train, y_test, test_size=test_size, stage="holdout", sides=("train", "test")
             )
 
             selection_X = X_train
@@ -845,12 +946,24 @@ def automl_data_loader(  # noqa: D417
         eligible_train_rows = len(selection_X)
         eligible_train_bytes = _memory_usage_bytes(selection_X) + _memory_usage_bytes(selection_y)
 
+        selection_extra_test_size = 1 - selection_train_size
+        class_counts = _assert_stratified_split_viable(
+            selection_y, test_size=selection_extra_test_size, stage="selection_extra"
+        )
         X_sel, X_extra, y_sel, y_extra = train_test_split(
             selection_X,
             selection_y,
-            test_size=(1 - selection_train_size),
+            test_size=selection_extra_test_size,
             stratify=(selection_y if stratify_effective else None),
             random_state=random_state,
+        )
+        _assert_stratified_split_coverage(
+            class_counts,
+            y_sel,
+            y_extra,
+            test_size=selection_extra_test_size,
+            stage="selection_extra",
+            sides=("selection", "extra"),
         )
 
         X_y_sel = pd.concat([X_sel, y_sel], axis=1)

@@ -55,6 +55,21 @@ def _set_kfp_mlflow_config(
     return cfg
 
 
+@pytest.mark.parametrize(
+    "image", [None, "", "   ", "quay.io/example/automl:custom", "quay.io/example/automl@sha256:" + "a" * 64]
+)
+def test_runtime_image_uses_only_explicit_environment(monkeypatch, image):
+    """Do not substitute package defaults for the selected runtime image."""
+    from kfp_components.utils import consts
+
+    monkeypatch.setattr(consts, "AUTOML_IMAGE", "quay.io/example/unrelated:default")
+    if image is None:
+        monkeypatch.delenv("RELATED_IMAGE_ODH_AUTOML_IMAGE", raising=False)
+    else:
+        monkeypatch.setenv("RELATED_IMAGE_ODH_AUTOML_IMAGE", image)
+    assert mlflow_tracking._resolve_image() == (image or "").strip()
+
+
 class TestMlflowTrackingHelpers:
     """Tests for MLflow env helpers and tracking artifact builders."""
 
@@ -396,6 +411,7 @@ class TestMlflowExperimentLogger:
         assert tracking_info["tracking_mode"] == "kfp"
         assert tracking_info["mlflow_child_run_count"] == "1"
         assert tracking_info["mlflow_child_run_ids"] == "child-run-1"
+        mock_mlflow.set_experiment.assert_called_once_with(experiment_id="1")
         mock_mlflow.start_run.assert_any_call(run_id="parent-run")
         mock_mlflow.start_run.assert_any_call(run_name="LightGBM_BAG_L1", nested=True)
         mock_mlflow.set_tags.assert_called()
@@ -565,6 +581,7 @@ class TestMlflowExperimentLogger:
         assert logged is True
         assert tracking_info["mlflow_child_run_count"] == "2"
         assert tracking_info["mlflow_experiment_id"] == "99"
+        mock_mlflow.set_experiment.assert_called_once_with(experiment_id="99")
         mock_mlflow.start_run.assert_any_call(run_id="parent-run")
         mock_mlflow.start_run.assert_any_call(run_name="WeightedEnsemble_L3", nested=True)
         mock_mlflow.start_run.assert_any_call(run_name="CatBoost_BAG_L1", nested=True)

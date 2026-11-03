@@ -1,0 +1,67 @@
+# Prepare Grpo Dataset ✨
+
+> ⚠️ **Stability: experimental** — This asset is not yet stable and may change.
+
+## Overview 🧾
+
+Resolve any supported source for Training Hub's GRPO loader.
+
+Hugging Face references are returned without downloading or rewriting them. Local/PVC JSON or JSONL files, S3 JSON/JSONL objects, and HTTP(S) JSON/JSONL resources are converted to Training Hub's local canonical format on the shared PVC. The component intentionally does not subset, split, or sample
+the data; Training Hub owns ``n_train`` and ``n_val``.
+
+Private S3 sources use ``AWS_ACCESS_KEY_ID`` and ``AWS_SECRET_ACCESS_KEY``. ``AWS_S3_ENDPOINT`` and ``AWS_DEFAULT_REGION`` are optional for S3-compatible services. The consuming pipeline should inject these variables from its RHOAI Connection Secret with ``kfp.kubernetes.use_secret_as_env``. The
+secret name is a pipeline-task setting, not a component runtime input.
+
+See the Training Hub GRPO loader contract: https://github.com/Red-Hat-AI-Innovation-Team/training_hub/blob/main/src/training_hub/algorithms/lora_grpo.py
+
+The normalized output always uses ``messages`` and ``tools`` so Training Hub sees one local format for every row. Single-turn source rows are represented as system, user, and assistant-with-tool-call messages. Multi-turn rows retain their conversation history and are normalized to modern OpenAI
+``tool_calls``/``tool`` messages. Malformed rows are skipped only when they raise an expected ``ValueError``; the component fails if the invalid-row ratio exceeds ``max_invalid_row_ratio``.
+
+## Inputs 📥
+
+| Parameter | Type | Default | Description |
+| --------- | ---- | ------- | ----------- |
+| `dataset_uri` | `str` | `None` | Hugging Face URI/repository ID, ``s3://`` object, ``http://`` or ``https://`` JSON/JSONL URL, or local JSON/JSONL path visible in the component container. Bare local/PVC paths are preferred; ``pvc://`` is retained as a legacy alias for the same local/PVC handling and validation. |
+| `pvc_mount_path` | `str` | `None` | Mount point of the shared PVC used for caches and normalized local data. |
+| `dataset_config` | `str` | `""` | Optional Hugging Face dataset configuration. An inline ``:config`` suffix on an HF URI takes precedence. |
+| `max_http_download_bytes` | `int` | `2147483648` | Maximum HTTP(S) response size in bytes. The default is 2 GiB; the limit is enforced before and during the download. |
+| `max_invalid_row_ratio` | `float` | `0.1` | Maximum fraction of invalid rows to skip before failing validation. The default is 10%; use ``0.0`` for strict validation. |
+
+## Outputs 📤
+
+| Name | Type | Description |
+| ---- | ---- | ----------- |
+| Output | `NamedTuple('PrepareDatasetOutputs', [('resolved_data_path', str), ('resolved_data_config', str), ('use_hf_direct', bool)])` | A Training Hub data path, config, and flag indicating whether the path should be passed through the direct Hugging Face loader. |
+
+## Metadata 🗂️
+
+- **Name**: prepare_grpo_dataset
+- **Stability**: experimental
+- **Dependencies**:
+  - Kubeflow:
+    - Name: Pipelines, Version: >=2.15.2
+  - External Services:
+    - Name: HuggingFace Datasets, Version: >=2.14.0
+    - Name: AWS S3, Version: >=1.0.0
+- **Tags**:
+  - data_processing
+  - dataset
+  - grpo
+  - huggingface
+  - s3
+- **Last Verified**: 2026-10-15 00:00:00+00:00
+- **Owners**:
+  - No Parent Owners: Yes
+  - Approvers:
+    - ChughShilpa
+    - efazal
+    - hrathina
+    - JaZeeGH
+    - Sridhar1030
+  - Reviewers:
+    - ChughShilpa
+    - hrathina
+
+## Additional Resources 📚
+
+- **Documentation**: [https://github.com/kubeflow/pipelines-components](https://github.com/kubeflow/pipelines-components)

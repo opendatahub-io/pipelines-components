@@ -69,6 +69,17 @@ class TestKubeflowModelRegistryUnitTests:
         # For now verify the component definition is valid
         assert kubeflow_model_registry.python_func is not None
 
+    def test_component_validates_model_subpath_metadata_type(self):
+        """Non-string PVC subpath metadata falls back to the default path."""
+        import inspect
+
+        source = inspect.getsource(kubeflow_model_registry.python_func)
+
+        assert 'model_subpath = meta.get("pvc_model_subpath", "")' in source
+        assert "if not isinstance(model_subpath, str):" in source
+        assert 'model_subpath = ""' in source
+        assert 'model_subpath.strip("/") or "final_model"' in source
+
     def test_component_returns_string(self):
         """Test that the component is annotated to return a string."""
         import inspect

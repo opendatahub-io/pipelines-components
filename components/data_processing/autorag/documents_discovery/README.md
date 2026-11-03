@@ -23,7 +23,6 @@ that every referenced document was actually ingested.
 | `discovered_documents` | `dsl.Output[dsl.Artifact]` | `None` | Output artifact containing the documents descriptor JSON file. |
 | `test_data` | `dsl.Output[dsl.Artifact]` | `None` | Output artifact containing the (possibly sampled) test data JSON. Empty when test data loading is skipped. |
 | `component_status` | `dsl.Output[dsl.Artifact]` | `None` | Output artifact containing stage-level progress tracking. |
-| `embedded_artifact` | `dsl.EmbeddedInput[dsl.Dataset]` | `None` | Embedded ``autorag.shared`` helpers injected by KFP at runtime. |
 
 ## Usage Examples 🧪
 
@@ -68,21 +67,19 @@ def example_pipeline(
     - Name: Pipelines, Version: >=2.15.2
   - External Services:
     - Name: RHOAI Connections API, Version: >=1.0.0
-    - Name: ai4rag, Version: ~=0.18.0
+    - Name: ai4rag, Version: ~=0.25.4
 - **Tags**:
   - data-processing
   - autorag
   - documents-sampling
-- **Last Verified**: 2026-09-15 00:00:00+00:00
+- **Last Verified**: 2026-11-12 00:00:00+00:00
 - **Owners**:
   - No Parent Owners: Yes
   - Approvers:
     - LukaszCmielowski
-    - DorotaDR
     - Mateusz-Switala
-    - filip-komarzyniec
     - jakub-walaszczyk
   - Reviewers:
-    - filip-komarzyniec
     - jakub-walaszczyk
-    - MichalSteczko
+    - Wojciech-Rebisz
+    - Mateusz-Switala

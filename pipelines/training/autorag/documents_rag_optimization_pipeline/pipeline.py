@@ -23,11 +23,12 @@ from kfp_components.components.training.autorag.rag_templates_optimization.compo
 from kfp_components.components.training.autorag.search_space_preparation.component import (
     search_space_preparation,
 )
+from kfp_components.components.training.autorag.shared.database_connection import SECRET_KEY_TO_ENV
 
 MAX_CPUS = "32"
 MAX_MEMORY = "64Gi"
 
-# Must match run_status_templates/pipelines/<name>.json
+# Template name; Neo4j uses the -graph variant.
 PIPELINE_NAME = "documents-rag-optimization-pipeline"
 
 # Inference credentials exposed by the MaaS secret.
@@ -60,6 +61,7 @@ def documents_rag_optimization_pipeline(
     optimization_metric: str = "overall_score",
     optimization_max_rag_patterns: int = 5,
     preset: str = "speed",
+    db_provider: str = "",
     gpu_acceleration: bool = False,
 ):
     """Automated system for building and optimizing Retrieval-Augmented Generation (RAG) applications.
@@ -71,7 +73,7 @@ def documents_rag_optimization_pipeline(
     settings based on an upfront-specified quality metric.
 
     The system integrates with MaaS (Models-as-a-Service) for inference and a vector database
-    (Milvus or PGVector) for retrieval, producing optimized RAG patterns as artifacts that can
+    (Milvus, PGVector, or Neo4j) for retrieval, producing optimized RAG patterns as artifacts that can
     be deployed and used for production RAG applications. Each optimized pattern contains a
     ``pattern.json`` (with deployment settings), executable notebooks, and evaluation results.
 
@@ -89,9 +91,9 @@ def documents_rag_optimization_pipeline(
         input_data_bucket_name: S3 (or compatible) bucket name for the input documents.
         maas_secret_name: Name of the Kubernetes secret for the MaaS inference connection.
             The secret must define: MAAS_BASE_URL, MAAS_API_KEY.
-        db_secret_name: Name of the Kubernetes secret carrying the database
-            configuration. The env-var prefix selects the backend: ``MILVUS_*`` keys (at least
-            ``MILVUS_URI``) select Milvus, ``PGVECTOR_*`` keys select PGVector.
+        db_secret_name: Name of the database configuration secret. Set ``db_provider``
+            for DCH or shared PostgreSQL keys. Existing ``MILVUS_*``,
+            ``PGVECTOR_*``, and ``NEO4J_*`` secrets remain supported.
         embedding_models: List of embedding model identifiers to use in the search space.
             Required: MaaS exposes no metadata to distinguish model types, so embedding
             models can no longer be inferred and must be declared explicitly.
@@ -113,13 +115,25 @@ def documents_rag_optimization_pipeline(
             enrichment. "balanced" enables Docling table layout parsing, hybrid
             chunking, and LLM contextual enrichment. Orthogonal to
             ``gpu_acceleration``.
+        db_provider: DCH provider: postgres (PGVector), milvus, or neo4j. Required
+            for DCH and shared PostgreSQL secrets. Omit for legacy prefixed secrets.
         gpu_acceleration: When True, run Docling text extraction on one NVIDIA GPU
             (only the extraction task requests ``nvidia.com/gpu``); downstream
             optimization is unchanged and stays on the shared (non-GPU) resource
             tier. Defaults to False (CPU extraction). Independent of ``preset``, so
             any quality tier can run extraction on CPU or GPU.
+    MLflow logging:
+        Runs are tracked in MLflow automatically when the cluster's MLflow integration
+        is enabled; there is no parameter to turn it on. The platform injects the
+        tracking endpoint, workspace, experiment, and parent run into every step, and
+        authentication uses the pod's ServiceAccount token, so no connection secret is
+        needed. Optimization parameters and results land on the pipeline's parent run,
+        and each discovered RAG pattern gets a nested child run written *as the
+        optimizer evaluates it*, so the experiment fills in live during the run. When
+        MLflow is not enabled, the pipeline behaves exactly as before.
     """
     component_stage_map_task = publish_component_stage_map(
+        db_provider=db_provider,
         pipeline_id=PIPELINE_NAME,
         run_id=dsl.PIPELINE_JOB_ID_PLACEHOLDER,
     )
@@ -147,6 +161,7 @@ def documents_rag_optimization_pipeline(
     normalized_preset = extraction_inputs_task.outputs["preset"]
 
     search_space_preparation_task = search_space_preparation(
+        db_provider=db_provider,
         test_data=documents_discovery_task.outputs["test_data"],
         embedding_models=embedding_models,
         generation_models=generation_models,
@@ -189,6 +204,7 @@ def documents_rag_optimization_pipeline(
     )
 
     rag_optimization_task = rag_templates_optimization(
+        db_provider=db_provider,
         extracted_text=extracted_text,
         test_data=documents_discovery_task.outputs["test_data"],
         search_space_mps_report=models_pre_selector_task.outputs["search_space_mps_report"],
@@ -203,8 +219,14 @@ def documents_rag_optimization_pipeline(
         test_data_key=test_data_key,
         input_data_keys=input_data_keys,
         preset=normalized_preset,
+        pipeline_name=PIPELINE_NAME,
+        run_id=dsl.PIPELINE_JOB_ID_PLACEHOLDER,
+        run_name=dsl.PIPELINE_JOB_NAME_PLACEHOLDER,
     )
 
+    rag_optimization_task.set_env_variable(
+        "RELATED_IMAGE_ODH_AUTORAG_IMAGE", rag_optimization_task.container_spec.image
+    )
     rag_optimization_task.set_caching_options(False)
     rag_optimization_task.set_cpu_request("4").set_memory_request("16Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(
         MAX_MEMORY
@@ -238,19 +260,12 @@ def documents_rag_optimization_pipeline(
     use_secret_as_env(models_pre_selector_task, maas_secret_name, MAAS_SECRET_KEYS)
     use_secret_as_env(rag_optimization_task, maas_secret_name, MAAS_SECRET_KEYS)
 
+    use_secret_as_env(search_space_preparation_task, db_secret_name, SECRET_KEY_TO_ENV, optional=True)
+    use_secret_as_env(rag_optimization_task, db_secret_name, SECRET_KEY_TO_ENV, optional=True)
     use_secret_as_env(
-        rag_optimization_task,
+        component_stage_map_task,
         db_secret_name,
-        secret_key_to_env={
-            "MILVUS_URI": "MILVUS_URI",
-            "MILVUS_TOKEN": "MILVUS_TOKEN",
-            "MILVUS_SERVER_CERT": "MILVUS_SERVER_CERT",
-            "PGVECTOR_HOST": "PGVECTOR_HOST",
-            "PGVECTOR_PORT": "PGVECTOR_PORT",
-            "PGVECTOR_DB": "PGVECTOR_DB",
-            "PGVECTOR_USER": "PGVECTOR_USER",
-            "PGVECTOR_PASSWORD": "PGVECTOR_PASSWORD",
-        },
+        {key: key for key in ("MILVUS_URI", "PGVECTOR_HOST", "NEO4J_URI")},
         optional=True,
     )
 

@@ -290,6 +290,17 @@ def parent_mlflow_run(mlflow: Any, config: MlflowConfig, *, fallback_name: str =
     """
     configure_mlflow_client(mlflow, config)
     if config.run_id:
+        # Resuming by run_id alone leaves the client's active experiment at Default (id=0).
+        # Nested ``start_run(..., nested=True)`` then fails with "No Experiment with id=0".
+        if config.experiment_id:
+            try:
+                mlflow.set_experiment(experiment_id=config.experiment_id)
+            except Exception:
+                logger.exception(
+                    "Could not activate MLflow experiment id %r before resuming parent run %s.",
+                    config.experiment_id,
+                    config.run_id,
+                )
         with mlflow.start_run(run_id=config.run_id) as run:
             yield run
         return
@@ -402,18 +413,8 @@ def _resolve_kfp_version() -> str:
 
 
 def _resolve_image() -> str:
-    """Best-effort training container image reference for the parent run.
-
-    Reads ``AUTOML_IMAGE`` (the component ``base_image``) from the installed package so the
-    parent run records which image produced the models. Returns ``""`` when unavailable.
-    """
-    try:
-        from kfp_components.utils.consts import AUTOML_IMAGE  # pyright: ignore[reportMissingImports]
-
-        return str(AUTOML_IMAGE)
-    except Exception:
-        logger.debug("Could not resolve AUTOML_IMAGE for MLflow logging", exc_info=True)
-        return ""
+    """Read the task image injected by the compiler; leave unknown provenance empty."""
+    return os.getenv("RELATED_IMAGE_ODH_AUTOML_IMAGE", "").strip()
 
 
 def _parse_timeout_seconds(timeout: str) -> int | None:

@@ -1,0 +1,7 @@
+# Validate relocation with the same runtime version; upgrade separately.
+ai4rag==0.25.4
+pytest
+pytest-mock
+nbformat
+fastapi
+httpx

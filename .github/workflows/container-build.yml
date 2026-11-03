@@ -52,6 +52,7 @@ jobs:
             context: pipelines/training/automl/autogluon_tabular_training_pipeline
           - name: pipelines-training-autorag-documents_rag_optimization_pipeline
             context: pipelines/training/autorag/documents_rag_optimization_pipeline
+            build-context: .
           - name: pipelines-training-autorag-documents_rag_optimization_pipeline-inference
             context: pipelines/training/autorag/documents_rag_optimization_pipeline/inference
 
@@ -101,7 +102,7 @@ jobs:
         id: build
         uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf  # v7.2.0
         with:
-          context: ${{ matrix.context }}
+          context: ${{ matrix.build-context || matrix.context }}
           file: ${{ steps.buildfile.outputs.containerfile }}
           push: ${{ env.SHOULD_PUSH == 'true' }}
           load: ${{ github.event_name == 'pull_request' }}

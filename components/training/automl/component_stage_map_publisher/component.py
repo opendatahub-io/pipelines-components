@@ -83,6 +83,12 @@ def publish_component_stage_map(
         if not tracking_uri:
             return {"tracking_enabled": False}
 
+        # Same gate as resolve_mlflow_config(): never advertise tracking when the optimizer
+        # would refuse to send a ServiceAccount token over cleartext HTTP.
+        auth_type = str(data.get("authType", "")).strip()
+        if auth_type == "kubernetes" and not tracking_uri.lower().startswith("https://"):
+            return {"tracking_enabled": False}
+
         block: dict = {"tracking_enabled": True, "tracking_uri": tracking_uri}
         experiment_id = str(data.get("experimentId", "")).strip()
         if experiment_id:

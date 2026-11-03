@@ -89,6 +89,7 @@ class TestImportGuardConfig:
                     "files": {
                         "scripts": ["pytest"],
                     },
+                    "exclude": ["templates/**"],
                 },
                 f,
             )
@@ -100,6 +101,7 @@ class TestImportGuardConfig:
             assert "numpy" in config.module_allowlist
             scripts_path = Path("scripts").resolve()
             assert scripts_path in config.path_scoped_allowlist
+            assert config.excluded_paths == ("templates/**",)
         finally:
             config_path.unlink()
 
@@ -317,6 +319,21 @@ class TestBuildStdlibIndex:
 
 class TestCheckImports:
     """Test the check_imports function."""
+
+    def test_excluded_templates_are_not_parsed(self, tmp_path, monkeypatch, capsys):
+        """Skip package-data templates without exempting adjacent KFP modules."""
+        monkeypatch.chdir(tmp_path)
+        template_dir = tmp_path / "templates" / "nested"
+        template_dir.mkdir(parents=True)
+        template = template_dir / "app.py"
+        template.write_text("import fastapi\nthis is not valid python\n")
+        component = tmp_path / "component.py"
+        component.write_text("import fastapi\n")
+        config = ImportGuardConfig(excluded_paths=["templates/**"])
+
+        assert check_imports([template], config) == 0
+        assert check_imports([component], config) == 1
+        assert "imports non-stdlib module 'fastapi'" in capsys.readouterr().err
 
     def test_stdlib_imports_pass(self):
         """Test that stdlib imports pass validation."""

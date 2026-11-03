@@ -9,6 +9,24 @@ import tempfile
 from typing import List, Optional
 
 
+def normalize_hf_dataset_uri(data_path: str, data_config: str = "") -> tuple[str, str]:
+    """Convert a pipeline Hugging Face URI into Training Hub arguments.
+
+    The pipeline accepts ``hf://org/dataset:config`` while the Training Hub
+    loader expects the repository ID and config as separate arguments.
+    Non-Hugging Face paths are returned unchanged.
+    """
+    if not data_path.startswith("hf://"):
+        return data_path, data_config
+
+    dataset_ref = data_path[len("hf://") :]
+    if ":" in dataset_ref:
+        dataset_ref, embedded_config = dataset_ref.rsplit(":", 1)
+        if embedded_config:
+            data_config = embedded_config
+    return dataset_ref, data_config
+
+
 def resolve_dataset(inp, out_dir: str, log: logging.Logger) -> None:
     """Resolve and prepare dataset from various sources.
 
@@ -88,6 +106,7 @@ def prepare_jsonl(ds_dir: str, jsonl_path: str, log: logging.Logger) -> None:
     try:
         dsk = load_from_disk(ds_dir)
         tr = dsk["train"] if isinstance(dsk, dict) else dsk
+
         try:
             tr.to_json(jsonl_path, lines=True)
             log.info(f"JSONL: {jsonl_path}")

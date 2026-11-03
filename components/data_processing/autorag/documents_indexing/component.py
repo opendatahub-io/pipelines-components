@@ -1,15 +1,11 @@
-from pathlib import Path
 from typing import Optional
 
 from kfp import dsl
 from kfp_components.utils.consts import AUTORAG_IMAGE  # pyright: ignore[reportMissingImports]
 
-_TEMPLATE_PATH = Path(__file__).parent / "indexing_report_template.html"
-
 
 @dsl.component(
     base_image=AUTORAG_IMAGE,  # noqa: E501
-    embedded_artifact_path=str(_TEMPLATE_PATH),
     install_kfp_package=False,
 )
 def documents_indexing(
@@ -17,13 +13,16 @@ def documents_indexing(
     extracted_text: dsl.Input[dsl.Artifact],
     indexing_report: dsl.Output[dsl.Artifact],
     indexing_report_html: dsl.Output[dsl.HTML],
-    embedded_artifact: dsl.EmbeddedInput[dsl.Dataset] = None,
     embedding_params: Optional[dict] = None,
+    foundation_model_id: Optional[str] = None,
+    foundation_model_params: Optional[dict] = None,
     chunking_method: str = "recursive",
     chunk_size: int = 1024,
     chunk_overlap: int = 0,
     batch_size: int = 20,
     collection_name: Optional[str] = None,
+    graph_extraction_config: Optional[dict] = None,
+    db_provider: str = "",
 ):
     """Chunk, embed, and index extracted documents into a vector store.
 
@@ -32,9 +31,9 @@ def documents_indexing(
     resulting vectors into the configured vector store.  Documents are
     processed in batches to bound memory consumption.
 
-    The vector store backend (Milvus or PGVector) is resolved at runtime from
-    the environment injected by the vector-database secret: ``MILVUS_*`` keys
-    select Milvus, ``PGVECTOR_*`` keys select PGVector.
+    The ``db_provider`` input selects the backend for DCH and shared PostgreSQL
+    secrets. Omitting it preserves inference from legacy ``MILVUS_*``,
+    ``PGVECTOR_*``, or ``NEO4J_*`` secret keys.
 
     Individual document failures (corrupt JSON, chunking errors) are
     recorded in the indexing report and skipped — they do not abort the
@@ -50,14 +49,20 @@ def documents_indexing(
             with per-document indexing status and pipeline settings.
         indexing_report_html: Output HTML artifact containing a styled rendering of
             the indexing results (summary stats, settings, per-document table).
-        embedded_artifact: Embedded HTML report template injected by KFP
-            at runtime from ``indexing_report_template.html``.
         embedding_params: Optional parameters forwarded to
             :class:`OpenAIEmbeddingParams` (e.g. ``embedding_dimension``,
             ``context_length``).
+        foundation_model_id: Optional generation model ID used to extract entities
+            when indexing into Neo4j. Set this from a graph-mode optimized pattern
+            to reproduce its knowledge graph; ignored by other vector stores.
+        foundation_model_params: Optional generation parameters (for example,
+            ``temperature`` and ``max_completion_tokens``) used with
+            ``foundation_model_id`` for Neo4j entity extraction. Set this from a
+            graph-mode optimized pattern to reproduce its knowledge graph; ignored
+            by other vector stores.
         chunking_method: Chunking strategy: ``"recursive"`` (LangChain) or
             ``"hybrid"`` (Docling structure-aware).
-        chunk_size: Maximum chunk size in tokens (128--2048).
+        chunk_size: Maximum chunk size in tokens (128--1024).
         chunk_overlap: Token overlap between consecutive chunks (recursive
             method only).
         batch_size: Number of documents loaded and processed per batch.
@@ -66,22 +71,30 @@ def documents_indexing(
         collection_name: Vector store collection to reuse (matches
             ``pattern.json`` ``settings.store_binding.collection_name``).
             Omit to create a new collection.
+        graph_extraction_config: Neo4j graph-extraction settings from an optimized
+            pattern. Requires ``foundation_model_id`` when indexing into Neo4j;
+            ignored by other vector stores.
+        db_provider: DCH provider: postgres (PGVector), milvus, or neo4j. Omit only
+            for legacy provider-prefixed secrets.
 
     Environment variables (required):
         MAAS_BASE_URL, MAAS_API_KEY for inference. Plus the vector database
         configuration injected from the vector-database secret: ``MILVUS_*``
         keys (at least ``MILVUS_URI``) select Milvus, ``PGVECTOR_*`` keys
-        select PGVector.
+        select PGVector, ``NEO4J_*`` keys (at least ``NEO4J_URI`` and
+        ``NEO4J_PASSWORD``) select Neo4j.
     """
     import html as html_mod
     import json
     import logging
     import os
+    import ssl
     from dataclasses import asdict
     from pathlib import Path
 
     from ai4rag.rag.chunking import DoclingChunker, LangChainChunker
     from ai4rag.rag.embedding.openai_model import OpenAIEmbeddingModel, OpenAIEmbeddingParams
+    from ai4rag.rag.foundation_models.openai_model import OpenAIFoundationModel
     from ai4rag.rag.vector_store import get_vector_store, get_vector_store_config
     from ai4rag.utils.clients import create_maas_client
     from ai4rag.utils.constants import ChunkingConstraints
@@ -118,23 +131,38 @@ def documents_indexing(
     if batch_size < 0:
         raise ValueError("batch_size must be a non-negative integer.")
 
-    maas_client = create_maas_client(
-        base_url=os.environ["MAAS_BASE_URL"],
-        api_key=os.environ["MAAS_API_KEY"],
-    )
+    maas_base_url, maas_api_key = os.environ["MAAS_BASE_URL"], os.environ["MAAS_API_KEY"]
+    from kfp_components.components.training.autorag.shared.database_connection import normalize_connection
 
-    if any(k.startswith("MILVUS") for k in os.environ):
-        provider = "milvus"
-    elif any(k.startswith("PGVECTOR") for k in os.environ):
-        provider = "pgvector"
-    else:
-        raise ValueError(
-            "No vector database configuration found. Expected MILVUS_* or PGVECTOR_* "
-            "environment variables injected from the vector-database secret."
+    backend = normalize_connection(db_provider)
+    vector_store_config = get_vector_store_config(backend)
+
+    try:
+        maas_client = create_maas_client(
+            base_url=maas_base_url,
+            api_key=maas_api_key,
         )
+    except Exception as exc:
+        error = exc
+        seen = set()
+        while error is not None and id(error) not in seen:
+            seen.add(id(error))
+            if isinstance(error, ssl.SSLCertVerificationError) or "CERTIFICATE_VERIFY_FAILED" in str(error).upper():
+                raise RuntimeError(
+                    "MaaS TLS certificate verification failed. Configure the CA ConfigMap in DSPA via "
+                    "spec.apiServer.cABundle.configMapName and spec.apiServer.cABundle.configMapKey."
+                ) from exc
+            error = error.__cause__ or error.__context__
+        raise
 
-    vector_store_config = get_vector_store_config(provider)
-    _logger.info("Detected %s database provider from secret.", provider)
+    _logger.info("Detected %s database provider from secret.", backend)
+
+    if (
+        backend == "neo4j"
+        and graph_extraction_config is not None
+        and not (isinstance(foundation_model_id, str) and foundation_model_id.strip())
+    ):
+        raise ValueError("foundation_model_id is required for Neo4j indexing when graph_extraction_config is supplied.")
 
     params = OpenAIEmbeddingParams(**(embedding_params or {}))
 
@@ -253,18 +281,13 @@ def documents_indexing(
         )
 
         # --- Load template and substitute placeholders ---
-        if embedded_artifact is None:
-            raise ValueError(
-                "embedded_artifact was not injected by the pipeline runtime; "
-                "ensure the component is compiled with embedded_artifact_path "
-                "pointing to a valid HTML template"
-            )
-        _embedded_path = Path(embedded_artifact.path)
-        _template_file = (
-            _embedded_path if _embedded_path.is_file() else _embedded_path / "indexing_report_template.html"
+        from importlib.resources import files
+
+        html_content = (
+            files("kfp_components.components.training.autorag.shared")
+            .joinpath("indexing_report_template.html")
+            .read_text(encoding="utf-8")
         )
-        with open(_template_file, "r", encoding="utf-8") as f:
-            html_content = f.read()
 
         html_content = (
             html_content.replace("__TOTAL_DOCUMENTS__", str(total_documents))
@@ -287,7 +310,7 @@ def documents_indexing(
         _logger.warning("No documents found in %s", extracted_text.path)
         settings = {
             "store_binding": {
-                "provider_type": provider,
+                "provider_type": backend,
                 "collection_name": collection_name,
             },
             "chunking": {
@@ -317,6 +340,13 @@ def documents_indexing(
         chunker = LangChainChunker(method=chunking_method, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
 
     embedding_model = OpenAIEmbeddingModel(client=maas_client, model_id=embedding_model_id, params=params)
+    foundation_model = None
+    if backend == "neo4j" and foundation_model_id:
+        foundation_model = OpenAIFoundationModel(
+            client=maas_client,
+            model_id=foundation_model_id,
+            params=foundation_model_params,
+        )
 
     effective_batch_size = batch_size if batch_size > 0 else total_documents
     total_chunks = 0
@@ -326,10 +356,13 @@ def documents_indexing(
         embedding_model=embedding_model,
         config=vector_store_config,
         collection_name=collection_name,
+        foundation_model=foundation_model,
+        # Translate the public input to ai4rag's internal keyword.
+        kg_extraction_config=graph_extraction_config,
     ) as vector_store:
         settings = {
             "store_binding": {
-                "provider_type": provider,
+                "provider_type": backend,
                 "collection_name": vector_store.collection_name,
             },
             "chunking": {

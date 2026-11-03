@@ -10,6 +10,7 @@ from kfp_components.components.data_processing.autorag.text_extraction.extractio
     S3_SECRET_ENV_KEYS,
     prepare_extraction_inputs,
 )
+from kfp_components.components.training.autorag.shared.database_connection import SECRET_KEY_TO_ENV
 
 MAX_CPUS = "32"
 MAX_MEMORY = "64Gi"
@@ -33,12 +34,16 @@ def documents_indexing_pipeline(
     input_data_keys: Optional[list[str]] = None,
     collection_name: Optional[str] = None,
     embedding_params: Optional[dict] = None,
+    foundation_model_id: Optional[str] = None,
+    foundation_model_params: Optional[dict] = None,
     chunking_method: str = "recursive",
     chunk_size: int = 1024,
     chunk_overlap: int = 0,
     batch_size: int = 20,
     ocr_lang: Optional[str] = None,
+    graph_extraction_config: Optional[dict] = None,
     preset: str = "speed",
+    db_provider: str = "",
     gpu_acceleration: bool = False,
 ):
     """Build a production vector index from documents for AutoRAG.
@@ -50,9 +55,9 @@ def documents_indexing_pipeline(
     Args:
         maas_secret_name: Name of the secret with MaaS inference credentials
             ("MAAS_BASE_URL", "MAAS_API_KEY").
-        db_secret_name: Name of the secret carrying the database
-            configuration. The env-var prefix selects the backend: ``MILVUS_*`` keys
-            (at least ``MILVUS_URI``) select Milvus, ``PGVECTOR_*`` keys select PGVector.
+        db_secret_name: Name of the database configuration secret. Set ``db_provider``
+            for DCH or shared PostgreSQL keys. Existing ``MILVUS_*``,
+            ``PGVECTOR_*``, and ``NEO4J_*`` secrets remain supported.
         embedding_model_id: Embedding model ID served by MaaS.
         input_data_secret_name: Name of the secret with S3 credentials for input data
             ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_S3_ENDPOINT", "AWS_DEFAULT_REGION").
@@ -64,8 +69,13 @@ def documents_indexing_pipeline(
             ``pattern.json`` ``settings.store_binding.collection_name``).
             Omit to create a new collection.
         embedding_params: Dict passed to OpenAIEmbeddingParams (default: {}).
+        foundation_model_id: Generation model used to rebuild Neo4j graph entities.
+            It is supplied by an optimized graph-mode pattern; ignored by non-Neo4j stores.
+        foundation_model_params: Generation parameters (for example, ``temperature``
+            and ``max_completion_tokens``) for Neo4j graph extraction. Supplied by an
+            optimized graph-mode pattern; ignored by non-Neo4j stores.
         chunking_method: Chunking method (e.g. "recursive").
-        chunk_size: Maximum chunk size in tokens (128--2048).
+        chunk_size: Maximum chunk size in tokens (128--1024).
         chunk_overlap: Token overlap between consecutive chunks (recursive method only).
         batch_size: Number of documents per batch. Defaults to ``20``; ``0`` processes all
             documents in a single batch.
@@ -76,16 +86,20 @@ def documents_indexing_pipeline(
             so override it when the corpus is in a different language. Chinese selects
             the Chinese bundle; omitting it selects the English bundle, which covers all
             Latin-script languages.
-        preset: Extraction quality tier. ``speed`` (default, no table parsing) or
-            ``balanced`` (table parsing). Orthogonal to ``gpu_acceleration``.
+        graph_extraction_config: Neo4j graph-extraction settings from an optimized
+            pattern. Ignored by other vector stores.
+        preset: Text extraction quality tier from the optimization run. "speed"
+            (default) disables table structure parsing; "balanced" enables
+            TableFormer table reconstruction. Independent of ``gpu_acceleration``.
+        db_provider: DCH provider: postgres (PGVector), milvus, or neo4j. Required
+            for DCH and shared PostgreSQL secrets. Omit for legacy prefixed secrets.
         gpu_acceleration: When True, run Docling text extraction on one NVIDIA GPU
-            (the extraction task requests ``nvidia.com/gpu``). Defaults to False
-            (CPU extraction). Independent of ``preset``, so any quality tier can run
-            on CPU or GPU.
+            (the extraction task requests ``nvidia.com/gpu``). Defaults to False.
     """
     documents_discovery_task = documents_discovery(
         input_data_bucket_name=input_data_bucket_name,
         input_data_keys=input_data_keys,
+        sampling_enabled=False,
     )
     documents_discovery_task.set_caching_options(False)
     documents_discovery_task.set_cpu_request("2").set_memory_request("8Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(
@@ -113,14 +127,18 @@ def documents_indexing_pipeline(
     )
 
     documents_indexing_task = documents_indexing(
+        db_provider=db_provider,
         embedding_params=embedding_params,
         embedding_model_id=embedding_model_id,
+        foundation_model_id=foundation_model_id,
+        foundation_model_params=foundation_model_params,
         extracted_text=text_extraction_task.outputs["extracted_text"],
         chunking_method=chunking_method,
         chunk_size=chunk_size,
         chunk_overlap=chunk_overlap,
         batch_size=batch_size,
         collection_name=collection_name,
+        graph_extraction_config=graph_extraction_config,
     )
     documents_indexing_task.set_caching_options(False)
     documents_indexing_task.set_cpu_request("2").set_memory_request("8Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(
@@ -140,16 +158,7 @@ def documents_indexing_pipeline(
     use_secret_as_env(
         documents_indexing_task,
         secret_name=db_secret_name,
-        secret_key_to_env={
-            "MILVUS_URI": "MILVUS_URI",
-            "MILVUS_TOKEN": "MILVUS_TOKEN",
-            "MILVUS_SERVER_CERT": "MILVUS_SERVER_CERT",
-            "PGVECTOR_HOST": "PGVECTOR_HOST",
-            "PGVECTOR_PORT": "PGVECTOR_PORT",
-            "PGVECTOR_DB": "PGVECTOR_DB",
-            "PGVECTOR_USER": "PGVECTOR_USER",
-            "PGVECTOR_PASSWORD": "PGVECTOR_PASSWORD",
-        },
+        secret_key_to_env=SECRET_KEY_TO_ENV,
         optional=True,
     )
 

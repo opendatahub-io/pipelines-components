@@ -17,6 +17,9 @@ def download_model(
     model_name: str,
     model_cache_pvc: str,
     model_cache_mount: str = "/mnt/models",
+    download_enabled: bool = True,
+    existing_model_path: str = "",
+    output_prefix: str = "",
 ) -> str:
     """Download a HuggingFace model to a PVC for caching.
 
@@ -26,6 +29,9 @@ def download_model(
         model_name: HuggingFace model ID (e.g. 'mistralai/Mistral-7B-Instruct-v0.3').
         model_cache_pvc: Name of the PVC to store models (unused here, mounted via pipeline).
         model_cache_mount: Mount path for the model cache PVC.
+        download_enabled: If False, return the expected model directory without downloading.
+        existing_model_path: Existing PVC-relative path or pvc:// URI returned when downloads are disabled.
+        output_prefix: Optional prefix prepended to the derived model directory name in return values.
 
     Returns:
         The PVC sub-path where the model is stored.
@@ -36,12 +42,18 @@ def download_model(
 
     model_dir_name = model_name.replace("/", "--")
     model_path = os.path.join(model_cache_mount, model_dir_name)
+    if not download_enabled:
+        if existing_model_path.strip():
+            print(f"Model download disabled; using existing model path {existing_model_path}.")
+            return existing_model_path.strip()
+        print(f"Model download disabled; expected model path is {model_path}.")
+        return f"{output_prefix}/{model_dir_name}".strip("/")
     sentinel = os.path.join(model_path, ".download_complete")
 
     if os.path.exists(sentinel):
         file_count = sum(1 for _ in os.scandir(model_path) if _.is_file())
         print(f"Model '{model_name}' already cached at {model_path} ({file_count} files). Skipping download.")
-        return model_dir_name
+        return f"{output_prefix}/{model_dir_name}".strip("/")
 
     print(f"Downloading model '{model_name}' to {model_path}...")
     snapshot_download(
@@ -55,7 +67,7 @@ def download_model(
 
     file_count = sum(1 for _ in os.scandir(model_path) if _.is_file())
     print(f"Model '{model_name}' downloaded to {model_path} ({file_count} files).")
-    return model_dir_name
+    return f"{output_prefix}/{model_dir_name}".strip("/")
 
 
 if __name__ == "__main__":

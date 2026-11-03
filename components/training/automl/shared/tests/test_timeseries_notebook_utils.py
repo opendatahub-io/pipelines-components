@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import ast
+from unittest import mock
 
 import pandas as pd
+import pytest
 
 from ..timeseries_notebook_utils import (
     _coerce_sample_timestamps,
@@ -179,6 +181,31 @@ class TestNotebookTimeseriesSampleHelpersSource:
 
 class TestBuildPredictSampleArtifact:
     """Tests for notebook-embedded predict sample payload."""
+
+    @pytest.mark.parametrize("covariates", [None, [], ["promo"]])
+    @pytest.mark.parametrize("timestamp_column", ["date", "timestamp"])
+    def test_empty_sample_preserves_metadata_without_forecasting(self, covariates, timestamp_column, monkeypatch):
+        """The training component's default empty preview must not fail a refit."""
+        import sys
+        import types
+
+        ts_df_cls = mock.Mock()
+        mock_mod = types.ModuleType("autogluon.timeseries")
+        mock_mod.TimeSeriesDataFrame = ts_df_cls
+        monkeypatch.setitem(sys.modules, "autogluon.timeseries", mock_mod)
+        predictor = mock.Mock()
+
+        payload = build_predict_sample_artifact(predictor, [], "product_id", timestamp_column, covariates)
+
+        assert payload == {
+            "id_column": "product_id",
+            "timestamp_column": timestamp_column,
+            "known_covariates_names": covariates or [],
+            "history": [],
+            "known_covariates": None,
+        }
+        ts_df_cls.from_data_frame.assert_not_called()
+        predictor.make_future_data_frame.assert_not_called()
 
     def test_builds_embeddable_payload(self, monkeypatch):
         """Payload contains history and pre-filled known covariates."""

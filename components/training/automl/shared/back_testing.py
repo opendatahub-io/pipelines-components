@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import math
 from datetime import datetime, timezone
+from time import perf_counter
 from typing import Any
 
 import numpy as np
@@ -47,6 +48,10 @@ _LOWER_IS_BETTER = frozenset(
         "root_mean_squared_scaled_error",
         "WAPE",
         "weighted_absolute_percentage_error",
+        # AutoGluon 1.6 losses. BIAS is a signed diagnostic and stays unflipped.
+        "MAEB",
+        "WAPEB",
+        "MQL",
     }
 )
 
@@ -194,9 +199,7 @@ def _holdout_frame(tsdf: pd.DataFrame, prediction_length: int) -> pd.DataFrame:
     if not isinstance(tsdf.index, pd.MultiIndex):
         return tsdf.tail(prediction_length)
 
-    item_ids = _item_ids(tsdf)
-    parts = [tsdf.loc[item_id].tail(prediction_length) for item_id in item_ids]
-    return pd.concat(parts, keys=item_ids, names=tsdf.index.names)
+    return tsdf.groupby(level=0, sort=False, observed=True).tail(prediction_length)
 
 
 def _window_date_bounds(targets_window: pd.DataFrame, prediction_length: int) -> tuple[str, str]:
@@ -216,20 +219,27 @@ def _forecast_data_for_item(
     prediction_length: int,
 ) -> list[dict[str, Any]]:
     if isinstance(predictions.index, pd.MultiIndex):
-        if item_id not in predictions.index.get_level_values(0):
+        try:
+            pred_item = predictions.loc[item_id]
+        except KeyError:
             return []
-        pred_item = predictions.loc[item_id]
     else:
         pred_item = predictions
 
-    holdout = _holdout_frame(targets_window, prediction_length)
-    if isinstance(holdout.index, pd.MultiIndex):
-        if item_id not in holdout.index.get_level_values(0):
+    if isinstance(targets_window.index, pd.MultiIndex):
+        try:
+            target_item = targets_window.loc[item_id]
+        except KeyError:
             return []
-        target_item = holdout.loc[item_id]
     else:
-        target_item = holdout
+        target_item = targets_window
+    target_item = _holdout_frame(target_item, prediction_length)
 
+    return _forecast_rows(pred_item, target_item, target)
+
+
+def _forecast_rows(pred_item: pd.DataFrame, target_item: pd.DataFrame, target: str) -> list[dict[str, Any]]:
+    """Build forecast rows from one series, with no full-panel indexing."""
     pred_col = _mean_prediction_column(pred_item)
     lower_col, upper_col = _quantile_bounds(pred_item)
 
@@ -383,13 +393,7 @@ def _build_series_analysis(
     prediction_length: int,
     eval_metric: str,
 ) -> dict[str, Any]:
-    """Build series analysis with cached metrics and forecast data.
-
-    Pre-computes forecast data once, then derives metrics from it. This avoids
-    double computation: forecast data generation is the expensive operation
-    (DataFrame slicing, type conversion, bounds extraction), while metrics
-    computation from the generated rows is cheap (numpy array operations).
-    """
+    """Build series analysis with one holdout and grouped lookups per window."""
     item_ids: set[Any] = set()
     for targets_window in targets_windows:
         item_ids.update(_item_ids(targets_window))
@@ -400,9 +404,14 @@ def _build_series_analysis(
 
     # Single pass: generate forecast data once, compute metrics from it
     for window_id, (predictions, targets_window) in enumerate(zip(predictions_windows, targets_windows, strict=True)):
-        for item_id in item_ids:
-            # Generate forecast data once
-            forecast_data = _forecast_data_for_item(predictions, targets_window, item_id, target, prediction_length)
+        # Drop unused covariates before grouping: real panels can have hundreds of columns.
+        holdout = _holdout_frame(targets_window.loc[:, targets_window.columns == target], prediction_length)
+        prediction_groups = _grouped_items(predictions)
+        for item_id, target_item in _grouped_items(holdout).items():
+            pred_item = prediction_groups.get(item_id)
+            if pred_item is None:
+                continue
+            forecast_data = _forecast_rows(pred_item, target_item, target)
             # Compute metrics from the forecast data (no redundant generation)
             metrics = _compute_metrics_from_forecast_data(forecast_data)
             if metrics:
@@ -451,6 +460,13 @@ def _build_series_analysis(
     }
 
 
+def _grouped_items(frame: pd.DataFrame) -> dict[Any, pd.DataFrame]:
+    """Index series once, avoiding a full-index membership scan for every item."""
+    if not isinstance(frame.index, pd.MultiIndex):
+        return {None: frame}
+    return {item_id: group.droplevel(0) for item_id, group in frame.groupby(level=0, sort=False, observed=True)}
+
+
 def build_back_testing_json(
     predictor: Any,
     *,
@@ -478,7 +494,10 @@ def build_back_testing_json(
         "use_cache": False,
     }
 
+    started = perf_counter()
     predictions_windows = predictor.backtest_predictions(**backtest_kwargs)
+    logger.info("Backtest prediction for %s took %.3f seconds", model_name_full, perf_counter() - started)
+    report_started = perf_counter()
     targets_windows = predictor.backtest_targets(data=train_data, num_val_windows=num_val_windows)
     if len(predictions_windows) != len(targets_windows):
         raise ValueError(
@@ -494,6 +513,7 @@ def build_back_testing_json(
     # For num_val_windows=3 and prediction_length=2, this generates [-6, -4, -2],
     # evaluating: window 0: steps -6 to -4, window 1: steps -4 to -2, window 2: steps -2 to end.
     cutoffs = range(-num_windows * prediction_length, 0, prediction_length)
+    evaluation_seconds = 0.0
     for window_id, cutoff in enumerate(cutoffs):
         evaluate_kwargs: dict[str, Any] = {
             "data": train_data,
@@ -501,11 +521,14 @@ def build_back_testing_json(
             "metrics": metric_names,
             "cutoff": cutoff,
         }
+        started = perf_counter()
         try:
             window_scores = filter_finite_metrics(predictor.evaluate(**evaluate_kwargs))
         except Exception as exc:
             logger.warning("Backtest evaluate failed for window %s (cutoff=%s): %s", window_id, cutoff, exc)
             window_scores = {}
+        finally:
+            evaluation_seconds += perf_counter() - started
         test_start, test_end = "", ""
         if window_id < len(targets_windows):
             test_start, test_end = _window_date_bounds(targets_windows[window_id], prediction_length)
@@ -525,6 +548,12 @@ def build_back_testing_json(
         target=target,
         prediction_length=prediction_length,
         eval_metric=eval_metric,
+    )
+    logger.info("Backtest evaluation for %s took %.3f seconds", model_name_full, evaluation_seconds)
+    logger.info(
+        "Backtest report construction for %s took %.3f seconds",
+        model_name_full,
+        perf_counter() - report_started - evaluation_seconds,
     )
 
     return {

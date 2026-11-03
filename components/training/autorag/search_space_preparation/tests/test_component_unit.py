@@ -9,6 +9,9 @@ no longer part of this component.
 """
 
 import inspect
+import json
+import ssl
+from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
@@ -78,6 +81,8 @@ class TestSearchSpacePreparationUnitTests:
         assert "generation_models" in params
         assert "preset" in params
         assert sig.parameters["preset"].default == "speed"
+        assert sig.parameters["db_provider"].default == ""
+        assert "provider" not in params
 
     @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
     def test_delegates_to_prepare_search_space_with_maas(self, tmp_path):
@@ -115,6 +120,7 @@ class TestSearchSpacePreparationUnitTests:
         assert payload["chunking_methods"] == ["recursive"]
         assert m.prepare.call_args.kwargs["client"] is client
         assert "benchmark_data" in m.prepare.call_args.kwargs
+        assert m.prepare.call_args.kwargs["vector_store_type"] == "milvus"
 
         m.build.assert_called_once_with(search_space)
         report.save_json.assert_called_once_with(str(tmp_path / "report.json"))
@@ -211,10 +217,50 @@ class TestSearchSpacePreparationUnitTests:
                 )
 
     @pytest.mark.parametrize(
+        ("env_vars", "expected_vector_store_type", "expects_fallback_warning"),
+        [
+            ({"MILVUS_URI": "http://milvus:19530"}, "milvus", False),
+            ({"PGVECTOR_HOST": "pg-host"}, "pgvector", False),
+            ({"NEO4J_URI": "neo4j://neo4j:7687", "NEO4J_PASSWORD": "s3cr3t"}, "neo4j", False),
+            ({}, "milvus", True),
+            ({"NEO4J_HOME": "/opt/neo4j"}, "milvus", True),
+        ],
+    )
+    def test_vector_db_env_selects_ai4rag_backend(
+        self, tmp_path, caplog, env_vars, expected_vector_store_type, expects_fallback_warning
+    ):
+        """Only underscore-qualified database-secret keys select an ai4rag backend."""
+        m = _make_ai4rag_mocks()
+        m.create_maas_client.return_value = mock.MagicMock()
+        m.prepare.return_value = mock.MagicMock()
+        m.build.return_value = mock.MagicMock()
+
+        test_data = mock.MagicMock()
+        test_data.path = str(tmp_path / "test.json")
+        report = mock.MagicMock()
+        report.path = str(tmp_path / "report.json")
+
+        full_env = {**MOCKED_ENV_VARIABLES, **env_vars}
+        with mock.patch.dict("os.environ", full_env, clear=True):
+            with mock.patch.dict("sys.modules", m.modules):
+                search_space_preparation.python_func(
+                    test_data=test_data,
+                    search_space_report=report,
+                    embedding_models=["embed-1"],
+                    generation_models=["gen-1"],
+                )
+
+        assert m.prepare.call_args.kwargs["vector_store_type"] == expected_vector_store_type
+        if expects_fallback_warning:
+            assert "defaulting to milvus" in caplog.text
+        else:
+            assert "defaulting to milvus" not in caplog.text
+
+    @pytest.mark.parametrize(
         ("preset_value", "expected_chunking", "expected_chunk_sizes", "expected_chunk_overlaps"),
         [
             ("speed", ["recursive"], [128, 256, 512], [32, 64]),
-            ("balanced", ["recursive", "hybrid"], [512, 1024, 2048], [0, 128, 256]),
+            ("balanced", ["recursive", "hybrid"], [512, 1024], [0, 128, 256]),
         ],
     )
     @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
@@ -268,6 +314,41 @@ class TestSearchSpacePreparationUnitTests:
                 )
         return result.detected_ocr_lang
 
+    @pytest.mark.parametrize("preset_value", ["speed", "balanced"])
+    def test_neo4j_delegates_backend_defaults_to_ai4rag(self, tmp_path, preset_value):
+        """Neo4j preserves ai4rag chunk defaults regardless of preset."""
+        m = _make_ai4rag_mocks()
+        m.create_maas_client.return_value = mock.MagicMock()
+        m.prepare.return_value = mock.MagicMock()
+        m.build.return_value = mock.MagicMock()
+
+        test_data = mock.MagicMock()
+        test_data.path = str(tmp_path / "test.json")
+        report = mock.MagicMock()
+        report.path = str(tmp_path / "report.json")
+
+        neo4j_env = {
+            **MOCKED_ENV_VARIABLES,
+            "NEO4J_URI": "neo4j://neo4j:7687",
+            "NEO4J_PASSWORD": "s3cr3t",
+        }
+        with mock.patch.dict("os.environ", neo4j_env, clear=True):
+            with mock.patch.dict("sys.modules", m.modules):
+                search_space_preparation.python_func(
+                    test_data=test_data,
+                    search_space_report=report,
+                    embedding_models=["embed-1"],
+                    generation_models=["gen-1"],
+                    preset=preset_value,
+                )
+
+        payload = m.prepare.call_args.args[0]
+        assert m.prepare.call_args.kwargs["vector_store_type"] == "neo4j"
+        expected_methods = ["recursive"] if preset_value == "speed" else ["recursive", "hybrid"]
+        assert payload["chunking_methods"] == expected_methods
+        assert "chunk_sizes" not in payload
+        assert "chunk_overlaps" not in payload
+
     @pytest.mark.parametrize(("code", "expected"), [("en", "en"), ("ZH", "zh"), (" pl ", "pl")])
     def test_detected_language_is_returned_normalized(self, tmp_path, code, expected):
         """The detected language is surfaced lowercased and stripped for text extraction."""
@@ -293,3 +374,132 @@ class TestSearchSpacePreparationUnitTests:
 
         assert detected == "en"
         assert "disagree on the detected language" in caplog.text
+
+
+@mock.patch.dict(
+    "os.environ",
+    MOCKED_ENV_VARIABLES
+    | {
+        "AUTORAG_DB_URI": "neo4j://graph:7687",
+        "AUTORAG_DB_PASSWORD": "password",
+    },
+    clear=True,
+)
+def test_explicit_dch_provider_uses_graph_search_defaults(tmp_path):
+    """DCH Neo4j gets graph-safe chunking even without NEO4J_URI in the secret."""
+    mocks = _make_ai4rag_mocks()
+    with mock.patch.dict("sys.modules", mocks.modules):
+        search_space_preparation.python_func(
+            test_data=SimpleNamespace(path=str(tmp_path / "test.json")),
+            search_space_report=SimpleNamespace(path=str(tmp_path / "report.json")),
+            embedding_models=["embedding"],
+            generation_models=["generation"],
+            db_provider="neo4j",
+        )
+    assert mocks.prepare.call_args.kwargs["vector_store_type"] == "neo4j"
+    assert "chunk_sizes" not in mocks.prepare.call_args.args[0]
+
+
+@pytest.mark.parametrize(
+    ("database_env", "message"),
+    [
+        ({"AUTORAG_DB_URI": "postgres://user:password@db:invalid/docs"}, "Invalid PostgreSQL URI"),
+        ({"MILVUS_URI": "https://milvus:19530"}, "db_provider does not match"),
+    ],
+)
+def test_connection_validation_publishes_failed_stage_before_api_calls(tmp_path, database_env, message):
+    """Bad connection configuration must be visible in Dashboard's status artifact."""
+    mocks = _make_ai4rag_mocks()
+    status = SimpleNamespace(path=str(tmp_path / "status"), metadata={})
+    with (
+        mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES | database_env, clear=True),
+        mock.patch.dict("sys.modules", mocks.modules),
+        pytest.raises(ValueError, match=message),
+    ):
+        search_space_preparation.python_func(
+            test_data=SimpleNamespace(path=str(tmp_path / "test.json")),
+            search_space_report=SimpleNamespace(path=str(tmp_path / "report.json")),
+            embedding_models=["embedding"],
+            generation_models=["generation"],
+            db_provider="postgres",
+            component_status=status,
+        )
+    report = json.loads((Path(status.path) / "component_status.json").read_text())
+    stage = next(stage for stage in report["stages"] if stage["id"] == "prepare_search_space")
+    assert stage["status"]["state"] == "failed"
+    assert message in stage["error"]
+    assert "user:password" not in json.dumps(report)
+    mocks.create_maas_client.assert_not_called()
+    mocks.prepare.assert_not_called()
+
+
+@pytest.mark.parametrize("link", [None, "__cause__", "__context__"])
+@pytest.mark.parametrize(
+    "certificate_error",
+    [
+        ssl.SSLCertVerificationError(1, "certificate verify failed"),
+        RuntimeError("[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed"),
+    ],
+)
+def test_maas_certificate_failure_publishes_dspa_hint(tmp_path, link, certificate_error):
+    """The executor and Dashboard status both expose the actionable CA guidance."""
+    mocks = _make_ai4rag_mocks()
+    error = certificate_error
+    if link is not None:
+        error = RuntimeError("Connection error")
+        setattr(error, link, certificate_error)
+    mocks.create_maas_client.side_effect = error
+    status = SimpleNamespace(path=str(tmp_path / "status"), metadata={})
+    with (
+        mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True),
+        mock.patch.dict("sys.modules", mocks.modules),
+        pytest.raises(RuntimeError, match="spec.apiServer.cABundle.configMapName") as caught,
+    ):
+        search_space_preparation.python_func(
+            test_data=SimpleNamespace(path=str(tmp_path / "test.json")),
+            search_space_report=SimpleNamespace(path=str(tmp_path / "report.json")),
+            embedding_models=["embedding"],
+            generation_models=["generation"],
+            component_status=status,
+        )
+    assert caught.value.__cause__ is error
+    report = json.loads((Path(status.path) / "component_status.json").read_text())
+    stage = next(stage for stage in report["stages"] if stage["id"] == "prepare_search_space")
+    assert stage["status"]["state"] == "failed"
+    assert "spec.apiServer.cABundle.configMapName" in stage["error"]
+    mocks.prepare.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        RuntimeError("Connection error"),
+        TimeoutError("timed out"),
+        ssl.SSLError(ssl.SSL_ERROR_SSL, "[SSL: WRONG_VERSION_NUMBER] wrong version number"),
+        ssl.SSLEOFError(ssl.SSL_ERROR_EOF, "[SSL: UNEXPECTED_EOF_WHILE_READING] EOF occurred"),
+    ],
+)
+@pytest.mark.parametrize("wrapped", [False, True])
+def test_other_maas_errors_remain_unchanged(tmp_path, error, wrapped):
+    """Network and TLS protocol errors must not suggest a CA configuration fix."""
+    if wrapped:
+        outer = RuntimeError("Connection error")
+        outer.__cause__ = error
+        error = outer
+    else:
+        error.__context__ = error  # A cycle must not trap the exception traversal.
+    mocks = _make_ai4rag_mocks()
+    mocks.create_maas_client.side_effect = error
+    with (
+        mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True),
+        mock.patch.dict("sys.modules", mocks.modules),
+        pytest.raises(type(error)) as caught,
+    ):
+        search_space_preparation.python_func(
+            test_data=SimpleNamespace(path=str(tmp_path / "test.json")),
+            search_space_report=SimpleNamespace(path=str(tmp_path / "report.json")),
+            embedding_models=["embedding"],
+            generation_models=["generation"],
+        )
+    assert caught.value is error
+    mocks.prepare.assert_not_called()
