@@ -45,6 +45,7 @@ SUPPORTED_RUNTIMES: tuple[str, ...] = ("podman", "docker")
 _CONTAINER_RUNTIME_ENV = "CONTAINER_RUNTIME"
 
 _INDEX_URL_RE = re.compile(r"^--index-url\s+(\S+)", re.MULTILINE)
+_GPU_LOCK_PACKAGES_RE = re.compile(r"^# gpu-lock-packages:\s*(.+)$", re.MULTILINE)
 _PKG_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*")
 _REQUIREMENTS_IN = "requirements.in"
 _REQUIREMENTS_TXT = "requirements.txt"
@@ -59,6 +60,12 @@ def read_index_url(requirements_in: Path) -> str | None:
     content = requirements_in.read_text(encoding="utf-8")
     match = _INDEX_URL_RE.search(content)
     return match.group(1) if match else None
+
+
+def read_gpu_lock_packages(requirements_in: Path) -> list[str]:
+    """Return packages installed from a separate GPU lockfile."""
+    match = _GPU_LOCK_PACKAGES_RE.search(requirements_in.read_text(encoding="utf-8"))
+    return match.group(1).split() if match else []
 
 
 def _strip_inline_comment(line: str) -> str:
@@ -306,6 +313,7 @@ def build_container_command(
     verbose: bool,
     python_platform: str | None = None,
     upgrade_packages: Sequence[str] = (),
+    omitted_packages: Sequence[str] = (),
 ) -> list[str]:
     """Build the container command that runs uv pip compile."""
     python_bin = "python3 -u"
@@ -318,6 +326,8 @@ def build_container_command(
     ]
     if python_platform:
         compile_flags.extend(["--python-platform", python_platform])
+    for package in omitted_packages:
+        compile_flags.extend(["--no-emit-package", package])
     # uv pip compile has no --dry-run; emit to stdout instead of writing the lockfile.
     if not dry_run:
         compile_flags.append(f"--output-file {_REQUIREMENTS_TXT}")
@@ -364,6 +374,7 @@ def compile_pipeline_requirements(
 
     runtime = resolve_container_runtime(container_runtime)
     requirements_content = requirements_in.read_text(encoding="utf-8")
+    gpu_lock_packages = read_gpu_lock_packages(requirements_in)
     command = build_container_command(
         runtime=runtime,
         container_image=container_image,
@@ -371,8 +382,11 @@ def compile_pipeline_requirements(
         upgrade=upgrade,
         dry_run=dry_run,
         verbose=verbose,
-        python_platform="x86_64-unknown-linux-gnu" if "linux_x86_64.whl" in requirements_content else None,
+        python_platform=(
+            "x86_64-unknown-linux-gnu" if "linux_x86_64.whl" in requirements_content or gpu_lock_packages else None
+        ),
         upgrade_packages=re.findall(r"^([A-Za-z0-9][A-Za-z0-9._-]*) @ https://", requirements_content, re.MULTILINE),
+        omitted_packages=gpu_lock_packages,
     )
 
     # Strip hashes only once the runtime resolved; keep the original content so

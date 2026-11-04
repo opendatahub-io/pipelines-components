@@ -1,0 +1,24 @@
+--index-url https://packages.redhat.com/api/pypi/public-rhai/cuda13.0-torch2.13-el9.8/simple
+
+onnxruntime-gpu==1.25.0 \
+    --hash=sha256:60445420d324fa34fbb7c5a637b21567e104833b665a4703f622730bc1c3ad63 \
+    --hash=sha256:8ed6997943f27f91b3e49db95f883051f645bdd01a9d7c96ef88035a6a121a49 \
+    --hash=sha256:95305be311023b02f6ca834f9702343b64b363a2f02fca4f764ae537cf87fc96 \
+    --hash=sha256:dda49e4991d7fa75940ccd711fd57d5cdb06a32cb9f022d8c7d4d64c57e55c02
+    # via -r requirements-gpu.in
+torch==2.13.0 \
+    --hash=sha256:36b2cbbe086c1c65fda0c568d7f929a29c513fe44302f30cdf3756a92c0480b7 \
+    --hash=sha256:4506b290da6bff31c80778bf6e3fb36ec152f9e603e35bd109ad1ad60dbc404e
+    # via -r requirements-gpu.in
+torchvision==0.28.0 \
+    --hash=sha256:023bb61d98efd90d7919f7eed9b7359ad3ab2fb98d81ab35ed61e55bc1925392 \
+    --hash=sha256:1101d4125ac2fe087e1ff84a03f29223a9eb74452e609714184aeec26f776872 \
+    --hash=sha256:1c06fdde876e3390ebcf2cf9053ec19a7884793842778604a27c6de81003fe14 \
+    --hash=sha256:8370c18df1204a2589d8a098f3ce036883ae030d2757e8222b64b682153e1d46 \
+    --hash=sha256:dd28c6bbdea8af86d02e3b8bec94b150c953d5917c277a89c8ca7bfe68be4688 \
+    --hash=sha256:e1d16f7fd01e5f3356b11d8a83cdf783bf79c15c159f842a4aac518d5ed8b5e7
+    # via -r requirements-gpu.in
+triton==3.7.1 \
+    --hash=sha256:81ee746838acc18019cf433f10cc1c0a344b53de3e444577288e03861e6cf54c \
+    --hash=sha256:fb46e67a31fef95d5859a65226c8723a40caa223981f357d5157c3f15eee5863
+    # via -r requirements-gpu.in
