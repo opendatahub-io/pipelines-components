@@ -5,9 +5,6 @@ ai4rag[text-extraction]==0.25.4
 # RHAI hf-xet 1.8.0 lacks ppc64le/s390x wheels; retain the upstream pin.
 hf-xet==1.7.0
 mlflow-skinny~=3.16.0
-# Red Hat CUDA 13 wheels. The lockfile hashes these URLs; Konflux builds this
-# image for x86_64, and the refresh script resolves for that platform.
-torch @ https://packages.redhat.com/api/pulp-content/public-rhai/cuda13.0-torch2.13-el9.8-test/torch-2.13.0-1-cp312-cp312-linux_x86_64.whl
-torchvision @ https://packages.redhat.com/api/pulp-content/public-rhai/cuda13.0-torch2.13-el9.8-test/torchvision-0.28.0-2-cp312-cp312-linux_x86_64.whl
-onnxruntime-gpu @ https://packages.redhat.com/api/pulp-content/public-rhai/cuda13.0-torch2.13-el9.8-test/onnxruntime_gpu-1.25.0-4-cp312-cp312-linux_x86_64.whl
-triton @ https://packages.redhat.com/api/pulp-content/public-rhai/cuda13.0-torch2.13-el9.8-test/triton-3.7.1-6-cp312-cp312-linux_x86_64.whl
+# Packages supplied by requirements-gpu.txt; omit their CPU equivalents from
+# this lockfile when refreshing it.
+# gpu-lock-packages: torch torchvision triton onnxruntime

@@ -8,13 +8,15 @@ FROM ${DOCLING_OGX_MODELCAR} AS docling-ogx-modelcar
 FROM ${WHISPER_MODELCAR} AS whisper-modelcar
 FROM ${BASE_IMAGE}
 
-COPY pipelines/training/autorag/documents_rag_optimization_pipeline/requirements.txt /tmp/
+COPY pipelines/training/autorag/documents_rag_optimization_pipeline/requirements*.txt /tmp/
 
 ## TODO: Ensure build isolation
-# Install the locked GPU wheels over the base image packages. The build container
-# has no GPU, so verify compiled CUDA support rather than torch.cuda.is_available().
-RUN pip uninstall -y torch torchvision onnxruntime && \
-    pip install --no-cache-dir -r /tmp/requirements.txt && \
+# Install GPU packages from the base image's CUDA index before the AutoRAG stack.
+# The application lock omits CPU replacements for these packages, and --no-deps
+# prevents pip from pulling them back in. The build worker has no GPU, so check
+# compiled CUDA support rather than torch.cuda.is_available().
+RUN pip install --no-cache-dir --no-deps -r /tmp/requirements-gpu.txt && \
+    pip install --no-cache-dir --no-deps -r /tmp/requirements.txt && \
     python -c 'import torch, torchvision, onnxruntime as ort; assert torch.version.cuda == "13.0", torch.version.cuda; assert "CUDAExecutionProvider" in ort.get_available_providers(), ort.get_available_providers(); print(torch.__version__, torchvision.__version__, ort.get_available_providers())'
 
 # Temporary workaround for docling-core versions that reject the MIME type

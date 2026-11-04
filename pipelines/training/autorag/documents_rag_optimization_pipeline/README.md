@@ -65,20 +65,27 @@ deployment settings), executable notebooks, and evaluation results.
 
 ### CUDA image build
 
-The training pipeline `Containerfile` installs its locked Python dependencies
-from the general RHOAI package index and direct wheel files from the Red Hat
-CUDA 13.0 / PyTorch 2.13 index.
-The final image keeps the required CPU base image; the CUDA 13 userspace runtime
-(`libcudart`, `libcublas`, cuDNN, NCCL, ...) is copied from the Red Hat CUDA image
-used as a build stage, because Red Hat does not publish that runtime as pip wheels.
-Both images are OCI build inputs, so the build stays hermetic.
-The lockfile pins x86_64 CUDA wheels for `torch`, `torchvision`, `triton`, and
-`onnxruntime-gpu`; the image build checks CUDA support without requiring a GPU
-on the build worker. The current Konflux build targets x86_64. Regenerate the
-lockfile with:
+The training image starts from the Red Hat CUDA 13.0 / PyTorch 2.13 base image.
+It supplies the CUDA runtime and configures the CUDA Python package index, but
+does not preinstall Torch. `requirements-gpu.txt` installs pinned `torch`,
+`torchvision`, `triton`, and `onnxruntime-gpu` wheels from that index. The
+application `requirements.txt` installs AutoRAG and its other dependencies from
+the general RHOAI index. Its lockfile omits GPU packages and CPU `onnxruntime`;
+both installs use `--no-deps` so the general index cannot replace GPU packages.
+The image build checks CUDA support without requiring a GPU on the build worker.
+
+Regenerate the application lockfile with:
 
 ```bash
 make pipeline-requirements PIPELINE=pipelines/training/autorag/documents_rag_optimization_pipeline
+```
+
+Regenerate the GPU lockfile from this directory with:
+
+```bash
+uv pip compile requirements-gpu.in --no-deps --generate-hashes --emit-index-url \
+  --no-header --python-platform x86_64-unknown-linux-gnu --python-version 3.12 \
+  --output-file requirements-gpu.txt
 ```
 
 The CUDA package index URL ends in `/simple`. The `/simple/torch/` URL is only
