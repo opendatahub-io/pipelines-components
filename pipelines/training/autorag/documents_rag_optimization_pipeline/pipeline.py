@@ -152,8 +152,7 @@ def documents_rag_optimization_pipeline(
         MAX_MEMORY
     )
 
-    # Resolve preset + GPU count once and reuse the preset across every quality
-    # component so they all agree on the effective tier.
+    # Resolve the preset once so every quality component uses the same tier.
     extraction_inputs_task = prepare_extraction_inputs(preset=preset, gpu_acceleration=gpu_acceleration)
     normalized_preset = extraction_inputs_task.outputs["preset"]
 
@@ -171,21 +170,36 @@ def documents_rag_optimization_pipeline(
 
     # ocr_lang comes from search space preparation; gating extraction behind it fails
     # misconfigured models before any heavy document processing starts.
-    text_extraction_task = text_extraction(
-        documents_descriptor=documents_discovery_task.outputs["discovered_documents"],
-        preset=normalized_preset,
-        gpu_acceleration=gpu_acceleration,
-        ocr_lang=search_space_preparation_task.outputs["detected_ocr_lang"],
+    with dsl.If(gpu_acceleration == True, name="gpu-extraction"):  # noqa: E712
+        gpu_extraction_task = text_extraction(
+            documents_descriptor=documents_discovery_task.outputs["discovered_documents"],
+            preset=normalized_preset,
+            gpu_acceleration=True,
+            ocr_lang=search_space_preparation_task.outputs["detected_ocr_lang"],
+        )
+        gpu_extraction_task.set_caching_options(False)
+        gpu_extraction_task.set_cpu_request("4").set_memory_request("16Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(
+            MAX_MEMORY
+        )
+        use_secret_as_env(gpu_extraction_task, input_data_secret_name, S3_SECRET_ENV_KEYS, optional=True)
+        gpu_extraction_task.set_accelerator_type(GPU_RESOURCE).set_accelerator_limit(1)
+
+    with dsl.Else(name="cpu-extraction"):
+        cpu_extraction_task = text_extraction(
+            documents_descriptor=documents_discovery_task.outputs["discovered_documents"],
+            preset=normalized_preset,
+            gpu_acceleration=False,
+            ocr_lang=search_space_preparation_task.outputs["detected_ocr_lang"],
+        )
+        cpu_extraction_task.set_caching_options(False)
+        cpu_extraction_task.set_cpu_request("4").set_memory_request("16Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(
+            MAX_MEMORY
+        )
+        use_secret_as_env(cpu_extraction_task, input_data_secret_name, S3_SECRET_ENV_KEYS, optional=True)
+
+    extracted_text = dsl.OneOf(
+        gpu_extraction_task.outputs["extracted_text"], cpu_extraction_task.outputs["extracted_text"]
     )
-    text_extraction_task.set_caching_options(False)
-    text_extraction_task.set_cpu_request("4").set_memory_request("16Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(
-        MAX_MEMORY
-    )
-    use_secret_as_env(text_extraction_task, input_data_secret_name, S3_SECRET_ENV_KEYS, optional=True)
-    text_extraction_task.set_accelerator_type(GPU_RESOURCE).set_accelerator_limit(
-        extraction_inputs_task.outputs["gpu_count"]
-    )
-    extracted_text = text_extraction_task.outputs["extracted_text"]
 
     models_pre_selector_task = models_pre_selector(
         search_space_report=search_space_preparation_task.outputs["search_space_report"],

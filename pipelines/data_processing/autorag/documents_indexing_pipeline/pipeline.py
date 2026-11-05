@@ -109,19 +109,35 @@ def documents_indexing_pipeline(
     extraction_inputs_task = prepare_extraction_inputs(preset=preset, gpu_acceleration=gpu_acceleration)
     extraction_inputs_task.set_caching_options(False)
 
-    text_extraction_task = text_extraction(
-        documents_descriptor=documents_discovery_task.outputs["discovered_documents"],
-        preset=extraction_inputs_task.outputs["preset"],
-        gpu_acceleration=gpu_acceleration,
-        ocr_lang=ocr_lang,
-    )
-    text_extraction_task.set_caching_options(False)
-    text_extraction_task.set_cpu_request("2").set_memory_request("8Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(
-        MAX_MEMORY
-    )
-    use_secret_as_env(text_extraction_task, input_data_secret_name, S3_SECRET_ENV_KEYS)
-    text_extraction_task.set_accelerator_type(GPU_RESOURCE).set_accelerator_limit(
-        extraction_inputs_task.outputs["gpu_count"]
+    with dsl.If(gpu_acceleration == True, name="gpu-extraction"):  # noqa: E712
+        gpu_extraction_task = text_extraction(
+            documents_descriptor=documents_discovery_task.outputs["discovered_documents"],
+            preset=extraction_inputs_task.outputs["preset"],
+            gpu_acceleration=True,
+            ocr_lang=ocr_lang,
+        )
+        gpu_extraction_task.set_caching_options(False)
+        gpu_extraction_task.set_cpu_request("2").set_memory_request("8Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(
+            MAX_MEMORY
+        )
+        use_secret_as_env(gpu_extraction_task, input_data_secret_name, S3_SECRET_ENV_KEYS)
+        gpu_extraction_task.set_accelerator_type(GPU_RESOURCE).set_accelerator_limit(1)
+
+    with dsl.Else(name="cpu-extraction"):
+        cpu_extraction_task = text_extraction(
+            documents_descriptor=documents_discovery_task.outputs["discovered_documents"],
+            preset=extraction_inputs_task.outputs["preset"],
+            gpu_acceleration=False,
+            ocr_lang=ocr_lang,
+        )
+        cpu_extraction_task.set_caching_options(False)
+        cpu_extraction_task.set_cpu_request("2").set_memory_request("8Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(
+            MAX_MEMORY
+        )
+        use_secret_as_env(cpu_extraction_task, input_data_secret_name, S3_SECRET_ENV_KEYS)
+
+    extracted_text = dsl.OneOf(
+        gpu_extraction_task.outputs["extracted_text"], cpu_extraction_task.outputs["extracted_text"]
     )
 
     documents_indexing_task = documents_indexing(
@@ -129,7 +145,7 @@ def documents_indexing_pipeline(
         embedding_model_id=embedding_model_id,
         foundation_model_id=foundation_model_id,
         foundation_model_params=foundation_model_params,
-        extracted_text=text_extraction_task.outputs["extracted_text"],
+        extracted_text=extracted_text,
         chunking_method=chunking_method,
         chunk_size=chunk_size,
         chunk_overlap=chunk_overlap,
