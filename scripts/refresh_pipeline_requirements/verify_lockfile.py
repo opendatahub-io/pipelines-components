@@ -64,6 +64,7 @@ _PIN_RE = re.compile(
     r"\s*\\?$"
 )
 _HASH_RE = re.compile(r"^\s*--hash=(?P<algorithm>[a-z0-9]+):(?P<digest>[0-9a-fA-F]+)\s*\\?$")
+_DIRECT_URL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*(?:\[[^\]]*\])?\s+@\s+https?://")
 # Wheel names are escaped per PEP 427 (runs of non-alphanumeric characters become
 # underscores), so the name group must not accept dashes; versions never contain
 # dashes either. RHAI additionally inserts a numeric build tag after the version.
@@ -141,6 +142,11 @@ def parse_lockfile_pins(requirements_txt: Path) -> list[PinnedRequirement]:
                 marker=pin_match.group("marker"),
             )
             pins.append(current)
+            continue
+        # Direct wheel URLs are outside the configured simple index. Their hashes
+        # belong to that URL and must not be attributed to the previous index pin.
+        if _DIRECT_URL_RE.match(raw_line):
+            current = None
             continue
         hash_match = _HASH_RE.match(raw_line)
         if hash_match is not None and current is not None:

@@ -4,8 +4,12 @@ import inspect
 import tempfile
 from pathlib import Path
 
+import pytest
 from kfp import compiler
 from kfp_components.components.data_processing.autorag.documents_indexing.component import documents_indexing
+from kfp_components.components.data_processing.autorag.text_extraction.extraction_inputs import (
+    prepare_extraction_inputs,
+)
 from kfp_components.utils.pipeline_dag_tasks import (
     assert_compiled_pipeline_root_dag_task_ids,
     load_pipeline_spec_document,
@@ -15,7 +19,8 @@ from ..pipeline import documents_indexing_pipeline
 
 _EXPECTED_ROOT_DAG_TASK_IDS = (
     "documents-discovery",
-    "text-extraction",
+    "prepare-extraction-inputs",
+    "condition-branches-1",
     "documents-indexing",
 )
 
@@ -43,6 +48,7 @@ class TestDocumentsIndexingPipelineUnit:
             "ocr_lang",
             "graph_extraction_config",
             "preset",
+            "gpu_acceleration",
         ):
             assert name in inputs
 
@@ -67,7 +73,7 @@ class TestDocumentsIndexingPipelineUnit:
         )
 
     def test_compiled_pipeline_task_dependencies(self):
-        """Indexing depends on extraction; extraction depends on discovery."""
+        """Extraction consumes discovery and the resolved inputs; indexing follows it."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as tmp:
             tmp_path = tmp.name
         try:
@@ -77,8 +83,11 @@ class TestDocumentsIndexingPipelineUnit:
             )
             spec = load_pipeline_spec_document(Path(tmp_path))
             tasks = spec["root"]["dag"]["tasks"]
-            assert tasks["text-extraction"]["dependentTasks"] == ["documents-discovery"]
-            assert tasks["documents-indexing"]["dependentTasks"] == ["text-extraction"]
+            assert set(tasks["condition-branches-1"]["dependentTasks"]) == {
+                "documents-discovery",
+                "prepare-extraction-inputs",
+            }
+            assert tasks["documents-indexing"]["dependentTasks"] == ["condition-branches-1"]
         finally:
             Path(tmp_path).unlink(missing_ok=True)
 
@@ -103,10 +112,15 @@ class TestDocumentsIndexingPipelineUnit:
         )
         spec = load_pipeline_spec_document(tmp_file)
         preset_input = spec["root"]["inputDefinitions"]["parameters"]["preset"]
-        extraction_inputs = spec["root"]["dag"]["tasks"]["text-extraction"]["inputs"]["parameters"]
+        extraction_inputs = spec["root"]["dag"]["tasks"]["condition-branches-1"]["inputs"]["parameters"]
 
         assert preset_input["defaultValue"] == "speed"
-        assert extraction_inputs["preset"] == {"componentInputParameter": "preset"}
+        assert extraction_inputs["pipelinechannel--prepare-extraction-inputs-preset"] == {
+            "taskOutputParameter": {
+                "producerTask": "prepare-extraction-inputs",
+                "outputParameterKey": "preset",
+            }
+        }
 
     def test_compiled_pipeline_wires_indexing_parameters(self):
         """Chunking and embedding pipeline inputs reach the indexing component."""
@@ -127,6 +141,7 @@ class TestDocumentsIndexingPipelineUnit:
         assert "componentInputParameter: foundation_model_id" in content
         assert "componentInputParameter: foundation_model_params" in content
         assert "componentInputParameter: collection_name" in content
+        assert "componentInputParameter: preset" in content
         assert "comp-documents-indexing:" in content
 
     def test_compiled_pipeline_wires_graph_extraction_config(self, tmp_path):
@@ -148,7 +163,22 @@ class TestDocumentsIndexingPipelineUnit:
             assert "kg_extraction_config" not in inputs
 
     def test_compiled_pipeline_wires_ocr_lang_to_text_extraction(self):
-        """ocr_lang reaches extraction so indexing OCRs the corpus the way the experiment did."""
+        """ocr_lang reaches text extraction so indexing OCRs the corpus the way the experiment did."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as tmp:
+            tmp_path = tmp.name
+        try:
+            compiler.Compiler().compile(
+                pipeline_func=documents_indexing_pipeline,
+                package_path=tmp_path,
+            )
+            content = Path(tmp_path).read_text(encoding="utf-8")
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
+
+        assert "componentInputParameter: ocr_lang" in content
+
+    def test_compiled_pipeline_declares_gpu_only_for_gpu_branch(self):
+        """The GPU branch has a literal GPU limit and the CPU branch has none."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as tmp:
             tmp_path = tmp.name
         try:
@@ -157,10 +187,38 @@ class TestDocumentsIndexingPipelineUnit:
                 package_path=tmp_path,
             )
             spec = load_pipeline_spec_document(Path(tmp_path))
-            te_inputs = spec["root"]["dag"]["tasks"]["text-extraction"]["inputs"]["parameters"]
-            assert te_inputs["ocr_lang"]["componentInputParameter"] == "ocr_lang"
         finally:
             Path(tmp_path).unlink(missing_ok=True)
+
+        executors = spec["deploymentSpec"]["executors"]
+        gpu = executors["exec-text-extraction"]["container"]["resources"]["accelerator"]
+        cpu = executors["exec-text-extraction-2"]["container"]["resources"]
+        assert gpu["resourceType"] == "nvidia.com/gpu"
+        assert gpu["resourceCount"] == "1"
+        assert "accelerator" not in cpu
+
+    @pytest.mark.parametrize(
+        ("preset", "expected"),
+        [
+            (None, "speed"),
+            ("", "speed"),
+            ("speed", "speed"),
+            ("balanced", "balanced"),
+        ],
+    )
+    def test_normalizes_extraction_preset(self, preset, expected):
+        """Missing and empty presets keep extraction at the speed tier."""
+        assert prepare_extraction_inputs.python_func(preset=preset).preset == expected
+
+    def test_rejects_invalid_extraction_preset(self):
+        """Extraction preset validation names the supported values."""
+        with pytest.raises(ValueError, match="speed.*balanced"):
+            prepare_extraction_inputs.python_func(preset="turbo")
+
+    @pytest.mark.parametrize(("gpu_acceleration", "expected_count"), [(False, 0), (True, 1)])
+    def test_gpu_acceleration_maps_to_accelerator_count(self, gpu_acceleration, expected_count):
+        """The preparation output retains its GPU count for compatibility."""
+        assert prepare_extraction_inputs.python_func(gpu_acceleration=gpu_acceleration).gpu_count == expected_count
 
     def test_compiled_pipeline_wires_s3_maas_and_vector_db_secrets(self):
         """S3 secrets attach to discovery/extraction; MaaS + vector-DB secrets attach to indexing."""

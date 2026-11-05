@@ -579,6 +579,7 @@ class TestRagTemplatesOptimizationRun:
             "data/manuals/",
         ]
         assert pattern_json["indexing"]["pipeline_spec"]["pipeline_name"] == "documents-indexing-pipeline"
+        assert pattern_json["indexing"]["pipeline_spec"]["parameters"]["preset"] == "speed"
         assert pattern_json["indexing"]["pipeline_spec"]["parameters"]["foundation_model_id"] == "fm-0"
         assert pattern_json["indexing"]["pipeline_spec"]["parameters"]["foundation_model_params"] == {
             "temperature": 0.2,

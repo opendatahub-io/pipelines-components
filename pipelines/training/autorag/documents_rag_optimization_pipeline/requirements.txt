@@ -605,12 +605,6 @@ olefile==0.47 \
 omegaconf==2.4.0 \
     --hash=sha256:40f4e2b6d83a112143b02be4862571a4f9c137b76588c23440ea40f07ae3f398
     # via rapidocr
-onnxruntime==1.25.0 \
-    --hash=sha256:38787539fdb27406f9189ed06d5f6d35a56ad01d1676056ae4839ccb3ef5e1da \
-    --hash=sha256:3c9ee87f6024581bf18adb339b41de8d8fa92006d34fdd6124ea832bfb41d4a1 \
-    --hash=sha256:64b70369f68de818f618a05c6c76fa045053199541189edcf341babafe1f4fa1 \
-    --hash=sha256:d61ca53ad8ec3ba5d3c2e4acf7ee62f611b59003cd4c61da5402b42fc8271b84
-    # via ai4rag
 openai==2.53.0 \
     --hash=sha256:781ee0a067abb323ba473a4d9d872583919b960d6f4fc37e59d6efd9074868b2
     # via
@@ -1077,36 +1071,6 @@ tokenizers==0.23.3 \
     # via
     #   transformers
     #   whisper-s2t-reborn
-torch==2.13.0 \
-    --hash=sha256:2a04ad8ab85fbeeac8463915f8e070949a9f98bd7630601af8b6955ee1fe0f4d \
-    --hash=sha256:71282ac1697262d0ae57dbc9b3877d1dfe783414fe38a6b19a8e334927fa9692 \
-    --hash=sha256:8a6ea722d77aecdcb3af8daf3d505419160281c81524fd0599dac13bdfa9a0d1 \
-    --hash=sha256:97ce14be01501f66257b84875af54124a510869d742163c2cb66e7fdc3bd2bd5 \
-    --hash=sha256:cfc35cf3b57b501b890a838bcdc7b7324195e047e92488f1faf9a8c8cbd402a7
-    # via
-    #   accelerate
-    #   docling-ibm-models
-    #   docling-slim
-    #   openai-whisper
-    #   safetensors
-    #   torchvision
-    #   whisper-s2t-reborn
-torchvision==0.28.0 \
-    --hash=sha256:2aaaf47f8e9fdf33991dd0b12fc596562b8dede1317097fb222a8a4c5c4e9c9e \
-    --hash=sha256:353a8fa8aec17de07ab9fcad57f57f20b555a517e65c13887de793930f40c623 \
-    --hash=sha256:4597e32b8489bd9aa2e6bb4af5cd59e5ee3e39f4a8ec2237a8433247b14372f6 \
-    --hash=sha256:4b48fa6c05da2c5c42e64a9f43bdf6163b73da2ba05cff9ea68ae85e39c1d7ce \
-    --hash=sha256:5b753a89e7cad2de0253b59f3acdb9223dd877e8055834205c51cdac060875f2 \
-    --hash=sha256:a09e67612963a65a7eb2b532b8186c4b253be63771c990a179d585e5f99e70fd \
-    --hash=sha256:ac95be176a6a30f4bccb87f35aae93ef16b506d7237d0c06539a9f9dff09a92a \
-    --hash=sha256:c1fa36519b32334af4507372f577765152c010b71f1a961ddd60818e6801a9b9 \
-    --hash=sha256:c66b473a333ce10c97efb1fee8efd0247f2ad246b10c9892447d2f139b06f3e6 \
-    --hash=sha256:d155debc1ddc9633a8ebeb361ee5c75badc36bf78b45978b3dbc164155447e4a \
-    --hash=sha256:f5bfe8874f2f669b07458e4bed34f0a84968a685ab7b5591ca059efe2b1ff63a \
-    --hash=sha256:fb4e1e7d29b27d9183bb0a2cd7bad61d9850c3681075e3dea6f37c99c03db885
-    # via
-    #   docling-ibm-models
-    #   docling-slim
 tqdm==4.70.1 \
     --hash=sha256:3a5758ef148f07ea4a5f62214371fd035c44d0ddf4e2403555003aaeb2499370
     # via
@@ -1158,11 +1122,6 @@ tree-sitter-typescript==0.23.2 \
     --hash=sha256:dab1ec90cb31e96ee7cb517dff9419b68ca564cfde6921000d3783742d78daf7 \
     --hash=sha256:f837a791389ec223aaf3cbc262175dd02621a3e340dc7f0986a6a958c4578669
     # via docling-core
-triton==3.6.0 ; platform_machine != "s390x" \
-    --hash=sha256:54c6a2fbc6b79207cd86cc81abb1c0257c412a776386a00137ae753602c5637a \
-    --hash=sha256:e49ae88574dddb0698baee607cc9c137b0fe34c5720656fe49e5174e21886833 \
-    --hash=sha256:f0ff7219b07ba61d2ef0190173f8c4e725a7295e0cfe493aee8fff36ff489856
-    # via -r requirements.in
 truststore==0.10.5 \
     --hash=sha256:9445a25aba9a475d42caa76f196e18f30433b8f0d01a372ae6f74ed54b6d113c
     # via
@@ -1294,3 +1253,9 @@ zstandard==0.25.0 \
     --hash=sha256:93ecfcca909d0e47d47a1fb4937665faadc11ba0ff1dbd66839252a2e0f1afab \
     --hash=sha256:d88b8b1f2b73a5792fa31fd72b84dad3020c63a966e6b1e0cb52972be8803bdf
     # via langsmith
+
+# The following packages were excluded from the output:
+# torch
+# torchvision
+# triton
+# onnxruntime

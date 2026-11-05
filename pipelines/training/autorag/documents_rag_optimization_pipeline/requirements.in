@@ -2,7 +2,9 @@
 
 kfp==2.17.0
 ai4rag[text-extraction]==0.25.4
-# RHAI hf-xet 1.8.0 lacks ppc64le/s390x wheels; retain all supported architectures.
+# RHAI hf-xet 1.8.0 lacks ppc64le/s390x wheels; retain the upstream pin.
 hf-xet==1.7.0
 mlflow-skinny~=3.16.0
-triton==3.6.0; platform_machine != "s390x"
+# Packages supplied by requirements-gpu.txt; omit their CPU equivalents from
+# this lockfile when refreshing it.
+# gpu-lock-packages: torch torchvision triton onnxruntime

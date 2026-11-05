@@ -12,6 +12,7 @@ from ..refresh_pipeline_requirements import (
     build_container_command,
     build_volume_mount,
     compile_pipeline_requirements,
+    read_gpu_lock_packages,
     read_index_url,
     read_requirement_markers,
     refresh_pipeline_requirements,
@@ -52,6 +53,14 @@ class TestReadIndexUrl:
         requirements_in.write_text("requests\n", encoding="utf-8")
 
         assert read_index_url(requirements_in) is None
+
+
+def test_reads_gpu_lock_packages(tmp_path: Path):
+    """The application lock omits packages installed from the CUDA lock."""
+    requirements_in = tmp_path / "requirements.in"
+    requirements_in.write_text("# gpu-lock-packages: torch torchvision onnxruntime\n", encoding="utf-8")
+
+    assert read_gpu_lock_packages(requirements_in) == ["torch", "torchvision", "onnxruntime"]
 
 
 class TestReadRequirementMarkers:
@@ -298,6 +307,25 @@ class TestBuildContainerCommand:
         compile_command = command[command.index("-lc") + 1]
         assert "--upgrade" not in compile_command
 
+    def test_omits_gpu_lock_packages(self, tmp_path: Path):
+        """Compile flags omit packages installed in a separate GPU lockfile."""
+        pipeline_dir = tmp_path / "pipeline"
+        _write_requirements_in(pipeline_dir)
+
+        command = build_container_command(
+            runtime="podman",
+            container_image="registry.example.com/ubi9/python-312:9.8",
+            pipeline_dir=pipeline_dir.resolve(),
+            upgrade=False,
+            dry_run=False,
+            verbose=False,
+            omitted_packages=["torch", "onnxruntime"],
+        )
+
+        compile_command = command[command.index("-lc") + 1]
+        assert "--no-emit-package torch" in compile_command
+        assert "--no-emit-package onnxruntime" in compile_command
+
     def test_builds_expected_docker_command(self, tmp_path: Path):
         """Builds a Docker command with a plain bind mount."""
         pipeline_dir = tmp_path / "pipeline"
@@ -354,6 +382,29 @@ class TestBuildContainerCommand:
 
 class TestCompilePipelineRequirements:
     """Tests for compile_pipeline_requirements."""
+
+    def test_x86_wheel_uses_x86_resolution(self, tmp_path: Path):
+        """Compile direct x86 CUDA wheels on non-x86 development hosts."""
+        pipeline_dir = tmp_path / "pipeline"
+        pipeline_dir.mkdir()
+        (pipeline_dir / "requirements.in").write_text(
+            "--index-url https://example.com/simple\n"
+            "torch @ https://example.com/torch-2.13.0-cp312-cp312-linux_x86_64.whl\n",
+            encoding="utf-8",
+        )
+
+        with (
+            mock.patch(
+                "scripts.refresh_pipeline_requirements.refresh_pipeline_requirements.resolve_container_runtime",
+                return_value="docker",
+            ),
+            mock.patch("subprocess.run") as run_mock,
+            mock.patch("builtins.print"),
+        ):
+            compile_pipeline_requirements(pipeline_dir, container_runtime="docker", upgrade=False, verify=False)
+
+        assert "--python-platform x86_64-unknown-linux-gnu" in run_mock.call_args.args[0][-1]
+        assert "--upgrade-package torch" in run_mock.call_args.args[0][-1]
 
     def test_quiet_mode_suppresses_container_output(self, tmp_path: Path):
         """Discards container stdout/stderr when quiet mode is requested."""
