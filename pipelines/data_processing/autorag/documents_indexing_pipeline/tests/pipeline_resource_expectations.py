@@ -7,5 +7,6 @@ WORKLOAD_RESOURCES = ExecutorResources("2", "8Gi", "32", "64Gi")
 AUTORAG_INDEXING_EXECUTOR_RESOURCES = {
     "documents-discovery": WORKLOAD_RESOURCES,
     "text-extraction": WORKLOAD_RESOURCES,
+    "text-extraction-2": WORKLOAD_RESOURCES,
     "documents-indexing": WORKLOAD_RESOURCES,
 }

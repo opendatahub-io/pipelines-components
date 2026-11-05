@@ -20,7 +20,7 @@ from ..pipeline import documents_indexing_pipeline
 _EXPECTED_ROOT_DAG_TASK_IDS = (
     "documents-discovery",
     "prepare-extraction-inputs",
-    "text-extraction",
+    "condition-branches-1",
     "documents-indexing",
 )
 
@@ -83,11 +83,11 @@ class TestDocumentsIndexingPipelineUnit:
             )
             spec = load_pipeline_spec_document(Path(tmp_path))
             tasks = spec["root"]["dag"]["tasks"]
-            assert set(tasks["text-extraction"]["dependentTasks"]) == {
+            assert set(tasks["condition-branches-1"]["dependentTasks"]) == {
                 "documents-discovery",
                 "prepare-extraction-inputs",
             }
-            assert tasks["documents-indexing"]["dependentTasks"] == ["text-extraction"]
+            assert tasks["documents-indexing"]["dependentTasks"] == ["condition-branches-1"]
         finally:
             Path(tmp_path).unlink(missing_ok=True)
 
@@ -112,10 +112,10 @@ class TestDocumentsIndexingPipelineUnit:
         )
         spec = load_pipeline_spec_document(tmp_file)
         preset_input = spec["root"]["inputDefinitions"]["parameters"]["preset"]
-        extraction_inputs = spec["root"]["dag"]["tasks"]["text-extraction"]["inputs"]["parameters"]
+        extraction_inputs = spec["root"]["dag"]["tasks"]["condition-branches-1"]["inputs"]["parameters"]
 
         assert preset_input["defaultValue"] == "speed"
-        assert extraction_inputs["preset"] == {
+        assert extraction_inputs["pipelinechannel--prepare-extraction-inputs-preset"] == {
             "taskOutputParameter": {
                 "producerTask": "prepare-extraction-inputs",
                 "outputParameterKey": "preset",
@@ -177,8 +177,8 @@ class TestDocumentsIndexingPipelineUnit:
 
         assert "componentInputParameter: ocr_lang" in content
 
-    def test_compiled_pipeline_declares_parameterized_gpu_resources(self):
-        """The single extraction task requests an NVIDIA GPU count driven by gpu_acceleration."""
+    def test_compiled_pipeline_declares_gpu_only_for_gpu_branch(self):
+        """The GPU branch has a literal GPU limit and the CPU branch has none."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as tmp:
             tmp_path = tmp.name
         try:
@@ -186,13 +186,16 @@ class TestDocumentsIndexingPipelineUnit:
                 pipeline_func=documents_indexing_pipeline,
                 package_path=tmp_path,
             )
-            content = Path(tmp_path).read_text(encoding="utf-8")
+            spec = load_pipeline_spec_document(Path(tmp_path))
         finally:
             Path(tmp_path).unlink(missing_ok=True)
 
-        assert "resourceType: nvidia.com/gpu" in content
-        # Count is a runtime value (0 or 1) produced by prepare-extraction-inputs, not a constant.
-        assert "pipelinechannel--prepare-extraction-inputs-gpu_count" in content
+        executors = spec["deploymentSpec"]["executors"]
+        gpu = executors["exec-text-extraction"]["container"]["resources"]["accelerator"]
+        cpu = executors["exec-text-extraction-2"]["container"]["resources"]
+        assert gpu["resourceType"] == "nvidia.com/gpu"
+        assert gpu["resourceCount"] == "1"
+        assert "accelerator" not in cpu
 
     @pytest.mark.parametrize(
         ("preset", "expected"),
@@ -214,7 +217,7 @@ class TestDocumentsIndexingPipelineUnit:
 
     @pytest.mark.parametrize(("gpu_acceleration", "expected_count"), [(False, 0), (True, 1)])
     def test_gpu_acceleration_maps_to_accelerator_count(self, gpu_acceleration, expected_count):
-        """The boolean toggle becomes the integer NVIDIA GPU count the task requests."""
+        """The preparation output retains its GPU count for compatibility."""
         assert prepare_extraction_inputs.python_func(gpu_acceleration=gpu_acceleration).gpu_count == expected_count
 
     def test_compiled_pipeline_wires_s3_maas_and_vector_db_secrets(self):

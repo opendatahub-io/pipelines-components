@@ -3,8 +3,8 @@
 Extraction has two independent knobs used by both the optimization and indexing
 pipelines: ``preset`` (quality tier -- ``speed`` skips Docling table parsing,
 ``balanced`` runs TableFormer) and ``gpu_acceleration`` (run Docling on an NVIDIA
-GPU). Both feed a single ``text_extraction`` task, so the compiled DAG stays one
-extraction step with no CPU/GPU branch.
+GPU). The pipelines use separate CPU and GPU extraction branches so the GPU
+resource limit is a literal value in the compiled pipeline.
 """
 
 from typing import NamedTuple, Optional
@@ -31,9 +31,9 @@ def prepare_extraction_inputs(
     """Resolve the runtime inputs for the text-extraction task.
 
     A blank or ``null`` preset falls back to ``speed``; any other unsupported value
-    is rejected. ``gpu_count`` is ``1`` when GPU acceleration is requested and ``0``
-    otherwise: ``set_accelerator_limit`` needs an integer channel, and KFP cannot
-    derive one from the boolean at compile time.
+    is rejected. ``gpu_count`` remains in the output for compatibility, but the
+    pipelines select the GPU task with a literal accelerator limit. The KFP
+    runtime does not apply a limit supplied through this output channel.
     """
     from typing import NamedTuple
 
