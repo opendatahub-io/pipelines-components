@@ -5,6 +5,7 @@ from kfp.kubernetes import use_secret_as_env
 from kfp_components.components.data_processing.autorag.documents_discovery.component import documents_discovery
 from kfp_components.components.data_processing.autorag.documents_indexing.component import documents_indexing
 from kfp_components.components.data_processing.autorag.text_extraction.component import text_extraction
+from kfp_components.components.training.autorag.shared.database_connection import SECRET_KEY_TO_ENV
 
 MAX_CPUS = "32"
 MAX_MEMORY = "64Gi"
@@ -37,6 +38,7 @@ def documents_indexing_pipeline(
     ocr_lang: Optional[str] = None,
     graph_extraction_config: Optional[dict] = None,
     preset: str = "speed",
+    db_provider: str = "",
 ):
     """Build a production vector index from documents for AutoRAG.
 
@@ -47,11 +49,9 @@ def documents_indexing_pipeline(
     Args:
         maas_secret_name: Name of the secret with MaaS inference credentials
             ("MAAS_BASE_URL", "MAAS_API_KEY").
-        db_secret_name: Name of the secret carrying the database
-            configuration. The env-var prefix selects the backend: ``MILVUS_*`` keys
-            (at least ``MILVUS_URI``) select Milvus, ``PGVECTOR_*`` keys select PGVector,
-            and ``NEO4J_*`` keys select Neo4j. ``NEO4J_CA_CERT`` optionally supplies a
-            private CA certificate for Neo4j TLS.
+        db_secret_name: Name of the database configuration secret. Set ``db_provider``
+            for DCH or shared PostgreSQL keys. Existing ``MILVUS_*``,
+            ``PGVECTOR_*``, and ``NEO4J_*`` secrets remain supported.
         embedding_model_id: Embedding model ID served by MaaS.
         input_data_secret_name: Name of the secret with S3 credentials for input data
             ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_S3_ENDPOINT", "AWS_DEFAULT_REGION").
@@ -85,6 +85,8 @@ def documents_indexing_pipeline(
         preset: Text extraction quality tier from the optimization run. "speed"
             (default) disables table structure parsing; "balanced" enables
             TableFormer table reconstruction.
+        db_provider: DCH provider: postgres (PGVector), milvus, or neo4j. Required
+            for DCH and shared PostgreSQL secrets. Omit for legacy prefixed secrets.
     """
     documents_discovery_task = documents_discovery(
         input_data_bucket_name=input_data_bucket_name,
@@ -107,6 +109,7 @@ def documents_indexing_pipeline(
     )
 
     documents_indexing_task = documents_indexing(
+        db_provider=db_provider,
         embedding_params=embedding_params,
         embedding_model_id=embedding_model_id,
         foundation_model_id=foundation_model_id,
@@ -152,22 +155,7 @@ def documents_indexing_pipeline(
     use_secret_as_env(
         documents_indexing_task,
         secret_name=db_secret_name,
-        secret_key_to_env={
-            "MILVUS_URI": "MILVUS_URI",
-            "MILVUS_TOKEN": "MILVUS_TOKEN",
-            "MILVUS_CA_CERT": "MILVUS_CA_CERT",
-            "PGVECTOR_HOST": "PGVECTOR_HOST",
-            "PGVECTOR_PORT": "PGVECTOR_PORT",
-            "PGVECTOR_DB": "PGVECTOR_DB",
-            "PGVECTOR_USER": "PGVECTOR_USER",
-            "PGVECTOR_PASSWORD": "PGVECTOR_PASSWORD",
-            "PGVECTOR_CA_CERT": "PGVECTOR_CA_CERT",
-            "NEO4J_URI": "NEO4J_URI",
-            "NEO4J_USERNAME": "NEO4J_USERNAME",
-            "NEO4J_PASSWORD": "NEO4J_PASSWORD",
-            "NEO4J_DATABASE": "NEO4J_DATABASE",
-            "NEO4J_CA_CERT": "NEO4J_CA_CERT",
-        },
+        secret_key_to_env=SECRET_KEY_TO_ENV,
         optional=True,
     )
 

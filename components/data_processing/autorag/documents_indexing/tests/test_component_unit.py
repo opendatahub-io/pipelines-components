@@ -137,7 +137,7 @@ def _make_indexing_report_html_artifact(tmp_path):
 def _make_embedded_artifact():
     """Create a mock embedded_artifact pointing to the real HTML template on disk."""
     art = mock.MagicMock()
-    art.path = str(Path(__file__).resolve().parents[1] / "indexing_report_template.html")
+    art.path = str(Path(__file__).resolve().parents[4] / "training" / "autorag" / "shared" / "runtime_embed")
     return art
 
 
@@ -184,6 +184,8 @@ class TestDocumentsIndexingInterface:
         assert "vector_store_id" not in params
         assert sig.parameters["chunk_size"].default == 1024
         assert sig.parameters["batch_size"].default == 20
+        assert sig.parameters["db_provider"].default == ""
+        assert "provider" not in params
 
 
 class TestDocumentsIndexingValidation:
@@ -768,3 +770,21 @@ class TestDocumentsIndexingHtmlReport:
         assert "Documents Indexing Report" in html_text
         assert "No documents were found" in html_text
         assert html.metadata["display_name"] == "Documents Indexing Report"
+
+
+@mock.patch.dict(
+    "os.environ",
+    {
+        "MAAS_BASE_URL": "https://maas.example.com/v1",
+        "MAAS_API_KEY": "key",
+        "AUTORAG_DB_URI": "postgresql://rag:password@database/documents",
+    },
+    clear=True,
+)
+def test_dch_postgres_indexes_using_pgvector(tmp_path):
+    """The embedded adapter feeds DCH PostgreSQL credentials into production indexing."""
+    modules, mocks = _make_ai4rag_mocks()
+    report, _ = _call_component(tmp_path, modules, mocks, db_provider="postgres")
+    mocks["get_vector_store_config"].assert_called_once_with("pgvector")
+    settings = json.loads(Path(report.path).read_text())["settings"]
+    assert settings["store_binding"]["provider_type"] == "pgvector"

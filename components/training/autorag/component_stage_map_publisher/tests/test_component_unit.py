@@ -221,3 +221,18 @@ class TestPublishComponentStageMapMlflow:
         document = self._publish(component_stage_map_artifact)
         optimization = next(c for c in document["components"] if c["id"] == "rag_templates_optimization")
         assert "log_mlflow_results" not in {stage["id"] for stage in optimization["stages"]}
+
+
+@pytest.mark.parametrize("provider", ["postgres", "milvus", "neo4j"])
+@mock.patch.dict("os.environ", {}, clear=True)
+def test_explicit_provider_selects_template_without_credentials(provider, component_stage_map_artifact):
+    """A DCH provider selects the graph template without exposing credentials to the publisher."""
+    publish_component_stage_map.python_func(
+        pipeline_id=PIPELINE_RAG_OPTIMIZATION,
+        run_id="run-dch",
+        db_provider=provider,
+        component_stage_map=component_stage_map_artifact,
+    )
+    document = json.loads((Path(component_stage_map_artifact.path) / "component_stage_map.json").read_text())
+    steps = document["components"][-1]["stages"][0]["steps"]
+    assert ("graph_extraction" in steps) == (provider == "neo4j")

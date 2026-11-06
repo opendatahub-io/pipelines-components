@@ -10,7 +10,7 @@ _AUTORAG_SHARED = Path(__file__).parents[1] / "shared"
 
 @dsl.component(
     base_image=AUTORAG_IMAGE,  # noqa: E501
-    embedded_artifact_path=str(_AUTORAG_SHARED / "runtime_embed" / "component_status.py"),
+    embedded_artifact_path=str(_AUTORAG_SHARED / "runtime_embed"),
     install_kfp_package=False,
 )
 def search_space_preparation(
@@ -21,6 +21,7 @@ def search_space_preparation(
     embedded_artifact: dsl.EmbeddedInput[dsl.Dataset] = None,
     component_status: dsl.Output[dsl.Artifact] = None,
     preset: str = "speed",
+    db_provider: str = "",
 ) -> NamedTuple("SearchSpacePreparationOutputs", [("detected_ocr_lang", str)]):
     """Search space preparation and validation for AutoRAG experiments.
 
@@ -43,6 +44,8 @@ def search_space_preparation(
         preset: Pipeline quality tier. "speed" (default) uses recursive chunking
             without contextual enrichment. "balanced" uses hybrid chunking with
             LLM contextual enrichment in the search space.
+        db_provider: DCH provider: postgres (PGVector), milvus, or neo4j. Omit only
+            for legacy provider-prefixed secrets.
 
     Returns:
         detected_ocr_lang: ISO 639-1 code of the language AutoRAG detected from the
@@ -55,6 +58,7 @@ def search_space_preparation(
     import importlib.util
     import logging
     import os
+    import ssl
     from collections import namedtuple
     from pathlib import Path
 
@@ -78,6 +82,15 @@ def search_space_preparation(
 
     chunking_methods = PRESET_CHUNKING_METHODS[preset]
 
+    if embedded_artifact is None:
+        from kfp_components.components.training.autorag.shared.database_connection import normalize_connection
+    else:
+        connection_path = Path(embedded_artifact.path) / "database_connection.py"
+        connection_spec = importlib.util.spec_from_file_location("_autorag_database_connection", connection_path)
+        connection_module = importlib.util.module_from_spec(connection_spec)
+        connection_spec.loader.exec_module(connection_module)
+        normalize_connection = connection_module.normalize_connection
+
     if component_status is None:
         from kfp_components.components.training.autorag.shared.component_status import (  # pyright: ignore[reportMissingImports]
             null_component_status_tracker,
@@ -100,22 +113,28 @@ def search_space_preparation(
             status.set_metadata(display_name="Search Space Preparation Status")
             component_status.metadata["display_name"] = "Search Space Preparation Status"
         with status.stage("prepare_search_space"):
-            maas_client = create_maas_client(
-                base_url=os.environ["MAAS_BASE_URL"],
-                api_key=os.environ["MAAS_API_KEY"],
-            )
-
-            if "MILVUS_URI" in os.environ:
-                vector_store_type = "milvus"
-            elif "PGVECTOR_HOST" in os.environ:
-                vector_store_type = "pgvector"
-            elif "NEO4J_URI" in os.environ:
-                vector_store_type = "neo4j"
-            else:
-                vector_store_type = "milvus"
-                logging.warning(
-                    "No MILVUS_URI, PGVECTOR_HOST, or NEO4J_URI environment variable found; defaulting to milvus."
+            vector_store_type = normalize_connection(db_provider, allow_missing=True)
+            try:
+                maas_client = create_maas_client(
+                    base_url=os.environ["MAAS_BASE_URL"],
+                    api_key=os.environ["MAAS_API_KEY"],
                 )
+            except Exception as exc:
+                error = exc
+                seen = set()
+                while error is not None and id(error) not in seen:
+                    seen.add(id(error))
+                    if (
+                        isinstance(error, ssl.SSLCertVerificationError)
+                        or "CERTIFICATE_VERIFY_FAILED" in str(error).upper()
+                    ):
+                        raise RuntimeError(
+                            "MaaS TLS certificate verification failed. Configure the CA ConfigMap in DSPA via "
+                            "spec.apiServer.cABundle.configMapName and spec.apiServer.cABundle.configMapKey."
+                        ) from exc
+                    error = error.__cause__ or error.__context__
+                raise
+
             logging.info("Detected vector store type: %s", vector_store_type)
 
             payload = {

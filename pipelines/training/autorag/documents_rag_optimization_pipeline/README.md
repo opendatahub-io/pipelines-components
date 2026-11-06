@@ -20,13 +20,14 @@ deployment settings), executable notebooks, and evaluation results.
 | `input_data_secret_name` | `str` | `None` | Name of the Kubernetes secret holding S3-compatible credentials for input document data access. The following environment variables are required: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_S3_ENDPOINT. AWS_DEFAULT_REGION is optional. |
 | `input_data_bucket_name` | `str` | `None` | S3 (or compatible) bucket name for the input documents. |
 | `maas_secret_name` | `str` | `None` | Name of the Kubernetes secret for the MaaS inference connection. The secret must define: MAAS_BASE_URL, MAAS_API_KEY. |
-| `db_secret_name` | `str` | `None` | Name of the Kubernetes secret carrying the database configuration. The env-var prefix selects the backend: ``MILVUS_*`` keys (at least ``MILVUS_URI``) select Milvus, ``PGVECTOR_*`` keys select PGVector, ``NEO4J_*`` keys (at least ``NEO4J_URI`` and ``NEO4J_PASSWORD``) select Neo4j. ``NEO4J_CA_CERT`` optionally supplies a private CA certificate for Neo4j TLS. |
+| `db_secret_name` | `str` | `None` | Name of the database configuration secret. Set ``db_provider`` for DCH or shared PostgreSQL keys. Existing ``MILVUS_*``, ``PGVECTOR_*``, and ``NEO4J_*`` secrets remain supported. |
 | `embedding_models` | `list[str]` | `None` | List of embedding model identifiers to use in the search space. Required: MaaS exposes no metadata to distinguish model types, so embedding models can no longer be inferred and must be declared explicitly. |
 | `generation_models` | `list[str]` | `None` | List of foundation/generation model identifiers to use in the search space. Required: MaaS exposes no metadata to distinguish model types, so generation models can no longer be inferred and must be declared explicitly. |
 | `input_data_keys` | `list[str]` | `[]` | Up to ten object-key prefixes for input documents in the input data bucket. Every location is discovered and merged into one deduplicated corpus. |
 | `optimization_metric` | `str` | `overall_score` | Quality metric used to rank RAG patterns. Use an evaluator-qualified value such as ``"unitxt:faithfulness"``, ``"ragas:context_precision"``, or ``"custom:overall_score"`` (default). The ``speed`` preset supports Unitxt and custom metrics; ``balanced`` also supports RAGAS metrics. ``custom:overall_score`` aggregates Unitxt outputs for ``speed`` and Unitxt plus RAGAS outputs for ``balanced``. |
 | `optimization_max_rag_patterns` | `int` | `5` | Maximum number of optimization iterations and published RAG patterns (4-10, default 5). |
 | `preset` | `str` | `speed` | Pipeline quality tier. "speed" (default) uses recursive chunking, no table structure parsing, and no contextual enrichment. "balanced" enables Docling table layout parsing, hybrid chunking, and LLM contextual enrichment. Both presets use the same resource tier. |
+| `db_provider` | `str` | `""` | DCH provider: postgres (PGVector), milvus, or neo4j. Required for DCH and shared PostgreSQL secrets. Omit for legacy prefixed secrets. |
 
 ## Metadata 🗂️
 
@@ -48,7 +49,7 @@ deployment settings), executable notebooks, and evaluation results.
   - pipeline
   - autorag
   - rag-optimization
-- **Last Verified**: 2026-11-02 00:00:00+00:00
+- **Last Verified**: 2026-11-05 00:00:00+00:00
 - **Owners**:
   - No Parent Owners: Yes
   - Approvers:
@@ -196,3 +197,8 @@ parameter values to create RAG Patterns.
 
 - **ai4rag Documentation**: [ai4rag GitHub](https://github.com/IBM/ai4rag)
 - **Issue Tracker**: [GitHub Issues](https://github.com/kubeflow/pipelines-components/issues)
+
+## DCH and shared database connections
+
+Set `db_provider` to `postgres`, `milvus`, or `neo4j` alongside `db_secret_name`.
+See the [connection contract and property mapping](../../../../components/training/autorag/shared/README.md).
