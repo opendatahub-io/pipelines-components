@@ -139,8 +139,6 @@ def documents_indexing(
     if batch_size < 0:
         raise ValueError("batch_size must be a non-negative integer.")
 
-    if embedded_artifact is None:
-        raise ValueError("embedded_artifact was not injected by the pipeline runtime.")
     maas_base_url, maas_api_key = os.environ["MAAS_BASE_URL"], os.environ["MAAS_API_KEY"]
     connection_path = Path(embedded_artifact.path) / "database_connection.py"
     connection_spec = importlib.util.spec_from_file_location("_autorag_database_connection", connection_path)
