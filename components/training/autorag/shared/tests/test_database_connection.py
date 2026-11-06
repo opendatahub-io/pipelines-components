@@ -89,6 +89,8 @@ def test_normalizes_secret(provider, fields, backend, expected):
         ("postgres", {"URI": "postgres://user:password@db/docs", "host": "db"}, "mixes DCH"),
         ("postgres", {"host": "db"}, "Shared PostgreSQL secret requires"),
         ("neo4j", {"URI": "neo4j://graph:7687"}, "requires PASSWORD"),
+        ("neo4j", {"URI": "neo4j+ssc://graph:7687", "PASSWORD": "password"}, "Invalid database URI"),
+        ("neo4j", {"URI": "bolt+ssc://graph:7687", "PASSWORD": "password"}, "Invalid database URI"),
         ("milvus", {"URI": "postgres://user:password@db/docs"}, "Invalid database URI"),
         ("neo4j", {"URI": "neo4j://graph:7687", "PASSWORD": "password", "TOKEN": "secret"}, "incompatible"),
     ],

@@ -145,11 +145,7 @@ def normalize_connection(provider="", environ=None, allow_missing=False):
             raise ValueError("DCH database secret requires URI.")
         try:
             uri = urlsplit(generic["URI"])
-            schemes = (
-                {"http", "https"}
-                if provider == "milvus"
-                else {"neo4j", "neo4j+s", "neo4j+ssc", "bolt", "bolt+s", "bolt+ssc"}
-            )
+            schemes = {"http", "https"} if provider == "milvus" else {"neo4j", "neo4j+s", "bolt", "bolt+s"}
             if uri.scheme not in schemes or not uri.hostname or uri.fragment:
                 raise ValueError
             if uri.port is not None and not 1 <= uri.port <= 65535:

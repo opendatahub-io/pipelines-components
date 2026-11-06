@@ -191,6 +191,14 @@ class TestDocumentsIndexingInterface:
 class TestDocumentsIndexingValidation:
     """Tests for input validation — runs before any API calls."""
 
+    @mock.patch.dict("os.environ", {}, clear=True)
+    def test_missing_embedded_artifact_fails_before_api_calls(self, tmp_path):
+        """Missing runtime helpers fail without a package-import fallback."""
+        modules, mocks = _make_ai4rag_mocks()
+        with pytest.raises(ValueError, match="embedded_artifact was not injected"):
+            _call_component(tmp_path, modules, mocks, embedded_artifact=None)
+        mocks["create_maas_client"].assert_not_called()
+
     @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
     def test_empty_embedding_model_id_raises(self, tmp_path):
         """Empty embedding_model_id raises ValueError."""

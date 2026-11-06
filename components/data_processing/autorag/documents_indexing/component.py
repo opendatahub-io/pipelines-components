@@ -139,15 +139,14 @@ def documents_indexing(
     if batch_size < 0:
         raise ValueError("batch_size must be a non-negative integer.")
 
-    maas_base_url, maas_api_key = os.environ["MAAS_BASE_URL"], os.environ["MAAS_API_KEY"]
     if embedded_artifact is None:
-        from kfp_components.components.training.autorag.shared.database_connection import normalize_connection
-    else:
-        connection_path = Path(embedded_artifact.path) / "database_connection.py"
-        connection_spec = importlib.util.spec_from_file_location("_autorag_database_connection", connection_path)
-        connection_module = importlib.util.module_from_spec(connection_spec)
-        connection_spec.loader.exec_module(connection_module)
-        normalize_connection = connection_module.normalize_connection
+        raise ValueError("embedded_artifact was not injected by the pipeline runtime.")
+    maas_base_url, maas_api_key = os.environ["MAAS_BASE_URL"], os.environ["MAAS_API_KEY"]
+    connection_path = Path(embedded_artifact.path) / "database_connection.py"
+    connection_spec = importlib.util.spec_from_file_location("_autorag_database_connection", connection_path)
+    connection_module = importlib.util.module_from_spec(connection_spec)
+    connection_spec.loader.exec_module(connection_module)
+    normalize_connection = connection_module.normalize_connection
     backend = normalize_connection(db_provider)
     vector_store_config = get_vector_store_config(backend)
 
@@ -295,12 +294,6 @@ def documents_indexing(
         )
 
         # --- Load template and substitute placeholders ---
-        if embedded_artifact is None:
-            raise ValueError(
-                "embedded_artifact was not injected by the pipeline runtime; "
-                "ensure the component is compiled with embedded_artifact_path "
-                "pointing to a valid HTML template"
-            )
         _embedded_path = Path(embedded_artifact.path)
         _template_file = (
             _embedded_path if _embedded_path.is_file() else _embedded_path / "indexing_report_template.html"
