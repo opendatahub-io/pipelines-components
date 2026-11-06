@@ -526,8 +526,8 @@ def _resolve_package_version(*packages: str) -> str:
 def _resolve_image() -> str:
     """Best-effort AutoRAG container image reference for the parent run.
 
-    The odh-autorag image does not ship ``kfp_components``, so prefer the env var the
-    pipeline build sets and fall back to the package constant for local runs.
+    Prefer the explicit runtime image environment variable and fall back to the
+    package constant when available.
     """
     image = os.getenv("RELATED_IMAGE_ODH_AUTORAG_IMAGE", "").strip()
     if image:

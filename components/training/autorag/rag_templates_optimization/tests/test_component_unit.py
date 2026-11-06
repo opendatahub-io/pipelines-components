@@ -175,7 +175,7 @@ def _make_ai4rag_mocks() -> SimpleNamespace:
         "ai4rag.search_space.src.parameter": parameter_module,
         "ai4rag.search_space.src.search_space": search_space_module,
         "ai4rag.utils": mock.MagicMock(),
-        "ai4rag.assets_generator": assets_generator_module,
+        "kfp_components.components.training.autorag.shared.assets_generator": assets_generator_module,
         "ai4rag.utils.clients": mock.MagicMock(),
         "ai4rag.utils.clients.maas_client": maas_client_module,
         "ai4rag.utils.docling_io": docling_io_module,
