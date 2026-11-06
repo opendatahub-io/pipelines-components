@@ -4,12 +4,12 @@ from typing import Optional
 from kfp import dsl
 from kfp_components.utils.consts import AUTORAG_IMAGE  # pyright: ignore[reportMissingImports]
 
-_TEMPLATE_PATH = Path(__file__).parent / "indexing_report_template.html"
+_RUNTIME_PATH = Path(__file__).parents[3] / "training" / "autorag" / "shared" / "runtime_embed"
 
 
 @dsl.component(
     base_image=AUTORAG_IMAGE,  # noqa: E501
-    embedded_artifact_path=str(_TEMPLATE_PATH),
+    embedded_artifact_path=str(_RUNTIME_PATH),
     install_kfp_package=False,
 )
 def documents_indexing(
@@ -27,6 +27,7 @@ def documents_indexing(
     batch_size: int = 20,
     collection_name: Optional[str] = None,
     graph_extraction_config: Optional[dict] = None,
+    db_provider: str = "",
 ):
     """Chunk, embed, and index extracted documents into a vector store.
 
@@ -35,9 +36,9 @@ def documents_indexing(
     resulting vectors into the configured vector store.  Documents are
     processed in batches to bound memory consumption.
 
-    The vector store backend (Milvus, PGVector, or Neo4j) is resolved at runtime
-    from the environment injected by the vector-database secret: ``MILVUS_*`` keys
-    select Milvus, ``PGVECTOR_*`` keys select PGVector, ``NEO4J_*`` keys select Neo4j.
+    The ``db_provider`` input selects the backend for DCH and shared PostgreSQL
+    secrets. Omitting it preserves inference from legacy ``MILVUS_*``,
+    ``PGVECTOR_*``, or ``NEO4J_*`` secret keys.
 
     Individual document failures (corrupt JSON, chunking errors) are
     recorded in the indexing report and skipped — they do not abort the
@@ -53,8 +54,8 @@ def documents_indexing(
             with per-document indexing status and pipeline settings.
         indexing_report_html: Output HTML artifact containing a styled rendering of
             the indexing results (summary stats, settings, per-document table).
-        embedded_artifact: Embedded HTML report template injected by KFP
-            at runtime from ``indexing_report_template.html``.
+        embedded_artifact: Shared runtime helpers and HTML report template
+            injected by KFP at runtime.
         embedding_params: Optional parameters forwarded to
             :class:`OpenAIEmbeddingParams` (e.g. ``embedding_dimension``,
             ``context_length``).
@@ -80,6 +81,8 @@ def documents_indexing(
         graph_extraction_config: Neo4j graph-extraction settings from an optimized
             pattern. Requires ``foundation_model_id`` when indexing into Neo4j;
             ignored by other vector stores.
+        db_provider: DCH provider: postgres (PGVector), milvus, or neo4j. Omit only
+            for legacy provider-prefixed secrets.
 
     Environment variables (required):
         MAAS_BASE_URL, MAAS_API_KEY for inference. Plus the vector database
@@ -89,9 +92,11 @@ def documents_indexing(
         ``NEO4J_PASSWORD``) select Neo4j.
     """
     import html as html_mod
+    import importlib.util
     import json
     import logging
     import os
+    import ssl
     from dataclasses import asdict
     from pathlib import Path
 
@@ -134,28 +139,37 @@ def documents_indexing(
     if batch_size < 0:
         raise ValueError("batch_size must be a non-negative integer.")
 
-    maas_client = create_maas_client(
-        base_url=os.environ["MAAS_BASE_URL"],
-        api_key=os.environ["MAAS_API_KEY"],
-    )
+    maas_base_url, maas_api_key = os.environ["MAAS_BASE_URL"], os.environ["MAAS_API_KEY"]
+    connection_path = Path(embedded_artifact.path) / "database_connection.py"
+    connection_spec = importlib.util.spec_from_file_location("_autorag_database_connection", connection_path)
+    connection_module = importlib.util.module_from_spec(connection_spec)
+    connection_spec.loader.exec_module(connection_module)
+    normalize_connection = connection_module.normalize_connection
+    backend = normalize_connection(db_provider)
+    vector_store_config = get_vector_store_config(backend)
 
-    if "MILVUS_URI" in os.environ:
-        provider = "milvus"
-    elif "PGVECTOR_HOST" in os.environ:
-        provider = "pgvector"
-    elif "NEO4J_URI" in os.environ:
-        provider = "neo4j"
-    else:
-        raise ValueError(
-            "No vector database configuration found. Expected MILVUS_*, PGVECTOR_*, or NEO4J_* "
-            "environment variables injected from the vector-database secret."
+    try:
+        maas_client = create_maas_client(
+            base_url=maas_base_url,
+            api_key=maas_api_key,
         )
+    except Exception as exc:
+        error = exc
+        seen = set()
+        while error is not None and id(error) not in seen:
+            seen.add(id(error))
+            if isinstance(error, ssl.SSLCertVerificationError) or "CERTIFICATE_VERIFY_FAILED" in str(error).upper():
+                raise RuntimeError(
+                    "MaaS TLS certificate verification failed. Configure the CA ConfigMap in DSPA via "
+                    "spec.apiServer.cABundle.configMapName and spec.apiServer.cABundle.configMapKey."
+                ) from exc
+            error = error.__cause__ or error.__context__
+        raise
 
-    vector_store_config = get_vector_store_config(provider)
-    _logger.info("Detected %s database provider from secret.", provider)
+    _logger.info("Detected %s database provider from secret.", backend)
 
     if (
-        provider == "neo4j"
+        backend == "neo4j"
         and graph_extraction_config is not None
         and not (isinstance(foundation_model_id, str) and foundation_model_id.strip())
     ):
@@ -278,12 +292,6 @@ def documents_indexing(
         )
 
         # --- Load template and substitute placeholders ---
-        if embedded_artifact is None:
-            raise ValueError(
-                "embedded_artifact was not injected by the pipeline runtime; "
-                "ensure the component is compiled with embedded_artifact_path "
-                "pointing to a valid HTML template"
-            )
         _embedded_path = Path(embedded_artifact.path)
         _template_file = (
             _embedded_path if _embedded_path.is_file() else _embedded_path / "indexing_report_template.html"
@@ -312,7 +320,7 @@ def documents_indexing(
         _logger.warning("No documents found in %s", extracted_text.path)
         settings = {
             "store_binding": {
-                "provider_type": provider,
+                "provider_type": backend,
                 "collection_name": collection_name,
             },
             "chunking": {
@@ -343,7 +351,7 @@ def documents_indexing(
 
     embedding_model = OpenAIEmbeddingModel(client=maas_client, model_id=embedding_model_id, params=params)
     foundation_model = None
-    if provider == "neo4j" and foundation_model_id:
+    if backend == "neo4j" and foundation_model_id:
         foundation_model = OpenAIFoundationModel(
             client=maas_client,
             model_id=foundation_model_id,
@@ -364,7 +372,7 @@ def documents_indexing(
     ) as vector_store:
         settings = {
             "store_binding": {
-                "provider_type": provider,
+                "provider_type": backend,
                 "collection_name": vector_store.collection_name,
             },
             "chunking": {

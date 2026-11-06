@@ -2,9 +2,9 @@
 
 packaging==26.3 \
     --hash=sha256:4351cc62d6fddd97665746370cd5d662b3ecf6b18de686db4d704acbedda7a15
-pip==26.2.1 \
-    --hash=sha256:8af708c57f9184350014a29925c07b6541c9e5b5de90a36d8693320dea7720d4
-setuptools==84.0.0 \
-    --hash=sha256:54551c2da1e47baf2c91b9c2ff07d616ae51cbc1c6c65e5f73103a826824c954
+pip==26.3 \
+    --hash=sha256:2ed0c2cb24b622e1d6f84e81a6ecc8f9d5175345cd0b907bb7d9c38e3061d954
+setuptools==84.2.1 \
+    --hash=sha256:36ef5cc277e2e4d09f5bc43a619ac2bd1511439a4983fab408ea16a179b073d9
 wheel==0.48.0 \
     --hash=sha256:c6d4bd2d0224ddba5b3b3d773566bffe64b9be5cf956be3e5223757ffa6e16f1

@@ -8,7 +8,7 @@ Chunk, embed, and index extracted documents into a vector store.
 
 Reads DoclingDocument JSON files from the *extracted_text* artifact, splits them into chunks, computes embeddings via MaaS, and inserts the resulting vectors into the configured vector store. Documents are processed in batches to bound memory consumption.
 
-The vector store backend (Milvus, PGVector, or Neo4j) is resolved at runtime from the environment injected by the vector-database secret: ``MILVUS_*`` keys select Milvus, ``PGVECTOR_*`` keys select PGVector, ``NEO4J_*`` keys select Neo4j.
+The ``db_provider`` input selects the backend for DCH and shared PostgreSQL secrets. Omitting it preserves inference from legacy ``MILVUS_*``, ``PGVECTOR_*``, or ``NEO4J_*`` secret keys.
 
 Individual document failures (corrupt JSON, chunking errors) are recorded in the indexing report and skipped — they do not abort the pipeline. Systemic failures (MaaS API unreachable, vector database unreachable, embedding model errors) propagate normally.
 
@@ -20,7 +20,7 @@ Individual document failures (corrupt JSON, chunking errors) are recorded in the
 | `extracted_text` | `dsl.Input[dsl.Artifact]` | `None` | Input artifact (directory) containing DoclingDocument JSON files from text extraction.  Searched recursively, since extraction preserves the nested source key of each document. |
 | `indexing_report` | `dsl.Output[dsl.Artifact]` | `None` | Output artifact containing ``indexing_report.json`` with per-document indexing status and pipeline settings. |
 | `indexing_report_html` | `dsl.Output[dsl.HTML]` | `None` | Output HTML artifact containing a styled rendering of the indexing results (summary stats, settings, per-document table). |
-| `embedded_artifact` | `dsl.EmbeddedInput[dsl.Dataset]` | `None` | Embedded HTML report template injected by KFP at runtime from ``indexing_report_template.html``. |
+| `embedded_artifact` | `dsl.EmbeddedInput[dsl.Dataset]` | `None` | Shared runtime helpers and HTML report template injected by KFP at runtime. |
 | `embedding_params` | `Optional[dict]` | `None` | Optional parameters forwarded to :class:`OpenAIEmbeddingParams` (e.g. ``embedding_dimension``, ``context_length``). |
 | `foundation_model_id` | `Optional[str]` | `None` | Optional generation model ID used to extract entities when indexing into Neo4j. Set this from a graph-mode optimized pattern to reproduce its knowledge graph; ignored by other vector stores. |
 | `foundation_model_params` | `Optional[dict]` | `None` | Optional generation parameters (for example, ``temperature`` and ``max_completion_tokens``) used with ``foundation_model_id`` for Neo4j entity extraction. Set this from a graph-mode optimized pattern to reproduce its knowledge graph; ignored by other vector stores. |
@@ -30,6 +30,7 @@ Individual document failures (corrupt JSON, chunking errors) are recorded in the
 | `batch_size` | `int` | `20` | Number of documents loaded and processed per batch. Controls peak memory usage, not API payload sizes. Defaults to ``20``; ``0`` processes all documents in a single batch. |
 | `collection_name` | `Optional[str]` | `None` | Vector store collection to reuse (matches ``pattern.json`` ``settings.store_binding.collection_name``). Omit to create a new collection. |
 | `graph_extraction_config` | `Optional[dict]` | `None` | Neo4j graph-extraction settings from an optimized pattern. Requires ``foundation_model_id`` when indexing into Neo4j; ignored by other vector stores. |
+| `db_provider` | `str` | `""` | DCH provider: postgres (PGVector), milvus, or neo4j. Omit only for legacy provider-prefixed secrets. |
 
 ## Usage Examples 🧪
 
@@ -91,7 +92,7 @@ def example_pipeline(
 - **Tags**:
   - data-indexing
   - autorag
-- **Last Verified**: 2026-11-02 00:00:00+00:00
+- **Last Verified**: 2026-11-06 00:00:00+00:00
 - **Owners**:
   - No Parent Owners: Yes
   - Approvers:
