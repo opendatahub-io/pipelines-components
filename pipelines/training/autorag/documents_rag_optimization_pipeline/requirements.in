@@ -1,6 +1,7 @@
 --index-url https://packages.redhat.com/api/pypi/public-rhai/cpu-torch2.13-el9.8-test/simple
 
 kfp==2.17.0
+kfp-kubernetes==2.17.0
 ai4rag[text-extraction]==0.25.4
 # RHAI hf-xet 1.8.0 lacks ppc64le/s390x wheels; retain all supported architectures.
 hf-xet==1.7.0
