@@ -35,6 +35,22 @@ from kfp_components.components.training.autorag.shared.mlflow_tracking import (
 TRACKING_URI = "https://mlflow.example.com"
 
 
+@pytest.mark.parametrize(
+    "image", [None, "", "   ", "quay.io/example/autorag:custom", "quay.io/example/autorag@sha256:" + "b" * 64]
+)
+def test_runtime_image_uses_only_explicit_environment(monkeypatch, image):
+    """Installed package defaults must not become runtime image provenance."""
+    from kfp_components.components.training.autorag.shared.runtime_embed import mlflow_tracking
+    from kfp_components.utils import consts
+
+    monkeypatch.setattr(consts, "AUTORAG_IMAGE", "quay.io/example/unrelated:default")
+    if image is None:
+        monkeypatch.delenv("RELATED_IMAGE_ODH_AUTORAG_IMAGE", raising=False)
+    else:
+        monkeypatch.setenv("RELATED_IMAGE_ODH_AUTORAG_IMAGE", image)
+    assert mlflow_tracking._resolve_image() == (image or "").strip()
+
+
 def _kfp_config(**overrides) -> str:
     """Serialize a platform KFP_MLFLOW_CONFIG blob with the given overrides."""
     payload = {

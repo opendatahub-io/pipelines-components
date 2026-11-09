@@ -219,7 +219,7 @@ def autogluon_tabular_training_pipeline(
         return data_loader_task
 
     def _create_training_task(data_loader_task, training_preset: str):
-        return autogluon_models_training(
+        training_task = autogluon_models_training(
             label_column=label_column,
             task_type=task_type,
             top_n=top_n,
@@ -242,6 +242,8 @@ def autogluon_tabular_training_pipeline(
             test_data_bucket_name=test_data_bucket_name,
             test_data_file_key=test_data_file_key,
         )
+        training_task.set_env_variable("RELATED_IMAGE_ODH_AUTOML_IMAGE", training_task.container_spec.image)
+        return training_task
 
     with dsl.If(preset == "balanced"):
         data_loader_task_bl = _create_data_loader("balanced", "32Gi")

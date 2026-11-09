@@ -169,7 +169,7 @@ class TestDocumentsRagOptimizationPipelineMlflow:
     """MLflow tracking wiring at the pipeline level."""
 
     def test_optimization_receives_run_identity_placeholders(self):
-        """The optimization step gets the KFP run identity MLflow logging records."""
+        """The optimization step gets the run identity and image MLflow records."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as tmp:
             tmp_path = tmp.name
         try:
@@ -182,6 +182,9 @@ class TestDocumentsRagOptimizationPipelineMlflow:
             assert params["pipeline_name"]["runtimeValue"]["constant"] == "documents-rag-optimization-pipeline"
             assert params["run_id"]["runtimeValue"]["constant"] == "{{$.pipeline_job_uuid}}"
             assert params["run_name"]["runtimeValue"]["constant"] == "{{$.pipeline_job_name}}"
+            container = spec["deploymentSpec"]["executors"]["exec-rag-templates-optimization"]["container"]
+            env = {item["name"]: item["value"] for item in container["env"]}
+            assert env["RELATED_IMAGE_ODH_AUTORAG_IMAGE"] == container["image"]
         finally:
             Path(tmp_path).unlink(missing_ok=True)
 

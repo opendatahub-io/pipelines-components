@@ -70,7 +70,7 @@ to a single combined ``models_artifact``.
   - pipeline
   - automl
   - autogluon-timeseries-training-pipeline
-- **Last Verified**: 2026-10-20 00:00:00+00:00
+- **Last Verified**: 2026-11-09 00:00:00+00:00
 - **Owners**:
   - No Parent Owners: Yes
   - Approvers:
