@@ -7,6 +7,7 @@ import pytest
 from kfp import compiler
 from kfp_components.utils.pipeline_dag_tasks import (
     assert_compiled_pipeline_root_dag_task_ids,
+    load_pipeline_spec_document,
 )
 
 from ..pipeline import autogluon_tabular_training_pipeline
@@ -212,7 +213,7 @@ class TestAutogluonTabularTrainingPipelineUnitTests:
         )
 
     def test_compiled_pipeline_wires_mlflow_inputs_to_training(self):
-        """MLflow inputs are forwarded into the training task.
+        """Run identity and selected image reach MLflow in every preset branch.
 
         The training task now logs to MLflow; the standalone mlflow-logger step no longer exists.
         """
@@ -224,12 +225,16 @@ class TestAutogluonTabularTrainingPipelineUnitTests:
                 package_path=tmp_path,
             )
             content = Path(tmp_path).read_text(encoding="utf-8")
+            spec = load_pipeline_spec_document(tmp_path)
         finally:
             Path(tmp_path).unlink(missing_ok=True)
 
         assert "automl-mlflow-logger" not in content
-        assert "exec-autogluon-models-training:" in content
-        assert "exec-autogluon-models-training-2:" in content
+        executors = spec["deploymentSpec"]["executors"]
+        for suffix in ("", "-2", "-3"):
+            container = executors[f"exec-autogluon-models-training{suffix}"]["container"]
+            env = {item["name"]: item["value"] for item in container["env"]}
+            assert env["RELATED_IMAGE_ODH_AUTOML_IMAGE"] == container["image"]
 
     def test_compiled_pipeline_data_loader_declares_task_type_and_label(self):
         """Tabular data loader component exposes task_type and label_column inputs."""
