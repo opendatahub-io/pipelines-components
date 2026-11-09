@@ -18,8 +18,7 @@ and answer using the evidence found.
 - An OpenShift cluster with `oc` logged in and permission to create the required
   resources.
 - An OpenShell gateway installed on the cluster by an administrator (one-time
-  cluster prerequisite, not part of this starter kit). Use
-  [pipelines-components/scripts/setup-openshell-gateway.sh](https://github.com/kubeflow/pipelines-components/blob/main/scripts/setup-openshell-gateway.sh).
+  cluster prerequisite, not part of this starter kit).
 - `podman` installed locally. The Makefile runs the OpenShell CLI from the RHOAI
   image in a container and stores the registration and the mTLS client
   certificates in `~/.config/openshell` (`OPENSHELL_CLI_STATE`), so no local
@@ -54,14 +53,28 @@ Export `OPENSHELL_BASE_IMAGE` or `OPENSHELL_CLI_IMAGE` to override image selecti
 Editing only the Containerfile's `BASE_IMAGE` default does not override the
 Makefile's build selection.
 
+### Deployment inputs
+
+Deployment settings live under `deployment:` in `values.yaml`.
+
+| Input | values.yaml key | Environment | Default |
+| --- | --- | --- | --- |
+| Application name | `app_name` | `APP_NAME` | `nameOverride` slug |
+| Agent namespace | `namespace` | `APP_NAMESPACE` | current `oc project` |
+| OpenShell workspace | `workspace` | `OPENSHELL_WORKSPACE` | `default` |
+| Gateway alias | `gateway_name` | `OPENSHELL_GATEWAY_NAME` | `openshift` |
+| Prebuilt image reference | `image` | `OPENSHELL_IMAGE_REF` | build from this kit |
+| Sandbox name | `sandbox_name` | `OPENSHELL_SANDBOX_NAME` | application name |
+
+The build image, Route, API ServiceAccount, token secret, and platform
+ServiceAccount names derive from the application name; the gateway namespace
+stays an environment-only setting (`OPENSHELL_NAMESPACE`, default `openshell`).
+
 ### Commands
 
 Run the following commands from the starter-kit root directory:
 
 ```bash
-# Generate the lockfile to the latest ai4rag release before building.
-uv lock --upgrade-package ai4rag
-
 make build-openshell
 make refresh-certs
 make deploy-openshell

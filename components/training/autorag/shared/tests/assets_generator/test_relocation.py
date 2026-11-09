@@ -129,5 +129,5 @@ def test_version_is_from_ai4rag(tmp_path):
     data = pattern("milvus", "agentic_rag", True)
     assert create_placeholder_mapping(data)["AI4RAG_VERSION"] == __version__
     with zipfile.ZipFile(generator.generate_starter_kit(data, tmp_path)) as archive:
-        assert f"ai4rag>={__version__}" in archive.read("starter_kit/pyproject.toml").decode()
+        assert f"ai4rag=={__version__}" in archive.read("starter_kit/pyproject.toml").decode()
         assert not any("setup-openshell-gateway" in name for name in archive.namelist())
