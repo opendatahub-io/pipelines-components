@@ -22,15 +22,17 @@ DEFAULT_CONFIG_PATH = Path(__file__).parent / "import_exceptions.yaml"
 
 
 class ImportGuardConfig:
-    """Holds allow-list data for the import guard."""
+    """Holds allowed imports and excluded paths for the import guard."""
 
     def __init__(
         self,
         module_allowlist: Optional[Iterable[str]] = None,
         path_scoped_allowlist: Optional[dict[str, Iterable[str]]] = None,
+        excluded_paths: Optional[Iterable[str]] = None,
     ) -> None:
-        """Initialize configuration from module and path allow lists."""
+        """Initialize allowed imports and excluded repository-relative paths."""
         self.module_allowlist: set[str] = {canonicalize_module_name(item) for item in module_allowlist or []}
+        self.excluded_paths = tuple(excluded_paths or [])
         # Store both exact path matches and pattern matches
         self.path_scoped_allowlist: dict[Path, set[str]] = {}
         self.pattern_scoped_allowlist: dict[str, set[str]] = {}
@@ -55,7 +57,15 @@ class ImportGuardConfig:
             data = yaml.safe_load(handle) or {}
         modules = data.get("modules", [])
         path_scoped = data.get("files", {})
-        return cls(modules, path_scoped)
+        return cls(modules, path_scoped, data.get("exclude", []))
+
+    def is_excluded(self, file_path: Path) -> bool:
+        """Return whether a repository-relative path matches an excluded glob."""
+        try:
+            relative_path = file_path.resolve().relative_to(Path.cwd()).as_posix()
+        except ValueError:
+            return False
+        return any(fnmatch.fnmatch(relative_path, pattern) for pattern in self.excluded_paths)
 
     def is_allowed(self, module: str, file_path: Path) -> bool:
         """Return True when a module is allow-listed for the given file path."""
@@ -181,6 +191,8 @@ def check_imports(files: Sequence[Path], config: ImportGuardConfig, *, quiet: bo
 
     for file_path in files:
         resolved_path = file_path.resolve()
+        if config.is_excluded(resolved_path):
+            continue
         try:
             with resolved_path.open("r", encoding="utf-8") as handle:
                 tree = ast.parse(handle.read(), filename=str(resolved_path))

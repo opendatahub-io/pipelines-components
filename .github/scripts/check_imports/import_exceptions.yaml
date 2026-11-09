@@ -5,6 +5,10 @@ modules:
   - kfp_components
   - components
   - pipelines
+# Bundled application sources are package data, not KFP modules. Their Python
+# version and dependency imports are validated by the generator tests instead.
+exclude:
+  - "components/training/autorag/shared/assets_generator/starter_kit_templates/**"
 files:
   # Allow any file in test directories to import from tests module
   # Glob patterns: * matches any directory, ** matches any path

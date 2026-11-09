@@ -391,6 +391,11 @@ jsonschema-specifications==2025.9.1 \
     # via jsonschema
 kfp==2.17.0 \
     --hash=sha256:347b04df10fd9987faea18f1523d6045ec907454e088be05070b422e2fedd758
+    # via
+    #   -r requirements.in
+    #   kfp-kubernetes
+kfp-kubernetes==2.17.0 \
+    --hash=sha256:c6b884b2b36ee6a76e629f9b06da3c489efbc1894f1546bd1e7e4afec7dd2388
     # via -r requirements.in
 kfp-pipeline-spec==2.18.0 \
     --hash=sha256:84df7eb779a2928fe523ab804f4078c8de11dc5ba03071e0d06fa313b8018a03
@@ -609,7 +614,11 @@ onnxruntime==1.25.0 \
     --hash=sha256:38787539fdb27406f9189ed06d5f6d35a56ad01d1676056ae4839ccb3ef5e1da \
     --hash=sha256:3c9ee87f6024581bf18adb339b41de8d8fa92006d34fdd6124ea832bfb41d4a1 \
     --hash=sha256:64b70369f68de818f618a05c6c76fa045053199541189edcf341babafe1f4fa1 \
-    --hash=sha256:d61ca53ad8ec3ba5d3c2e4acf7ee62f611b59003cd4c61da5402b42fc8271b84
+    --hash=sha256:8396917c4c03478229d6919fbba8d5eac530ae2fc41befb5bfc6a28a2fa953e5 \
+    --hash=sha256:9e6b75499d5b5a25237a3c3ef5dc514fc741d7b44f0058fbbeb5f7d400ca6815 \
+    --hash=sha256:d10230f4ce84692a1cd8ce2eb32e5a9e0229e20c355a739f4d9c35672771f50e \
+    --hash=sha256:d61ca53ad8ec3ba5d3c2e4acf7ee62f611b59003cd4c61da5402b42fc8271b84 \
+    --hash=sha256:e8d2b875f4a870e6055759eaba39da8bb12465e5ea51b73cd82799b9880b9553
     # via ai4rag
 openai==2.53.0 \
     --hash=sha256:781ee0a067abb323ba473a4d9d872583919b960d6f4fc37e59d6efd9074868b2
@@ -737,6 +746,7 @@ protobuf==6.33.6 \
     #   google-api-core
     #   googleapis-common-protos
     #   kfp
+    #   kfp-kubernetes
     #   kfp-pipeline-spec
     #   mlflow-skinny
     #   onnxruntime
@@ -915,6 +925,7 @@ requests==2.33.0 \
     #   google-cloud-storage
     #   instructor
     #   kfp
+    #   kfp-kubernetes
     #   kubernetes
     #   langchain-classic
     #   langchain-community
@@ -1237,6 +1248,7 @@ urllib3==2.7.0 \
     #   databricks-sdk
     #   instructor
     #   kfp
+    #   kfp-kubernetes
     #   kfp-server-api
     #   kubernetes
     #   requests

@@ -114,7 +114,6 @@ def rag_templates_optimization(
 
     import pandas as pd
     from ai4rag import handler
-    from ai4rag.assets_generator import build_leaderboard_html, generate_notebook_from_template, generate_starter_kit
     from ai4rag.core.experiment.experiment import AI4RAGExperiment
     from ai4rag.core.hpo.gam_opt import GAMOptSettings
     from ai4rag.evaluator import BaseEvaluator, RagasEvaluator, UnitxtEvaluator
@@ -128,6 +127,11 @@ def rag_templates_optimization(
     from ai4rag.utils.clients.maas_client import create_maas_client
     from ai4rag.utils.docling_io import load_docling_documents
     from ai4rag.utils.event_handler import KFPEventHandler
+    from kfp_components.components.training.autorag.shared.assets_generator import (
+        build_leaderboard_html,
+        generate_notebook_from_template,
+        generate_starter_kit,
+    )
 
     logging.basicConfig(level=logging.INFO)
     _logger = logging.getLogger("rag-templates-optimization")
