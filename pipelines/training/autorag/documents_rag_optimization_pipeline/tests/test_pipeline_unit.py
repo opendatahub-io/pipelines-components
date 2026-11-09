@@ -184,3 +184,23 @@ class TestDocumentsRagOptimizationPipelineMlflow:
             assert params["run_name"]["runtimeValue"]["constant"] == "{{$.pipeline_job_name}}"
         finally:
             Path(tmp_path).unlink(missing_ok=True)
+
+
+def test_provider_and_generic_secret_refs_reach_only_database_consumers(tmp_path):
+    """DCH/shared secrets reach both consumers; stage publishing receives no generic credentials."""
+    path = tmp_path / "provider.yaml"
+    compiler.Compiler().compile(documents_rag_optimization_pipeline, str(path))
+    spec = load_pipeline_spec_document(path)
+    assert spec["root"]["inputDefinitions"]["parameters"]["db_provider"]["defaultValue"] == ""
+    assert spec["root"]["inputDefinitions"]["parameters"]["db_provider"]["isOptional"] is True
+    assert "provider" not in spec["root"]["inputDefinitions"]["parameters"]
+    tasks = spec["root"]["dag"]["tasks"]
+    for task in ("publish-component-stage-map", "search-space-preparation", "rag-templates-optimization"):
+        assert tasks[task]["inputs"]["parameters"]["db_provider"] == {"componentInputParameter": "db_provider"}
+        component = spec["components"][tasks[task]["componentRef"]["name"]]
+        provider_input = component["inputDefinitions"]["parameters"]["db_provider"]
+        assert provider_input["isOptional"] is True
+        assert provider_input["defaultValue"] == ""
+    content = path.read_text()
+    for env in ("AUTORAG_DB_URI", "AUTORAG_DB_password", "AUTORAG_DB_ca_crt", "AUTORAG_DB_schema"):
+        assert content.count(f"envVar: {env}\n") == 2

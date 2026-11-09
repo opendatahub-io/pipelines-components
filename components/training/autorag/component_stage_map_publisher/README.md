@@ -17,6 +17,7 @@ pipeline execution begins. An ``mlflow`` block is added from the platform-inject
 | `run_id` | `str` | `None` | KFP run ID for tracking (from ``dsl.PIPELINE_JOB_ID_PLACEHOLDER``). |
 | `component_stage_map` | `dsl.Output[dsl.Artifact]` | `None` | Output artifact containing the component-to-stage map. |
 | `embedded_artifact` | `dsl.EmbeddedInput[dsl.Dataset]` | `None` | Embedded ``autorag.shared`` package with pipeline templates. |
+| `db_provider` | `str` | `""` | DCH provider: postgres (PGVector), milvus, or neo4j. When omitted, infer graph mode from legacy database secret keys. |
 
 ## Outputs 📤
 
@@ -34,7 +35,7 @@ pipeline execution begins. An ``mlflow`` block is added from the platform-inject
 - **Tags**:
   - autorag
   - run-status
-- **Last Verified**: 2026-10-26 00:00:00+00:00
+- **Last Verified**: 2026-11-05 00:00:00+00:00
 - **Owners**:
   - Approvers:
     - LukaszCmielowski

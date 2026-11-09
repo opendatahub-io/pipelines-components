@@ -11,7 +11,7 @@ Discovers documents from object storage, extracts text, and indexes chunks into 
 | Parameter | Type | Default | Description |
 | --------- | ---- | ------- | ----------- |
 | `maas_secret_name` | `str` | `None` | Name of the secret with MaaS inference credentials ("MAAS_BASE_URL", "MAAS_API_KEY"). |
-| `db_secret_name` | `str` | `None` | Name of the secret carrying the database configuration. The env-var prefix selects the backend: ``MILVUS_*`` keys (at least ``MILVUS_URI``) select Milvus, ``PGVECTOR_*`` keys select PGVector, and ``NEO4J_*`` keys select Neo4j. ``NEO4J_CA_CERT`` optionally supplies a private CA certificate for Neo4j TLS. |
+| `db_secret_name` | `str` | `None` | Name of the database configuration secret. Set ``db_provider`` for DCH or shared PostgreSQL keys. Existing ``MILVUS_*``, ``PGVECTOR_*``, and ``NEO4J_*`` secrets remain supported. |
 | `embedding_model_id` | `str` | `None` | Embedding model ID served by MaaS. |
 | `input_data_secret_name` | `str` | `None` | Name of the secret with S3 credentials for input data ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_S3_ENDPOINT", "AWS_DEFAULT_REGION"). |
 | `input_data_bucket_name` | `str` | `None` | Name of the S3 bucket containing input data. |
@@ -27,6 +27,7 @@ Discovers documents from object storage, extracts text, and indexes chunks into 
 | `ocr_lang` | `Optional[str]` | `None` | Language used to pick the RapidOCR model bundle. Pass ``pattern.json`` ``settings.generation.language.code`` from the optimization run so indexing OCRs the corpus the same way the experiment did. Note that AutoRAG derives that code from the benchmark questions, not from the documents themselves, so override it when the corpus is in a different language. Chinese selects the Chinese bundle; omitting it selects the English bundle, which covers all Latin-script languages. |
 | `graph_extraction_config` | `Optional[dict]` | `None` | Neo4j graph-extraction settings from an optimized pattern. Ignored by other vector stores. |
 | `preset` | `str` | `speed` | Text extraction quality tier from the optimization run. "speed" (default) disables table structure parsing; "balanced" enables TableFormer table reconstruction. |
+| `db_provider` | `str` | `""` | DCH provider: postgres (PGVector), milvus, or neo4j. Required for DCH and shared PostgreSQL secrets. Omit for legacy prefixed secrets. |
 
 ## Metadata 🗂️
 
@@ -49,7 +50,7 @@ Discovers documents from object storage, extracts text, and indexes chunks into 
   - documents_discovery
   - data_indexing
   - autorag
-- **Last Verified**: 2026-11-02 00:00:00+00:00
+- **Last Verified**: 2026-11-05 00:00:00+00:00
 - **Owners**:
   - No Parent Owners: Yes
   - Approvers:
@@ -60,3 +61,10 @@ Discovers documents from object storage, extracts text, and indexes chunks into 
     - LukaszCmielowski
     - Wojciech-Rebisz
     - Mateusz-Switala
+
+<!-- custom-content -->
+
+## DCH and shared database connections
+
+Set `db_provider` to `postgres`, `milvus`, or `neo4j` alongside `db_secret_name`.
+See the [connection contract and property mapping](../../../../components/training/autorag/shared/README.md).

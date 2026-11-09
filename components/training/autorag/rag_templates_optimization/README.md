@@ -20,7 +20,7 @@ Generated indexing specs forward ``settings.generation.language.code`` as ``ocr_
 | `rag_patterns` | `dsl.Output[dsl.Artifact]` | `None` | Output artifact for generated RAG patterns. |
 | `test_data_key` | `str` | `None` | Path to benchmark JSON in object storage. |
 | `maas_secret_name` | `str` | `None` | Name of the K8s secret with MaaS inference credentials ("MAAS_BASE_URL", "MAAS_API_KEY"). Propagated into each generated ``pattern.json`` indexing spec for downstream deployment. |
-| `db_secret_name` | `str` | `None` | Name of the K8s secret holding the database configuration. Its keys select the backend: ``MILVUS_*`` keys use Milvus, ``PGVECTOR_*`` keys use PGVector, ``NEO4J_*`` keys use Neo4j. Propagated into each generated ``pattern.json`` indexing spec. |
+| `db_secret_name` | `str` | `None` | Name of the K8s secret holding the database configuration. Set ``db_provider`` for DCH or shared PostgreSQL keys; legacy ``MILVUS_*``, ``PGVECTOR_*``, and ``NEO4J_*`` keys remain supported. Propagated into each generated ``pattern.json`` indexing spec. |
 | `input_data_secret_name` | `str` | `None` | Name of the K8s secret with S3 credentials for input data. |
 | `input_data_bucket_name` | `str` | `None` | S3 bucket containing input documents. |
 | `leaderboard` | `dsl.Output[dsl.HTML]` | `None` | Output HTML artifact; the leaderboard table is written to leaderboard_html.path (single file). |
@@ -33,6 +33,7 @@ Generated indexing specs forward ``settings.generation.language.code`` as ``ocr_
 | `pipeline_name` | `str` | `""` | Pipeline identifier, logged to MLflow as a param and tag. |
 | `run_id` | `str` | `""` | KFP run ID (``dsl.PIPELINE_JOB_ID_PLACEHOLDER``), logged to MLflow. |
 | `run_name` | `str` | `""` | KFP run name (``dsl.PIPELINE_JOB_NAME_PLACEHOLDER``). Logged to MLflow, and used to name the fallback experiment/run when the platform supplies no parent run. |
+| `db_provider` | `str` | `""` | DCH provider: postgres (PGVector), milvus, or neo4j. Omit only for legacy provider-prefixed secrets. |
 
 ## Usage Examples 🧪
 
@@ -110,7 +111,7 @@ def example_pipeline(
   - autorag
   - optimization
   - rag-patterns
-- **Last Verified**: 2026-11-02 00:00:00+00:00
+- **Last Verified**: 2026-11-06 00:00:00+00:00
 - **Owners**:
   - No Parent Owners: Yes
   - Approvers:

@@ -208,3 +208,22 @@ class TestDocumentsIndexingPipelineUnit:
                 f"pipeline default for {param} ({pipeline_sig.parameters[param].default}) "
                 f"diverged from component ({component_sig.parameters[param].default})"
             )
+
+
+def test_indexing_receives_provider_and_shared_database_secret(tmp_path):
+    """Production indexing uses the same DCH provider and secret contract as optimization."""
+    path = tmp_path / "provider.yaml"
+    compiler.Compiler().compile(documents_indexing_pipeline, str(path))
+    spec = load_pipeline_spec_document(path)
+    assert spec["root"]["inputDefinitions"]["parameters"]["db_provider"]["defaultValue"] == ""
+    assert spec["root"]["inputDefinitions"]["parameters"]["db_provider"]["isOptional"] is True
+    assert "provider" not in spec["root"]["inputDefinitions"]["parameters"]
+    task = spec["root"]["dag"]["tasks"]["documents-indexing"]
+    assert task["inputs"]["parameters"]["db_provider"] == {"componentInputParameter": "db_provider"}
+    component = spec["components"][task["componentRef"]["name"]]
+    provider_input = component["inputDefinitions"]["parameters"]["db_provider"]
+    assert provider_input["isOptional"] is True
+    assert provider_input["defaultValue"] == ""
+    content = path.read_text()
+    for env in ("AUTORAG_DB_URI", "AUTORAG_DB_password", "AUTORAG_DB_ca_crt", "AUTORAG_DB_schema"):
+        assert content.count(f"envVar: {env}\n") == 1

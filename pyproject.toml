@@ -140,7 +140,7 @@ packages = [
 
 [tool.setuptools.package-data]
 "*" = ["*.yaml", "*.yml", "*.json"]
-"kfp_components.components.data_processing.autorag.documents_indexing" = [
+"kfp_components.components.training.autorag.shared.runtime_embed" = [
     "*.html",
 ]
 "kfp_components.components.training.automl.shared" = [

@@ -67,13 +67,13 @@ pyasn1-modules==0.4.2 \
     --hash=sha256:2797cbeecc67dcad8618013f9685a8705c863cddc553c3271703bcef736eb67f
 pycparser==3.12 \
     --hash=sha256:4d9e76c9a9bb4ff0cc899113045b8c35810f70dee6cc979abbe6edfa73bca1a8
-pydantic==2.14.2 \
-    --hash=sha256:c787d74500d8a86950bb3aeba8291a0e702fa68a8c2f661aacc6b2aee0866961
-pydantic-core==2.50.2 \
-    --hash=sha256:17ff80fb8c58d374d2c767857f3e7329b855365df40b989974a947b8ef94d338 \
-    --hash=sha256:c9c47b9d60bf01bc94233a6cf4ebe4179c664477589e0ee82572abdf404d5151 \
-    --hash=sha256:dedb5e8ca226571c5acdd3a91e83bdadbb0d5290eaa744c1e2e0b21011956955 \
-    --hash=sha256:f2511c014ca91b10958e608f79d1e7193c1a93e1a58399e7a83cfff951547416
+pydantic==2.14.3 \
+    --hash=sha256:7662d35f70c01d066e4d2cbfe3cef30688b03b57e33cfb98daefab3de843eebd
+pydantic-core==2.50.4 \
+    --hash=sha256:69d7c99351413dc38b7c3a4ac1b5cde12fce206988ba0c1faaaa030bf2dfffd1 \
+    --hash=sha256:8985c7160abfd3b733dc13d577c4b1fb83f83957982dc3bcadc1e8fce52f69a1 \
+    --hash=sha256:de8f9d4e620392ec261fd38d8806935606436354fd211a9e4eb05a962edafa79 \
+    --hash=sha256:e093287fbef5596a681c64ff1160f0cad021d1793777bdfdefd01f78e52fa17c
 python-dateutil==4.0.0 \
     --hash=sha256:7b6c1752615eba82c2a8db74b935dd27bc0209b32f1a6393c24d16687ee4f42d
 pyyaml==6.0.3 \
@@ -93,8 +93,8 @@ tabulate==0.10.0 \
     --hash=sha256:22ebd5d78937d9212287603eb3ba77a5f76e915a11d62b7131cc86be6d1c2788
 typing-extensions==4.16.0 \
     --hash=sha256:cb0d89f2664e5ae94b951d7e2e51d22607d5c78d2867763243f13e2b7c5f3a54
-typing-inspection==0.4.4 \
-    --hash=sha256:b6eb66af055e575c1a9d77cce4dbc972399c9de3fbcacdae65e35d03c25a6cee
+typing-inspection==0.4.5 \
+    --hash=sha256:415132ec4513cb1df2c041d6ac7b5a9540b8f1a8c53a83df4518a9bed7c96ca7
 tzdata==2026.6 \
     --hash=sha256:3e828e4683301ef76a54a07ddaa069f957b3bf70aa61b78045725998cb62aa29
 urllib3==2.8.0 \
