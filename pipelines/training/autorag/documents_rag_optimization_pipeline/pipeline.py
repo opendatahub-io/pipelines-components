@@ -203,6 +203,9 @@ def documents_rag_optimization_pipeline(
         run_name=dsl.PIPELINE_JOB_NAME_PLACEHOLDER,
     )
 
+    rag_optimization_task.set_env_variable(
+        "RELATED_IMAGE_ODH_AUTORAG_IMAGE", rag_optimization_task.container_spec.image
+    )
     rag_optimization_task.set_caching_options(False)
     rag_optimization_task.set_cpu_request("4").set_memory_request("16Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(
         MAX_MEMORY

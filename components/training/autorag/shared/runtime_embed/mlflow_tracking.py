@@ -524,21 +524,8 @@ def _resolve_package_version(*packages: str) -> str:
 
 
 def _resolve_image() -> str:
-    """Best-effort AutoRAG container image reference for the parent run.
-
-    Prefer the explicit runtime image environment variable and fall back to the
-    package constant when available.
-    """
-    image = os.getenv("RELATED_IMAGE_ODH_AUTORAG_IMAGE", "").strip()
-    if image:
-        return image
-    try:
-        from kfp_components.utils.consts import AUTORAG_IMAGE  # pyright: ignore[reportMissingImports]
-
-        return str(AUTORAG_IMAGE)
-    except Exception:
-        logger.debug("Could not resolve AUTORAG_IMAGE for MLflow logging", exc_info=True)
-        return ""
+    """Read the task image injected by the compiler; leave unknown provenance empty."""
+    return os.getenv("RELATED_IMAGE_ODH_AUTORAG_IMAGE", "").strip()
 
 
 # ---------------------------------------------------------------------------
