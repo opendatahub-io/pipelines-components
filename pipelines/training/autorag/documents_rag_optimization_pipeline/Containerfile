@@ -6,12 +6,25 @@ ARG BASE_IMAGE=quay.io/aipcc/base-images/cpu-torch2.13-el9.8:1793124049
 
 FROM ${DOCLING_OGX_MODELCAR} AS docling-ogx-modelcar
 FROM ${WHISPER_MODELCAR} AS whisper-modelcar
+FROM ${BASE_IMAGE} AS builder
+RUN mkdir /tmp/kfp-src /tmp/dist
+COPY pyproject.toml README.md __init__.py /tmp/kfp-src/
+COPY components/ /tmp/kfp-src/components/
+COPY pipelines/ /tmp/kfp-src/pipelines/
+COPY utils/ /tmp/kfp-src/utils/
+RUN pip install --no-cache-dir setuptools==80.10.2 && \
+    pip wheel --no-deps --no-build-isolation -w /tmp/dist /tmp/kfp-src/
+
 FROM ${BASE_IMAGE}
+
+COPY --from=builder /tmp/dist/kfp_components-*.whl /tmp/
+RUN pip install --no-cache-dir --no-deps /tmp/kfp_components-*.whl
 
 COPY pipelines/training/autorag/documents_rag_optimization_pipeline/requirements.txt /tmp/
 
 ## TODO: Ensure build isolation
 RUN pip install --no-cache-dir -r /tmp/requirements.txt
+RUN pip check
 
 # Temporary workaround for docling-core versions that reject the MIME type
 # emitted by Docling's M4A ASR path. Remove when the upstream fix is available.
