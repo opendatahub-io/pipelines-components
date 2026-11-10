@@ -51,6 +51,11 @@ spec:
   - name: additional-tags
     value:
     - 'odh-pr-{{revision}}'
+    # Diagnostic: bypass Konflux package-registry proxy to confirm stale-cache lag.
+    # Requires odh-konflux-central to declare/pass this param (like RHDS konflux-central).
+    # Do not merge long-term.
+  - name: enable-package-registry-proxy
+    value: "false"
   pipelineRef:
     resolver: git
     params:
