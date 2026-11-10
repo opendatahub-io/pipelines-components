@@ -31,9 +31,9 @@ This is a breaking move from `ai4rag.assets_generator`; there is no compatibilit
 shim. Release the matching ai4rag removal and pipelines-components changes together.
 The AutoRAG training image builds and installs the local wheel with `--no-deps`;
 its hashed requirements provide KFP and kfp-kubernetes. The inference image does
-not need this wheel. Keep ai4rag pinned to 0.25.4 while validating the relocation;
-validate the removal candidate separately before release. Broader dependency
-upgrades are a separate change.
+not need this wheel. ai4rag 0.26.0 removes the upstream generator; use it with
+the relocated generator in this repository. The optional generator tests pin
+the same ai4rag version as the AutoRAG runtime.
 
 Publish and select the matching training runtime image when recompiling managed
 pipelines. Previously compiled pipelines contain the old import path: retain their

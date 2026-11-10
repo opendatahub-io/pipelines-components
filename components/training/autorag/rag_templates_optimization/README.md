@@ -102,7 +102,7 @@ def example_pipeline(
   - Kubeflow:
     - Name: Pipelines, Version: >=2.15.2
   - External Services:
-    - Name: ai4rag, Version: ~=0.25.4
+    - Name: ai4rag, Version: ~=0.26.0
     - Name: MaaS, Version: >=1.0.0
     - Name: Milvus, Version: >=2.0.0
     - Name: PGVector, Version: >=0.5.0
@@ -111,7 +111,7 @@ def example_pipeline(
   - autorag
   - optimization
   - rag-patterns
-- **Last Verified**: 2026-11-06 00:00:00+00:00
+- **Last Verified**: 2026-11-10 00:00:00+00:00
 - **Owners**:
   - No Parent Owners: Yes
   - Approvers:
