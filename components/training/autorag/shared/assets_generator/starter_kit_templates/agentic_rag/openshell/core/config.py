@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Mapping
@@ -119,9 +120,7 @@ class KitConfig:  # pylint: disable=too-many-instance-attributes
     agent_token_secret: str
     sandbox_sa: str
     cli_state: Path
-    podman_userns: str
     create_attempts: int
-    openshell_cli: str
     values: dict[str, dict[str, str]] = field(default_factory=dict)
     environ: dict[str, str] = field(default_factory=dict)
 
@@ -133,9 +132,9 @@ class KitConfig:  # pylint: disable=too-many-instance-attributes
         return f"image-registry.openshift-image-registry.svc:5000/{self.namespace}/{self.image}:latest"
 
     @property
-    def uses_container_cli(self) -> bool:
-        """True when the OpenShell CLI runs from the RHOAI container image."""
-        return self.openshell_cli in ("", "openshell_cli")
+    def local_cli(self) -> str:
+        """Return the installed ``openshell`` command, or an empty string."""
+        return shutil.which("openshell") or ""
 
     def value(self, name: str, section: str = "", key: str = "", default: str = "") -> str:
         """Return an environment value, then ``values.yaml``, then ``default``."""
@@ -182,9 +181,7 @@ class KitConfig:  # pylint: disable=too-many-instance-attributes
             agent_token_secret=env.get("AGENT_TOKEN_SECRET") or f"{agent_sa_name}-token",
             sandbox_sa=env.get("OPENSHELL_SANDBOX_SA") or "openshell-sandbox",
             cli_state=Path(env.get("OPENSHELL_CLI_STATE") or Path.home() / ".config" / "openshell"),
-            podman_userns=env.get("OPENSHELL_PODMAN_USERNS") or "--userns=keep-id",
             create_attempts=int(attempts) if attempts.isdigit() else 3,
-            openshell_cli=env.get("OPENSHELL_CLI", ""),
             values=values,
             environ=env,
         )

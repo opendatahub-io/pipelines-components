@@ -1,4 +1,4 @@
-"""OpenShell sandbox lifecycle: CLI container, create, egress, agent, route."""
+"""OpenShell sandbox lifecycle: create, egress, agent, route."""
 
 from __future__ import annotations
 
@@ -24,7 +24,6 @@ WAIT_MAX_ATTEMPTS = 30
 WAIT_POLL_INTERVAL_SECONDS = 5
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 _POLICY_FILE = ".openshell-policy.yaml"
-_POLICY_MOUNTED = "/work/" + _POLICY_FILE
 _ENV_KEYS = ("MAAS_BASE_URL", "MAAS_API_KEY", "AGENT_CONFIG_B64", *cluster.VECTOR_STORE_KEYS)
 _STOP_SCRIPT = (
     "import os,signal; from pathlib import Path; pid=Path('/sandbox/agent.pid'); "
@@ -62,73 +61,30 @@ class Context:
 
 
 class OpenShell:
-    """Thin wrapper around the OpenShell CLI, local or containerized."""
+    """Thin wrapper around the local OpenShell CLI."""
 
     def __init__(self, config: KitConfig) -> None:
         self.config = config
-        self._image: str | None = None
-
-    def _cli_image(self) -> str:
-        if self._image is None:
-            self._image = self._resolve_cli_image()
-        return self._image
-
-    def _resolve_cli_image(self) -> str:
-        image = cluster.openshell_cli_image(self.config)
-        fallback_registry = (self.config.environ.get("OPENSHELL_FALLBACK_REGISTRY") or "quay.io/rhoai").rstrip("/")
-        fallback_namespace = fallback_registry.rsplit("/", 1)[-1]
-        path = "/".join(image.split("/")[1:])
-        if path.startswith(f"{fallback_namespace}/"):
-            path = path.split("/", 1)[1]
-        fallback = f"{fallback_registry}/{path}"
-        if self._podman_image_exists(image):
-            return image
-        if image != fallback and self._podman_image_exists(fallback):
-            return fallback
-        if not self._podman_pull(image):
-            if image == fallback:
-                raise KitError(f"unable to pull OpenShell CLI image {image}.")
-            log.warn(f"OpenShell CLI: {image} is not pullable here; using {fallback}...")
-            if not self._podman_pull(fallback):
-                raise KitError(f"unable to pull OpenShell CLI image {fallback}.")
-            return fallback
-        return image
-
-    def _podman_image_exists(self, image: str) -> bool:
-        return log.run(["podman", "image", "exists", image], check=False, capture=True).returncode == 0
-
-    def _podman_pull(self, image: str) -> bool:
-        return log.run(["podman", "pull", image], check=False, capture=True).returncode == 0
-
-    def _container_prefix(self) -> list[str]:
-        config = self.config
-        config.cli_state.mkdir(parents=True, exist_ok=True)
-        return [
-            "podman",
-            "run",
-            "--rm",
-            "-i",
-            *shlex.split(config.podman_userns),
-            "-e",
-            "XDG_CONFIG_HOME=/cli",
-            "-e",
-            "HOME=/cli",
-            "-v",
-            f"{config.cli_state}:/cli/openshell",
-            "-v",
-            f"{config.root}:/work:ro",
-            self._cli_image(),
-        ]
 
     def command(self, args: list[str], *, with_gateway: bool = True) -> list[str]:
         """Build the full argv for the OpenShell CLI."""
-        if not self.config.uses_container_cli:
-            prefix = shlex.split(self.config.openshell_cli)
-        else:
-            prefix = self._container_prefix()
+        if not self.config.local_cli:
+            raise KitError(
+                "The 'openshell' command was not found on PATH; install it from "
+                "https://github.com/NVIDIA/OpenShell/releases."
+            )
+        prefix = shlex.split(self.config.local_cli)
         if with_gateway:
             prefix = prefix + ["-g", self.config.gateway_name]
         return prefix + args
+
+    def _local_env(self) -> dict[str, str]:
+        """Point a local CLI at the configured state directory when possible."""
+        env = {"OPENSHELL_WORKSPACE": self.config.workspace}
+        state = self.config.cli_state
+        if state.name == "openshell":
+            env["XDG_CONFIG_HOME"] = str(state.parent)
+        return env
 
     def call(
         self,
@@ -145,6 +101,7 @@ class OpenShell:
             self.command(args, with_gateway=with_gateway),
             check=check,
             capture=capture,
+            env=self._local_env(),
             stdin_text=stdin_text,
             timeout=timeout,
         )
@@ -364,7 +321,7 @@ def egress(config: KitConfig, cli: OpenShell, ctx: Context) -> None:
     }
     if not log.dry_run():
         policy_path.write_text(json.dumps(policy, indent=2), encoding="utf-8")
-    policy_arg = _POLICY_MOUNTED if config.uses_container_cli else str(policy_path)
+    policy_arg = str(policy_path)
     try:
         cli.call(["policy", "set", config.sandbox_name, "--policy", policy_arg, "--wait"])
     finally:

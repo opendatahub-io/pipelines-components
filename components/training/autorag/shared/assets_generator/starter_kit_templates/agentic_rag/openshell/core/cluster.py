@@ -1,16 +1,16 @@
-"""OpenShift helpers: CSV images, BuildConfigs, routes, and secrets."""
+"""OpenShift helpers: images, BuildConfigs, routes, and secrets."""
 
 from __future__ import annotations
 
 import base64
 import json
+import re
 import time
 
 from openshell.core import log
 from openshell.core.config import KitConfig
 from openshell.core.log import KitError
 
-_CSV_PREFIX = "rhods-operator."
 VECTOR_STORE_KEYS = (
     "MILVUS_URI",
     "MILVUS_TOKEN",
@@ -28,6 +28,7 @@ VECTOR_STORE_KEYS = (
     "NEO4J_CA_CERT",
 )
 _PEM_MARKER = "-----BEGIN CERTIFICATE-----"
+_BASE_IMAGE_ARG_RE = re.compile(r"^\s*ARG\s+BASE_IMAGE=(.+?)\s*$", re.MULTILINE)
 
 
 def oc(*args: str, check: bool = True, capture: bool = False, stdin_text: str | None = None):
@@ -45,57 +46,23 @@ def current_namespace() -> str:
     return oc_output("project", "-q", check=False)
 
 
-def csv_related_images(namespace: str | None = None) -> dict[str, str]:
-    """Return ``relatedImages`` of the newest Succeeded RHOAI CSV."""
-    target = namespace or "redhat-ods-operator"
-    result = oc("get", "csv", "-n", target, "-o", "json", check=False, capture=True)
-    try:
-        data = json.loads(result.stdout or "{}")
-    except json.JSONDecodeError:
-        return {}
-    candidates = [
-        item
-        for item in data.get("items", [])
-        if item.get("status", {}).get("phase") == "Succeeded"
-        and item.get("metadata", {}).get("name", "").startswith(_CSV_PREFIX)
-    ]
-    candidates.sort(key=lambda item: item.get("metadata", {}).get("creationTimestamp", ""))
-    if not candidates:
-        return {}
-    related = candidates[-1].get("spec", {}).get("relatedImages", []) or []
-    return {entry.get("name", ""): entry.get("image", "") for entry in related}
-
-
-def _csv_namespace(config: KitConfig) -> str:
-    return config.environ.get("RHOAI_CSV_NAMESPACE") or "redhat-ods-operator"
-
-
-def openshell_cli_image(config: KitConfig) -> str:
-    """Resolve the OpenShell CLI image from the override or the RHOAI CSV."""
-    image = config.environ.get("OPENSHELL_CLI_IMAGE") or csv_related_images(_csv_namespace(config)).get(
-        "odh_openshell_cli_image", ""
-    )
-    if not image:
-        if log.dry_run():
-            return "<openshell-cli-image>"
-        raise KitError("OpenShell CLI image is missing from the RHOAI CSV; set OPENSHELL_CLI_IMAGE.")
-    return image
-
-
 def sandbox_base_image(config: KitConfig) -> str:
-    """Resolve the sandbox base image from the override or the RHOAI CSV."""
-    image = config.environ.get("OPENSHELL_BASE_IMAGE") or csv_related_images(_csv_namespace(config)).get(
-        "odh_openshell_sandbox_image", ""
-    )
+    """Resolve the sandbox base image from ``OPENSHELL_BASE_IMAGE``."""
+    image = config.environ.get("OPENSHELL_BASE_IMAGE", "")
     if not image:
-        if log.dry_run():
-            log.detail("Using sandbox base image: <rhoai-sandbox-image>")
-            return "<rhoai-sandbox-image>"
-        raise KitError(
-            "ERROR: sandbox image is absent from the RHOAI CSV. Set RHOAI_CSV_NAMESPACE or OPENSHELL_BASE_IMAGE."
-        )
-    log.detail(f"Using sandbox base image from the RHOAI CSV: {image}")
+        log.detail("Using the Containerfile BASE_IMAGE default.")
+        return ""
+    log.detail(f"Using sandbox base image: {image}")
     return image
+
+
+def containerfile_base_image(config: KitConfig) -> str:
+    """Return the Containerfile's default ``BASE_IMAGE`` value."""
+    path = config.root / "Containerfile.openshell"
+    if not path.is_file():
+        return ""
+    match = _BASE_IMAGE_ARG_RE.search(path.read_text(encoding="utf-8"))
+    return match.group(1).strip() if match else ""
 
 
 def cluster_domain() -> str:
@@ -138,6 +105,20 @@ def _patch_build_args(config: KitConfig, base_image: str) -> None:
         {"spec": {"strategy": {"dockerStrategy": {"buildArgs": [{"name": "BASE_IMAGE", "value": base_image}]}}}}
     )
     oc("patch", "bc", config.image, "-n", config.namespace, "--type=merge", "-p", patch)
+
+
+def _clear_build_args(config: KitConfig) -> None:
+    """Drop a previously pinned BASE_IMAGE so the Containerfile default applies."""
+    oc(
+        "patch",
+        "bc",
+        config.image,
+        "-n",
+        config.namespace,
+        "--type=merge",
+        "-p",
+        '{"spec":{"strategy":{"dockerStrategy":{"buildArgs":[]}}}}',
+    )
 
 
 def _run_build(config: KitConfig) -> tuple[str, str]:
@@ -191,14 +172,17 @@ def build_openshell(config: KitConfig) -> None:
         '{"spec":{"strategy":{"dockerStrategy":{"dockerfilePath":"Containerfile.openshell"}}}}',
     )
     base_image = sandbox_base_image(config)
-    _patch_build_args(config, base_image)
+    if base_image:
+        _patch_build_args(config, base_image)
+    else:
+        _clear_build_args(config)
+    resolved_base = base_image or containerfile_base_image(config)
     phase, reason = _run_build(config)
     if phase == "Failed" and "Pull" in reason:
-        fallback = base_image.replace("registry.redhat.io", "quay.io")
-        if fallback != base_image:
+        fallback = resolved_base.replace("registry.redhat.io", "quay.io")
+        if fallback != resolved_base:
             log.detail(f"Base image pull failed; retrying with {fallback}")
-            base_image = fallback
-            _patch_build_args(config, base_image)
+            _patch_build_args(config, fallback)
             phase, reason = _run_build(config)
     if phase != "Complete":
         raise KitError(f"OpenShift image build did not complete (phase {phase}, reason {reason or 'unknown'}).")
