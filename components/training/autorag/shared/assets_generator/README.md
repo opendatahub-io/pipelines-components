@@ -43,7 +43,7 @@ together.
 
 ## Starter-kit lockfile
 
-The bundled `uv.lock` is resolved against the pinned `ai4rag==0.25.4` in the
+The bundled `uv.lock` is resolved against the pinned `ai4rag` in the
 generated `pyproject.toml`, so the Containerfile's `uv export --locked` build
 needs no refresh. Bump the pin and run `uv lock` together when upgrading.
 
