@@ -114,7 +114,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         config = KitConfig.load(root=root, lookup_namespace=cluster.current_namespace)
         _dispatch(args.command, config)
-    except KitError as error:
+    except (KitError, OSError) as error:
         log.error(str(error))
         return 1
     except KeyboardInterrupt:

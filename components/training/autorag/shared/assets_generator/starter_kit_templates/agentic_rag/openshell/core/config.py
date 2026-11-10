@@ -20,10 +20,11 @@ _SLUG_RE = re.compile(r"[^a-z0-9]+")
 
 
 def _clean(value: str) -> str:
-    value = _COMMENT_RE.split(value, maxsplit=1)[0].strip()
-    if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
-        value = value[1:-1]
-    return value
+    value = value.strip()
+    if len(value) >= 2 and value[0] in "\"'" and value[0] in value[1:]:
+        end = value.index(value[0], 1)
+        return value[1:end]
+    return _COMMENT_RE.split(value, maxsplit=1)[0].strip()
 
 
 def parse_values(text: str) -> dict[str, dict[str, str]]:

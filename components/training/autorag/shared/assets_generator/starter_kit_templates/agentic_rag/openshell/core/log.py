@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -17,6 +18,15 @@ from typing import Mapping, Sequence
 _LOGGER = logging.getLogger("kit")
 _TRUTHY = frozenset({"1", "true", "yes", "on"})
 _STATE = {"verbose": False}
+_SECRET_ARG_RE = re.compile(
+    r"^((?:--from-literal=)?[A-Za-z0-9_]*(?:KEY|TOKEN|PASSWORD|SECRET)[A-Za-z0-9_]*)=.*$",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _redact(argv: Sequence[str]) -> str:
+    """Render *argv* as a shell line with credential values masked."""
+    return shlex.join(_SECRET_ARG_RE.sub(r"\1=***", str(part)) for part in argv)
 
 
 class _MaxLevel(logging.Filter):
@@ -103,10 +113,10 @@ def run(
     """
     argv = [str(part) for part in cmd]
     if dry_run():
-        detail("+ " + shlex.join(argv))
+        detail("+ " + _redact(argv))
         return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
     if is_verbose():
-        _LOGGER.debug("+ %s", shlex.join(argv))
+        _LOGGER.debug("+ %s", _redact(argv))
 
     run_env = dict(os.environ)
     if env:
@@ -132,7 +142,7 @@ def run(
         return subprocess.CompletedProcess(argv, 124, stdout=expired_stdout, stderr=expired_stderr)
     if check and result.returncode != 0:
         stderr = (result.stderr or "").strip()
-        message = f"command failed ({result.returncode}): {shlex.join(argv)}"
+        message = f"command failed ({result.returncode}): {_redact(argv)}"
         raise KitError(f"{message}\n{stderr}" if stderr else message)
     return result
 

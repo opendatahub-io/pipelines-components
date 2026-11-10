@@ -523,7 +523,7 @@ def rotate_tokens(config: KitConfig, cli: OpenShell) -> None:
     )
     log.step("Starting agent with new tokens...")
     script = _agent_script(config, ctx, api_url, reviewer_token, "/sandbox/k8s-ca.crt")
-    cli.call(["sandbox", "exec", "-n", config.sandbox_name, "--", "bash", "-c", script])
+    cli.call(["sandbox", "exec", "-n", config.sandbox_name, "--", "bash", "-s"], stdin_text=script)
     _sleep(2)
     pid_check = cli.call(
         ["sandbox", "exec", "-n", config.sandbox_name, "--", "bash", "-c", "[ -f /sandbox/agent.pid ]"],

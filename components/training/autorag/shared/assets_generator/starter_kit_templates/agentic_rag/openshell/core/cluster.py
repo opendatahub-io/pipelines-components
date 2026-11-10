@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import re
 import time
 
@@ -195,7 +196,7 @@ def refresh_certs(config: KitConfig, cli) -> None:
     """Write mTLS certificates and register the cluster gateway."""
     log.step("Refreshing openShell client certificates...")
     mtls_dir = config.cli_state / "gateways" / config.gateway_name / "mtls"
-    mtls_dir.mkdir(parents=True, exist_ok=True)
+    mtls_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     for key in ("ca.crt", "tls.crt", "tls.key"):
         escaped = key.replace(".", "\\.")
         encoded = (
@@ -213,9 +214,11 @@ def refresh_certs(config: KitConfig, cli) -> None:
         )
         if log.dry_run():
             continue
-        (mtls_dir / key).write_bytes(base64.b64decode(encoded))
-    if not log.dry_run():
-        (mtls_dir / "tls.key").chmod(0o600)
+        mode = 0o600 if key == "tls.key" else 0o644
+        descriptor = os.open(mtls_dir / key, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(base64.b64decode(encoded))
+        os.chmod(mtls_dir / key, mode)
     log.detail("Certificates refreshed.")
 
     if not cli.connected():
@@ -344,5 +347,7 @@ def upsert_token_secret(config: KitConfig, token: str) -> None:
         config.agent_token_secret,
         "-n",
         config.namespace,
-        f"--from-literal=token={token}",
+        "--from-file",
+        "token=/dev/stdin",
+        stdin_text=token,
     )
