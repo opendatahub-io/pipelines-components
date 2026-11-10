@@ -176,8 +176,18 @@ class TestBackTestingCharts:
     def test_pick_window_metric_prefers_eval_metric(self):
         """Metric lookup matches normalized eval metric names."""
         metrics = {"MASE": 0.42, "MAPE": 5.0}
-        assert pick_window_metric(metrics, "MASE") == 0.42
-        assert pick_window_metric(metrics, "-MASE") == 0.42
+        assert pick_window_metric(metrics, "MASE") == ("MASE", 0.42)
+        assert pick_window_metric(metrics, "-MASE") == ("MASE", 0.42)
+        assert pick_window_metric(metrics, "mean_absolute_scaled_error") == ("MASE", 0.42)
+        assert pick_window_metric({"MAPE": 5.0}, "MASE") == ("MAPE", 5.0)
+        assert pick_window_metric({"MAEB": 1.0}, "mean_absolute_error_with_bias") == ("MAEB", 1.0)
+        assert pick_window_metric({"WAPEB": 0.2}, "weighted_absolute_percentage_error_with_bias") == ("WAPEB", 0.2)
+
+    def test_aggregate_does_not_substitute_another_metric(self):
+        """Missing MASE must not become a MAPE value in a MASE mean."""
+        windows = [{"metrics": {"MASE": 0.4}}, {"metrics": {"MAPE": 5.0}}]
+        assert mean_window_metric(windows, "mean_absolute_scaled_error") == 0.4
+        assert pd.isna(per_window_metrics_table(windows, "MASE").iloc[1]["MASE"])
 
     def test_notebook_backtest_charts_source_compiles(self):
         """Notebook injection source is valid Python."""
@@ -223,7 +233,15 @@ class TestBackTestingCharts:
         assert "Cutoff -6: MASE = 0.38" in output
         assert "Overall MASE (mean across 2 validation windows, all series): 0.4" in output
 
-    def test_render_back_testing_forecast_charts_runs(self):
+    @pytest.mark.parametrize(
+        ("eval_metric", "ranking_metric", "ranking_label"),
+        [
+            ("MASE", "mean_absolute_percentage_error", "ranked by MAPE (fallback for MASE)"),
+            ("mean_absolute_percentage_error", "mean_absolute_percentage_error", "ranked by MAPE"),
+            ("MASE", None, "ranking metric unavailable (legacy artifact)"),
+        ],
+    )
+    def test_render_back_testing_forecast_charts_runs(self, eval_metric, ranking_metric, ranking_label):
         """Forecast charts entry point renders matplotlib panels only."""
         pytest.importorskip("matplotlib")
         import matplotlib
@@ -232,7 +250,7 @@ class TestBackTestingCharts:
         import matplotlib.pyplot as plt
 
         payload = {
-            "eval_metric": "MASE",
+            "eval_metric": eval_metric,
             "target": "sales",
             "per_window_metrics": [{"window_id": 0, "test_start": "2025-01-03"}],
             "series_analysis": {
@@ -248,7 +266,18 @@ class TestBackTestingCharts:
                 },
             },
         }
+        if ranking_metric:
+            payload["series_analysis"]["ranking_metric"] = ranking_metric
         render_back_testing_forecast_charts(payload)
+        figure = plt.gcf()
+        assert figure.axes[0].get_title() == "Window 0 (MAPE=5)"
+        assert figure._suptitle.get_text() == f"Best performer: A — {ranking_label}"
+        # Labels change, actual/predicted curves and interval bounds stay intact.
+        assert list(figure.axes[0].lines[0].get_ydata()) == [100.0, 110.0]
+        assert list(figure.axes[0].lines[1].get_ydata()) == [105.0, 108.0]
+        band = figure.axes[0].collections[0].get_paths()[0].vertices
+        assert band[:, 1].min() == 95.0
+        assert band[:, 1].max() == 118.0
         plt.close("all")
 
     def test_render_back_testing_charts_runs(self):

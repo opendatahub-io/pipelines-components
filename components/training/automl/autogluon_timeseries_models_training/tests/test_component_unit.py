@@ -7,6 +7,7 @@ import tempfile
 from pathlib import Path
 from unittest import mock
 
+import pandas as pd
 import pytest
 
 from ..component import autogluon_timeseries_models_training
@@ -35,18 +36,6 @@ def isolated_sys_modules():
 
         # Mock additional autogluon submodules
         _metrics = mock.MagicMock()
-        _metrics.AVAILABLE_METRICS = {
-            k: mock.MagicMock()
-            for k in (
-                "mean_absolute_scaled_error",
-                "mean_squared_error",
-                "weighted_quantile_loss",
-                "root_mean_squared_scaled_error",
-                "mean_absolute_error",
-                "root_mean_squared_error",
-                "sql",
-            )
-        }
         _metrics.METRIC_ALIASES = {
             "mean_absolute_scaled_error": "MASE",
             "root_mean_squared_error": "RMSE",
@@ -54,6 +43,17 @@ def isolated_sys_modules():
             "mean_squared_error": "MSE",
             "mean_absolute_error": "MAE",
             "root_mean_squared_scaled_error": "RMSSE",
+        }
+        _metrics.METRIC_ALIASES["higher_score"] = "HIGHER"
+        _metrics.AVAILABLE_METRICS = {
+            name: mock.Mock(
+                return_value=mock.Mock(
+                    sign=1 if name in {"BIAS", "HIGHER"} else -1,
+                    greater_is_better_internal=name in {"BIAS", "HIGHER"},
+                    evaluate_only=name == "BIAS",
+                )
+            )
+            for name in [*_metrics.METRIC_ALIASES.values(), "BIAS", "SQL"]
         }
         _metrics.__spec__ = None
         mocked_modules["autogluon.timeseries.metrics"] = _metrics
@@ -1137,54 +1137,78 @@ class TestTimeseriesModelsTrainingUnitTests:
 
 
 class TestMetricsJsonSignConvention:
-    """Tests for metrics.json sign convention (raw AutoGluon, leaderboard-compatible)."""
+    """Natural exports and direction-aware ranking with real pandas."""
 
+    @pytest.mark.parametrize(
+        ("eval_metric", "best_model"),
+        [
+            ("mean_absolute_scaled_error", "TFT_FULL"),
+            ("higher_score", "DeepAR_FULL"),
+        ],
+    )
+    @mock.patch("kfp_components.components.training.automl.shared.mlflow_tracking.experiment_run_logger")
     @mock.patch("kfp_components.components.training.automl.shared.back_testing.build_back_testing_json")
     @mock.patch("pandas.read_parquet")
     @mock.patch("pandas.concat")
     @mock.patch("autogluon.timeseries.TimeSeriesDataFrame")
     @mock.patch("autogluon.timeseries.TimeSeriesPredictor")
-    def test_metrics_json_preserves_autogluon_evaluate_signs(
+    def test_natural_exports_and_metric_ordering(
         self,
         mock_predictor_cls,
         mock_ts_df_cls,
         mock_concat,
         mock_read_parquet,
         mock_build_back_testing_json,
+        mock_run_logger,
         mock_artifacts,  # noqa: F811
+        eval_metric,
+        best_model,
+        monkeypatch,
     ):
-        """metrics.json keeps negated error metrics from AutoGluon evaluate() for leaderboard sorting."""
+        """Exports normalize once; ranking respects direction and preserves internal selection."""
+        # Training data stays mocked; use actual pandas for exported ranking and values.
+        monkeypatch.setitem(sys.modules, "pandas", pd)
+        monkeypatch.setattr(pd, "concat", mock_concat)
+        monkeypatch.setattr(pd, "read_parquet", mock_read_parquet)
+        run_logger = mock_run_logger.return_value.__enter__.return_value
+        run_logger.result.return_value = (False, {})
         models_artifact, extra_train_path, html_artifact, experiment_notebook = mock_artifacts
         mock_build_back_testing_json.return_value = {"schema_version": 1}
 
         mock_predictor = mock.MagicMock()
-        mock_predictor.leaderboard.return_value = _mock_leaderboard(["DeepAR"])
-        mock_predictor.fit_summary.return_value = {"model_hyperparams": {"DeepAR": {}}}
+        mock_predictor.leaderboard.return_value = _mock_leaderboard(["DeepAR", "TFT"])
+        mock_predictor.fit_summary.return_value = {"model_hyperparams": {"DeepAR": {}, "TFT": {}}}
         mock_predictor._trainer.get_model_attribute.return_value = mock.MagicMock
 
         mock_refit_predictor = mock.MagicMock()
         # AutoGluon returns uppercase acronym keys from evaluate() regardless of the
         # metric names passed in; the component normalizes these via _acronym_to_snake.
-        mock_refit_predictor.evaluate.return_value = {"MASE": -0.42, "MSE": -1.0}
+        mock_refit_predictor.evaluate.return_value = {"MASE": -0.42, "MSE": -1.0, "BIAS": -0.3, "HIGHER": -0.1}
 
-        mock_predictor_cls.side_effect = [mock_predictor, mock_refit_predictor]
+        second_refit = mock.MagicMock()
+        second_refit.evaluate.return_value = {"MASE": -0.30, "MSE": -0.5, "BIAS": 0.2, "HIGHER": -0.8}
+        mock_predictor_cls.side_effect = [mock_predictor, mock_refit_predictor, second_refit]
         _configure_predictor_api(mock_predictor_cls)
-        # from_data_frame is called for: train, test, and once per model for build_predict_sample_artifact (1 model)
+        # from_data_frame is called for: train, test, and once per model for build_predict_sample_artifact
         mock_ts_df_cls.from_data_frame.return_value = _mock_ts_df()
         mock_ts_df_cls.from_path.return_value = _mock_ts_df()
         mock_ts_df_cls.return_value = _mock_ts_df()
         mock_concat.return_value = mock.MagicMock()
-        mock_read_parquet.side_effect = [mock.MagicMock(), mock.MagicMock()]
+        mock_read_parquet.side_effect = [
+            pd.DataFrame({"timestamp": ["2025-01-01"], "sales": [1.0]}),
+            pd.DataFrame({"timestamp": ["2025-01-02"], "sales": [2.0]}),
+        ]
         test_data = mock.MagicMock()
         test_data.path = "/tmp/test.parquet"
 
-        autogluon_timeseries_models_training.python_func(
+        result = autogluon_timeseries_models_training.python_func(
             target="sales",
             id_column="item_id",
             timestamp_column="timestamp",
             train_data_path="/tmp/train.parquet",
             test_data=test_data,
-            top_n=1,
+            top_n=2,
+            eval_metric=eval_metric,
             workspace_path="/tmp/workspace",
             pipeline_name="ts-pipeline-123",
             run_id="run-123",
@@ -1198,8 +1222,37 @@ class TestMetricsJsonSignConvention:
         metrics_path = Path(models_artifact.path) / "DeepAR_FULL" / "metrics" / "metrics.json"
         with metrics_path.open(encoding="utf-8") as f:
             metrics = json.load(f)
-        assert metrics["mean_absolute_scaled_error"] == -0.42
-        assert metrics["mean_squared_error"] == -1.0
+        assert metrics == {
+            "mean_absolute_scaled_error": 0.42,
+            "mean_squared_error": 1.0,
+            "BIAS": -0.3,
+            "higher_score": -0.1,
+        }
+        model_dir = metrics_path.parent.parent
+        model_metadata = json.loads((model_dir / "model.json").read_text())
+        assert model_metadata["metrics"]["test_data"] == metrics
+        context = models_artifact.metadata["context"]
+        assert context["models"][0] == model_metadata
+        predictor_metadata = json.loads((model_dir / "predictor" / "predictor_metadata.json").read_text())
+        for metadata in (model_metadata, predictor_metadata, context, models_artifact.metadata, html_artifact.metadata):
+            assert metadata["metrics_convention"] == "natural_v1"
+            assert metadata["metric_directions"]["mean_absolute_scaled_error"] == "lower_is_better"
+            assert metadata["metric_directions"]["higher_score"] == "higher_is_better"
+            assert metadata["metric_directions"]["BIAS"] == "diagnostic"
+        assert result.top_models == ["DeepAR", "TFT"]
+        assert result.best_model_name == context["best_model_name"] == best_model
+        rows = json.loads(html_artifact.metadata["data"])
+        assert rows[0]["model"] == best_model
+        assert float(rows[0][eval_metric]) == (0.30 if eval_metric == "mean_absolute_scaled_error" else -0.1)
+        assert "-0.4200" not in Path(html_artifact.path).read_text()
+        mock_run_logger.assert_called_once_with(
+            task_type="time_series",
+            eval_metric=eval_metric,
+            run_name="ts-pipeline-123",
+            metric_direction="lower_is_better" if eval_metric == "mean_absolute_scaled_error" else "higher_is_better",
+            metrics_convention="natural_v1",
+        )
+        assert run_logger.log_model.call_args_list[0].kwargs["metrics"] == {"test_data": metrics}
 
 
 class TestBackTestingArtifactFailure:
@@ -1542,6 +1595,8 @@ class TestPredictorMetadata:
         metadata_path = Path(models_artifact.path) / "DeepAR_FULL" / "predictor" / "predictor_metadata.json"
         assert metadata_path.exists()
         metadata = json.loads(metadata_path.read_text())
+        assert metadata.pop("metrics_convention") == "natural_v1"
+        assert metadata.pop("metric_directions")["mean_absolute_scaled_error"] == "lower_is_better"
         assert metadata == {
             "model_name": "DeepAR_FULL",
             "base_model": "DeepAR",

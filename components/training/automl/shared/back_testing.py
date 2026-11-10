@@ -36,6 +36,8 @@ _LOWER_IS_BETTER = frozenset(
         "symmetric_mean_absolute_percentage_error",
         "MSE",
         "mean_squared_error",
+        "RMSLE",
+        "root_mean_squared_logarithmic_error",
         "RMSE",
         "root_mean_squared_error",
         "MAE",
@@ -44,14 +46,18 @@ _LOWER_IS_BETTER = frozenset(
         "weighted_quantile_loss",
         "SQL",
         "symmetric_quantile_loss",
+        "scaled_quantile_loss",
         "RMSSE",
         "root_mean_squared_scaled_error",
         "WAPE",
         "weighted_absolute_percentage_error",
         # AutoGluon 1.6 losses. BIAS is a signed diagnostic and stays unflipped.
         "MAEB",
+        "mean_absolute_error_with_bias",
         "WAPEB",
+        "weighted_absolute_percentage_error_with_bias",
         "MQL",
+        "mean_quantile_loss",
     }
 )
 
@@ -81,8 +87,8 @@ def filter_finite_metrics(metrics: dict[str, Any]) -> dict[str, float]:
     back to their natural positive form. AutoGluon negates error metrics like MAPE/RMSE/MAE
     in .evaluate() output, so this function multiplies them by -1 to restore standard signs.
 
-    Used for ``back_testing.json`` only. ``metrics.json`` keeps raw AutoGluon signs for
-    leaderboard compatibility.
+    Used for raw AutoGluon backtest scores only, never for already-natural point errors.
+    Holdout exports independently use scorer metadata to restore natural signs.
     """
     cleaned: dict[str, float] = {}
     for key, value in metrics.items():
@@ -91,7 +97,7 @@ def filter_finite_metrics(metrics: dict[str, Any]) -> dict[str, float]:
             # AutoGluon negates error metrics for "higher is better" convention.
             # Convert back to natural form: MAPE/RMSE/etc should be positive.
             metric_normalized = _normalize_metric_name(key)
-            if metric_normalized in _LOWER_IS_BETTER:
+            if key in _LOWER_IS_BETTER or metric_normalized in _LOWER_IS_BETTER:
                 # This metric is naturally "lower is better", so AutoGluon negated it.
                 # Multiply by -1 to restore positive error values.
                 cleaned[key] = -number
@@ -454,6 +460,7 @@ def _build_series_analysis(
         }
 
     return {
+        "ranking_metric": ranking_metric,
         "num_series_evaluated": len(series_averages),
         "best_performer": _series_payload(best_id),
         "worst_performer": _series_payload(worst_id),

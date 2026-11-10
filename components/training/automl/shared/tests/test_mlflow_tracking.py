@@ -378,6 +378,54 @@ def _run_logger_lifecycle(
 class TestMlflowExperimentLogger:
     """Tests for the incremental ``experiment_run_logger`` / ``MlflowExperimentLogger`` API."""
 
+    @pytest.mark.parametrize(
+        ("direction", "best_model", "best", "worst"),
+        [
+            ("lower_is_better", "DeepAR_FULL", 0.2, 0.8),
+            ("higher_is_better", "TFT_FULL", 0.8, 0.2),
+        ],
+    )
+    def test_natural_metrics_use_direction_in_tracking(self, monkeypatch, direction, best_model, best, worst):
+        """Model metrics pass through once; parent aggregates select the correct extrema."""
+        _set_kfp_mlflow_config(monkeypatch, parent_run_id="parent-run", experiment_id="1")
+        mlflow = _make_mock_mlflow(
+            _mock_run_context("parent-run", "1"),
+            [
+                _mock_run_context("child-1", "1"),
+                _mock_run_context("child-2", "1"),
+            ],
+        )
+        with mock.patch.dict(sys.modules, {"mlflow": mlflow}):
+            with experiment_run_logger(
+                task_type="time_series",
+                eval_metric="metric",
+                metric_direction=direction,
+                metrics_convention="natural_v1",
+            ) as logger:
+                logger.log_header(pipeline_name="timeseries", kfp_run_id="run-1")
+                for name, score in (("DeepAR_FULL", 0.2), ("TFT_FULL", 0.8)):
+                    logger.log_model(
+                        model_name=name,
+                        model_uri=f"s3://models/{name}",
+                        metrics={
+                            "test_data": {
+                                "metric": score,
+                                "BIAS": -0.3,
+                            }
+                        },
+                    )
+                logger.finalize()
+        assert mlflow.log_metrics.call_args_list == [
+            mock.call({"metric": 0.2, "BIAS": -0.3}),
+            mock.call({"metric": 0.8, "BIAS": -0.3}),
+        ]
+        assert mock.call("best_score", best) in mlflow.log_metric.call_args_list
+        assert mock.call("worst_score", worst) in mlflow.log_metric.call_args_list
+        mlflow.log_param.assert_called_with("best_model_name", best_model)
+        for call in mlflow.log_params.call_args_list:
+            assert call.args[0]["metrics_convention"] == "natural_v1"
+            assert call.args[0]["metric_direction"] == direction
+
     def test_skips_when_mlflow_disabled(self, tmp_path, monkeypatch):
         """Yield a no-op logger (no MLflow import) when tracking is disabled."""
         monkeypatch.delenv("KFP_MLFLOW_CONFIG", raising=False)
@@ -605,6 +653,8 @@ class TestMlflowExperimentLogger:
         ]
         assert child_params == [
             {
+                "metric_direction": "higher_is_better",
+                "metrics_convention": "autogluon_raw",
                 "model_name": model_name,
                 "model_type": "LightGBM",
                 "stack_level": "1",

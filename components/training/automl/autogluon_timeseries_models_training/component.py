@@ -158,6 +158,23 @@ def autogluon_timeseries_models_training(
                 raise TypeError(f"{param} must be a non-empty string.")
         if eval_metric not in METRIC_ALIASES:
             raise ValueError(f"eval_metric must be one of {sorted(METRIC_ALIASES)}; got {eval_metric!r}.")
+        # Scorer metadata restores natural values, including legitimately signed diagnostics.
+        metric_signs = {}
+        metric_directions = {}
+        for name, scorer_cls in AVAILABLE_METRICS.items():
+            name = _acronym_to_snake.get(name, name)
+            scorer = scorer_cls()
+            metric_signs[name] = scorer.sign
+            metric_directions[name] = "higher_is_better" if scorer.greater_is_better_internal else "lower_is_better"
+            if scorer.evaluate_only:
+                metric_directions[name] = "diagnostic"
+        metric_export_metadata = {
+            "metrics_convention": "natural_v1",
+            "metric_directions": metric_directions,
+        }
+        metric_direction = metric_directions[eval_metric]
+        if metric_direction == "diagnostic":
+            raise ValueError(f"Metric '{eval_metric}' is diagnostic and cannot select models.")
         if not isinstance(top_n, int):
             raise TypeError("top_n must be an integer.")
         if top_n <= 0 or top_n > TOP_N_MAX:
@@ -443,6 +460,8 @@ def autogluon_timeseries_models_training(
                     task_type="time_series",
                     eval_metric=eval_metric,
                     run_name=effective_run_name,
+                    metric_direction=metric_direction,
+                    metrics_convention="natural_v1",
                 )
             )
             # Non-secret dataset identity for the parent run; credentials stay in the K8s secret.
@@ -488,9 +507,7 @@ def autogluon_timeseries_models_training(
                         model_name_full,
                         time.perf_counter() - evaluation_started,
                     )
-                    # Keep raw AutoGluon evaluate() signs for metrics.json (higher-is-better / negated errors)
-                    # so Phase C leaderboard sorting (ascending=False) stays correct.
-                    # back_testing.json normalizes separately.
+                    # Convert raw AutoGluon scores exactly once, before exporting or tracking.
                     # Remap uppercase acronym keys (e.g. "MASE") to snake_case (e.g. "mean_absolute_scaled_error").
                     metrics_dict = {}
                     for k, v in metrics.items():
@@ -502,7 +519,7 @@ def autogluon_timeseries_models_training(
                                 if k not in AVAILABLE_METRICS:
                                     logger.warning("Unrecognized metric key %r from evaluate(); storing as-is.", k)
                                 normalized_key = k
-                            metrics_dict[normalized_key] = v
+                            metrics_dict[normalized_key] = v * metric_signs.get(normalized_key, 1)
 
                     if eval_metric not in metrics_dict:
                         raise ValueError(
@@ -512,6 +529,7 @@ def autogluon_timeseries_models_training(
 
                     # Save additional metadata about the selected model
                     predictor_metadata = {
+                        **metric_export_metadata,
                         "model_name": model_name_full,
                         "base_model": model_name,
                         "prediction_length": prediction_length,
@@ -598,6 +616,7 @@ def autogluon_timeseries_models_training(
                         model_location["back_testing"] = str(Path(model_name_full) / "metrics" / "back_testing.json")
 
                     model_metadata = {
+                        **metric_export_metadata,
                         "name": model_name_full,
                         "refit": refit_plan.metadata(model_name),
                         "location": model_location,
@@ -673,14 +692,14 @@ def autogluon_timeseries_models_training(
                     }
                 )
 
-            # AutoGluon negates error metrics (e.g. mean_absolute_scaled_error -> negative)
-            # so descending = best model first.
             # Sort on raw (unrounded) values so close scores cannot flip rank after rounding.
             if not leaderboard_rows:
                 raise RuntimeError("Leaderboard rows are empty; no models available for ranking.")
             leaderboard_df = pd.DataFrame(leaderboard_rows)
             if eval_metric in leaderboard_rows[0]:
-                leaderboard_df = leaderboard_df.sort_values(by=eval_metric, ascending=False, na_position="last")
+                leaderboard_df = leaderboard_df.sort_values(
+                    by=eval_metric, ascending=metric_direction == "lower_is_better", na_position="last"
+                )
             else:
                 logger.warning(
                     "eval_metric '%s' not found in row keys %s; preserving refit order.",
@@ -709,6 +728,7 @@ def autogluon_timeseries_models_training(
             with open(html_artifact.path, "w", encoding="utf-8") as f:
                 f.write(html_content)
 
+            html_artifact.metadata.update(metric_export_metadata)
             html_artifact.metadata["data"] = leaderboard_df.to_json(orient="records")
             html_artifact.metadata["display_name"] = "automl_leaderboard"
             status.record(
@@ -792,7 +812,9 @@ def autogluon_timeseries_models_training(
                 )
 
             models_artifact.metadata["model_names"] = json.dumps(model_names_full)
+            models_artifact.metadata.update(metric_export_metadata)
             models_artifact.metadata["context"] = {
+                **metric_export_metadata,
                 "data_config": {
                     "sampling_config": sampling_config,
                     "split_config": split_config,
