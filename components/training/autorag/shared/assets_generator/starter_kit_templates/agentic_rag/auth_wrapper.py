@@ -3,15 +3,11 @@
 Authenticates requests using K8s ServiceAccount tokens via TokenReview API.
 ``K8S_API_URL`` and ``K8S_REVIEWER_TOKEN`` are required.
 
-TokenReview results are cached for 5 minutes to reduce K8s API load.
-
 Usage:
     K8S_API_URL=https://... K8S_REVIEWER_TOKEN=... uvicorn auth_wrapper:app --host 0.0.0.0 --port 8080
 """
 
-import hashlib
 import logging
-import time
 from collections.abc import Awaitable, Callable
 from os import getenv
 from pathlib import Path
@@ -28,10 +24,6 @@ type Send = Callable[[ASGIMessage], Awaitable[None]]
 type ASGIApp = Callable[[ASGIMessage, Receive, Send], Awaitable[None]]
 
 log = logging.getLogger("auth_wrapper")
-
-# TokenReview cache: {token_hash: (authenticated: bool, username: str, expires_at: float)}
-_TOKEN_CACHE: dict[str, tuple[bool, str, float]] = {}
-_CACHE_TTL_SECONDS = 300  # 5 minutes
 
 _K8S_API_URL = getenv("K8S_API_URL", "").strip().rstrip("/")
 _K8S_REVIEWER_TOKEN = getenv("K8S_REVIEWER_TOKEN", "").strip()
@@ -54,32 +46,9 @@ if not Path(_K8S_CA_PATH).is_file():
     raise RuntimeError(f"K8s CA certificate not found at {_K8S_CA_PATH}")
 
 
-def _cleanup_expired_cache() -> None:
-    """Remove expired entries from the token cache."""
-    now = time.time()
-    expired = [k for k, (_, _, exp) in _TOKEN_CACHE.items() if exp < now]
-    for key in expired:
-        del _TOKEN_CACHE[key]
-
-
 async def _validate_k8s_token(token: str) -> bool:
     if not (_K8S_API_URL and _K8S_REVIEWER_TOKEN):
         return False
-
-    # Check cache
-    token_hash = hashlib.sha256(token.encode()).hexdigest()
-    now = time.time()
-    if token_hash in _TOKEN_CACHE:
-        authenticated, username, expires_at = _TOKEN_CACHE[token_hash]
-        if expires_at > now:
-            log.debug("TokenReview cache hit for %s", username)
-            return authenticated
-        del _TOKEN_CACHE[token_hash]
-
-    # Cleanup old entries periodically
-    if len(_TOKEN_CACHE) > 100:
-        _cleanup_expired_cache()
-
     try:
         async with httpx2.AsyncClient(verify=_K8S_CA_PATH, timeout=10.0) as client:
             resp = await client.post(
@@ -96,22 +65,16 @@ async def _validate_k8s_token(token: str) -> bool:
             )
         if resp.status_code == 201:
             status = resp.json().get("status", {})
-            authenticated = status.get("authenticated", False)
-            user = status.get("user", {}).get("username", "unknown")
-
-            if authenticated and _ALLOWED_SA_USERNAME and user != _ALLOWED_SA_USERNAME:
-                log.warning(
-                    "K8s token authenticated but username mismatch: got %s, expected %s",
-                    user,
-                    _ALLOWED_SA_USERNAME,
-                )
-                authenticated = False
-
-            # Cache result (both success and failure)
-            _TOKEN_CACHE[token_hash] = (authenticated, user, now + _CACHE_TTL_SECONDS)
-
-            if authenticated:
-                log.info("K8s token authenticated: %s (cached for %ds)", user, _CACHE_TTL_SECONDS)
+            if status.get("authenticated"):
+                user = status.get("user", {}).get("username", "unknown")
+                if _ALLOWED_SA_USERNAME and user != _ALLOWED_SA_USERNAME:
+                    log.warning(
+                        "K8s token authenticated but username mismatch: got %s, expected %s",
+                        user,
+                        _ALLOWED_SA_USERNAME,
+                    )
+                    return False
+                log.info("K8s token authenticated: %s", user)
                 return True
         return False
     except Exception as e:

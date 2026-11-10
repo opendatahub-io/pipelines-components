@@ -18,6 +18,7 @@ def _create_starter_kit_mapping(output_data: dict[str, Any]) -> dict[str, str]:
 
     All values are stringified so they can be used with ``str.replace()``.
     """
+    from ai4rag import __version__
     from ai4rag.rag.vector_store.neo4j import Neo4jGraphRetrievalConfig
 
     mapping: dict[str, str] = {}
@@ -27,6 +28,7 @@ def _create_starter_kit_mapping(output_data: dict[str, Any]) -> dict[str, str]:
         return default if value is None else str(value)
 
     mapping["__PATTERN_NAME__"] = _value(output_data.get("name"))
+    mapping["__AI4RAG_VERSION__"] = __version__
 
     settings = output_data.get("settings", {})
     agentic = settings.get("agentic", {})
