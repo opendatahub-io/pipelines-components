@@ -349,6 +349,7 @@ def _run_logger_lifecycle(
     eval_metric: str = "accuracy",
     metrics_by_model: dict | None = None,
     total_fit_time_seconds: float | None = None,
+    **logger_kwargs,
 ):
     """Drive a full ``experiment_run_logger`` lifecycle and return ``result()``."""
     metrics_by_model = metrics_by_model or {name: {"accuracy": 0.9} for name in model_names}
@@ -356,6 +357,7 @@ def _run_logger_lifecycle(
         with experiment_run_logger(
             task_type=task_type,
             eval_metric=eval_metric,
+            **logger_kwargs,
         ) as run_logger:
             run_logger.log_header(
                 pipeline_name="autogluon-tabular-training-pipeline",
@@ -377,6 +379,47 @@ def _run_logger_lifecycle(
 
 class TestMlflowExperimentLogger:
     """Tests for the incremental ``experiment_run_logger`` / ``MlflowExperimentLogger`` API."""
+
+    @pytest.mark.parametrize(
+        ("direction", "best_model", "best", "worst"),
+        [
+            ("lower_is_better", "DeepAR_FULL", 0.2, 0.8),
+            ("higher_is_better", "TFT_FULL", 0.8, 0.2),
+        ],
+    )
+    def test_natural_metrics_use_direction_in_tracking(self, monkeypatch, tmp_path, direction, best_model, best, worst):
+        """Model metrics pass through once; parent aggregates select the correct extrema."""
+        _set_kfp_mlflow_config(monkeypatch, parent_run_id="parent-run", experiment_id="1")
+        mlflow = _make_mock_mlflow(
+            _mock_run_context("parent-run", "1"),
+            [
+                _mock_run_context("child-1", "1"),
+                _mock_run_context("child-2", "1"),
+            ],
+        )
+        _run_logger_lifecycle(
+            mlflow,
+            tmp_path=tmp_path,
+            model_names=["DeepAR_FULL", "TFT_FULL"],
+            task_type="time_series",
+            eval_metric="metric",
+            metric_direction=direction,
+            metrics_convention="natural_v1",
+            metrics_by_model={
+                "DeepAR_FULL": {"metric": 0.2, "BIAS": -0.3},
+                "TFT_FULL": {"metric": 0.8, "BIAS": -0.3},
+            },
+        )
+        assert mlflow.log_metrics.call_args_list == [
+            mock.call({"metric": 0.2, "BIAS": -0.3}),
+            mock.call({"metric": 0.8, "BIAS": -0.3}),
+        ]
+        assert mock.call("best_score", best) in mlflow.log_metric.call_args_list
+        assert mock.call("worst_score", worst) in mlflow.log_metric.call_args_list
+        mlflow.log_param.assert_called_with("best_model_name", best_model)
+        for call in mlflow.log_params.call_args_list:
+            assert call.args[0]["metrics_convention"] == "natural_v1"
+            assert call.args[0]["metric_direction"] == direction
 
     def test_skips_when_mlflow_disabled(self, tmp_path, monkeypatch):
         """Yield a no-op logger (no MLflow import) when tracking is disabled."""
@@ -605,6 +648,8 @@ class TestMlflowExperimentLogger:
         ]
         assert child_params == [
             {
+                "metric_direction": "higher_is_better",
+                "metrics_convention": "autogluon_raw",
                 "model_name": model_name,
                 "model_type": "LightGBM",
                 "stack_level": "1",

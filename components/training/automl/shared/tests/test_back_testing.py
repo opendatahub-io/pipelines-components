@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import math
+import sys
 from time import perf_counter
 from unittest import mock
 
@@ -22,6 +22,25 @@ from ..back_testing import (
     serialize_date,
     serialize_timestamp,
 )
+
+
+@pytest.fixture(autouse=True)
+def metric_metadata(monkeypatch):
+    """Model AutoGluon scorer metadata without requiring the training SDK."""
+    metrics = mock.Mock()
+    metrics.METRIC_ALIASES = {
+        "mean_absolute_percentage_error": "MAPE",
+        "root_mean_squared_error": "RMSE",
+        "mean_absolute_error": "MAE",
+        "scaled_quantile_loss": "SQL",
+    }
+    metrics.AVAILABLE_METRICS = {
+        name: mock.Mock(
+            return_value=mock.Mock(sign=1 if name == "BIAS" else -1, greater_is_better_internal=name == "BIAS")
+        )
+        for name in ("MASE", "MAPE", "RMSE", "MAE", "MAEB", "WAPEB", "MQL", "BIAS", "RMSLE", "SQL")
+    }
+    monkeypatch.setitem(sys.modules, "autogluon.timeseries.metrics", metrics)
 
 
 def _make_panel(item_ids: list[str], timestamps: list[str], target_values: list[float]) -> pd.DataFrame:
@@ -62,7 +81,14 @@ class TestSerialization:
             "MQL": 0.8,
             "BIAS": 0.4,
         }
-        assert filter_finite_metrics({"BIAS": -0.3}) == {"BIAS": -0.3}
+        assert filter_finite_metrics({"BIAS": -0.3, "unknown_signed_metric": -0.5}) == {
+            "BIAS": -0.3,
+            "unknown_signed_metric": -0.5,
+        }
+        assert filter_finite_metrics({"RMSLE": -0.2, "scaled_quantile_loss": -0.4}) == {
+            "RMSLE": 0.2,
+            "scaled_quantile_loss": 0.4,
+        }
 
     def test_back_testing_normalizes_autogluon_signs(self):
         """back_testing.json converts AutoGluon negated error metrics to natural positive form."""
@@ -72,42 +98,6 @@ class TestSerialization:
             "MAPE": 5.0,
             "RMSE": 10.5,
         }
-
-    def test_metrics_json_and_backtesting_use_different_sign_conventions(self):
-        """metrics.json keeps raw AutoGluon signs; back_testing.json normalizes to natural form."""
-        raw_autogluon = {"MASE": -0.42, "MAPE": -5.0, "RMSE": -10.5}
-        metrics_json_values = {
-            k: v for k, v in raw_autogluon.items() if isinstance(v, (int, float)) and math.isfinite(v)
-        }
-
-        timestamps = ["2025-01-01", "2025-01-02", "2025-01-03", "2025-01-04"]
-        train_data = _make_panel(["A"], timestamps, [100.0, 110.0, 120.0, 130.0])
-        window_targets = _holdout_frame(train_data, prediction_length=2)
-        predictions = pd.DataFrame({"mean": [121.0, 131.0]}, index=window_targets.loc["A"].index)
-
-        predictor = mock.MagicMock()
-        predictor.backtest_predictions.return_value = [predictions]
-        predictor.backtest_targets.return_value = [window_targets]
-        predictor.evaluate.return_value = raw_autogluon
-
-        payload = build_back_testing_json(
-            predictor,
-            model_name="DeepAR",
-            model_name_full="DeepAR_FULL",
-            train_data=train_data,
-            eval_metric="MASE",
-            target="target",
-            id_column="item_id",
-            timestamp_column="timestamp",
-            prediction_length=2,
-            num_val_windows=1,
-            metrics=list(raw_autogluon.keys()),
-        )
-
-        backtesting_values = payload["per_window_metrics"][0]["metrics"]
-        assert metrics_json_values == raw_autogluon
-        assert backtesting_values == filter_finite_metrics(raw_autogluon)
-        assert metrics_json_values != backtesting_values
 
     def test_serialize_timestamp_utc(self):
         """Timestamps serialize to ISO strings with UTC suffix."""
@@ -516,12 +506,12 @@ class TestBuildBackTestingJson:
         assert payload["per_window_metrics"][0]["cutoff"] == -2
         assert payload["per_window_metrics"][0]["metrics"]["MASE"] == 0.42
         assert payload["series_analysis"]["num_series_evaluated"] == 2
+        assert payload["series_analysis"]["ranking_metric"] == "mean_absolute_percentage_error"
         assert payload["series_analysis"]["best_performer"]["item_id"] == "good"
         assert payload["series_analysis"]["worst_performer"]["item_id"] == "bad"
         assert payload["series_analysis"]["best_performer"]["windows"][0]["forecast_data"]
         assert payload["series_analysis"]["best_performer"]["windows"][0]["forecast_data"][0]["timestamp"].endswith("Z")
         assert payload["schema_version"] == 1
-        assert "ranking_metric" not in payload["series_analysis"]
 
     def test_ranks_by_point_metric_matching_eval_metric(self):
         """Best/worst selection uses eval_metric when it is a computed point-forecast metric."""
@@ -552,8 +542,8 @@ class TestBuildBackTestingJson:
             num_val_windows=1,
         )
 
+        assert payload["series_analysis"]["ranking_metric"] == "root_mean_squared_error"
         assert payload["series_analysis"]["best_performer"]["item_id"] == "good"
-        assert "ranking_metric" not in payload["series_analysis"]
 
     def test_requires_backtest_api(self):
         """Missing backtest methods raise AttributeError."""

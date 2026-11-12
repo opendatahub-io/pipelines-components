@@ -23,38 +23,6 @@ MAX_FORECAST_POINTS_PER_WINDOW = 500
 _SERIES_POINT_METRICS = frozenset({"mean_absolute_percentage_error", "root_mean_squared_error", "mean_absolute_error"})
 _DEFAULT_SERIES_RANKING_METRIC = "mean_absolute_percentage_error"
 
-# Metrics where lower values indicate better performance (AutoGluon time series defaults).
-# Includes both uppercase acronyms (AutoGluon evaluate() output) and snake_case names
-# (component-normalized keys used in series_analysis metrics).
-_LOWER_IS_BETTER = frozenset(
-    {
-        "MASE",
-        "mean_absolute_scaled_error",
-        "MAPE",
-        "mean_absolute_percentage_error",
-        "SMAPE",
-        "symmetric_mean_absolute_percentage_error",
-        "MSE",
-        "mean_squared_error",
-        "RMSE",
-        "root_mean_squared_error",
-        "MAE",
-        "mean_absolute_error",
-        "WQL",
-        "weighted_quantile_loss",
-        "SQL",
-        "symmetric_quantile_loss",
-        "RMSSE",
-        "root_mean_squared_scaled_error",
-        "WAPE",
-        "weighted_absolute_percentage_error",
-        # AutoGluon 1.6 losses. BIAS is a signed diagnostic and stays unflipped.
-        "MAEB",
-        "WAPEB",
-        "MQL",
-    }
-)
-
 
 def to_finite_float(value: Any) -> float | None:
     """Return a finite float or None."""
@@ -70,33 +38,26 @@ def to_finite_float(value: Any) -> float | None:
     return number
 
 
-def _normalize_metric_name(metric: str) -> str:
-    return (metric or "").strip().lstrip("-").upper()
+def _metric_scorer(name: str) -> Any:
+    """Resolve AutoGluon metric metadata without importing the SDK at module load."""
+    from autogluon.timeseries.metrics import AVAILABLE_METRICS, METRIC_ALIASES
+
+    scorer_cls = AVAILABLE_METRICS.get(METRIC_ALIASES.get(name, name))
+    return scorer_cls() if scorer_cls else None
 
 
 def filter_finite_metrics(metrics: dict[str, Any]) -> dict[str, float]:
-    """Keep only finite scalar metric values (KFP-safe).
+    """Restore natural signs of raw AutoGluon scores; omit non-finite values.
 
-    Normalizes AutoGluon's "higher-is-better" convention by converting error metrics
-    back to their natural positive form. AutoGluon negates error metrics like MAPE/RMSE/MAE
-    in .evaluate() output, so this function multiplies them by -1 to restore standard signs.
-
-    Used for ``back_testing.json`` only. ``metrics.json`` keeps raw AutoGluon signs for
-    leaderboard compatibility.
+    Used once for holdout and aggregate backtest scores, never for natural point errors.
+    Unknown metrics retain their signs.
     """
     cleaned: dict[str, float] = {}
     for key, value in metrics.items():
         number = to_finite_float(value)
         if number is not None:
-            # AutoGluon negates error metrics for "higher is better" convention.
-            # Convert back to natural form: MAPE/RMSE/etc should be positive.
-            metric_normalized = _normalize_metric_name(key)
-            if metric_normalized in _LOWER_IS_BETTER:
-                # This metric is naturally "lower is better", so AutoGluon negated it.
-                # Multiply by -1 to restore positive error values.
-                cleaned[key] = -number
-            else:
-                cleaned[key] = number
+            scorer = _metric_scorer(key)
+            cleaned[key] = number * scorer.sign if scorer else number
     return cleaned
 
 
@@ -127,14 +88,6 @@ def serialize_date(value: Any) -> str:
     """Serialize timestamps to YYYY-MM-DD for compact window bounds."""
     timestamp = serialize_timestamp(value)
     return timestamp[:10] if len(timestamp) >= 10 else timestamp
-
-
-def _is_higher_better(eval_metric: str) -> bool:
-    original = (eval_metric or "").strip()
-    if original.startswith("-"):
-        return True
-    # Check raw name first (handles snake_case), then normalized uppercase (handles acronyms).
-    return original not in _LOWER_IS_BETTER and _normalize_metric_name(original) not in _LOWER_IS_BETTER
 
 
 def _mean_prediction_column(predictions: pd.DataFrame) -> str:
@@ -372,7 +325,8 @@ def _select_best_worst(
     if not series_averages:
         return None, None
 
-    higher_is_better = _is_higher_better(ranking_metric)
+    scorer = _metric_scorer(ranking_metric)
+    higher_is_better = scorer is None or scorer.greater_is_better_internal
 
     def sort_key(item: tuple[Any, dict[str, float]]) -> float:
         value = item[1].get(ranking_metric)
@@ -454,6 +408,7 @@ def _build_series_analysis(
         }
 
     return {
+        "ranking_metric": ranking_metric,
         "num_series_evaluated": len(series_averages),
         "best_performer": _series_payload(best_id),
         "worst_performer": _series_payload(worst_id),

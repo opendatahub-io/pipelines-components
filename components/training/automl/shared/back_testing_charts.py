@@ -30,27 +30,28 @@ def _metric_display_name(metric: str) -> str:
     """Return a short label for plot titles (abbreviates snake_case to initials)."""
     if "_" not in metric:
         return metric
+    metric = metric.replace("_with_bias", "_bias")  # AutoGluon's MAEB/WAPEB aliases.
     return "".join(w[0] for w in metric.split("_") if w).upper()
 
 
 def _normalize_metric(metric: str) -> str:
-    return (metric or "").strip().lstrip("-").upper()
+    return _metric_display_name((metric or "").strip().lstrip("-")).upper()
 
 
-def pick_window_metric(metrics: dict[str, Any], eval_metric: str) -> float | None:
-    """Return a finite window metric value, preferring ``eval_metric``."""
-    if not metrics:
-        return None
+def pick_window_metric(
+    metrics: dict[str, Any], eval_metric: str, *, allow_fallback: bool = True
+) -> tuple[str, float] | None:
+    """Return the actual metric name and finite value, preferring ``eval_metric``."""
+    finite = {
+        key: float(value)
+        for key, value in metrics.items()
+        if isinstance(value, (int, float)) and math.isfinite(float(value))
+    }
     wanted = _normalize_metric(eval_metric)
-    for key, value in metrics.items():
-        if _normalize_metric(key) == wanted and isinstance(value, (int, float)):
-            number = float(value)
-            if math.isfinite(number):
-                return number
-    for value in metrics.values():
-        if isinstance(value, (int, float)) and math.isfinite(float(value)):
-            return float(value)
-    return None
+    for key, value in finite.items():
+        if _normalize_metric(key) == wanted:
+            return key, value
+    return next(iter(finite.items()), None) if allow_fallback else None
 
 
 def _resolve_item_id(item_id: Any, available_item_ids: list[Any]) -> Any | None:
@@ -107,14 +108,14 @@ def per_window_metrics_table(
     rows: list[dict[str, Any]] = []
     for index, window in enumerate(per_window_metrics):
         metrics = window.get("metrics") or {}
-        metric_value = pick_window_metric(metrics, eval_metric)
+        metric = pick_window_metric(metrics, eval_metric, allow_fallback=False)
         rows.append(
             {
                 "cutoff": window.get("cutoff"),
                 "window_id": window.get("window_id", index),
                 "test_start": window.get("test_start", ""),
                 "test_end": window.get("test_end", ""),
-                eval_metric: metric_value,
+                eval_metric: metric[1] if metric else None,
             }
         )
     return pd.DataFrame(rows)
@@ -151,7 +152,7 @@ def _show_overall_backtest_summary(
     overall = mean_window_metric(per_window_metrics, eval_metric)
     if overall is None:
         return
-    window_count = len(per_window_metrics)
+    window_count = int(per_window_metrics_table(per_window_metrics, eval_metric)[eval_metric].count())
     window_label = "window" if window_count == 1 else "windows"
     summary = f"Overall {eval_metric} (mean across {window_count} validation {window_label}, all series): {overall:.6g}"
     if num_series_evaluated is not None:
@@ -409,9 +410,8 @@ def render_back_testing_forecast_charts(back_testing: dict[str, Any]) -> None:
         for index, window in enumerate(item_windows):
             axis = axes[0, index]
             window_id = window.get("window_id", index)
-            metric_value = pick_window_metric(window.get("metrics") or {}, eval_metric)
-            metric_label = _metric_display_name(eval_metric)
-            metric_text = f"{metric_label}={metric_value:.3g}" if metric_value is not None else metric_label
+            metric = pick_window_metric(window.get("metrics") or {}, series_analysis.get("ranking_metric", eval_metric))
+            metric_text = f"{_metric_display_name(metric[0])}={metric[1]:.3g}" if metric else "No finite metric"
             try:
                 _draw_forecast(
                     axis,
@@ -425,7 +425,13 @@ def render_back_testing_forecast_charts(back_testing: dict[str, Any]) -> None:
             if index:
                 axis.set_ylabel("")
 
-        figure.suptitle(f"{heading} performer: {item_id}", fontsize=12)
+        ranking_metric = series_analysis.get("ranking_metric")
+        ranking_label = "ranking metric unavailable (legacy artifact)"
+        if ranking_metric:
+            ranking_label = f"ranked by {_metric_display_name(ranking_metric)}"
+            if _normalize_metric(ranking_metric) != _normalize_metric(eval_metric):
+                ranking_label += f" (fallback for {_metric_display_name(eval_metric)})"
+        figure.suptitle(f"{heading} performer: {item_id} — {ranking_label}", fontsize=12)
         figure.tight_layout(rect=[0, 0.04, 1, 0.92])
         plt.show()
 
