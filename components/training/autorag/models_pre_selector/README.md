@@ -19,7 +19,6 @@ Running as a distinct step keeps the (potentially expensive) pre-selection evalu
 | `extracted_text` | `dsl.Input[dsl.Artifact]` | `None` | Input artifact with extracted text documents. Only read when pre-selection actually runs. |
 | `test_data` | `dsl.Input[dsl.Artifact]` | `None` | Input artifact with benchmark questions and expected answers. Only read when pre-selection actually runs. |
 | `search_space_mps_report` | `dsl.Output[dsl.Artifact]` | `None` | Output artifact for the (possibly reduced) JSON search space report. |
-| `embedded_artifact` | `dsl.EmbeddedInput[dsl.Dataset]` | `None` | Embedded ``autorag.shared`` helpers injected by KFP at runtime. |
 | `component_status` | `dsl.Output[dsl.Artifact]` | `None` | Output artifact containing stage-level progress tracking. |
 | `preset` | `str` | `speed` | Pipeline quality tier. "speed" (default) uses 10 benchmark query threads during pre-selection; "balanced" uses 4 (reduced due to larger per-request context). |
 
@@ -71,7 +70,7 @@ def example_pipeline():
   - autorag
   - model-selection
   - optimization
-- **Last Verified**: 2026-11-02 00:00:00+00:00
+- **Last Verified**: 2026-11-12 00:00:00+00:00
 - **Owners**:
   - No Parent Owners: Yes
   - Approvers:

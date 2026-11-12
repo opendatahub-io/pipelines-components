@@ -18,7 +18,6 @@ It also surfaces the language AutoRAG detects from the benchmark questions, so t
 | `search_space_report` | `dsl.Output[dsl.Artifact]` | `None` | Output artifact for the JSON search space report. |
 | `embedding_models` | `List[str]` | `None` | List of embedding model identifiers to try. |
 | `generation_models` | `List[str]` | `None` | List of generation model identifiers to try. |
-| `embedded_artifact` | `dsl.EmbeddedInput[dsl.Dataset]` | `None` | Embedded ``autorag.shared`` helpers injected by KFP at runtime. |
 | `component_status` | `dsl.Output[dsl.Artifact]` | `None` | Output artifact containing stage-level progress tracking. |
 | `preset` | `str` | `speed` | Pipeline quality tier. "speed" (default) uses recursive chunking without contextual enrichment. "balanced" uses hybrid chunking with LLM contextual enrichment in the search space. |
 | `db_provider` | `str` | `""` | DCH provider: postgres (PGVector), milvus, or neo4j. Omit only for legacy provider-prefixed secrets. |
@@ -70,7 +69,7 @@ def example_pipeline():
   - autorag
   - search-space
   - optimization
-- **Last Verified**: 2026-11-06 00:00:00+00:00
+- **Last Verified**: 2026-11-12 00:00:00+00:00
 - **Owners**:
   - No Parent Owners: Yes
   - Approvers:

@@ -163,7 +163,7 @@ def test_shared_postgres_sslmode_is_optional(sslmode):
 
 def test_adapter_loads_without_repository_package():
     """The exact module shipped in the runtime artifact is standalone."""
-    path = Path(__file__).parents[1] / "runtime_embed" / "database_connection.py"
+    path = Path(__file__).parents[1] / "database_connection.py"
     spec = importlib.util.spec_from_file_location("standalone_connection", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
