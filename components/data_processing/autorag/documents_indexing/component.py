@@ -284,7 +284,7 @@ def documents_indexing(
         from importlib.resources import files
 
         html_content = (
-            files("kfp_components.components.training.autorag.shared.runtime_embed")
+            files("kfp_components.components.training.autorag.shared")
             .joinpath("indexing_report_template.html")
             .read_text(encoding="utf-8")
         )
