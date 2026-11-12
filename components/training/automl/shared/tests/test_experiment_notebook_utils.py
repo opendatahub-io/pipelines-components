@@ -6,6 +6,8 @@
 import ast
 import json
 
+import pytest
+
 from ..experiment_notebook_utils import (
     EXPERIMENT_NOTEBOOK_FILENAME,
     EXPERIMENT_NOTEBOOK_RELATIVE_PATH,
@@ -218,16 +220,19 @@ class TestExperimentNotebookUtils:
         assert 'positive_class = "yes"' in source
         assert '"positive_class": positive_class' in source
 
-    def test_write_experiment_notebook_timeseries(self, tmp_path):
+    @pytest.mark.parametrize("freq", ["", "D"])
+    def test_write_experiment_notebook_timeseries(self, tmp_path, freq):
         destination = write_experiment_notebook(
             output_dir=tmp_path,
             kind="timeseries",
-            replacements=timeseries_experiment_notebook_replacements(_timeseries_config()),
+            replacements=timeseries_experiment_notebook_replacements(_timeseries_config(freq=freq)),
         )
         assert destination.name == EXPERIMENT_NOTEBOOK_FILENAME
         source = _code_source(json.loads(destination.read_text(encoding="utf-8")))
         assert 'pipeline_name = "autogluon-timeseries-training-pipeline"' in source
         assert 'target = "sales"' in source
+        assert f'freq = "{freq}"' in source
+        assert '"freq": freq' in source
         assert "test_data_bucket_name" not in source
         assert "test_data_file_key" not in source
         assert EXPERIMENT_NOTEBOOK_RELATIVE_PATH.endswith(EXPERIMENT_NOTEBOOK_FILENAME)
