@@ -152,7 +152,7 @@ def _show_overall_backtest_summary(
     overall = mean_window_metric(per_window_metrics, eval_metric)
     if overall is None:
         return
-    window_count = len(per_window_metrics)
+    window_count = int(per_window_metrics_table(per_window_metrics, eval_metric)[eval_metric].count())
     window_label = "window" if window_count == 1 else "windows"
     summary = f"Overall {eval_metric} (mean across {window_count} validation {window_label}, all series): {overall:.6g}"
     if num_series_evaluated is not None:

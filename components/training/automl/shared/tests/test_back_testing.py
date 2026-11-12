@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from time import perf_counter
 from unittest import mock
 
@@ -21,6 +22,25 @@ from ..back_testing import (
     serialize_date,
     serialize_timestamp,
 )
+
+
+@pytest.fixture(autouse=True)
+def metric_metadata(monkeypatch):
+    """Model AutoGluon scorer metadata without requiring the training SDK."""
+    metrics = mock.Mock()
+    metrics.METRIC_ALIASES = {
+        "mean_absolute_percentage_error": "MAPE",
+        "root_mean_squared_error": "RMSE",
+        "mean_absolute_error": "MAE",
+        "scaled_quantile_loss": "SQL",
+    }
+    metrics.AVAILABLE_METRICS = {
+        name: mock.Mock(
+            return_value=mock.Mock(sign=1 if name == "BIAS" else -1, greater_is_better_internal=name == "BIAS")
+        )
+        for name in ("MASE", "MAPE", "RMSE", "MAE", "MAEB", "WAPEB", "MQL", "BIAS", "RMSLE", "SQL")
+    }
+    monkeypatch.setitem(sys.modules, "autogluon.timeseries.metrics", metrics)
 
 
 def _make_panel(item_ids: list[str], timestamps: list[str], target_values: list[float]) -> pd.DataFrame:
@@ -61,7 +81,10 @@ class TestSerialization:
             "MQL": 0.8,
             "BIAS": 0.4,
         }
-        assert filter_finite_metrics({"BIAS": -0.3}) == {"BIAS": -0.3}
+        assert filter_finite_metrics({"BIAS": -0.3, "unknown_signed_metric": -0.5}) == {
+            "BIAS": -0.3,
+            "unknown_signed_metric": -0.5,
+        }
         assert filter_finite_metrics({"RMSLE": -0.2, "scaled_quantile_loss": -0.4}) == {
             "RMSLE": 0.2,
             "scaled_quantile_loss": 0.4,

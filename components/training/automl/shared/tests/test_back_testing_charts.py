@@ -183,11 +183,13 @@ class TestBackTestingCharts:
         assert pick_window_metric({"MAEB": 1.0}, "mean_absolute_error_with_bias") == ("MAEB", 1.0)
         assert pick_window_metric({"WAPEB": 0.2}, "weighted_absolute_percentage_error_with_bias") == ("WAPEB", 0.2)
 
-    def test_aggregate_does_not_substitute_another_metric(self):
+    def test_aggregate_does_not_substitute_another_metric(self, capsys):
         """Missing MASE must not become a MAPE value in a MASE mean."""
         windows = [{"metrics": {"MASE": 0.4}}, {"metrics": {"MAPE": 5.0}}]
         assert mean_window_metric(windows, "mean_absolute_scaled_error") == 0.4
         assert pd.isna(per_window_metrics_table(windows, "MASE").iloc[1]["MASE"])
+        render_back_testing_metrics({"eval_metric": "MASE", "per_window_metrics": windows})
+        assert "mean across 1 validation window, all series): 0.4" in capsys.readouterr().out
 
     def test_notebook_backtest_charts_source_compiles(self):
         """Notebook injection source is valid Python."""

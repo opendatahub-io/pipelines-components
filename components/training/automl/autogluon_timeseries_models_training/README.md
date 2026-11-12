@@ -168,17 +168,15 @@ Under each ``{model_name}_FULL/metrics/`` directory:
 
 Metric export compatibility:
 
-- New time-series exports carry ``metrics_convention: natural_v1`` and ``metric_directions`` in
-  ``model.json``, ``predictor_metadata.json``, models artifact metadata/context, and leaderboard artifact metadata.
-  Directions are ``lower_is_better``, ``higher_is_better``, or ``diagnostic`` (no monotonic better direction).
-  ``metrics.json`` remains a flat metric-name-to-number mapping; read its convention from the accompanying metadata.
-- Consumers should display new values directly and use the directions for tooltips and sorting. Do not negate them again
-  or use absolute values. Older time-series exports without the marker contain raw AutoGluon scores; handle those through
-  a separate legacy path. The marker applies to holdout exports, not to ``back_testing.json``, whose errors were already positive.
-- MLflow parent and model runs record ``metrics_convention`` and the evaluation ``metric_direction`` as parameters.
-  Parent best/worst scores and best-model selection use that direction.
-- ``back_testing.json`` now includes ``series_analysis.ranking_metric``. Best/worst notebook headings identify this metric
-  and any fallback from the configured evaluation metric; window annotations name the metric actually displayed.
-  Older artifacts lack this field, so their series ranking metric is shown as unavailable.
-- Holdout test metrics, backtesting aggregates across validation windows/all series, and individual-series point errors
-  cover different evaluation scopes and need not match numerically. Missing aggregate metrics are not replaced by another metric.
+- New exports carry ``metrics_convention: natural_v1`` and ``metric_directions`` in ``model.json``,
+  ``predictor_metadata.json``, models artifact metadata/context, and leaderboard artifact metadata.
+  Display values directly. Use ``lower_is_better`` / ``higher_is_better`` for sorting and tooltips;
+  ``diagnostic`` has no monotonic direction. ``metrics.json`` remains a flat mapping; its convention is in the accompanying metadata.
+- Older time-series exports without the marker contain raw AutoGluon scores and require separate legacy handling.
+  Do not convert new values again or use absolute values. Backtest errors were already positive, independently of this marker.
+- MLflow records ``metrics_convention`` and the evaluation ``metric_direction`` on parent and model runs;
+  parent best/worst scores and best-model selection follow that direction.
+- ``back_testing.json`` includes ``series_analysis.ranking_metric``. Notebook headings identify this metric and any fallback;
+  annotations name the actual metric. For older artifacts the ranking metric is shown as unavailable.
+- Holdout scores, all-series backtesting aggregates, and individual-series errors cover different scopes and need not match.
+  Missing aggregate metrics are not replaced by another metric.

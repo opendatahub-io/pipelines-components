@@ -349,6 +349,7 @@ def _run_logger_lifecycle(
     eval_metric: str = "accuracy",
     metrics_by_model: dict | None = None,
     total_fit_time_seconds: float | None = None,
+    **logger_kwargs,
 ):
     """Drive a full ``experiment_run_logger`` lifecycle and return ``result()``."""
     metrics_by_model = metrics_by_model or {name: {"accuracy": 0.9} for name in model_names}
@@ -356,6 +357,7 @@ def _run_logger_lifecycle(
         with experiment_run_logger(
             task_type=task_type,
             eval_metric=eval_metric,
+            **logger_kwargs,
         ) as run_logger:
             run_logger.log_header(
                 pipeline_name="autogluon-tabular-training-pipeline",
@@ -385,7 +387,7 @@ class TestMlflowExperimentLogger:
             ("higher_is_better", "TFT_FULL", 0.8, 0.2),
         ],
     )
-    def test_natural_metrics_use_direction_in_tracking(self, monkeypatch, direction, best_model, best, worst):
+    def test_natural_metrics_use_direction_in_tracking(self, monkeypatch, tmp_path, direction, best_model, best, worst):
         """Model metrics pass through once; parent aggregates select the correct extrema."""
         _set_kfp_mlflow_config(monkeypatch, parent_run_id="parent-run", experiment_id="1")
         mlflow = _make_mock_mlflow(
@@ -395,26 +397,19 @@ class TestMlflowExperimentLogger:
                 _mock_run_context("child-2", "1"),
             ],
         )
-        with mock.patch.dict(sys.modules, {"mlflow": mlflow}):
-            with experiment_run_logger(
-                task_type="time_series",
-                eval_metric="metric",
-                metric_direction=direction,
-                metrics_convention="natural_v1",
-            ) as logger:
-                logger.log_header(pipeline_name="timeseries", kfp_run_id="run-1")
-                for name, score in (("DeepAR_FULL", 0.2), ("TFT_FULL", 0.8)):
-                    logger.log_model(
-                        model_name=name,
-                        model_uri=f"s3://models/{name}",
-                        metrics={
-                            "test_data": {
-                                "metric": score,
-                                "BIAS": -0.3,
-                            }
-                        },
-                    )
-                logger.finalize()
+        _run_logger_lifecycle(
+            mlflow,
+            tmp_path=tmp_path,
+            model_names=["DeepAR_FULL", "TFT_FULL"],
+            task_type="time_series",
+            eval_metric="metric",
+            metric_direction=direction,
+            metrics_convention="natural_v1",
+            metrics_by_model={
+                "DeepAR_FULL": {"metric": 0.2, "BIAS": -0.3},
+                "TFT_FULL": {"metric": 0.8, "BIAS": -0.3},
+            },
+        )
         assert mlflow.log_metrics.call_args_list == [
             mock.call({"metric": 0.2, "BIAS": -0.3}),
             mock.call({"metric": 0.8, "BIAS": -0.3}),

@@ -105,7 +105,6 @@ def autogluon_timeseries_models_training(
     """
     import json
     import logging
-    import math
     import time
     from pathlib import Path
 
@@ -117,7 +116,10 @@ def autogluon_timeseries_models_training(
 
     logger = logging.getLogger(__name__)
 
-    from kfp_components.components.training.automl.shared.back_testing import build_back_testing_json
+    from kfp_components.components.training.automl.shared.back_testing import (
+        build_back_testing_json,
+        filter_finite_metrics,
+    )
     from kfp_components.components.training.automl.shared.back_testing_charts import (
         notebook_backtest_charts_source,
     )
@@ -159,12 +161,10 @@ def autogluon_timeseries_models_training(
         if eval_metric not in METRIC_ALIASES:
             raise ValueError(f"eval_metric must be one of {sorted(METRIC_ALIASES)}; got {eval_metric!r}.")
         # Scorer metadata restores natural values, including legitimately signed diagnostics.
-        metric_signs = {}
         metric_directions = {}
         for name, scorer_cls in AVAILABLE_METRICS.items():
             name = _acronym_to_snake.get(name, name)
             scorer = scorer_cls()
-            metric_signs[name] = scorer.sign
             metric_directions[name] = "higher_is_better" if scorer.greater_is_better_internal else "lower_is_better"
             if scorer.evaluate_only:
                 metric_directions[name] = "diagnostic"
@@ -173,8 +173,6 @@ def autogluon_timeseries_models_training(
             "metric_directions": metric_directions,
         }
         metric_direction = metric_directions[eval_metric]
-        if metric_direction == "diagnostic":
-            raise ValueError(f"Metric '{eval_metric}' is diagnostic and cannot select models.")
         if not isinstance(top_n, int):
             raise TypeError("top_n must be an integer.")
         if top_n <= 0 or top_n > TOP_N_MAX:
@@ -507,19 +505,8 @@ def autogluon_timeseries_models_training(
                         model_name_full,
                         time.perf_counter() - evaluation_started,
                     )
-                    # Convert raw AutoGluon scores exactly once, before exporting or tracking.
-                    # Remap uppercase acronym keys (e.g. "MASE") to snake_case (e.g. "mean_absolute_scaled_error").
-                    metrics_dict = {}
-                    for k, v in metrics.items():
-                        if hasattr(v, "item"):
-                            v = float(v)
-                        if isinstance(v, (int, float)) and math.isfinite(v):
-                            normalized_key = _acronym_to_snake.get(k)
-                            if normalized_key is None:
-                                if k not in AVAILABLE_METRICS:
-                                    logger.warning("Unrecognized metric key %r from evaluate(); storing as-is.", k)
-                                normalized_key = k
-                            metrics_dict[normalized_key] = v * metric_signs.get(normalized_key, 1)
+                    # Normalize signs once, before exporting or tracking; keep canonical snake_case keys.
+                    metrics_dict = {_acronym_to_snake.get(k, k): v for k, v in filter_finite_metrics(metrics).items()}
 
                     if eval_metric not in metrics_dict:
                         raise ValueError(
