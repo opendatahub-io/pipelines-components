@@ -35,6 +35,7 @@ def rag_templates_optimization(
     pipeline_name: str = "",
     run_id: str = "",
     run_name: str = "",
+    db_provider: str = "",
 ):
     """RAG Templates Optimization component.
 
@@ -56,8 +57,8 @@ def rag_templates_optimization(
             ("MAAS_BASE_URL", "MAAS_API_KEY"). Propagated into each generated
             ``pattern.json`` indexing spec for downstream deployment.
         db_secret_name: Name of the K8s secret holding the database
-            configuration. Its keys select the backend: ``MILVUS_*`` keys use
-            Milvus, ``PGVECTOR_*`` keys use PGVector, ``NEO4J_*`` keys use Neo4j.
+            configuration. Set ``db_provider`` for DCH or shared PostgreSQL keys;
+            legacy ``MILVUS_*``, ``PGVECTOR_*``, and ``NEO4J_*`` keys remain supported.
             Propagated into each generated ``pattern.json`` indexing spec.
         input_data_secret_name: Name of the K8s secret with S3 credentials for
             input data.
@@ -82,6 +83,8 @@ def rag_templates_optimization(
         run_name: KFP run name (``dsl.PIPELINE_JOB_NAME_PLACEHOLDER``). Logged to
             MLflow, and used to name the fallback experiment/run when the platform
             supplies no parent run.
+        db_provider: DCH provider: postgres (PGVector), milvus, or neo4j. Omit only
+            for legacy provider-prefixed secrets.
     MLflow logging:
         Tracking is server-configured, not parameter-driven: it activates only when the
         platform injects ``KFP_MLFLOW_CONFIG`` into the step (RHOAI supplies the
@@ -114,7 +117,6 @@ def rag_templates_optimization(
 
     import pandas as pd
     from ai4rag import handler
-    from ai4rag.assets_generator import build_leaderboard_html, generate_notebook_from_template, generate_starter_kit
     from ai4rag.core.experiment.experiment import AI4RAGExperiment
     from ai4rag.core.hpo.gam_opt import GAMOptSettings
     from ai4rag.evaluator import BaseEvaluator, RagasEvaluator, UnitxtEvaluator
@@ -128,6 +130,11 @@ def rag_templates_optimization(
     from ai4rag.utils.clients.maas_client import create_maas_client
     from ai4rag.utils.docling_io import load_docling_documents
     from ai4rag.utils.event_handler import KFPEventHandler
+    from kfp_components.components.training.autorag.shared.assets_generator import (
+        build_leaderboard_html,
+        generate_notebook_from_template,
+        generate_starter_kit,
+    )
 
     logging.basicConfig(level=logging.INFO)
     _logger = logging.getLogger("rag-templates-optimization")
@@ -241,7 +248,7 @@ def rag_templates_optimization(
                             "batch_size": indexing_pipeline_params.get("batch_size"),
                             "preset": indexing_pipeline_params["preset"],
                             "ocr_lang": (settings["generation"].get("language") or {}).get("code"),
-                            "provider_type": store_binding["provider_type"],
+                            "db_provider": indexing_pipeline_params["db_provider"],
                             "collection_name": store_binding["collection_name"],
                             "embedding_model_id": settings["embedding"]["model_id"],
                             "embedding_params": settings["embedding"]["embedding_params"],
@@ -449,10 +456,14 @@ def rag_templates_optimization(
 
     if embedded_artifact is None:
         from kfp_components.components.training.autorag.shared import (  # pyright: ignore[reportMissingImports]
+            database_connection as _database_connection,
+        )
+        from kfp_components.components.training.autorag.shared import (
             mlflow_tracking as _mlflow_tracking,
         )
     else:
         _mlflow_tracking = _load_embedded_module("mlflow_tracking.py", "_autorag_mlflow_tracking")
+        _database_connection = _load_embedded_module("database_connection.py", "_autorag_database_connection")
 
     if component_status is None:
         from kfp_components.components.training.autorag.shared.component_status import (  # pyright: ignore[reportMissingImports]
@@ -476,24 +487,15 @@ def rag_templates_optimization(
             status.set_metadata(display_name="RAG Templates Optimization Status")
             component_status.metadata["display_name"] = "RAG Templates Optimization Status"
         with status.stage("optimize_templates"):
+            maas_base_url, maas_api_key = os.environ["MAAS_BASE_URL"], os.environ["MAAS_API_KEY"]
+            backend = _database_connection.normalize_connection(db_provider)
             maas_client = create_maas_client(
-                base_url=os.environ["MAAS_BASE_URL"],
-                api_key=os.environ["MAAS_API_KEY"],
+                base_url=maas_base_url,
+                api_key=maas_api_key,
             )
 
-            if "MILVUS_URI" in os.environ:
-                provider = "milvus"
-            elif "PGVECTOR_HOST" in os.environ:
-                provider = "pgvector"
-            elif "NEO4J_URI" in os.environ:
-                provider = "neo4j"
-            else:
-                raise ValueError(
-                    "No vector database configuration found. Expected MILVUS_*, PGVECTOR_*, or NEO4J_* "
-                    "environment variables injected from db_secret_name."
-                )
-            vector_store_config = get_vector_store_config(provider)
-            logging.info("Detected %s database provider from secret.", provider)
+            vector_store_config = get_vector_store_config(backend)
+            logging.info("Selected %s database provider.", backend)
 
             output_dir = Path(rag_patterns.path)
             output_dir.mkdir(parents=True, exist_ok=True)
@@ -505,6 +507,7 @@ def rag_templates_optimization(
                 "pipeline_name": "documents-indexing-pipeline",
                 "maas_secret_name": maas_secret_name,
                 "db_secret_name": db_secret_name,
+                "db_provider": db_provider,
                 "input_data_secret_name": input_data_secret_name,
                 "input_data_bucket_name": input_data_bucket_name,
                 "input_data_keys": input_data_keys or [],
@@ -544,7 +547,7 @@ def rag_templates_optimization(
                     values = embedding_models
                 params.append(Parameter(param_name, "C", values=values))
 
-            search_space = AI4RAGSearchSpace(params=params, vector_store_type=provider)
+            search_space = AI4RAGSearchSpace(params=params, vector_store_type=backend)
 
             evaluators = _build_evaluators(
                 foundation_models=foundation_models,

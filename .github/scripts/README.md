@@ -11,3 +11,10 @@ to add new scripts, see [scripts/README.md](../../scripts/README.md).
 cd .github/scripts
 uv run pytest */tests/ -v --tb=short
 ```
+
+## Import guard
+
+`check_imports/import_exceptions.yaml` lists allowed module-level imports and
+repository-relative `exclude` globs. Exclusions apply before parsing, so bundled
+application templates can use their own Python version and dependencies without
+weakening checks on component and pipeline modules.

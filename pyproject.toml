@@ -93,6 +93,7 @@ packages = [
     "kfp_components.components.training.autorag.rag_templates_optimization",
     "kfp_components.components.training.autorag.search_space_preparation",
     "kfp_components.components.training.autorag.shared",
+    "kfp_components.components.training.autorag.shared.assets_generator",
     "kfp_components.components.training.autorag.shared.runtime_embed",
     "kfp_components.components.training.finetuning",
     "kfp_components.components.training.finetuning.lora",
@@ -139,7 +140,7 @@ packages = [
 
 [tool.setuptools.package-data]
 "*" = ["*.yaml", "*.yml", "*.json"]
-"kfp_components.components.data_processing.autorag.documents_indexing" = [
+"kfp_components.components.training.autorag.shared.runtime_embed" = [
     "*.html",
 ]
 "kfp_components.components.training.automl.shared" = [
@@ -149,6 +150,25 @@ packages = [
 ]
 "kfp_components.components.training.autorag.shared" = [
     "run_status_templates/pipelines/*.json",
+]
+
+
+"kfp_components.components.training.autorag.shared.assets_generator" = [
+    "notebook_templates/*.ipynb",
+    "starter_kit_templates/**/*.py",
+    "starter_kit_templates/agentic_rag/agent_config.json",
+    "starter_kit_templates/agentic_rag/uv.lock",
+    "starter_kit_templates/agentic_rag/Makefile",
+    "starter_kit_templates/agentic_rag/pyproject.toml",
+    "starter_kit_templates/agentic_rag/Containerfile.openshell",
+    "starter_kit_templates/agentic_rag/README.md",
+    "starter_kit_templates/agentic_rag/values.yaml",
+]
+
+[tool.setuptools.exclude-package-data]
+"kfp_components.components.training.autorag.shared.assets_generator" = [
+    "**/__pycache__/*", "**/*.pyc", "**/.DS_Store",
+    "**/.venv/*", "**/.env", "**/.env.*", "**/*.pem", "**/*.key",
 ]
 
 [tool.ruff]
@@ -162,6 +182,8 @@ exclude = [
     "__pycache__",
     "node_modules",
     "**/_generated/",
+    "components/training/autorag/shared/assets_generator/starter_kit_templates/**",
+    "components/training/autorag/shared/assets_generator/notebook_templates/**",
     "**/test_data/**", # Test fixtures may have intentional styles (quote types, etc.)
 ]
 
@@ -174,6 +196,11 @@ ignore = [
     "D415", # First line should end with punctuation (not needed for simple module names)
 ]
 
+
+[tool.ruff.lint.per-file-ignores]
+# Preserve the relocated public APIs' NumPy docstrings.
+"components/training/autorag/shared/assets_generator/*.py" = ["D107", "D416"]
+"components/training/autorag/shared/tests/assets_generator/*.py" = ["D"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"

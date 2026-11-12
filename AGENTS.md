@@ -143,3 +143,16 @@ Workflow references:
 
 - Component/pipeline tests: [`.github/workflows/component-pipeline-tests.yml`](.github/workflows/component-pipeline-tests.yml)
 - Scripts tests: [`.github/workflows/scripts-tests.yml`](.github/workflows/scripts-tests.yml)
+
+## AutoRAG asset generation
+
+The generator and its templates live in
+`components/training/autorag/shared/assets_generator` and ship in the local
+`kfp-components` wheel. Importing them remains compatible with Python 3.11 without
+ai4rag; generation requires ai4rag and Python 3.12+. The optional generator tests
+require real ai4rag; see the generator README for local installed-wheel validation.
+Bundled starter-kit sources are package data and are excluded from the KFP import
+guard so their Python 3.12 syntax and application imports remain intact.
+Build the training Containerfile with repository-root context. Preserve the inference
+image's dependency boundary and the embedded status/MLflow helpers. See the
+generator README for coordinated release, compiled-pipeline compatibility, and rollback.

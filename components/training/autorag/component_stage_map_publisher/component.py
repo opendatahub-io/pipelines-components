@@ -22,6 +22,7 @@ def publish_component_stage_map(
     run_id: str,
     component_stage_map: dsl.Output[dsl.Artifact],
     embedded_artifact: dsl.EmbeddedInput[dsl.Dataset] = None,
+    db_provider: str = "",
 ) -> None:
     """Publish the component-to-stage map for dashboard consumption.
 
@@ -39,6 +40,8 @@ def publish_component_stage_map(
         run_id: KFP run ID for tracking (from ``dsl.PIPELINE_JOB_ID_PLACEHOLDER``).
         component_stage_map: Output artifact containing the component-to-stage map.
         embedded_artifact: Embedded ``autorag.shared`` package with pipeline templates.
+        db_provider: DCH provider: postgres (PGVector), milvus, or neo4j. When omitted,
+            infer graph mode from legacy database secret keys.
 
     Raises:
         FileNotFoundError: If the template for ``pipeline_id`` is missing or empty.
@@ -100,12 +103,17 @@ def publish_component_stage_map(
 
     templates_root = Path(embedded_artifact.path) if embedded_artifact is not None else None
     template_name = pipeline_id
+    if db_provider and db_provider not in {"postgres", "milvus", "neo4j"}:
+        raise ValueError("db_provider must be postgres, milvus, or neo4j.")
     # Match search_space_preparation's provider precedence.
-    if (
-        pipeline_id == "documents-rag-optimization-pipeline"
-        and "NEO4J_URI" in os.environ
-        and "MILVUS_URI" not in os.environ
-        and "PGVECTOR_HOST" not in os.environ
+    if pipeline_id == "documents-rag-optimization-pipeline" and (
+        db_provider == "neo4j"
+        or (
+            not db_provider
+            and "NEO4J_URI" in os.environ
+            and "MILVUS_URI" not in os.environ
+            and "PGVECTOR_HOST" not in os.environ
+        )
     ):
         template_name += "-graph"
     manifest_path = templates_root / "pipelines" / f"{template_name}.json" if templates_root is not None else None

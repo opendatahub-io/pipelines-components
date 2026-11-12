@@ -55,6 +55,21 @@ def _set_kfp_mlflow_config(
     return cfg
 
 
+@pytest.mark.parametrize(
+    "image", [None, "", "   ", "quay.io/example/automl:custom", "quay.io/example/automl@sha256:" + "a" * 64]
+)
+def test_runtime_image_uses_only_explicit_environment(monkeypatch, image):
+    """Do not substitute package defaults for the selected runtime image."""
+    from kfp_components.utils import consts
+
+    monkeypatch.setattr(consts, "AUTOML_IMAGE", "quay.io/example/unrelated:default")
+    if image is None:
+        monkeypatch.delenv("RELATED_IMAGE_ODH_AUTOML_IMAGE", raising=False)
+    else:
+        monkeypatch.setenv("RELATED_IMAGE_ODH_AUTOML_IMAGE", image)
+    assert mlflow_tracking._resolve_image() == (image or "").strip()
+
+
 class TestMlflowTrackingHelpers:
     """Tests for MLflow env helpers and tracking artifact builders."""
 

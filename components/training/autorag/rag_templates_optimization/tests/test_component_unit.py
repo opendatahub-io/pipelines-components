@@ -175,7 +175,7 @@ def _make_ai4rag_mocks() -> SimpleNamespace:
         "ai4rag.search_space.src.parameter": parameter_module,
         "ai4rag.search_space.src.search_space": search_space_module,
         "ai4rag.utils": mock.MagicMock(),
-        "ai4rag.assets_generator": assets_generator_module,
+        "kfp_components.components.training.autorag.shared.assets_generator": assets_generator_module,
         "ai4rag.utils.clients": mock.MagicMock(),
         "ai4rag.utils.clients.maas_client": maas_client_module,
         "ai4rag.utils.docling_io": docling_io_module,
@@ -293,6 +293,8 @@ class TestRagTemplatesOptimizationInterface:
             assert sig.parameters[name].default is inspect.Parameter.empty
         assert sig.parameters["preset"].default == "speed"
         assert sig.parameters["component_status"].default is None
+        assert sig.parameters["db_provider"].default == ""
+        assert "provider" not in params
 
 
 class TestRagTemplatesOptimizationValidation:
@@ -978,3 +980,102 @@ class TestPresetWarmStartConfiguration:
         assert gam_call_kwargs["max_iterations"] == limit
         assert len(rag_patterns.metadata["metadata"]["patterns"]) == limit + 1
         assert len(list(Path(rag_patterns.path).glob("*/pattern.json"))) == limit + 1
+
+
+@pytest.mark.parametrize(
+    ("provider", "database_env", "backend"),
+    [
+        (
+            "postgres",
+            {"AUTORAG_DB_URI": "postgresql://rag:private-password@database:5432/documents"},
+            "pgvector",
+        ),
+        ("", {"MILVUS_URI": "https://milvus:19530", "PGVECTOR_HOST": "database"}, "milvus"),
+        ("", {"PGVECTOR_HOST": "database", "NEO4J_URI": "neo4j://graph:7687"}, "pgvector"),
+    ],
+)
+def test_connection_provider_survives_optimization_and_indexing(tmp_path, provider, database_env, backend):
+    """Generated indexing inputs preserve explicit selection and legacy precedence."""
+    mocks = _make_ai4rag_mocks()
+    pattern = _pattern_payload("pattern_a")
+    pattern["settings"]["store_binding"]["provider_type"] = backend
+    mocks.KFPEventHandler.return_value.patterns = [{"payload": pattern, "evaluation_results": []}]
+    report = _write_search_space_report(tmp_path)
+    rag_patterns, leaderboard = _artifacts(tmp_path)
+    with (
+        mock.patch.dict(
+            "os.environ",
+            {key: value for key, value in MOCKED_ENV_VARIABLES.items() if key.startswith("MAAS_")} | database_env,
+            clear=True,
+        ),
+        mock.patch.dict("sys.modules", mocks.modules),
+    ):
+        rag_templates_optimization.python_func(
+            extracted_text=str(tmp_path / "ext"),
+            test_data=str(tmp_path / "test.json"),
+            search_space_mps_report=report,
+            rag_patterns=rag_patterns,
+            test_data_key="test.json",
+            maas_secret_name="maas",
+            db_secret_name="dch-db",
+            input_data_secret_name="s3",
+            input_data_bucket_name="docs",
+            leaderboard=leaderboard,
+            db_provider=provider,
+        )
+    mocks.get_vector_store_config.assert_called_once_with(backend)
+    assert mocks.AI4RAGSearchSpace.call_args.kwargs["vector_store_type"] == backend
+    payload = json.loads((Path(rag_patterns.path) / "pattern_a" / "pattern.json").read_text())
+    params = payload["indexing"]["pipeline_spec"]["parameters"]
+    assert params["db_provider"] == provider
+    assert "provider" not in params
+    assert params["db_secret_name"] == "dch-db"
+    assert "provider_type" not in params
+    assert "private-password" not in json.dumps(payload)
+    mocks.generate_starter_kit.assert_called_once()
+    assert (Path(rag_patterns.path).parent / "starter_kit" / "starter_kit.zip").read_bytes() == b"generated zip"
+
+    from ...shared.database_connection import normalize_connection
+
+    assert normalize_connection(params["db_provider"], database_env.copy()) == backend
+
+
+@pytest.mark.parametrize(
+    ("database_env", "message"),
+    [
+        ({"AUTORAG_DB_URI": "postgres://user:password@db:invalid/docs"}, "Invalid PostgreSQL URI"),
+        ({"MILVUS_URI": "https://milvus:19530"}, "db_provider does not match"),
+    ],
+)
+def test_connection_validation_publishes_failed_stage_before_api_calls(tmp_path, database_env, message):
+    """Optimization reports invalid secrets through stage tracking without contacting services."""
+    mocks = _make_ai4rag_mocks()
+    rag_patterns, leaderboard = _artifacts(tmp_path)
+    status = SimpleNamespace(path=str(tmp_path / "status"), metadata={})
+    maas_env = {"MAAS_BASE_URL": "https://maas.example.com/v1", "MAAS_API_KEY": "key"}
+    with (
+        mock.patch.dict("os.environ", maas_env | database_env, clear=True),
+        mock.patch.dict("sys.modules", mocks.modules),
+        pytest.raises(ValueError, match=message),
+    ):
+        rag_templates_optimization.python_func(
+            extracted_text=str(tmp_path / "extracted"),
+            test_data=str(tmp_path / "test.json"),
+            search_space_mps_report=str(tmp_path / "search-space.json"),
+            rag_patterns=rag_patterns,
+            test_data_key="test.json",
+            maas_secret_name="maas",
+            db_secret_name="db",
+            input_data_secret_name="s3",
+            input_data_bucket_name="documents",
+            leaderboard=leaderboard,
+            db_provider="postgres",
+            component_status=status,
+        )
+    report = json.loads((Path(status.path) / "component_status.json").read_text())
+    stage = next(stage for stage in report["stages"] if stage["id"] == "optimize_templates")
+    assert stage["status"]["state"] == "failed"
+    assert message in stage["error"]
+    assert "user:password" not in json.dumps(report)
+    mocks.create_maas_client.assert_not_called()
+    mocks.AI4RAGExperiment.assert_not_called()

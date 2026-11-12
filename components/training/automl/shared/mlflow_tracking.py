@@ -413,18 +413,8 @@ def _resolve_kfp_version() -> str:
 
 
 def _resolve_image() -> str:
-    """Best-effort training container image reference for the parent run.
-
-    Reads ``AUTOML_IMAGE`` (the component ``base_image``) from the installed package so the
-    parent run records which image produced the models. Returns ``""`` when unavailable.
-    """
-    try:
-        from kfp_components.utils.consts import AUTOML_IMAGE  # pyright: ignore[reportMissingImports]
-
-        return str(AUTOML_IMAGE)
-    except Exception:
-        logger.debug("Could not resolve AUTOML_IMAGE for MLflow logging", exc_info=True)
-        return ""
+    """Read the task image injected by the compiler; leave unknown provenance empty."""
+    return os.getenv("RELATED_IMAGE_ODH_AUTOML_IMAGE", "").strip()
 
 
 def _parse_timeout_seconds(timeout: str) -> int | None:
