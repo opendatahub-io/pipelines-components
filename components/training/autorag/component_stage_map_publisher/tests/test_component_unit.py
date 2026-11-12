@@ -122,7 +122,7 @@ class TestPublishComponentStageMap:
                 component_stage_map=component_stage_map_artifact,
             )
 
-    def test_rejects_empty_components_list(self, component_stage_map_artifact, tmp_path):
+    def test_rejects_empty_components_list(self, component_stage_map_artifact, tmp_path, monkeypatch):
         """Reject templates whose components list is empty."""
         templates_root = tmp_path / "run_status_templates"
         pipelines_dir = templates_root / "pipelines"
@@ -131,13 +131,15 @@ class TestPublishComponentStageMap:
             json.dumps({"pipeline_id": "empty-pipeline", "components": []}),
             encoding="utf-8",
         )
+        from kfp_components.components.training.autorag.shared import run_status
+
+        monkeypatch.setattr(run_status, "resolve_templates_dir", lambda: templates_root)
 
         with pytest.raises(FileNotFoundError, match="empty-pipeline"):
             publish_component_stage_map.python_func(
                 pipeline_id="empty-pipeline",
                 run_id="run-1",
                 component_stage_map=component_stage_map_artifact,
-                embedded_artifact=type("Embedded", (), {"path": str(templates_root)})(),
             )
 
     def test_unknown_pipeline_id_raises(self, component_stage_map_artifact):

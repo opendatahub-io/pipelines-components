@@ -1,15 +1,10 @@
-from pathlib import Path
-
 from kfp import dsl
 from kfp.compiler import Compiler
 from kfp_components.utils.consts import AUTORAG_IMAGE  # pyright: ignore[reportMissingImports]
 
-_AUTORAG_SHARED = Path(__file__).parents[1] / "shared"
-
 
 @dsl.component(
     base_image=AUTORAG_IMAGE,  # noqa: E501
-    embedded_artifact_path=str(_AUTORAG_SHARED / "runtime_embed" / "component_status.py"),
     install_kfp_package=False,
 )
 def models_pre_selector(
@@ -17,7 +12,6 @@ def models_pre_selector(
     extracted_text: dsl.Input[dsl.Artifact],
     test_data: dsl.Input[dsl.Artifact],
     search_space_mps_report: dsl.Output[dsl.Artifact],
-    embedded_artifact: dsl.EmbeddedInput[dsl.Dataset] = None,
     component_status: dsl.Output[dsl.Artifact] = None,
     preset: str = "speed",
 ):
@@ -44,7 +38,6 @@ def models_pre_selector(
             Only read when pre-selection actually runs.
         search_space_mps_report: Output artifact for the (possibly reduced) JSON
             search space report.
-        embedded_artifact: Embedded ``autorag.shared`` helpers injected by KFP at runtime.
         component_status: Output artifact containing stage-level progress tracking.
         preset: Pipeline quality tier. "speed" (default) uses 10 benchmark query
             threads during pre-selection; "balanced" uses 4 (reduced due to
@@ -53,11 +46,9 @@ def models_pre_selector(
     Environment variables (required only when pre-selection runs):
         MAAS_BASE_URL, MAAS_API_KEY.
     """
-    import importlib.util
     import json
     import logging
     import os
-    from pathlib import Path
 
     from ai4rag.core.experiment.mps import ModelsPreSelector
     from ai4rag.search_space.prepare import SearchSpaceReport
@@ -74,21 +65,9 @@ def models_pre_selector(
 
     inference_max_threads = PRESET_INFERENCE_MAX_THREADS[preset]
 
-    if component_status is None:
-        from kfp_components.components.training.autorag.shared.component_status import (  # pyright: ignore[reportMissingImports]
-            null_component_status_tracker,
-        )
+    from kfp_components.components.training.autorag.shared.component_status import component_status_tracker
 
-        status = null_component_status_tracker()
-    else:
-        _embedded_path = Path(embedded_artifact.path)
-        _module_path = _embedded_path if _embedded_path.is_file() else _embedded_path / "component_status.py"
-        _spec = importlib.util.spec_from_file_location("_autorag_component_status", _module_path)
-        if _spec is None or _spec.loader is None:
-            raise ValueError(f"Cannot load embedded module from {_module_path}")
-        _status_module = importlib.util.module_from_spec(_spec)
-        _spec.loader.exec_module(_status_module)
-        status = _status_module.bootstrap_status_tracker(embedded_artifact, component_status, "models_pre_selector")
+    status = component_status_tracker(component_status, "models_pre_selector")
     with status:
         if component_status is not None:
             status.set_metadata(display_name="Model Pre-Selection Status")

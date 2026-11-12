@@ -6,8 +6,8 @@
 
 Publish the component-to-stage map for dashboard consumption.
 
-Reads the static JSON template from the embedded artifact (``run_status_templates/pipelines/``) and publishes it as a KFP artifact. Neo4j optimization runs use the graph template; other providers use the vector template. Dashboards use this map to show expected components, stages, and steps before
-pipeline execution begins. An ``mlflow`` block is added from the platform-injected ``KFP_MLFLOW_CONFIG``, so the dashboard can deep-link the run into the MLflow UI (``tracking_enabled: false`` when the platform integration is off).
+Reads the packaged static JSON template from ``run_status_templates/pipelines/`` and publishes it as a KFP artifact. Neo4j optimization runs use the graph template; other providers use the vector template. Dashboards use this map to show expected components, stages, and steps before pipeline
+execution begins. An ``mlflow`` block is added from the platform-injected ``KFP_MLFLOW_CONFIG``, so the dashboard can deep-link the run into the MLflow UI (``tracking_enabled: false`` when the platform integration is off).
 
 ## Inputs 📥
 
@@ -16,7 +16,6 @@ pipeline execution begins. An ``mlflow`` block is added from the platform-inject
 | `pipeline_id` | `str` | `None` | Pipeline identifier matching the template filename (e.g. ``documents-rag-optimization-pipeline``). |
 | `run_id` | `str` | `None` | KFP run ID for tracking (from ``dsl.PIPELINE_JOB_ID_PLACEHOLDER``). |
 | `component_stage_map` | `dsl.Output[dsl.Artifact]` | `None` | Output artifact containing the component-to-stage map. |
-| `embedded_artifact` | `dsl.EmbeddedInput[dsl.Dataset]` | `None` | Embedded ``autorag.shared`` package with pipeline templates. |
 | `db_provider` | `str` | `""` | DCH provider: postgres (PGVector), milvus, or neo4j. When omitted, infer graph mode from legacy database secret keys. |
 
 ## Outputs 📤
@@ -35,7 +34,7 @@ pipeline execution begins. An ``mlflow`` block is added from the platform-inject
 - **Tags**:
   - autorag
   - run-status
-- **Last Verified**: 2026-11-05 00:00:00+00:00
+- **Last Verified**: 2026-11-12 00:00:00+00:00
 - **Owners**:
   - Approvers:
     - LukaszCmielowski

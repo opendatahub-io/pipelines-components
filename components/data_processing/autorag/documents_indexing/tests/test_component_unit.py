@@ -134,13 +134,6 @@ def _make_indexing_report_html_artifact(tmp_path):
     return art
 
 
-def _make_embedded_artifact():
-    """Create a mock embedded_artifact pointing to the real HTML template on disk."""
-    art = mock.MagicMock()
-    art.path = str(Path(__file__).resolve().parents[4] / "training" / "autorag" / "shared" / "runtime_embed")
-    return art
-
-
 def _call_component(tmp_path, modules, mocks, *, filenames=None, **overrides):
     """Invoke the component with sensible defaults and return (report, html) artifacts."""
     extracted = _make_extracted_text(tmp_path, filenames=filenames)
@@ -152,7 +145,6 @@ def _call_component(tmp_path, modules, mocks, *, filenames=None, **overrides):
         "extracted_text": extracted,
         "indexing_report": report,
         "indexing_report_html": html,
-        "embedded_artifact": _make_embedded_artifact(),
     }
     defaults.update(overrides)
 
@@ -178,7 +170,6 @@ class TestDocumentsIndexingInterface:
         assert "extracted_text" in params
         assert "indexing_report" in params
         assert "indexing_report_html" in params
-        assert "embedded_artifact" in params
         assert "collection_name" in params
         assert "vector_io_provider_id" not in params
         assert "vector_store_id" not in params

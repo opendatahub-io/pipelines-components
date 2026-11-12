@@ -20,7 +20,6 @@ Individual document failures (corrupt JSON, chunking errors) are recorded in the
 | `extracted_text` | `dsl.Input[dsl.Artifact]` | `None` | Input artifact (directory) containing DoclingDocument JSON files from text extraction.  Searched recursively, since extraction preserves the nested source key of each document. |
 | `indexing_report` | `dsl.Output[dsl.Artifact]` | `None` | Output artifact containing ``indexing_report.json`` with per-document indexing status and pipeline settings. |
 | `indexing_report_html` | `dsl.Output[dsl.HTML]` | `None` | Output HTML artifact containing a styled rendering of the indexing results (summary stats, settings, per-document table). |
-| `embedded_artifact` | `dsl.EmbeddedInput[dsl.Dataset]` | `None` | Shared runtime helpers and HTML report template injected by KFP at runtime. |
 | `embedding_params` | `Optional[dict]` | `None` | Optional parameters forwarded to :class:`OpenAIEmbeddingParams` (e.g. ``embedding_dimension``, ``context_length``). |
 | `foundation_model_id` | `Optional[str]` | `None` | Optional generation model ID used to extract entities when indexing into Neo4j. Set this from a graph-mode optimized pattern to reproduce its knowledge graph; ignored by other vector stores. |
 | `foundation_model_params` | `Optional[dict]` | `None` | Optional generation parameters (for example, ``temperature`` and ``max_completion_tokens``) used with ``foundation_model_id`` for Neo4j entity extraction. Set this from a graph-mode optimized pattern to reproduce its knowledge graph; ignored by other vector stores. |
@@ -92,7 +91,7 @@ def example_pipeline(
 - **Tags**:
   - data-indexing
   - autorag
-- **Last Verified**: 2026-11-06 00:00:00+00:00
+- **Last Verified**: 2026-11-12 00:00:00+00:00
 - **Owners**:
   - No Parent Owners: Yes
   - Approvers:

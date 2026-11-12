@@ -1,6 +1,3 @@
-"""Re-export for package imports.
-
-Implementation lives in ``runtime_embed/`` (see ``component_status`` re-export).
-"""
+"""MLflow tracking helpers for installed AutoRAG runtime components."""
 
 from .runtime_embed.mlflow_tracking import *  # noqa: F403

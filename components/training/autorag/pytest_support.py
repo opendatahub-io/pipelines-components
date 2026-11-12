@@ -10,36 +10,13 @@ from types import SimpleNamespace
 from unittest import mock
 
 
-def autorag_shared_dir() -> Path:
-    """Path to ``components/training/autorag/shared``."""
-    return Path(__file__).resolve().parent / "shared"
-
-
-def autorag_runtime_embed_dir() -> Path:
-    """Path to the KFP-embedable helper directory under ``shared/runtime_embed``."""
-    return autorag_shared_dir() / "runtime_embed"
-
-
-def wrap_component_python_func(
-    component,
-    monkeypatch,
-    tmp_path: Path,
-    *,
-    embedded_path: str | None = None,
-) -> None:
-    """Inject embedded-artifact and component-status mocks omitted by unit tests."""
+def wrap_component_python_func(component, monkeypatch, tmp_path: Path) -> None:
+    """Inject KFP output-artifact mocks omitted by unit tests."""
     original = component.python_func
     signature = inspect.signature(original)
-    # Default to runtime_embed so file-based loads get the real modules, not the
-    # package re-export stubs at shared/{component_status,mlflow_tracking}.py.
-    embed_root = embedded_path or str(autorag_runtime_embed_dir())
 
     def wrapper(*args, **kwargs):
         bound = signature.bind_partial(*args, **kwargs)
-        if "embedded_artifact" in signature.parameters and "embedded_artifact" not in bound.arguments:
-            embedded = mock.MagicMock()
-            embedded.path = embed_root
-            kwargs["embedded_artifact"] = embedded
         if "component_status" in signature.parameters and "component_status" not in bound.arguments:
             status = mock.MagicMock()
             status.path = str(tmp_path / "component_status_out")

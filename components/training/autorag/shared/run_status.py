@@ -2,10 +2,8 @@
 
 Pipeline manifests use ``run_status_templates/pipelines/<name>.json``;
 Neo4j optimization uses the ``-graph`` variant.
-Notebook templates live under ``notebook_templates/``.
-AutoML components load these from ``kfp_components`` on the runtime image; AutoRAG
-embeds them at compile time (see ``component_stage_map_publisher`` and
-``rag_templates_optimization``).
+Notebook templates live under ``notebook_templates/`` and are loaded from the
+installed ``kfp_components`` package at runtime.
 """
 
 from __future__ import annotations

@@ -23,7 +23,6 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
-from types import ModuleType
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -274,73 +273,6 @@ class ComponentStatusTracker:
             self.mark_active_failed(exc)
         self.save_best_effort()
         return False
-
-
-def _resolve_embedded_module_path(embedded_artifact: Any) -> Path:
-    """Return the path to embedded ``component_status.py`` after validating the artifact."""
-    if embedded_artifact is None:
-        raise ValueError(
-            "embedded_artifact is required for component status tracking. "
-            "Injected by KFP when using embedded_artifact_path."
-        )
-    if not getattr(embedded_artifact, "path", None):
-        raise ValueError("embedded_artifact.path is missing or empty")
-
-    embedded_path = Path(embedded_artifact.path)
-    if embedded_path.is_file():
-        module_path = embedded_path
-    elif embedded_path.is_dir():
-        module_path = embedded_path / "component_status.py"
-    else:
-        raise ValueError(f"Invalid embedded_artifact.path: {embedded_path}")
-    if not module_path.is_file():
-        raise ValueError(f"Embedded component_status module not found at {module_path}")
-    return module_path
-
-
-def resolve_embedded_import_root(embedded_artifact: Any) -> Path:
-    """Return the directory containing embedded shared assets (e.g. script templates)."""
-    embedded_path = Path(embedded_artifact.path)
-    if embedded_path.is_file():
-        return embedded_path.parent
-    if embedded_path.is_dir():
-        return embedded_path
-    raise ValueError(f"Invalid embedded_artifact.path: {embedded_path}")
-
-
-def load_embedded_component_status_module(embedded_artifact: Any) -> ModuleType:
-    """Load ``component_status`` from a KFP embedded artifact path via importlib."""
-    import importlib.util
-
-    module_path = _resolve_embedded_module_path(embedded_artifact)
-    spec = importlib.util.spec_from_file_location("_autorag_component_status", module_path)
-    if spec is None or spec.loader is None:
-        raise ValueError(f"Cannot load embedded module from {module_path}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-def tracker_from_embedded(
-    embedded_artifact: Any,
-    component_status: Any,
-    component_id: str,
-) -> ComponentStatusTracker:
-    """Validate embedded artifact path and return a configured tracker."""
-    _resolve_embedded_module_path(embedded_artifact)
-    return component_status_tracker(component_status, component_id)
-
-
-def bootstrap_status_tracker(
-    embedded_artifact: Any,
-    component_status: Any,
-    component_id: str,
-) -> ComponentStatusTracker | NullComponentStatusTracker:
-    """Load this module from ``embedded_artifact`` and return a configured tracker."""
-    if component_status is None:
-        return null_component_status_tracker()
-    status_module = load_embedded_component_status_module(embedded_artifact)
-    return status_module.tracker_from_embedded(embedded_artifact, component_status, component_id)
 
 
 def component_status_tracker(
