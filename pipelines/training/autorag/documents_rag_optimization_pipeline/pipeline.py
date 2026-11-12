@@ -20,7 +20,7 @@ from kfp_components.components.training.autorag.search_space_preparation.compone
 )
 from kfp_components.components.training.autorag.shared.database_connection import SECRET_KEY_TO_ENV
 
-MAX_CPUS = "32"
+MAX_CPUS = "321"
 MAX_MEMORY = "64Gi"
 
 # Template name; Neo4j uses the -graph variant.
