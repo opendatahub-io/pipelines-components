@@ -789,6 +789,24 @@ def automl_data_loader(  # noqa: D417
                 fail_on_partial_read=fail_on_partial_read,
             )
 
+        def _drop_unused_label_categories(frame):
+            """Remove label categories with no rows left after cleansing.
+
+            Parquet preserves pandas categorical metadata, so a category present
+            in the dictionary but with zero rows (an unused category in the
+            source file, or one emptied by label-NaN drops) still appears in
+            value_counts with count 0 and fails the stratified-split viability
+            check, while the equivalent CSV source (plain object dtype) passes.
+            Stripping unused categories makes both formats behave identically;
+            label columns that are not categorical are returned unchanged. The
+            dtype is probed as a string so the mocked-pandas suite (whose frames
+            carry no dtype at all) treats this as a no-op, like select_dtypes.
+            """
+            label_series = frame[label_column]
+            if str(getattr(label_series, "dtype", "")) == "category":
+                frame[label_column] = label_series.cat.remove_unused_categories()
+            return frame
+
         status.record(
             "prepare_data",
             "running",
@@ -831,6 +849,7 @@ def automl_data_loader(  # noqa: D417
 
         n_before_drop = len(sampled_dataframe)
         sampled_dataframe = sampled_dataframe.dropna(subset=[label_column])
+        sampled_dataframe = _drop_unused_label_categories(sampled_dataframe)
         n_dropped = n_before_drop - len(sampled_dataframe)
         if n_dropped:
             logger.info(
@@ -1053,6 +1072,7 @@ def automl_data_loader(  # noqa: D417
             user_test_df.replace([math.inf, -math.inf], float("nan"), inplace=True)
             user_test_df.drop_duplicates(inplace=True)
             user_test_df = user_test_df.dropna(subset=[label_column])
+            user_test_df = _drop_unused_label_categories(user_test_df)
 
             if user_test_df.empty:
                 raise ValueError(

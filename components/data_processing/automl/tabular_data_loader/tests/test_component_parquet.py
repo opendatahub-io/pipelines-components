@@ -434,8 +434,34 @@ class TestCsvParquetParity:
         for csv_output, parquet_output in zip(csv_run, parquet_run):
             pd.testing.assert_frame_equal(pd.read_parquet(csv_output), pd.read_parquet(parquet_output))
 
+    @mock.patch.dict(os.environ, mocked_env_variables, clear=True)
+    def test_categorical_label_with_unused_category_matches_csv(self, tmp_path):
+        """A Parquet categorical label with an unused category splits exactly like the CSV.
+
+        Parquet preserves pandas categorical metadata, so ``value_counts`` reports
+        the zero-row category ``C`` alongside the real labels; the stratified
+        viability check previously rejected the dataset (counts [60, 60, 0]) while
+        the equivalent CSV (object dtype) passed. Unused categories are stripped
+        during cleansing, so both formats produce identical splits.
+        """
+        labels = pd.Categorical(["A" if i % 2 == 0 else "B" for i in range(120)], categories=["A", "B", "C"])
+        parquet_frame = pd.DataFrame({"feature_1": range(120), "target": labels})
+        csv_payload = (
+            pd.DataFrame({"feature_1": range(120), "target": labels.astype(str)}).to_csv(index=False).encode("utf-8")
+        )
+
+        csv_run = self._run_csv(tmp_path / "csv", csv_payload, task_type="binary")
+        parquet_run = self._run_parquet(tmp_path / "parquet", _parquet_bytes(parquet_frame), task_type="binary")
+
+        for csv_output, parquet_output in zip(csv_run, parquet_run):
+            csv_out = pd.read_parquet(csv_output)
+            parquet_out = pd.read_parquet(parquet_output)
+            assert csv_out["feature_1"].tolist() == parquet_out["feature_1"].tolist()
+            assert csv_out["target"].tolist() == parquet_out["target"].tolist()
+            assert set(parquet_out["target"]) == {"A", "B"}
+
     @staticmethod
-    def _run_csv(workspace, csv_payload):
+    def _run_csv(workspace, csv_payload, task_type="regression"):
         """Run the loader over a streamed CSV source; return the three output paths."""
         workspace.mkdir(parents=True)
         sampled_test, component_status = _make_artifacts(workspace)
@@ -449,6 +475,7 @@ class TestCsvParquetParity:
                 bucket_name="bucket",
                 workspace_path=str(workspace),
                 label_column="target",
+                task_type=task_type,
                 sampled_test_dataset=sampled_test,
                 component_status=component_status,
             )
@@ -457,7 +484,7 @@ class TestCsvParquetParity:
         return [sampled_test.path, result.models_selection_train_data_path, result.extra_train_data_path]
 
     @staticmethod
-    def _run_parquet(workspace, parquet_payload):
+    def _run_parquet(workspace, parquet_payload, task_type="regression"):
         """Run the loader over a staged Parquet source; return the three output paths."""
         workspace.mkdir(parents=True)
         sampled_test, component_status = _make_artifacts(workspace)
@@ -469,6 +496,7 @@ class TestCsvParquetParity:
                 bucket_name="bucket",
                 workspace_path=str(workspace),
                 label_column="target",
+                task_type=task_type,
                 sampled_test_dataset=sampled_test,
                 component_status=component_status,
             )

@@ -132,7 +132,7 @@ def example_parquet_pipeline(
   - timeseries
   - automl
   - data-loading
-- **Last Verified**: 2026-10-28 00:00:00+00:00
+- **Last Verified**: 2026-11-16 00:00:00+00:00
 - **Owners**:
   - No Parent Owners: Yes
   - Approvers:

@@ -1983,7 +1983,6 @@ class TestParquetInput:
         extra = pd.read_parquet(result.extra_train_data_path)
         assert len(selection) + len(extra) == 120
 
-
     @mock.patch.dict(os.environ, mocked_env_variables, clear=True)
     def test_two_column_parquet_uses_synthetic_id(self, tmp_path):
         """Single-series Parquet input (timestamp + target) injects the synthetic id like CSV."""
@@ -2042,6 +2041,71 @@ class TestParquetInput:
         assert result.split_config["test_size"] == 0.0
         assert len(pd.read_parquet(sampled_test.path)) == 20
         mock_s3.download_file.assert_called_once()
+
+    @mock.patch.dict(os.environ, mocked_env_variables, clear=True)
+    def test_parquet_float_item_ids_normalized_to_string(self, tmp_path):
+        """Float64 item ids pass every loader check but AutoGluon rejects them; they become strings.
+
+        CSV sources read the id column as strings (the loader's dtype policy), so
+        Parquet's preserved float64 dtype would produce artifacts AutoGluon refuses
+        (item_id must be integer or string) and diverge from the CSV behavior.
+        """
+        frame = _panel_frame()
+        frame["item_id"] = frame["item_id"].map({"series-1": 1.0, "series-2": 2.0})
+        sampled_test = _make_test_artifact(tmp_path)
+
+        with _mock_boto3_parquet({"ts.parquet": _parquet_bytes(frame)}):
+            result = timeseries_data_loader.python_func(
+                file_key="ts.parquet",
+                bucket_name="b",
+                workspace_path=str(tmp_path),
+                target="target",
+                id_column="item_id",
+                timestamp_column="timestamp",
+                sampled_test_dataset=sampled_test,
+            )
+
+        for artifact_path in (sampled_test.path, result.models_selection_train_data_path, result.extra_train_data_path):
+            item_ids = pd.read_parquet(artifact_path)["item_id"]
+            assert item_ids.map(type).eq(str).all()
+            assert set(item_ids) <= {"1.0", "2.0"}
+
+    @mock.patch.dict(os.environ, mocked_env_variables, clear=True)
+    def test_csv_train_with_parquet_test_data_item_id_types_consistent(self, tmp_path):
+        """Mixed formats agree on one item_id type: Parquet float ids match the CSV string policy."""
+        train = _panel_frame()
+        train["item_id"] = train["item_id"].map({"series-1": "1.0", "series-2": "2.0"})
+        test = _panel_frame(rows_per_series=10)
+        test["item_id"] = test["item_id"].map({"series-1": 1.0, "series-2": 2.0})
+        csv_body = train.to_csv(index=False)
+        payloads = {"test.parquet": _parquet_bytes(test)}
+        sampled_test = _make_test_artifact(tmp_path)
+
+        with _mock_boto3_parquet(payloads) as mock_s3:
+            mock_s3.get_object.side_effect = lambda *, Bucket, Key, **kwargs: {
+                "Body": io.BytesIO(csv_body.encode("utf-8")),
+                "ContentLength": len(csv_body),
+            }
+            result = timeseries_data_loader.python_func(
+                file_key="train.csv",
+                bucket_name="b",
+                workspace_path=str(tmp_path),
+                target="target",
+                id_column="item_id",
+                timestamp_column="timestamp",
+                sampled_test_dataset=sampled_test,
+                test_data_bucket_name="test-bucket",
+                test_data_file_key="test.parquet",
+            )
+
+        # Train ids come from the CSV string policy, test ids from Parquet float
+        # normalization: every artifact carries the same string item ids.
+        written_test = pd.read_parquet(sampled_test.path)
+        assert written_test["item_id"].map(type).eq(str).all()
+        assert set(written_test["item_id"]) == {"1.0", "2.0"}
+        selection = pd.read_parquet(result.models_selection_train_data_path)
+        assert selection["item_id"].map(type).eq(str).all()
+        assert set(selection["item_id"]) == {"1.0", "2.0"}
 
 
 class TestCorruptParquetRejected:

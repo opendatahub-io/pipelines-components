@@ -439,6 +439,16 @@ def timeseries_data_loader(
                         )
                     chunk[id_column] = SYNTHETIC_ITEM_ID_VALUE
                 chunk = _clean_timeseries_dataframe(chunk, id_column, timestamp_column, logger)
+                # CSV sources read the id column as strings (the dtype policy in
+                # _csv_chunks) and the synthetic path injects a string constant, but
+                # Parquet preserves the stored dtype (float64, int64, categorical).
+                # AutoGluon requires item_id values of integer or string dtype: a
+                # float64 id column passes every loader check yet produces artifacts
+                # AutoGluon rejects downstream, and mixed CSV/Parquet inputs (train
+                # plus user test data) would carry inconsistent id types. Normalize
+                # after the null check inside _clean_timeseries_dataframe -- casting
+                # first would turn null ids into the string "nan" and mask them.
+                chunk[id_column] = chunk[id_column].astype(str)
                 stringify_mixed_object_columns(chunk)
                 yield chunk
 
