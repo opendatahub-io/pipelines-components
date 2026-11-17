@@ -9,7 +9,7 @@ from unittest import mock
 
 import pytest
 
-from ..component import _AUTORAG_SHARED, text_extraction
+from ..component import text_extraction
 
 TEST_ARTIFACTS_PATH = Path(tempfile.gettempdir()) / "pipelines-components-docling-test-artifacts"
 
@@ -234,7 +234,6 @@ class TestTextExtractionUnitTests:
         )
         output_artifact = SimpleNamespace(path=str(tmp_path / "output"))
         component_status = SimpleNamespace(path=str(tmp_path / "status"), metadata={})
-        embedded_artifact = SimpleNamespace(path=str(_AUTORAG_SHARED / "runtime_embed"))
 
         asr_model = _make_asr_model(tmp_path / "whisper-tiny")
         with (
@@ -245,7 +244,6 @@ class TestTextExtractionUnitTests:
                 documents_descriptor=descriptor_artifact,
                 extracted_text=output_artifact,
                 component_status=component_status,
-                embedded_artifact=embedded_artifact,
             )
 
         status = json.loads((tmp_path / "status" / "component_status.json").read_text(encoding="utf-8"))
@@ -279,7 +277,6 @@ class TestTextExtractionUnitTests:
         )
         output_artifact = SimpleNamespace(path=str(tmp_path / "output"))
         component_status = SimpleNamespace(path=str(tmp_path / "status"), metadata={})
-        embedded_artifact = SimpleNamespace(path=str(_AUTORAG_SHARED / "runtime_embed"))
 
         asr_model = _make_asr_model(tmp_path / "whisper-tiny")
         with (
@@ -291,7 +288,6 @@ class TestTextExtractionUnitTests:
                     documents_descriptor=descriptor_artifact,
                     extracted_text=output_artifact,
                     component_status=component_status,
-                    embedded_artifact=embedded_artifact,
                 )
 
         status = json.loads((tmp_path / "status" / "component_status.json").read_text(encoding="utf-8"))

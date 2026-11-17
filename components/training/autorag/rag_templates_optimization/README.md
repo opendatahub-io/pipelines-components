@@ -25,7 +25,6 @@ Generated indexing specs forward ``settings.generation.language.code`` as ``ocr_
 | `input_data_bucket_name` | `str` | `None` | S3 bucket containing input documents. |
 | `leaderboard` | `dsl.Output[dsl.HTML]` | `None` | Output HTML artifact; the leaderboard table is written to leaderboard_html.path (single file). |
 | `starter_kit` | `dsl.Output[dsl.Artifact]` | `None` | Output ZIP artifact containing the generated starter kit for the best-performing RAG pattern. |
-| `embedded_artifact` | `dsl.EmbeddedInput[dsl.Dataset]` | `None` | Embedded ``autorag.shared`` helpers injected by KFP at runtime. |
 | `optimization_settings` | `Optional[dict]` | `None` | Additional experiment settings. The ``max_number_of_rag_patterns`` setting (4-10, default 5) limits optimization iterations and published patterns. |
 | `input_data_keys` | `Optional[list[str]]` | `None` | Paths to documents dirs within bucket, 1-10 of them. The full list is propagated both to the generated indexing notebook and to the indexing pipeline blueprint, so either route reingests the same corpus. |
 | `component_status` | `dsl.Output[dsl.Artifact]` | `None` | Output artifact containing stage-level progress tracking. |
@@ -111,7 +110,7 @@ def example_pipeline(
   - autorag
   - optimization
   - rag-patterns
-- **Last Verified**: 2026-11-06 00:00:00+00:00
+- **Last Verified**: 2026-11-12 00:00:00+00:00
 - **Owners**:
   - No Parent Owners: Yes
   - Approvers:

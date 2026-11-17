@@ -1,18 +1,11 @@
-from pathlib import Path
 from typing import Any, Optional
 
 from kfp import dsl
 from kfp_components.utils.consts import AUTORAG_IMAGE  # pyright: ignore[reportMissingImports]
 
-# Shared embed root (status + MLflow helpers). Committed under shared/ so DSPA can
-# compile managed pipelines from a read-only site-packages install without
-# import-time staging, and so there is a single source for those modules.
-_AUTORAG_SHARED = Path(__file__).parents[1] / "shared"
-
 
 @dsl.component(
     base_image=AUTORAG_IMAGE,
-    embedded_artifact_path=str(_AUTORAG_SHARED / "runtime_embed"),
     install_kfp_package=False,
 )
 def rag_templates_optimization(
@@ -27,7 +20,6 @@ def rag_templates_optimization(
     input_data_bucket_name: str,
     leaderboard: dsl.Output[dsl.HTML],
     starter_kit: dsl.Output[dsl.Artifact],
-    embedded_artifact: dsl.EmbeddedInput[dsl.Dataset] = None,
     optimization_settings: Optional[dict] = None,
     input_data_keys: Optional[list[str]] = None,
     component_status: dsl.Output[dsl.Artifact] = None,
@@ -68,7 +60,6 @@ def rag_templates_optimization(
         starter_kit: Output ZIP artifact containing the generated starter kit for
             the best-performing RAG pattern.
         component_status: Output artifact containing stage-level progress tracking.
-        embedded_artifact: Embedded ``autorag.shared`` helpers injected by KFP at runtime.
         optimization_settings: Additional experiment settings. The
             ``max_number_of_rag_patterns`` setting (4-10, default 5) limits
             optimization iterations and published patterns.
@@ -105,12 +96,10 @@ def rag_templates_optimization(
         KFP_MLFLOW_CONFIG, injected by the platform MLflow integration. See
         "MLflow logging" above.
     """
-    import importlib.util
     import json
     import logging
     import os
     import shutil
-    import sys
     import tempfile
     from pathlib import Path
     from zipfile import ZipFile
@@ -430,50 +419,11 @@ def rag_templates_optimization(
         kg_extraction_config,
     )
 
-    def _load_embedded_module(module_filename: str, module_alias: str) -> Any:
-        """Load one module from the embedded AutoRAG helpers.
+    from kfp_components.components.training.autorag.shared import database_connection as _database_connection
+    from kfp_components.components.training.autorag.shared import mlflow_tracking as _mlflow_tracking
+    from kfp_components.components.training.autorag.shared.component_status import component_status_tracker
 
-        KFP mounts the staged embed as a directory. A single-file mount is also
-        tolerated, for compatibility with embeds carrying only ``component_status.py``.
-        """
-        embedded_root = Path(embedded_artifact.path)
-        if embedded_root.is_file():
-            if embedded_root.name != module_filename:
-                raise FileNotFoundError(f"Embedded artifact {embedded_root} does not provide {module_filename}.")
-            module_path = embedded_root
-        else:
-            module_path = embedded_root / module_filename
-        spec = importlib.util.spec_from_file_location(module_alias, module_path)
-        if spec is None or spec.loader is None:
-            raise ValueError(f"Cannot load embedded module from {module_path}")
-        module = importlib.util.module_from_spec(spec)
-        # Register before exec_module: @dataclass resolves string annotations (these
-        # modules use `from __future__ import annotations`) through sys.modules[__module__],
-        # which raises AttributeError if the module is not there yet.
-        sys.modules[module_alias] = module
-        spec.loader.exec_module(module)
-        return module
-
-    if embedded_artifact is None:
-        from kfp_components.components.training.autorag.shared import (  # pyright: ignore[reportMissingImports]
-            database_connection as _database_connection,
-        )
-        from kfp_components.components.training.autorag.shared import (
-            mlflow_tracking as _mlflow_tracking,
-        )
-    else:
-        _mlflow_tracking = _load_embedded_module("mlflow_tracking.py", "_autorag_mlflow_tracking")
-        _database_connection = _load_embedded_module("database_connection.py", "_autorag_database_connection")
-
-    if component_status is None:
-        from kfp_components.components.training.autorag.shared.component_status import (  # pyright: ignore[reportMissingImports]
-            null_component_status_tracker,
-        )
-
-        status = null_component_status_tracker()
-    else:
-        _status_module = _load_embedded_module("component_status.py", "_autorag_component_status")
-        status = _status_module.tracker_from_embedded(embedded_artifact, component_status, "rag_templates_optimization")
+    status = component_status_tracker(component_status, "rag_templates_optimization")
 
     # MLflow logging is best-effort and self-disabling: when the platform injects no
     # KFP_MLFLOW_CONFIG, run_logger is a no-op and optimization proceeds unchanged.

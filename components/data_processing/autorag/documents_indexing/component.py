@@ -1,15 +1,11 @@
-from pathlib import Path
 from typing import Optional
 
 from kfp import dsl
 from kfp_components.utils.consts import AUTORAG_IMAGE  # pyright: ignore[reportMissingImports]
 
-_RUNTIME_PATH = Path(__file__).parents[3] / "training" / "autorag" / "shared" / "runtime_embed"
-
 
 @dsl.component(
     base_image=AUTORAG_IMAGE,  # noqa: E501
-    embedded_artifact_path=str(_RUNTIME_PATH),
     install_kfp_package=False,
 )
 def documents_indexing(
@@ -17,7 +13,6 @@ def documents_indexing(
     extracted_text: dsl.Input[dsl.Artifact],
     indexing_report: dsl.Output[dsl.Artifact],
     indexing_report_html: dsl.Output[dsl.HTML],
-    embedded_artifact: dsl.EmbeddedInput[dsl.Dataset] = None,
     embedding_params: Optional[dict] = None,
     foundation_model_id: Optional[str] = None,
     foundation_model_params: Optional[dict] = None,
@@ -54,8 +49,6 @@ def documents_indexing(
             with per-document indexing status and pipeline settings.
         indexing_report_html: Output HTML artifact containing a styled rendering of
             the indexing results (summary stats, settings, per-document table).
-        embedded_artifact: Shared runtime helpers and HTML report template
-            injected by KFP at runtime.
         embedding_params: Optional parameters forwarded to
             :class:`OpenAIEmbeddingParams` (e.g. ``embedding_dimension``,
             ``context_length``).
@@ -92,7 +85,6 @@ def documents_indexing(
         ``NEO4J_PASSWORD``) select Neo4j.
     """
     import html as html_mod
-    import importlib.util
     import json
     import logging
     import os
@@ -140,11 +132,8 @@ def documents_indexing(
         raise ValueError("batch_size must be a non-negative integer.")
 
     maas_base_url, maas_api_key = os.environ["MAAS_BASE_URL"], os.environ["MAAS_API_KEY"]
-    connection_path = Path(embedded_artifact.path) / "database_connection.py"
-    connection_spec = importlib.util.spec_from_file_location("_autorag_database_connection", connection_path)
-    connection_module = importlib.util.module_from_spec(connection_spec)
-    connection_spec.loader.exec_module(connection_module)
-    normalize_connection = connection_module.normalize_connection
+    from kfp_components.components.training.autorag.shared.database_connection import normalize_connection
+
     backend = normalize_connection(db_provider)
     vector_store_config = get_vector_store_config(backend)
 
@@ -292,12 +281,13 @@ def documents_indexing(
         )
 
         # --- Load template and substitute placeholders ---
-        _embedded_path = Path(embedded_artifact.path)
-        _template_file = (
-            _embedded_path if _embedded_path.is_file() else _embedded_path / "indexing_report_template.html"
+        from importlib.resources import files
+
+        html_content = (
+            files("kfp_components.components.training.autorag.shared")
+            .joinpath("indexing_report_template.html")
+            .read_text(encoding="utf-8")
         )
-        with open(_template_file, "r", encoding="utf-8") as f:
-            html_content = f.read()
 
         html_content = (
             html_content.replace("__TOTAL_DOCUMENTS__", str(total_documents))

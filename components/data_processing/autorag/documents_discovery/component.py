@@ -1,14 +1,9 @@
-from pathlib import Path
-
 from kfp import dsl
 from kfp_components.utils.consts import AUTORAG_IMAGE  # pyright: ignore[reportMissingImports]
-
-_AUTORAG_SHARED = Path(__file__).parents[3] / "training" / "autorag" / "shared"
 
 
 @dsl.component(
     base_image=AUTORAG_IMAGE,  # noqa: E501
-    embedded_artifact_path=str(_AUTORAG_SHARED / "runtime_embed" / "component_status.py"),
     install_kfp_package=False,
 )
 def documents_discovery(
@@ -22,7 +17,6 @@ def documents_discovery(
     discovered_documents: dsl.Output[dsl.Artifact] = None,
     test_data: dsl.Output[dsl.Artifact] = None,
     component_status: dsl.Output[dsl.Artifact] = None,
-    embedded_artifact: dsl.EmbeddedInput[dsl.Dataset] = None,
 ):
     """Documents discovery component with optional benchmark test data loading.
 
@@ -50,7 +44,6 @@ def documents_discovery(
         test_data: Output artifact containing the (possibly sampled) test data JSON.
             Empty when test data loading is skipped.
         component_status: Output artifact containing stage-level progress tracking.
-        embedded_artifact: Embedded ``autorag.shared`` helpers injected by KFP at runtime.
 
     Raises:
         ValueError: When more than 10 input data keys are given.
@@ -66,7 +59,6 @@ def documents_discovery(
         TEST_DATA_AWS_S3_ENDPOINT for test data (only when test_data_bucket_name is set).
         AWS_DEFAULT_REGION / *_DEFAULT_REGION variants are optional.
     """
-    import importlib.util
     import json
     import logging
     import os
@@ -77,21 +69,9 @@ def documents_discovery(
 
     logging.basicConfig(level=logging.INFO)
 
-    if component_status is None:
-        from kfp_components.components.training.autorag.shared.component_status import (  # pyright: ignore[reportMissingImports]
-            null_component_status_tracker,
-        )
+    from kfp_components.components.training.autorag.shared.component_status import component_status_tracker
 
-        status = null_component_status_tracker()
-    else:
-        _embedded_path = Path(embedded_artifact.path)
-        _module_path = _embedded_path if _embedded_path.is_file() else _embedded_path / "component_status.py"
-        _spec = importlib.util.spec_from_file_location("_autorag_component_status", _module_path)
-        if _spec is None or _spec.loader is None:
-            raise ValueError(f"Cannot load embedded module from {_module_path}")
-        _status_module = importlib.util.module_from_spec(_spec)
-        _spec.loader.exec_module(_status_module)
-        status = _status_module.bootstrap_status_tracker(embedded_artifact, component_status, "documents_discovery")
+    status = component_status_tracker(component_status, "documents_discovery")
     with status:
         if component_status is not None:
             status.set_metadata(display_name="Documents Discovery Status")

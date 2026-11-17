@@ -19,17 +19,14 @@ import pytest
 from ..component import rag_templates_optimization
 
 
-def test_kfp_embed_uses_shared_runtime_embed():
-    """Executor embed path is the shared runtime_embed directory (no local copies)."""
+def test_runtime_uses_installed_kfp_components():
+    """Executor imports helpers from the image-installed package."""
     component_dir = Path(__file__).parents[1]
-    runtime_embed_dir = component_dir.parent / "shared" / "runtime_embed"
     source = (component_dir / "component.py").read_text(encoding="utf-8")
 
-    assert 'embedded_artifact_path=str(_AUTORAG_SHARED / "runtime_embed")' in source
-    assert (runtime_embed_dir / "component_status.py").is_file()
-    assert (runtime_embed_dir / "mlflow_tracking.py").is_file()
-    assert "_stage_kfp_embed" not in source
-    assert ".kfp_embed" not in source
+    assert "embedded_artifact_path" not in source
+    assert "dsl.EmbeddedInput" not in source
+    assert "kfp_components.components.training.autorag.shared" in source
 
 
 MOCKED_ENV_VARIABLES = {
@@ -281,7 +278,6 @@ class TestRagTemplatesOptimizationInterface:
             "input_data_secret_name",
             "input_data_bucket_name",
             "leaderboard",
-            "embedded_artifact",
             "optimization_settings",
             "input_data_keys",
             "component_status",
