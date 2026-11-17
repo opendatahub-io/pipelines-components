@@ -12,6 +12,7 @@ def infer_frequency_from_gaps(data: pd.DataFrame, max_expansion: int = 10) -> st
     a strict majority of its gaps. Remaining gaps must be whole multiples of it.
     Month-start/end data is measured in calendar months, other data in elapsed
     time. Shorter series are validated against the candidate without voting.
+    Timestamps must be timezone-naive, as required by AutoGluon.
 
     Ambiguous panels, off-grid timestamps and grids exceeding ``max_expansion``
     times the observed rows in any series require an explicit user frequency.
@@ -32,6 +33,8 @@ def infer_frequency_from_gaps(data: pd.DataFrame, max_expansion: int = 10) -> st
     candidates = set()
     for _, series in data.groupby(level="item_id", sort=False):
         timestamps = pd.DatetimeIndex(series.index.get_level_values("timestamp")).as_unit("ns").sort_values()
+        if timestamps.tz is not None:
+            raise ValueError("AutoGluon requires timezone-naive timestamps.")
         if timestamps.hasnans or timestamps.has_duplicates:
             raise ValueError(error)
         indexes.append(timestamps)
@@ -76,12 +79,14 @@ def infer_frequency_from_gaps(data: pd.DataFrame, max_expansion: int = 10) -> st
 
 
 def validate_frequency_grid(data: pd.DataFrame, freq: str, name: str = "data", max_expansion: int = 10) -> None:
-    """Validate automatic resampling; explicit user frequencies bypass this check."""
+    """Validate automatic resampling of timezone-naive data; explicit frequencies bypass this check."""
     error = f"{name} has timestamps incompatible with automatic frequency {freq!r}. Set freq explicitly."
     indexes = [
         pd.DatetimeIndex(series.index.get_level_values("timestamp")).as_unit("ns").sort_values()
         for _, series in data.groupby(level="item_id", sort=False)
     ]
+    if any(timestamps.tz is not None for timestamps in indexes):
+        raise ValueError(f"{name}: AutoGluon requires timezone-naive timestamps.")
     offset = pd.tseries.frequencies.to_offset(freq)
     # AutoGluon skips resampling when the whole panel already matches, even at noon.
     # Short series also need compatible index metadata for AutoGluon to skip resampling.

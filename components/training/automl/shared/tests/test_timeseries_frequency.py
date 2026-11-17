@@ -19,6 +19,24 @@ def panel(*indexes):
     )
 
 
+@pytest.mark.parametrize(
+    ("start", "tz"),
+    [("2024-03-31", "UTC"), ("2024-03-31", "Europe/Warsaw"), ("2024-10-27", "Europe/Warsaw")],
+)
+@pytest.mark.parametrize("freq", ["3h", "6h"])
+@pytest.mark.parametrize("with_gaps", [False, True])
+def test_timezone_aware_timestamps_are_rejected(start, tz, freq, with_gaps):
+    """Require naive timestamps even on regular grids and across DST transitions."""
+    dates = pd.date_range(start, periods=18, freq=freq, tz=tz)
+    if with_gaps:
+        dates = dates.delete([3, 7])
+    data = panel(dates)
+    with pytest.raises(ValueError, match="AutoGluon requires timezone-naive timestamps"):
+        infer_frequency_from_gaps(data)
+    with pytest.raises(ValueError, match="test data: AutoGluon requires timezone-naive timestamps"):
+        validate_frequency_grid(data, freq, name="test data")
+
+
 @pytest.mark.parametrize("freq", ["D", "h", "15min", "100ns", "7D", "MS", "ME", "3MS", "3ME", "12MS"])
 def test_infers_fixed_and_calendar_grids_with_gaps(freq):
     """Gaps preserve the data's cadence, values, and timestamps when resampled."""
