@@ -50,7 +50,7 @@ Discovers documents from object storage, extracts text, and indexes chunks into 
   - documents_discovery
   - data_indexing
   - autorag
-- **Last Verified**: 2026-11-05 00:00:00+00:00
+- **Last Verified**: 2026-11-12 00:00:00+00:00
 - **Owners**:
   - No Parent Owners: Yes
   - Approvers:

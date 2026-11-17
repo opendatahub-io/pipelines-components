@@ -4,30 +4,24 @@ Publishes the static component-to-stage map as a KFP artifact at pipeline start 
 dashboards know the expected structure before components run.
 """
 
-from pathlib import Path
-
 from kfp import dsl
 from kfp_components.utils.consts import AUTORAG_IMAGE  # pyright: ignore[reportMissingImports]
-
-_AUTORAG_SHARED = Path(__file__).parents[1] / "shared"
 
 
 @dsl.component(
     base_image=AUTORAG_IMAGE,
-    embedded_artifact_path=str(_AUTORAG_SHARED / "run_status_templates"),
     install_kfp_package=False,
 )
 def publish_component_stage_map(
     pipeline_id: str,
     run_id: str,
     component_stage_map: dsl.Output[dsl.Artifact],
-    embedded_artifact: dsl.EmbeddedInput[dsl.Dataset] = None,
     db_provider: str = "",
 ) -> None:
     """Publish the component-to-stage map for dashboard consumption.
 
-    Reads the static JSON template from the embedded artifact
-    (``run_status_templates/pipelines/``) and publishes it as a KFP artifact.
+    Reads the packaged static JSON template from ``run_status_templates/pipelines/``
+    and publishes it as a KFP artifact.
     Neo4j optimization runs use the graph template; other providers use the vector template.
     Dashboards use this map to show expected components, stages, and steps before
     pipeline execution begins. An ``mlflow`` block is added from the platform-injected
@@ -39,7 +33,6 @@ def publish_component_stage_map(
             (e.g. ``documents-rag-optimization-pipeline``).
         run_id: KFP run ID for tracking (from ``dsl.PIPELINE_JOB_ID_PLACEHOLDER``).
         component_stage_map: Output artifact containing the component-to-stage map.
-        embedded_artifact: Embedded ``autorag.shared`` package with pipeline templates.
         db_provider: DCH provider: postgres (PGVector), milvus, or neo4j. When omitted,
             infer graph mode from legacy database secret keys.
 
@@ -52,12 +45,12 @@ def publish_component_stage_map(
     from datetime import UTC, datetime
     from pathlib import Path
 
+    from kfp_components.components.training.autorag.shared.run_status import resolve_templates_dir
+
     def _build_mlflow_stage_map_block() -> dict:
         """Build the ``mlflow`` block from the platform-injected ``KFP_MLFLOW_CONFIG`` blob.
 
-        Inlined so the publisher keeps embedding only ``run_status_templates`` (KFP allows
-        one embedded artifact path). Mirrors ``build_mlflow_stage_map_block`` in
-        ``shared/mlflow_tracking.py``.
+        Mirrors ``build_mlflow_stage_map_block`` in ``shared/mlflow_tracking.py``.
         """
         raw = os.getenv("KFP_MLFLOW_CONFIG", "").strip()
         if not raw:
@@ -101,7 +94,7 @@ def publish_component_stage_map(
     if "/" in pipeline_id or "\\" in pipeline_id:
         raise ValueError(f"Invalid pipeline_id '{pipeline_id}': must be a simple identifier without path separators")
 
-    templates_root = Path(embedded_artifact.path) if embedded_artifact is not None else None
+    templates_root = resolve_templates_dir()
     template_name = pipeline_id
     if db_provider and db_provider not in {"postgres", "milvus", "neo4j"}:
         raise ValueError("db_provider must be postgres, milvus, or neo4j.")
@@ -116,8 +109,8 @@ def publish_component_stage_map(
         )
     ):
         template_name += "-graph"
-    manifest_path = templates_root / "pipelines" / f"{template_name}.json" if templates_root is not None else None
-    if manifest_path is None or not manifest_path.is_file():
+    manifest_path = templates_root / "pipelines" / f"{template_name}.json"
+    if not manifest_path.is_file():
         raise FileNotFoundError(
             f"Component stage map not found or empty for pipeline_id='{pipeline_id}'. "
             f"Expected embedded template at pipelines/{template_name}.json."
@@ -128,7 +121,7 @@ def publish_component_stage_map(
     if not stage_map.get("components"):
         raise FileNotFoundError(
             f"Component stage map not found or empty for pipeline_id='{pipeline_id}'. "
-            "Ensure run_status_templates/pipelines/<pipeline_id>.json is packaged in the embedded artifact."
+            "Ensure run_status_templates/pipelines/<pipeline_id>.json is packaged in kfp-components."
         )
 
     stage_map["kfp_run_id"] = run_id
