@@ -1140,10 +1140,11 @@ class TestMetricsJsonSignConvention:
     """Natural exports and direction-aware ranking with real pandas."""
 
     @pytest.mark.parametrize(
-        ("eval_metric", "best_model"),
+        ("eval_metric", "best_model", "second_mase"),
         [
-            ("mean_absolute_scaled_error", "TFT_FULL"),
-            ("higher_score", "DeepAR_FULL"),
+            ("mean_absolute_scaled_error", "TFT_FULL", 0.30),
+            ("higher_score", "DeepAR_FULL", 0.30),
+            ("mean_absolute_scaled_error", "TFT_FULL", 0.41999),  # Same displayed score as DeepAR.
         ],
     )
     @mock.patch("kfp_components.components.training.automl.shared.mlflow_tracking.experiment_run_logger")
@@ -1163,6 +1164,7 @@ class TestMetricsJsonSignConvention:
         mock_artifacts,  # noqa: F811
         eval_metric,
         best_model,
+        second_mase,
         monkeypatch,
     ):
         """Exports normalize once; ranking respects direction and preserves internal selection."""
@@ -1186,7 +1188,7 @@ class TestMetricsJsonSignConvention:
         mock_refit_predictor.evaluate.return_value = {"MASE": -0.42, "MSE": -1.0, "BIAS": -0.3, "HIGHER": -0.1}
 
         second_refit = mock.MagicMock()
-        second_refit.evaluate.return_value = {"MASE": -0.30, "MSE": -0.5, "BIAS": 0.2, "HIGHER": -0.8}
+        second_refit.evaluate.return_value = {"MASE": -second_mase, "MSE": -0.5, "BIAS": 0.2, "HIGHER": -0.8}
         mock_predictor_cls.side_effect = [mock_predictor, mock_refit_predictor, second_refit]
         _configure_predictor_api(mock_predictor_cls)
         # from_data_frame is called for: train, test, and once per model for build_predict_sample_artifact
@@ -1243,7 +1245,14 @@ class TestMetricsJsonSignConvention:
         assert result.best_model_name == context["best_model_name"] == best_model
         rows = json.loads(html_artifact.metadata["data"])
         assert rows[0]["model"] == best_model
-        assert float(rows[0][eval_metric]) == (0.30 if eval_metric == "mean_absolute_scaled_error" else -0.1)
+        assert float(rows[0][eval_metric]) == (
+            round(second_mase, 4) if eval_metric == "mean_absolute_scaled_error" else -0.1
+        )
+        for expected_rank, row in enumerate(rows, start=1):
+            exported_model = json.loads((Path(models_artifact.path) / row["model"] / "model.json").read_text())
+            assert type(exported_model["rank"]) is int
+            assert exported_model["rank"] == expected_rank
+            assert exported_model == next(model for model in context["models"] if model["name"] == row["model"])
         assert "-0.4200" not in Path(html_artifact.path).read_text()
         mock_run_logger.assert_called_once_with(
             task_type="time_series",

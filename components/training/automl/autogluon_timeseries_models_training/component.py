@@ -696,6 +696,15 @@ def autogluon_timeseries_models_training(
             n = len(leaderboard_df)
             best_model_name = str(leaderboard_df.iloc[0]["model"])
             leaderboard_df.index = pd.RangeIndex(start=1, stop=n + 1, name="rank")
+
+            # Persist the final leaderboard position for consumers loading individual model.json files.
+            models_by_name = {model["name"]: model for model in models_metadata}
+            for rank, model_name_full in enumerate(leaderboard_df["model"], start=1):
+                model_metadata = models_by_name[model_name_full]
+                model_metadata["rank"] = rank
+                with (Path(models_artifact.path) / model_name_full / "model.json").open("w", encoding="utf-8") as f:
+                    json.dump(model_metadata, f, indent=2)
+
             _metric_cols = [c for c in leaderboard_df.columns if c not in ("model", "notebook", "predictor")]
             leaderboard_df[_metric_cols] = leaderboard_df[_metric_cols].map(_format_metric_value)
             html_table = _build_leaderboard_table(leaderboard_df)

@@ -120,7 +120,7 @@ def example_pipeline(
   - timeseries
   - automl
   - model-selection
-- **Last Verified**: 2026-11-10 00:00:00+00:00
+- **Last Verified**: 2026-11-17 00:00:00+00:00
 - **Owners**:
   - No Parent Owners: Yes
   - Approvers:
@@ -168,6 +168,9 @@ Under each ``{model_name}_FULL/metrics/`` directory:
 
 Metric export compatibility:
 
+- Each ``model.json`` includes an integer ``rank`` starting at 1 for the best model, matching the final exported leaderboard.
+  Ranks use unrounded holdout scores and are also included in ``models_artifact.metadata.context.models``.
+  Older artifacts do not contain this field.
 - New exports carry ``metrics_convention: natural_v1`` and ``metric_directions`` in ``model.json``,
   ``predictor_metadata.json``, models artifact metadata/context, and leaderboard artifact metadata.
   Display values directly. Use ``lower_is_better`` / ``higher_is_better`` for sorting and tooltips;
