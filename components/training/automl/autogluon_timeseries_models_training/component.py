@@ -665,40 +665,29 @@ def autogluon_timeseries_models_training(
                 _format_metric_value,
             )
 
-            eval_results_by_model = {m["name"]: m["metrics"]["test_data"] for m in models_metadata}
+            models_by_name = {model["name"]: model for model in models_metadata}
             base_uri = models_artifact.uri.rstrip("/")
             leaderboard_rows = []
-            for model_name_full in model_names_full:
+            for model_name_full, model_metadata in models_by_name.items():
                 model_uri = f"{base_uri}/{model_name_full}"
                 leaderboard_rows.append(
                     {
                         "model": model_name_full,
-                        **eval_results_by_model[model_name_full],
+                        **model_metadata["metrics"]["test_data"],
                         "notebook": f"{model_uri}/notebooks/automl_predictor_notebook.ipynb",
                         "predictor": f"{model_uri}/predictor",
                     }
                 )
 
-            # Sort on raw (unrounded) values so close scores cannot flip rank after rounding.
-            if not leaderboard_rows:
-                raise RuntimeError("Leaderboard rows are empty; no models available for ranking.")
-            leaderboard_df = pd.DataFrame(leaderboard_rows)
-            if eval_metric in leaderboard_rows[0]:
-                leaderboard_df = leaderboard_df.sort_values(
-                    by=eval_metric, ascending=metric_direction == "lower_is_better", na_position="last"
-                )
-            else:
-                logger.warning(
-                    "eval_metric '%s' not found in row keys %s; preserving refit order.",
-                    eval_metric,
-                    list(leaderboard_rows[0].keys()),
-                )
+            # Successful models have a finite eval_metric; rank before rounding for display.
+            leaderboard_df = pd.DataFrame(leaderboard_rows).sort_values(
+                by=eval_metric, ascending=metric_direction == "lower_is_better", na_position="last"
+            )
             n = len(leaderboard_df)
             best_model_name = str(leaderboard_df.iloc[0]["model"])
             leaderboard_df.index = pd.RangeIndex(start=1, stop=n + 1, name="rank")
 
             # Persist the final leaderboard position for consumers loading individual model.json files.
-            models_by_name = {model["name"]: model for model in models_metadata}
             for rank, model_name_full in enumerate(leaderboard_df["model"], start=1):
                 model_metadata = models_by_name[model_name_full]
                 model_metadata["rank"] = rank
