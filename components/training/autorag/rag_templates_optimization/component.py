@@ -101,6 +101,7 @@ def rag_templates_optimization(
     """
     import json
     import logging
+    import math
     import os
     import shutil
     import tempfile
@@ -194,7 +195,7 @@ def rag_templates_optimization(
         return evaluators
 
     def _optimization_score(pattern_data: dict) -> float:
-        """Return the mean score of the metric selected for optimization."""
+        """Return the finite optimization mean, or rank missing/non-finite scores last."""
         evaluation = pattern_data.get("evaluation") or {}
         metrics = evaluation.get("metrics", []) if isinstance(evaluation, dict) else []
         for metric in metrics:
@@ -203,7 +204,8 @@ def rag_templates_optimization(
             scores = metric.get("scores") or {}
             score = scores.get("mean") if isinstance(scores, dict) else None
             if score is not None:
-                return float(score)
+                score = float(score)
+                return score if math.isfinite(score) else float("-inf")
         return float("-inf")
 
     def _generate_output_artifacts(

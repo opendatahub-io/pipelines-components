@@ -496,6 +496,51 @@ class TestRagTemplatesOptimizationMetricResolution:
 class TestRagTemplatesOptimizationRun:
     """End-to-end orchestration: evaluator wiring, artifact generation, leaderboard."""
 
+    @pytest.mark.parametrize("invalid_score", [float("nan"), float("inf"), float("-inf")])
+    @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
+    def test_nonfinite_scores_rank_last_and_do_not_select_starter_kit(self, tmp_path, invalid_score):
+        """Non-finite evaluations cannot outrank valid patterns in any exported output."""
+        from kfp_components.components.training.autorag.shared.assets_generator.leaderboard import (
+            build_leaderboard_html,
+        )
+
+        mocks = _make_ai4rag_mocks()
+        mocks.build_leaderboard_html.side_effect = build_leaderboard_html
+        mocks.KFPEventHandler.return_value.patterns = [
+            {"payload": _pattern_payload(name, optimization_score=score)}
+            for name, score in [("pattern_weak", 0.1), ("pattern_invalid", invalid_score), ("pattern_best", 0.9)]
+        ]
+        search_space_path = _write_search_space_report(tmp_path)
+        rag_patterns, leaderboard_html = _artifacts(tmp_path)
+
+        with mock.patch.dict("sys.modules", mocks.modules):
+            rag_templates_optimization.python_func(
+                extracted_text=str(tmp_path / "extracted"),
+                test_data=str(tmp_path / "test_data.json"),
+                search_space_mps_report=search_space_path,
+                rag_patterns=rag_patterns,
+                test_data_key="data/test.json",
+                maas_secret_name="maas-connection",
+                db_secret_name="vector-db-connection",
+                input_data_secret_name="s3-input-connection",
+                input_data_bucket_name="customer-docs",
+                leaderboard=leaderboard_html,
+            )
+
+        expected_order = ["pattern_best", "pattern_weak", "pattern_invalid"]
+        patterns = rag_patterns.metadata["metadata"]["patterns"]
+        assert [pattern["name"] for pattern in patterns] == expected_order
+        for rank, pattern in enumerate(patterns, start=1):
+            assert pattern["rank"] == rank
+            pattern_path = Path(rag_patterns.path) / pattern["name"] / "pattern.json"
+            assert json.loads(pattern_path.read_text(encoding="utf-8"))["rank"] == rank
+
+        mocks.generate_starter_kit.assert_called_once()
+        assert mocks.generate_starter_kit.call_args.args[0]["name"] == "pattern_best"
+        html = Path(leaderboard_html.path).read_text(encoding="utf-8")
+        positions = [html.index(name) for name in expected_order]
+        assert positions == sorted(positions)
+
     @pytest.mark.parametrize("template_id", ["agentic_rag", "sequential_rag"])
     @pytest.mark.parametrize(
         ("score_a", "score_b", "expected_order"),
