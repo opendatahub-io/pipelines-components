@@ -39,6 +39,9 @@ def rag_templates_optimization(
     Generated indexing specs forward ``settings.generation.language.code`` as
     ``ocr_lang`` so production extraction uses the optimization run's OCR language.
 
+    Each ``pattern.json`` includes a top-level integer ``rank`` (1 = best), also
+    included in artifact metadata. Ranking uses unrounded optimization scores.
+
     Args:
         extracted_text: Path to extracted text documents.
         test_data: Path to benchmark test data JSON.
@@ -213,11 +216,15 @@ def rag_templates_optimization(
         """Write per-pattern artefacts (JSON, notebooks, evaluation results)."""
         patterns: list[dict] = []
 
-        for pattern in patterns_raw:
+        ranked_patterns = sorted(
+            patterns_raw, key=lambda pattern: _optimization_score(pattern["payload"]), reverse=True
+        )
+        for rank, pattern in enumerate(ranked_patterns, start=1):
             patt_dir = output_dir / pattern.get("payload").get("name")
             patt_dir.mkdir(parents=True, exist_ok=True)
 
             pattern_data = pattern.get("payload")
+            pattern_data["rank"] = rank
             settings = pattern_data["settings"]
             # Retry with excerpts after a context-window overflow so a large
             # retrieval result does not make the deployed agent unusable.
@@ -584,7 +591,7 @@ def rag_templates_optimization(
             starter_kit.set_path(str(starter_kit_path))
 
             if patterns:
-                best_pattern = max(patterns, key=_optimization_score)
+                best_pattern = patterns[0]
                 with tempfile.TemporaryDirectory() as temp_dir:
                     generated_zip = generate_starter_kit(best_pattern, temp_dir)
                     shutil.copyfile(generated_zip, starter_kit_path)

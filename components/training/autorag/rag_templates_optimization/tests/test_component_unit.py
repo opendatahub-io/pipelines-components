@@ -497,21 +497,38 @@ class TestRagTemplatesOptimizationRun:
     """End-to-end orchestration: evaluator wiring, artifact generation, leaderboard."""
 
     @pytest.mark.parametrize("template_id", ["agentic_rag", "sequential_rag"])
+    @pytest.mark.parametrize(
+        ("score_a", "score_b", "expected_order"),
+        [
+            (0.9, 0.95, ["pattern_b", "pattern_a"]),
+            (0.90001, 0.90002, ["pattern_b", "pattern_a"]),
+            (0.9, 0.9, ["pattern_b", "pattern_a"]),
+            (None, 0.95, ["pattern_b", "pattern_a"]),
+            (0.9, None, ["pattern_a", "pattern_b"]),
+        ],
+    )
     @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
-    def test_full_run_speed_wires_unitxt_and_writes_patterns(self, tmp_path, template_id):
-        """The speed preset runs Unitxt only and persists pattern artifacts."""
+    def test_full_run_speed_wires_unitxt_and_writes_patterns(
+        self, tmp_path, template_id, score_a, score_b, expected_order
+    ):
+        """Exported ranks agree with the HTML leaderboard and selected starter kit."""
+        from kfp_components.components.training.autorag.shared.assets_generator.leaderboard import (
+            build_leaderboard_html,
+        )
+
         mocks = _make_ai4rag_mocks()
+        mocks.build_leaderboard_html.side_effect = build_leaderboard_html
         mocks.get_vector_store_config.return_value = mock.MagicMock(name="vector_store_config")
         search_space_path = _write_search_space_report(tmp_path)
         mocks.KFPEventHandler.return_value.patterns = [
             {
-                "payload": _pattern_payload("pattern_a", optimization_score=0.9),
-                "evaluation_results": [{"metric": "faithfulness", "score": 0.9}],
-                "conversations": [{"conversation_id": "case-0000", "question": "What is RAG?"}],
+                "payload": _pattern_payload("pattern_b", optimization_score=score_b),
+                "evaluation_results": [{"metric": "faithfulness", "score": score_b}],
             },
             {
-                "payload": _pattern_payload("pattern_b", optimization_score=0.95),
-                "evaluation_results": [{"metric": "faithfulness", "score": 0.95}],
+                "payload": _pattern_payload("pattern_a", optimization_score=score_a),
+                "evaluation_results": [{"metric": "faithfulness", "score": score_a}],
+                "conversations": [{"conversation_id": "case-0000", "question": "What is RAG?"}],
             },
         ]
         for pattern in mocks.KFPEventHandler.return_value.patterns:
@@ -563,7 +580,8 @@ class TestRagTemplatesOptimizationRun:
         assert not (Path(rag_patterns.path) / "pattern_b" / "conversations.json").exists()
         mocks.generate_starter_kit.assert_called_once()
         selected_pattern, generated_dir = mocks.generate_starter_kit.call_args.args
-        assert selected_pattern["name"] == "pattern_b"
+        assert selected_pattern["name"] == expected_order[0]
+        assert selected_pattern["rank"] == 1
         assert selected_pattern["template_id"] == template_id
         assert generated_dir != str(rag_patterns.path)
         assert Path(starter_kit.path).read_bytes() == b"generated zip"
@@ -595,10 +613,17 @@ class TestRagTemplatesOptimizationRun:
         assert indexing_notebook_call.kwargs["test_data_key"] == "data/test.json"
         assert rag_patterns.metadata["name"] == "rag_patterns_artifact"
         assert rag_patterns.metadata["uri"] == "gs://bucket/rag_patterns"
-        assert rag_patterns.metadata["metadata"]["patterns"][0]["name"] == "pattern_a"
+        exported_patterns = rag_patterns.metadata["metadata"]["patterns"]
+        assert [pattern["name"] for pattern in exported_patterns] == expected_order
+        for expected_rank, pattern in enumerate(exported_patterns, start=1):
+            assert type(pattern["rank"]) is int
+            assert pattern["rank"] == expected_rank
+            pattern_path = Path(rag_patterns.path) / pattern["name"] / "pattern.json"
+            assert json.loads(pattern_path.read_text(encoding="utf-8")) == pattern
 
         mocks.build_leaderboard_html.assert_called_once()
-        assert Path(leaderboard_html.path).read_text(encoding="utf-8") == "<html></html>"
+        html = Path(leaderboard_html.path).read_text(encoding="utf-8")
+        assert html.index(expected_order[0]) < html.index(expected_order[1])
         assert leaderboard_html.metadata["display_name"] == "autorag_leaderboard"
 
     @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
