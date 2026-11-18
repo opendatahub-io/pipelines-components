@@ -179,6 +179,7 @@ def _mock_ts_df():
     ts_df.num_items = 3
     ts_df.__len__.return_value = 30
     ts_df.infer_frequency.return_value = "D"
+    ts_df.convert_frequency.return_value = ts_df
     return ts_df
 
 
@@ -261,6 +262,34 @@ class TestTimeseriesModelsTrainingUnitTests:
         predictor.assert_not_called()
 
     @mock.patch("pandas.read_parquet")
+    @mock.patch("autogluon.timeseries.TimeSeriesDataFrame")
+    @mock.patch("autogluon.timeseries.TimeSeriesPredictor")
+    @pytest.mark.parametrize("freq", ["D", ""])
+    @pytest.mark.parametrize("periods", [1, 24, 25])
+    def test_holdout_periods_are_checked_after_conversion(
+        self, predictor, ts_frame, read_parquet, frequency_component_kwargs, freq, periods
+    ):
+        """Reject an item shortened by aggregation before fitting any model."""
+        train_ts, test_ts, converted = mock.MagicMock(), mock.MagicMock(), mock.MagicMock()
+        ts_frame.from_data_frame.side_effect = [train_ts, test_ts]
+        ts_frame.return_value.infer_frequency.return_value = "D"
+        test_ts.convert_frequency.return_value = converted
+        converted.num_timesteps_per_item.return_value = {"long": 100, "short": periods}
+        predictor.side_effect = RuntimeError("reached predictor construction")
+        if periods < 25:
+            with pytest.raises(ValueError, match=f"'short'.*{periods} periods.*'D'.*at least 25 periods"):
+                autogluon_timeseries_models_training.python_func(
+                    **frequency_component_kwargs, freq=freq, prediction_length=24
+                )
+            predictor.assert_not_called()
+        else:
+            with pytest.raises(RuntimeError, match="reached predictor construction"):
+                autogluon_timeseries_models_training.python_func(
+                    **frequency_component_kwargs, freq=freq, prediction_length=24
+                )
+        test_ts.convert_frequency.assert_called_once_with("D")
+
+    @mock.patch("pandas.read_parquet")
     @mock.patch("pandas.concat")
     @mock.patch("autogluon.timeseries.TimeSeriesDataFrame")
     @mock.patch("autogluon.timeseries.TimeSeriesPredictor")
@@ -307,7 +336,8 @@ class TestTimeseriesModelsTrainingUnitTests:
         full_train_ts = _mock_ts_df()
         refit_train_ts = _mock_ts_df()
         # from_data_frame is called for: train, test, and once per model for build_predict_sample_artifact
-        mock_ts_df_cls.from_data_frame.return_value = _mock_ts_df()
+        train_ts, test_ts = _mock_ts_df(), _mock_ts_df()
+        mock_ts_df_cls.from_data_frame.side_effect = [train_ts, test_ts]
         if inferred_freq is None:
             full_train_ts.infer_frequency.side_effect = ValueError("Irregular timestamps")
         else:
@@ -372,21 +402,22 @@ class TestTimeseriesModelsTrainingUnitTests:
         assert result.model_config["prediction_length"] == 24
         expected_freq = freq.strip() or inferred_freq or "15min"
         assert all(call.kwargs["freq"] == expected_freq for call in mock_predictor_cls.call_args_list)
-        mock_ts_df_cls.from_data_frame.return_value.infer_frequency.assert_not_called()
+        train_ts.infer_frequency.assert_not_called()
+        test_ts.convert_frequency.assert_called_once_with(expected_freq)
         if freq.strip():
             full_train_ts.infer_frequency.assert_not_called()
             mock_frequency_grid.assert_not_called()
             assert mock_frequency_expansion.call_args_list == [
                 mock.call(full_train_ts, expected_freq, name="full training data"),
-                mock.call(mock_ts_df_cls.from_data_frame.return_value, expected_freq, name="selection training data"),
-                mock.call(mock_ts_df_cls.from_data_frame.return_value, expected_freq, name="test data"),
+                mock.call(train_ts, expected_freq, name="selection training data"),
+                mock.call(test_ts, expected_freq, name="test data"),
             ]
         else:
             mock_frequency_expansion.assert_not_called()
             full_train_ts.infer_frequency.assert_called_once_with(num_items=None, raise_if_irregular=True)
             assert mock_frequency_grid.call_args_list == [
-                mock.call(mock_ts_df_cls.from_data_frame.return_value, expected_freq, name="selection training data"),
-                mock.call(mock_ts_df_cls.from_data_frame.return_value, expected_freq, name="test data"),
+                mock.call(train_ts, expected_freq, name="selection training data"),
+                mock.call(test_ts, expected_freq, name="test data"),
             ]
         if not freq.strip() and inferred_freq is None:
             mock_gap_inference.assert_called_once_with(full_train_ts)

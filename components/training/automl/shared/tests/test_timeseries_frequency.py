@@ -3,7 +3,13 @@
 import pandas as pd
 import pytest
 
-from ..timeseries_frequency import infer_frequency_from_gaps, validate_frequency_expansion, validate_frequency_grid
+from ..timeseries_frequency import (
+    _frequency_grid_size,
+    _resampling_memory_budget,
+    infer_frequency_from_gaps,
+    validate_frequency_expansion,
+    validate_frequency_grid,
+)
 
 
 def panel(*indexes):
@@ -39,11 +45,15 @@ def test_timezone_aware_timestamps_are_rejected(start, tz, freq, with_gaps):
 
 @pytest.mark.parametrize("freq", ["h", "MS", "ME", "B"])
 @pytest.mark.parametrize("steps", [1999, 2000])
-def test_explicit_frequency_expansion_limit_without_allocating_grid(freq, steps, monkeypatch):
+@pytest.mark.parametrize("off_grid", [False, True])
+def test_explicit_frequency_expansion_limit_without_allocating_grid(freq, steps, off_grid, monkeypatch):
     """Allow exactly 1000x expansion and reject larger grids before resampling."""
     offset = pd.tseries.frequencies.to_offset(freq)
     first = offset.rollforward(pd.Timestamp("2020-01-01"))
-    data = panel(pd.DatetimeIndex([first, first + steps * offset]))
+    last = first + steps * offset
+    if off_grid:
+        last += pd.Timedelta(minutes=15)
+    data = panel(pd.DatetimeIndex([first, last]))
 
     def unexpected_grid(*args, **kwargs):
         raise AssertionError("Expansion checks must not allocate a timestamp grid")
@@ -54,6 +64,42 @@ def test_explicit_frequency_expansion_limit_without_allocating_grid(freq, steps,
     else:
         with pytest.raises(ValueError, match="series '0' in test data.*1000.5x.*1000x limit"):
             validate_frequency_expansion(data, freq, name="test data")
+
+
+@pytest.mark.parametrize("freq", ["MS", "ME", "3MS", "3ME", "B", "W-MON", "QS", "YE"])
+@pytest.mark.parametrize("start", ["2020-01-01 12:15", "2020-01-31 23:30", "2020-02-01 00:15"])
+@pytest.mark.parametrize("end", ["2020-02-02 13:30", "2020-07-31 23:30"])
+def test_calendar_estimate_matches_resampler(freq, start, end):
+    """Count calendar bins exactly, including partial and boundary-day bins."""
+    dates = pd.to_datetime([start, end])
+    expected = len(pd.Series([1, 2], index=dates).resample(freq).mean())
+    assert _frequency_grid_size(dates[0], dates[-1], pd.tseries.frequencies.to_offset(freq)) == expected
+
+
+def test_aggregate_expansion_memory_budget(monkeypatch):
+    """Multiple individually safe items can exceed the task's total memory budget."""
+    from .. import timeseries_frequency
+
+    dates = pd.date_range("2020-01-01", periods=100, freq="h")
+    data = panel(dates[[0, -1]], dates[[0, -1]])
+    bytes_per_row = max(data.memory_usage(index=True, deep=True).sum() / len(data), 24)
+    projected_bytes = 200 * bytes_per_row
+    monkeypatch.setattr(timeseries_frequency, "_resampling_memory_budget", lambda: projected_bytes)
+    validate_frequency_expansion(data, "h")
+    monkeypatch.setattr(timeseries_frequency, "_resampling_memory_budget", lambda: projected_bytes - 1)
+    with pytest.raises(ValueError, match="Frequency 'h'.*200 rows.*GiB.*coarser freq"):
+        validate_frequency_expansion(data, "h")
+
+
+@pytest.mark.parametrize("cgroup_limit", [str(64 * 2**30), str(128 * 2**30), "max"])
+def test_memory_budget_uses_task_limit(monkeypatch, cgroup_limit):
+    """Use the tighter cgroup/host limit with room for copies and training."""
+    from .. import timeseries_frequency
+
+    monkeypatch.setattr(timeseries_frequency.os, "sysconf", lambda name: 4096 if name == "SC_PAGE_SIZE" else 2**28)
+    monkeypatch.setattr(timeseries_frequency.Path, "read_text", lambda self: cgroup_limit)
+    limit = 2**40 if cgroup_limit == "max" else int(cgroup_limit)
+    assert _resampling_memory_budget() == limit // 4
 
 
 @pytest.mark.parametrize("freq", ["h", "D", "MS", "ME", "B"])

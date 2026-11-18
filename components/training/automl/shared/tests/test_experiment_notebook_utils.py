@@ -5,6 +5,7 @@
 
 import ast
 import json
+from unittest import mock
 
 import pytest
 
@@ -232,7 +233,67 @@ class TestExperimentNotebookUtils:
         assert 'pipeline_name = "autogluon-timeseries-training-pipeline"' in source
         assert 'target = "sales"' in source
         assert f'freq = "{freq}"' in source
-        assert '"freq": freq' in source
+        assert 'return {"freq": value}' in source
         assert "test_data_bucket_name" not in source
         assert "test_data_file_key" not in source
         assert EXPERIMENT_NOTEBOOK_RELATIVE_PATH.endswith(EXPERIMENT_NOTEBOOK_FILENAME)
+
+    @pytest.mark.parametrize("freq", ["", "   ", " D "])
+    @pytest.mark.parametrize("supports_freq", [False, True])
+    def test_timeseries_frequency_preflight_and_submission(self, tmp_path, freq, supports_freq):
+        destination = write_experiment_notebook(
+            output_dir=tmp_path,
+            kind="timeseries",
+            replacements=timeseries_experiment_notebook_replacements(_timeseries_config(freq=freq)),
+        )
+        notebook = json.loads(destination.read_text())
+        sources = ["".join(cell.get("source", [])) for cell in notebook["cells"] if cell["cell_type"] == "code"]
+        helper_source = next(source for source in sources if "def frequency_arguments" in source)
+        helper = next(
+            node for node in ast.parse(helper_source).body if getattr(node, "name", "") == "frequency_arguments"
+        )
+        client = mock.Mock()
+        client.get_pipeline_version.return_value.pipeline_spec = {
+            "root": {"inputDefinitions": {"parameters": {"freq": {}} if supports_freq else {}}}
+        }
+        pipeline = mock.Mock(pipeline_id="pipeline")
+        version = mock.Mock(pipeline_version_id="selected")
+        namespace = {
+            **vars(_timeseries_config(freq=freq)),
+            "client": client,
+            "pipeline_name": "timeseries",
+            "pipeline_version_id": "selected",
+            "artifacts_bucket": "artifacts",
+            "get_pipeline_and_versions": mock.Mock(return_value=(pipeline, [version])),
+            "resolve_pipeline_template": mock.Mock(return_value=("pipeline", "selected")),
+        }
+        exec(compile(ast.Module(body=[helper], type_ignores=[]), "notebook", "exec"), namespace)
+        preflight = ast.parse(next(source for source in sources if "missing_s3_environment =" in source))
+        statements = []
+        for node in preflight.body:
+            if isinstance(node, ast.Assign) and getattr(node.targets[0], "id", "") == "missing_s3_environment":
+                break
+            if not isinstance(node, (ast.Import, ast.ImportFrom)):
+                statements.append(node)
+        preflight_code = compile(ast.Module(body=statements, type_ignores=[]), "preflight", "exec")
+        if freq.strip() and not supports_freq:
+            with pytest.raises(ValueError, match="version 'selected'.*does not declare freq"):
+                exec(preflight_code, namespace)
+            client.create_experiment.assert_not_called()
+            client.run_pipeline.assert_not_called()
+            return
+        exec(preflight_code, namespace)
+        submission = ast.parse(next(source for source in sources if "pipeline_arguments =" in source))
+        statements = []
+        for node in submission.body:
+            if isinstance(node, ast.Assign) and getattr(node.targets[0], "id", "") == "experiment":
+                break
+            statements.append(node)
+        exec(compile(ast.Module(body=statements, type_ignores=[]), "submission", "exec"), namespace)
+        namespace["resolve_pipeline_template"].assert_called_once_with("timeseries", "selected")
+        if freq.strip():
+            assert namespace["pipeline_arguments"]["freq"] == "D"
+            client.get_pipeline_version.assert_called_with(pipeline_id="pipeline", pipeline_version_id="selected")
+        else:
+            assert "freq" not in namespace["pipeline_arguments"]
+            client.get_pipeline_version.assert_not_called()

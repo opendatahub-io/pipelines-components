@@ -271,6 +271,16 @@ def autogluon_timeseries_models_training(
             validate_frequency_expansion(test_ts, effective_freq, name="test data")
         del full_train_ts_df
 
+        test_ts = test_ts.convert_frequency(effective_freq)
+        required_periods = prediction_length + 1
+        for item_id, periods in test_ts.num_timesteps_per_item().items():
+            if periods < required_periods:
+                raise ValueError(
+                    f"Series {item_id!r} in test data has {periods} periods at frequency {effective_freq!r}; "
+                    f"requires at least {required_periods} periods (prediction_length={prediction_length} "
+                    "plus one history period)."
+                )
+
         # Create TimeSeriesPredictor
         predictor = TimeSeriesPredictor(
             freq=effective_freq,

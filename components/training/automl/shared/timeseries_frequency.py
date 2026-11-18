@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
+
 import pandas as pd
 
 
@@ -11,9 +14,16 @@ def _frequency_grid_size(first, last, offset):
         origin = int(first.normalize().value)
         return (int(last.value) - origin) // offset.nanos - (int(first.value) - origin) // offset.nanos + 1
 
+    # Calendar resamplers compare bin boundaries at midnight. End-anchored
+    # offsets include the entire boundary day in the bin to its left.
+    closed_right = pd.Grouper(freq=offset).closed == "right"
+    first = offset.rollforward(first.normalize()) if closed_right else offset.rollback(first.normalize())
+    last = last.normalize()
+
     def reaches_last(steps):
         try:
-            return first + offset * steps >= last
+            boundary = first + offset * steps
+            return boundary >= last if closed_right else boundary > last
         except (OverflowError, pd.errors.OutOfBoundsDatetime):
             return True
 
@@ -26,23 +36,50 @@ def _frequency_grid_size(first, last, offset):
             upper = middle
         else:
             lower = middle + 1
-    return lower + 1
+    return lower + 1 if closed_right else lower
+
+
+def _resampling_memory_budget() -> int:
+    """Reserve 75% of task memory for inputs, resampling copies and model fitting."""
+    limits = [os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")]
+    # The pipeline sets 64Gi (speed/balanced) or 128Gi (quality); read the
+    # enforced container limit so overrides also determine this budget.
+    for path in ("/sys/fs/cgroup/memory.max", "/sys/fs/cgroup/memory/memory.limit_in_bytes"):
+        try:
+            limit = int(Path(path).read_text().strip())
+        except (OSError, ValueError):
+            continue
+        if limit > 0:
+            limits.append(limit)
+    return min(limits) // 4
 
 
 def validate_frequency_expansion(data: pd.DataFrame, freq: str, name: str = "data", max_expansion: int = 1000) -> None:
     """Bound explicit-frequency resampling without requiring grid or midnight alignment."""
     offset = pd.tseries.frequencies.to_offset(freq)
+    projected_rows = 0
     for item_id, series in data.groupby(level="item_id", sort=False):
         timestamps = pd.DatetimeIndex(series.index.get_level_values("timestamp")).as_unit("ns")
         if timestamps.hasnans:
             raise ValueError(f"Series {item_id!r} in {name} has missing timestamps.")
         expected_rows = _frequency_grid_size(timestamps.min(), timestamps.max(), offset)
+        projected_rows += expected_rows
         expansion = expected_rows / len(timestamps)
         if expansion > max_expansion:
             raise ValueError(
                 f"Frequency {freq!r} would expand series {item_id!r} in {name} by approximately {expansion:.6g}x "
                 f"({expected_rows} rows from {len(timestamps)}), exceeding the {max_expansion}x limit."
             )
+    # Account for the index and numeric columns promoted to float64 for gaps.
+    bytes_per_row = max(data.memory_usage(index=True, deep=True).sum() / max(len(data), 1), 16 + 8 * len(data.columns))
+    projected_bytes = projected_rows * bytes_per_row
+    budget = _resampling_memory_budget()
+    if projected_bytes > budget:
+        raise ValueError(
+            f"Frequency {freq!r} would resample {name} to approximately {projected_rows} rows "
+            f"({projected_bytes / 2**30:.3g} GiB), exceeding the task resampling budget "
+            f"({budget / 2**30:.3g} GiB). Choose a coarser freq."
+        )
 
 
 def infer_frequency_from_gaps(data: pd.DataFrame, max_expansion: int = 10) -> str:
