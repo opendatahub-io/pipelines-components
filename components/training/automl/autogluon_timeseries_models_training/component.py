@@ -127,6 +127,7 @@ def autogluon_timeseries_models_training(
     )
     from kfp_components.components.training.automl.shared.timeseries_frequency import (
         infer_frequency_from_gaps,
+        validate_frequency_expansion,
         validate_frequency_grid,
     )
     from kfp_components.components.training.automl.shared.timeseries_notebook_utils import (
@@ -264,6 +265,11 @@ def autogluon_timeseries_models_training(
                 )
             validate_frequency_grid(train_ts, effective_freq, name="selection training data")
             validate_frequency_grid(test_ts, effective_freq, name="test data")
+        else:
+            validate_frequency_expansion(full_train_ts_df, effective_freq, name="full training data")
+            validate_frequency_expansion(train_ts, effective_freq, name="selection training data")
+            validate_frequency_expansion(test_ts, effective_freq, name="test data")
+        del full_train_ts_df
 
         # Create TimeSeriesPredictor
         predictor = TimeSeriesPredictor(
@@ -367,6 +373,15 @@ def autogluon_timeseries_models_training(
         failed_models = []
 
         status.record("refit_and_evaluate", "started")
+
+        # Reload the extra split so the combined frame is only retained during refit.
+        extra_train_ts_df = TimeSeriesDataFrame.from_path(
+            path=extra_train_data_path,
+            id_column=id_column,
+            timestamp_column=timestamp_column,
+        )
+        full_train_ts_df = TimeSeriesDataFrame(pd.concat([train_ts, extra_train_ts_df], axis=0))
+        del extra_train_ts_df
 
         def replace_placeholder_in_notebook(notebook, replacements):
             for cell in notebook.get("cells", []):

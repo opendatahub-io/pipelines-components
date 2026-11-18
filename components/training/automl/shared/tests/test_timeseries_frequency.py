@@ -3,7 +3,7 @@
 import pandas as pd
 import pytest
 
-from ..timeseries_frequency import infer_frequency_from_gaps, validate_frequency_grid
+from ..timeseries_frequency import infer_frequency_from_gaps, validate_frequency_expansion, validate_frequency_grid
 
 
 def panel(*indexes):
@@ -35,6 +35,53 @@ def test_timezone_aware_timestamps_are_rejected(start, tz, freq, with_gaps):
         infer_frequency_from_gaps(data)
     with pytest.raises(ValueError, match="test data: AutoGluon requires timezone-naive timestamps"):
         validate_frequency_grid(data, freq, name="test data")
+
+
+@pytest.mark.parametrize("freq", ["h", "MS", "ME", "B"])
+@pytest.mark.parametrize("steps", [1999, 2000])
+def test_explicit_frequency_expansion_limit_without_allocating_grid(freq, steps, monkeypatch):
+    """Allow exactly 1000x expansion and reject larger grids before resampling."""
+    offset = pd.tseries.frequencies.to_offset(freq)
+    first = offset.rollforward(pd.Timestamp("2020-01-01"))
+    data = panel(pd.DatetimeIndex([first, first + steps * offset]))
+
+    def unexpected_grid(*args, **kwargs):
+        raise AssertionError("Expansion checks must not allocate a timestamp grid")
+
+    monkeypatch.setattr(pd, "date_range", unexpected_grid)
+    if steps == 1999:
+        validate_frequency_expansion(data, freq)
+    else:
+        with pytest.raises(ValueError, match="series '0' in test data.*1000.5x.*1000x limit"):
+            validate_frequency_expansion(data, freq, name="test data")
+
+
+@pytest.mark.parametrize("freq", ["h", "D", "MS", "ME", "B"])
+def test_explicit_frequency_expansion_allows_off_grid_timestamps(freq):
+    """Explicit frequencies may aggregate data and move timestamps away from noon."""
+    dates = pd.to_datetime(["2020-01-01 12:15", "2020-01-03 13:30", "2020-01-05 14:45"])
+    validate_frequency_expansion(panel(dates), freq)
+
+
+def test_explicit_frequency_expansion_identifies_sparse_series():
+    """A dense item must not hide an excessive expansion in another item."""
+    dates = pd.date_range("2020-01-01", periods=3000, freq="h")
+    with pytest.raises(ValueError, match="series '1'.*1500x"):
+        validate_frequency_expansion(panel(dates, dates[[0, -1]]), "h")
+
+
+def test_explicit_frequency_expansion_counts_partial_tick_bins():
+    """Off-grid endpoints can occupy one more bin than their elapsed span implies."""
+    first = pd.Timestamp("2020-01-01 00:30")
+    last = first.normalize() + pd.Timedelta(hours=2000)
+    with pytest.raises(ValueError, match="1000.5x"):
+        validate_frequency_expansion(panel(pd.DatetimeIndex([first, last])), "h")
+
+
+def test_explicit_frequency_expansion_rejects_missing_timestamps():
+    """Missing endpoints must not enter calendar grid arithmetic."""
+    with pytest.raises(ValueError, match="missing timestamps"):
+        validate_frequency_expansion(panel(pd.DatetimeIndex([pd.NaT])), "MS")
 
 
 @pytest.mark.parametrize("freq", ["D", "h", "15min", "100ns", "7D", "MS", "ME", "3MS", "3ME", "12MS"])

@@ -5,6 +5,46 @@ from __future__ import annotations
 import pandas as pd
 
 
+def _frequency_grid_size(first, last, offset):
+    """Estimate resampling rows without allocating a grid, conservatively for calendar offsets."""
+    if isinstance(offset, pd.offsets.Tick):
+        origin = int(first.normalize().value)
+        return (int(last.value) - origin) // offset.nanos - (int(first.value) - origin) // offset.nanos + 1
+
+    def reaches_last(steps):
+        try:
+            return first + offset * steps >= last
+        except (OverflowError, pd.errors.OutOfBoundsDatetime):
+            return True
+
+    lower, upper = 0, 1
+    while not reaches_last(upper):
+        lower, upper = upper, upper * 2
+    while lower < upper:
+        middle = (lower + upper) // 2
+        if reaches_last(middle):
+            upper = middle
+        else:
+            lower = middle + 1
+    return lower + 1
+
+
+def validate_frequency_expansion(data: pd.DataFrame, freq: str, name: str = "data", max_expansion: int = 1000) -> None:
+    """Bound explicit-frequency resampling without requiring grid or midnight alignment."""
+    offset = pd.tseries.frequencies.to_offset(freq)
+    for item_id, series in data.groupby(level="item_id", sort=False):
+        timestamps = pd.DatetimeIndex(series.index.get_level_values("timestamp")).as_unit("ns")
+        if timestamps.hasnans:
+            raise ValueError(f"Series {item_id!r} in {name} has missing timestamps.")
+        expected_rows = _frequency_grid_size(timestamps.min(), timestamps.max(), offset)
+        expansion = expected_rows / len(timestamps)
+        if expansion > max_expansion:
+            raise ValueError(
+                f"Frequency {freq!r} would expand series {item_id!r} in {name} by approximately {expansion:.6g}x "
+                f"({expected_rows} rows from {len(timestamps)}), exceeding the {max_expansion}x limit."
+            )
+
+
 def infer_frequency_from_gaps(data: pd.DataFrame, max_expansion: int = 10) -> str:
     """Infer a shared observation grid without moving or aggregating timestamps.
 
@@ -110,16 +150,10 @@ def validate_frequency_grid(data: pd.DataFrame, freq: str, name: str = "data", m
         if isinstance(offset, pd.offsets.Tick):
             if (first.value - first.normalize().value) % offset.nanos:
                 raise ValueError(error)
-            too_large = (int(last.value) - int(first.value)) // offset.nanos + 1 > limit
         else:
             if offset.rollforward(first.normalize()) != first:
                 raise ValueError(error)
-            try:
-                too_large = last > first + offset * (limit - 1)
-            except (OverflowError, pd.errors.OutOfBoundsDatetime):
-                # The upper bound lies beyond representable dates.
-                too_large = False
-        if too_large:
+        if _frequency_grid_size(first, last, offset) > limit:
             raise ValueError(
                 f"Automatic frequency {freq!r} would expand a series by more than {max_expansion}x in {name}."
             )

@@ -81,6 +81,15 @@ def mock_frequency_grid():
         yield validate
 
 
+@pytest.fixture(autouse=True)
+def mock_frequency_expansion():
+    """Expansion arithmetic is tested on real pandas independently of SDK doubles."""
+    with mock.patch(
+        "kfp_components.components.training.automl.shared.timeseries_frequency.validate_frequency_expansion"
+    ) as validate:
+        yield validate
+
+
 @pytest.fixture
 def frequency_component_kwargs(mock_artifacts, tmp_path):
     """Common component arguments for frequency failure tests."""
@@ -234,6 +243,24 @@ class TestTimeseriesModelsTrainingUnitTests:
         assert mock_frequency_grid.call_args_list[-1].kwargs["name"] == "test data"
 
     @mock.patch("pandas.read_parquet")
+    @mock.patch("autogluon.timeseries.TimeSeriesDataFrame")
+    @mock.patch("autogluon.timeseries.TimeSeriesPredictor")
+    @pytest.mark.parametrize("split", ["full training data", "selection training data", "test data"])
+    def test_explicit_frequency_expansion_fails_before_fitting(
+        self, predictor, ts_frame, read_parquet, mock_frequency_expansion, frequency_component_kwargs, split
+    ):
+        """Check all splits before explicit frequencies can trigger excessive resampling."""
+
+        def validate(data, freq, name):
+            if name == split:
+                raise ValueError(f"series 'sparse' in {name} exceeds the 1000x limit")
+
+        mock_frequency_expansion.side_effect = validate
+        with pytest.raises(ValueError, match=f"series 'sparse' in {split}.*1000x"):
+            autogluon_timeseries_models_training.python_func(**frequency_component_kwargs, freq="s")
+        predictor.assert_not_called()
+
+    @mock.patch("pandas.read_parquet")
     @mock.patch("pandas.concat")
     @mock.patch("autogluon.timeseries.TimeSeriesDataFrame")
     @mock.patch("autogluon.timeseries.TimeSeriesPredictor")
@@ -253,6 +280,7 @@ class TestTimeseriesModelsTrainingUnitTests:
         mock_read_parquet,
         mock_artifacts,  # noqa: F811
         mock_frequency_grid,
+        mock_frequency_expansion,
         freq,
         inferred_freq,
         caplog,
@@ -277,6 +305,7 @@ class TestTimeseriesModelsTrainingUnitTests:
 
         extra_ts = _mock_ts_df()
         full_train_ts = _mock_ts_df()
+        refit_train_ts = _mock_ts_df()
         # from_data_frame is called for: train, test, and once per model for build_predict_sample_artifact
         mock_ts_df_cls.from_data_frame.return_value = _mock_ts_df()
         if inferred_freq is None:
@@ -284,8 +313,14 @@ class TestTimeseriesModelsTrainingUnitTests:
         else:
             full_train_ts.infer_frequency.return_value = inferred_freq
         mock_ts_df_cls.from_path.return_value = extra_ts
-        mock_ts_df_cls.return_value = full_train_ts
+        mock_ts_df_cls.side_effect = [full_train_ts, refit_train_ts]
         mock_concat.return_value = mock.MagicMock()
+
+        def selection_fit(**kwargs):
+            assert mock_ts_df_cls.from_path.call_count == 1
+            assert mock_ts_df_cls.call_count == 1
+
+        mock_predictor.fit.side_effect = selection_fit
 
         train_df, test_df = mock.MagicMock(), mock.MagicMock()
         mock_read_parquet.side_effect = [train_df, test_df]
@@ -319,12 +354,14 @@ class TestTimeseriesModelsTrainingUnitTests:
         mock_read_parquet.assert_any_call("/tmp/test.parquet")
         mock_ts_df_cls.from_data_frame.assert_any_call(train_df, id_column="item_id", timestamp_column="timestamp")
         mock_ts_df_cls.from_data_frame.assert_any_call(test_df, id_column="item_id", timestamp_column="timestamp")
-        mock_ts_df_cls.from_path.assert_called_once_with(
-            path=extra_train_path,
-            id_column="item_id",
-            timestamp_column="timestamp",
-        )
-        mock_concat.assert_called_once()
+        assert mock_ts_df_cls.from_path.call_args_list == 2 * [
+            mock.call(
+                path=extra_train_path,
+                id_column="item_id",
+                timestamp_column="timestamp",
+            )
+        ]
+        assert mock_concat.call_count == 2
         concat_frames = mock_concat.call_args[0][0]
         assert len(concat_frames) == 2
         assert concat_frames[1] is extra_ts
@@ -339,7 +376,13 @@ class TestTimeseriesModelsTrainingUnitTests:
         if freq.strip():
             full_train_ts.infer_frequency.assert_not_called()
             mock_frequency_grid.assert_not_called()
+            assert mock_frequency_expansion.call_args_list == [
+                mock.call(full_train_ts, expected_freq, name="full training data"),
+                mock.call(mock_ts_df_cls.from_data_frame.return_value, expected_freq, name="selection training data"),
+                mock.call(mock_ts_df_cls.from_data_frame.return_value, expected_freq, name="test data"),
+            ]
         else:
+            mock_frequency_expansion.assert_not_called()
             full_train_ts.infer_frequency.assert_called_once_with(num_items=None, raise_if_irregular=True)
             assert mock_frequency_grid.call_args_list == [
                 mock.call(mock_ts_df_cls.from_data_frame.return_value, expected_freq, name="selection training data"),
@@ -361,6 +404,7 @@ class TestTimeseriesModelsTrainingUnitTests:
         assert result.model_config["known_covariates_names"] == []
         assert result.model_config["num_models_trained"] == 3
         assert mock_refit_predictor.fit.call_count == 2
+        assert all(call.kwargs["train_data"] is refit_train_ts for call in mock_refit_predictor.fit.call_args_list)
         assert all(call.kwargs["time_limit"] == 300 for call in mock_refit_predictor.fit.call_args_list)
         assert [call.kwargs["model"] for call in mock_refit_predictor.evaluate.call_args_list] == ["DeepAR", "TFT"]
         # Verify full refit happened
@@ -617,12 +661,10 @@ class TestTimeseriesModelsTrainingUnitTests:
         # Check that first predictor call (selection) has known_covariates
         assert mock_predictor_cls.call_args_list[0][1]["known_covariates_names"] == covariates
         assert result.model_config["known_covariates_names"] == covariates
-        mock_ts_df_cls.from_path.assert_called_once_with(
-            path=extra_train_path,
-            id_column="item_id",
-            timestamp_column="timestamp",
-        )
-        mock_concat.assert_called_once()
+        assert mock_ts_df_cls.from_path.call_args_list == 2 * [
+            mock.call(path=extra_train_path, id_column="item_id", timestamp_column="timestamp")
+        ]
+        assert mock_concat.call_count == 2
 
     @mock.patch("pandas.read_parquet")
     @mock.patch("autogluon.timeseries.TimeSeriesDataFrame")
