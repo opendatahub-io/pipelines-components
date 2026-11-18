@@ -59,7 +59,7 @@ model directory contains a ``model.json`` file with model metadata (name, locati
 - **Tags**:
   - training
   - automl
-- **Last Verified**: 2026-06-10 12:00:00+00:00
+- **Last Verified**: 2026-11-18 00:00:00+00:00
 - **Owners**:
   - No Parent Owners: Yes
   - Approvers:
@@ -162,11 +162,17 @@ One `<ModelName>_FULL/` directory is created for each of the top N selected mode
 
 ### `model.json`
 
-Each model directory contains a `model.json` file with the model's metadata, matching the corresponding entry in `context.models`. When predictor feature metadata is available, an ``inference`` block is also written so consumers can build KServe AutoGluon ``:predict`` bodies without loading AutoGluon:
+Each model directory contains a `model.json` file with the model's metadata, matching the corresponding entry in `context.models`.
+
+The top-level integer `rank` matches the final leaderboard position (1 = best), using unrounded holdout scores.
+It is also present in `context.models`. Older artifacts do not contain this field.
+
+When predictor feature metadata is available, an ``inference`` block is also written so consumers can build KServe AutoGluon ``:predict`` bodies without loading AutoGluon:
 
 ```json
 {
   "name": "LightGBM_BAG_L1_FULL",
+  "rank": 1,
   "location": {
     "model_directory": "LightGBM_BAG_L1_FULL",
     "predictor": "LightGBM_BAG_L1_FULL/predictor",
