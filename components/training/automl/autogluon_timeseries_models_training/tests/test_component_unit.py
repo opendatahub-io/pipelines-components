@@ -273,6 +273,7 @@ class TestTimeseriesModelsTrainingUnitTests:
         train_ts, test_ts, converted = mock.MagicMock(), mock.MagicMock(), mock.MagicMock()
         ts_frame.from_data_frame.side_effect = [train_ts, test_ts]
         ts_frame.return_value.infer_frequency.return_value = "D"
+        test_ts.infer_frequency.return_value = "IRREG"
         test_ts.convert_frequency.return_value = converted
         converted.num_timesteps_per_item.return_value = {"long": 100, "short": periods}
         predictor.side_effect = RuntimeError("reached predictor construction")
@@ -288,6 +289,34 @@ class TestTimeseriesModelsTrainingUnitTests:
                     **frequency_component_kwargs, freq=freq, prediction_length=24
                 )
         test_ts.convert_frequency.assert_called_once_with("D")
+
+    @mock.patch("pandas.read_parquet")
+    @mock.patch("autogluon.timeseries.TimeSeriesDataFrame")
+    @mock.patch("autogluon.timeseries.TimeSeriesPredictor")
+    @pytest.mark.parametrize(
+        ("start", "freq"),
+        [("2020-01-01 12:00", "D"), ("2020-01-01 12:00", "1D"), ("2020-01-01 00:15", "h")],
+    )
+    def test_regular_holdout_keeps_original_timestamps(
+        self, predictor, ts_frame, read_parquet, frequency_component_kwargs, start, freq
+    ):
+        """Do not resample a matching holdout, which would shift noon/quarter-hour timestamps."""
+        from kfp_components.components.training.automl.shared.timeseries_frequency import pd
+
+        dates = pd.date_range(start, periods=30, freq=freq)
+        test_ts = _mock_ts_df()
+        test_ts.index = pd.MultiIndex.from_product([["a"], dates], names=["item_id", "timestamp"])
+        original_index = test_ts.index.copy()
+        test_ts.infer_frequency.return_value = pd.infer_freq(dates)
+        test_ts.num_timesteps_per_item.return_value = {"a": len(dates)}
+        ts_frame.from_data_frame.side_effect = [_mock_ts_df(), test_ts]
+        predictor.side_effect = RuntimeError("reached predictor construction")
+
+        with pytest.raises(RuntimeError, match="reached predictor construction"):
+            autogluon_timeseries_models_training.python_func(**frequency_component_kwargs, freq=freq)
+
+        test_ts.convert_frequency.assert_not_called()
+        pd.testing.assert_index_equal(test_ts.index, original_index)
 
     @mock.patch("pandas.read_parquet")
     @mock.patch("pandas.concat")
@@ -403,7 +432,17 @@ class TestTimeseriesModelsTrainingUnitTests:
         expected_freq = freq.strip() or inferred_freq or "15min"
         assert all(call.kwargs["freq"] == expected_freq for call in mock_predictor_cls.call_args_list)
         train_ts.infer_frequency.assert_not_called()
-        test_ts.convert_frequency.assert_called_once_with(expected_freq)
+        if expected_freq == "D":
+            test_ts.convert_frequency.assert_not_called()
+        else:
+            test_ts.convert_frequency.assert_called_once_with(expected_freq)
+        assert result.model_config["freq"] == expected_freq
+        expected_source = "explicit" if freq.strip() else ("inferred" if inferred_freq else "gaps")
+        assert result.model_config["frequency_source"] == expected_source
+        status = json.loads((Path(_DEFAULT_COMPONENT_STATUS.path) / "component_status.json").read_text())
+        selection = next(stage for stage in status["stages"] if stage["id"] == "model_selection")
+        assert selection["metrics"]["freq"] == expected_freq
+        assert selection["metrics"]["frequency_source"] == expected_source
         if freq.strip():
             full_train_ts.infer_frequency.assert_not_called()
             mock_frequency_grid.assert_not_called()

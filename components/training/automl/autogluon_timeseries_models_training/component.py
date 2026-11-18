@@ -206,8 +206,10 @@ def autogluon_timeseries_models_training(
         effective_freq = freq.strip() or None
         if effective_freq is not None:
             try:
-                if pd.tseries.frequencies.to_offset(effective_freq).n <= 0:
+                offset = pd.tseries.frequencies.to_offset(effective_freq)
+                if offset.n <= 0:
                     raise ValueError("Frequency must be positive.")
+                effective_freq = offset.freqstr
             except (TypeError, ValueError, OverflowError) as exc:
                 raise ValueError(f"freq {freq!r} is not a valid positive pandas frequency.") from exc
         time_limit = PRESET_TIME_LIMITS[preset]
@@ -253,11 +255,14 @@ def autogluon_timeseries_models_training(
         predictor_path = Path(workspace_path) / "timeseries_predictor"
 
         status.record("model_selection", "started")
+        frequency_source = "explicit"
         if effective_freq is None:
             try:
                 effective_freq = full_train_ts_df.infer_frequency(num_items=None, raise_if_irregular=True)
+                frequency_source = "inferred"
             except ValueError:
                 effective_freq = infer_frequency_from_gaps(full_train_ts_df)
+                frequency_source = "gaps"
                 logger.warning(
                     "Strict frequency inference failed; inferred freq=%r from timestamp gaps. "
                     "AutoGluon will resample to this grid. Set freq explicitly to override this heuristic.",
@@ -271,7 +276,15 @@ def autogluon_timeseries_models_training(
             validate_frequency_expansion(test_ts, effective_freq, name="test data")
         del full_train_ts_df
 
-        test_ts = test_ts.convert_frequency(effective_freq)
+        status.record(
+            "model_selection",
+            "started",
+            message={"level": "info", "text": f"Using frequency {effective_freq!r} (source: {frequency_source})."},
+            metrics={"freq": effective_freq, "frequency_source": frequency_source},
+        )
+        # Match AutoGluon: resampling an already regular index can shift its timestamps.
+        if test_ts.infer_frequency(num_items=None) != effective_freq:
+            test_ts = test_ts.convert_frequency(effective_freq)
         required_periods = prediction_length + 1
         for item_id, periods in test_ts.num_timesteps_per_item().items():
             if periods < required_periods:
@@ -352,6 +365,8 @@ def autogluon_timeseries_models_training(
         # Create model config
         model_config = {
             "prediction_length": prediction_length,
+            "freq": effective_freq,
+            "frequency_source": frequency_source,
             "eval_metric": eval_metric,
             "target": target,
             "id_column": id_column,

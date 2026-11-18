@@ -185,6 +185,58 @@ class TestTimeseriesDataLoaderUnitTests:
         assert hasattr(timeseries_data_loader, "python_func")
 
     @mock.patch.dict(os.environ, mocked_env_variables, clear=True)
+    @pytest.mark.parametrize("with_gaps", [False, True])
+    def test_reports_irregular_panel_before_export(self, tmp_path, caplog, with_gaps):
+        """Report a three-series, 383-row panel without changing its calendar mapping."""
+        lines = ["item_id,timestamp,target,feature"]
+        for item, count in enumerate([128, 128, 127]):
+            for i in range(count):
+                day = i + i // 7 if with_gaps else i
+                lines.append(f"{item},{_date_from_day_offset(day)},{i},{i * 10}")
+        csv_body = "\n".join(lines) + "\n"
+        sampled_test = _make_test_artifact(tmp_path)
+        write_parquet = pd.DataFrame.to_parquet
+
+        def check_before_export(*args, **kwargs):
+            if with_gaps:
+                assert "Detected 3 series with irregular timestamps before splitting" in caplog.text
+            return write_parquet(*args, **kwargs)
+
+        with (
+            _mock_boto3_module(get_object_return={"Body": io.BytesIO(csv_body.encode())}),
+            mock.patch.object(pd.DataFrame, "to_parquet", autospec=True, side_effect=check_before_export),
+        ):
+            result = timeseries_data_loader.python_func(
+                file_key="ts.csv",
+                bucket_name="b",
+                workspace_path=str(tmp_path),
+                target="target",
+                id_column="item_id",
+                timestamp_column="timestamp",
+                sampled_test_dataset=sampled_test,
+            )
+
+        exported = (
+            pd.concat(
+                pd.read_parquet(path)
+                for path in [result.models_selection_train_data_path, result.extra_train_data_path, sampled_test.path]
+            )
+            .sort_values(["item_id", "timestamp"])
+            .reset_index(drop=True)
+        )
+        original = pd.read_csv(io.StringIO(csv_body), parse_dates=["timestamp"], dtype={"item_id": str})
+        pd.testing.assert_frame_equal(exported, original)
+
+        status = json.loads((tmp_path / "component_status" / "component_status.json").read_text())
+        preparation = next(stage for stage in status["stages"] if stage["id"] == "prepare_data")
+        assert preparation["metrics"]["irregular_series"] == (3 if with_gaps else 0)
+        if with_gaps:
+            assert preparation["status"]["message"]["level"] == "warning"
+            assert "freq parameter" in preparation["status"]["message"]["text"]
+        else:
+            assert "message" not in preparation["status"]
+
+    @mock.patch.dict(os.environ, mocked_env_variables, clear=True)
     def test_component_default_split_outputs(self, tmp_path):
         """Default split creates expected files with chronological partitioning."""
         body_stream = io.BytesIO(_timeseries_csv().encode("utf-8"))
