@@ -345,30 +345,43 @@ class TestSeriesAnalysis:
         assert "mean_absolute_percentage_error" in metrics
         assert metrics["mean_absolute_percentage_error"] == pytest.approx(5.0)
 
-    def test_select_best_worst_missing_value_ranks_as_worst(self):
-        """A series with no metric value is ranked worst regardless of metric direction."""
+    @pytest.mark.parametrize("ranking_metric", ["mean_absolute_percentage_error", "R2"])
+    @pytest.mark.parametrize("invalid_score", [None, float("nan"), float("inf"), float("-inf")])
+    def test_select_best_worst_excludes_invalid_scores(self, ranking_metric, invalid_score):
+        """Neither extreme may select a series without a finite ranking score."""
         from ..back_testing import _select_best_worst
 
-        # Test with lower-is-better metric (mean_absolute_percentage_error)
-        series_averages_lower = {"A": {"mean_absolute_percentage_error": 5.0}, "B": {}}
-        best, worst = _select_best_worst(series_averages_lower, "mean_absolute_percentage_error")
-        assert best == "A"
-        assert worst == "B"
-
-        # Test with higher-is-better metric (R2)
-        series_averages_higher = {"A": {"R2": 0.9}, "B": {}}
-        best, worst = _select_best_worst(series_averages_higher, "R2")
-        assert best == "A"
-        assert worst == "B"
-
-        # Missing lower-is-better metric still ranks as worst
-        series_averages_empty = {
-            "A": {"mean_absolute_percentage_error": 5.0, "root_mean_squared_error": 10.0},
-            "B": {"mean_absolute_percentage_error": 8.0},
+        series_averages = {
+            "A": {ranking_metric: 0.2},
+            "B": {ranking_metric: 0.8},
+            "invalid": {ranking_metric: invalid_score},
+            "missing": {},
         }
-        best, worst = _select_best_worst(series_averages_empty, "root_mean_squared_error")
-        assert best == "A"
-        assert worst == "B"
+        expected = ("A", "B") if ranking_metric == "mean_absolute_percentage_error" else ("B", "A")
+        assert _select_best_worst(series_averages, ranking_metric) == expected
+        assert _select_best_worst(
+            {"A": series_averages["A"], "invalid": series_averages["invalid"]}, ranking_metric
+        ) == ("A", "A")
+        assert _select_best_worst({"invalid": series_averages["invalid"], "missing": {}}, ranking_metric) == (
+            None,
+            None,
+        )
+
+    def test_series_count_includes_series_without_ranking_metric(self):
+        """Zero-target series remain evaluated but cannot be ranked by MAPE."""
+        targets = _make_panel(["valid", "zero"], ["2025-01-01", "2025-01-02"], [100.0, 100.0])
+        targets.loc[("zero", slice(None)), "target"] = 0.0
+        predictions = pd.DataFrame({"mean": 101.0}, index=targets.index)
+        analysis = _build_series_analysis(
+            [predictions],
+            [targets],
+            target="target",
+            prediction_length=2,
+            eval_metric="mean_absolute_percentage_error",
+        )
+        assert analysis["num_series_evaluated"] == 2
+        assert analysis["best_performer"]["item_id"] == "valid"
+        assert analysis["worst_performer"]["item_id"] == "valid"
 
     def test_build_series_analysis_caches_computation(self):
         """Series analysis generates forecast rows once per (item, window)."""

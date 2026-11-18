@@ -120,7 +120,7 @@ def example_pipeline(
   - timeseries
   - automl
   - model-selection
-- **Last Verified**: 2026-11-17 00:00:00+00:00
+- **Last Verified**: 2026-11-18 00:00:00+00:00
 - **Owners**:
   - No Parent Owners: Yes
   - Approvers:
@@ -176,10 +176,12 @@ Metric export compatibility:
   Display values directly. Use ``lower_is_better`` / ``higher_is_better`` for sorting and tooltips;
   ``diagnostic`` has no monotonic direction. ``metrics.json`` remains a flat mapping; its convention is in the accompanying metadata.
 - Older time-series exports without the marker contain raw AutoGluon scores and require separate legacy handling.
-  Do not convert new values again or use absolute values. Backtest errors were already positive, independently of this marker.
+  Do not convert ``natural_v1`` values again or use absolute values. Legacy backtest signs depend on the metric:
+  older normalization could leave RMSLE negative, while scorer-based normalization exports it as positive.
 - MLflow records ``metrics_convention`` and the evaluation ``metric_direction`` on parent and model runs;
   parent best/worst scores and best-model selection follow that direction.
 - ``back_testing.json`` includes ``series_analysis.ranking_metric``. Notebook headings identify this metric and any fallback;
   annotations name the actual metric. For older artifacts the ranking metric is shown as unavailable.
 - Holdout scores, all-series backtesting aggregates, and individual-series errors cover different scopes and need not match.
+  Holdout and aggregate MAPE are ratios (e.g. 0.05), while per-series MAPE is a percentage (e.g. 5%).
   Missing aggregate metrics are not replaced by another metric.

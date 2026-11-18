@@ -417,9 +417,14 @@ class TestMlflowExperimentLogger:
         assert mock.call("best_score", best) in mlflow.log_metric.call_args_list
         assert mock.call("worst_score", worst) in mlflow.log_metric.call_args_list
         mlflow.log_param.assert_called_with("best_model_name", best_model)
-        for call in mlflow.log_params.call_args_list:
-            assert call.args[0]["metrics_convention"] == "natural_v1"
-            assert call.args[0]["metric_direction"] == direction
+        payloads = [call.args[0] for call in mlflow.log_params.call_args_list]
+        parent_payloads = [payload for payload in payloads if payload.get("task_type") == "time_series"]
+        child_payloads = {payload["model_name"]: payload for payload in payloads if "model_name" in payload}
+        assert len(parent_payloads) == 1
+        assert set(child_payloads) == {"DeepAR_FULL", "TFT_FULL"}
+        for payload in [*parent_payloads, *child_payloads.values()]:
+            assert payload["metrics_convention"] == "natural_v1"
+            assert payload["metric_direction"] == direction
 
     def test_skips_when_mlflow_disabled(self, tmp_path, monkeypatch):
         """Yield a no-op logger (no MLflow import) when tracking is disabled."""

@@ -1139,6 +1139,7 @@ class TestTimeseriesModelsTrainingUnitTests:
 class TestMetricsJsonSignConvention:
     """Natural exports and direction-aware ranking with real pandas."""
 
+    @pytest.mark.parametrize("rank_failure", [None, "write", "replace"])
     @pytest.mark.parametrize(
         ("eval_metric", "best_model", "second_mase"),
         [
@@ -1166,6 +1167,8 @@ class TestMetricsJsonSignConvention:
         best_model,
         second_mase,
         monkeypatch,
+        rank_failure,
+        caplog,
     ):
         """Exports normalize once; ranking respects direction and preserves internal selection."""
         # Training data stays mocked; use actual pandas for exported ranking and values.
@@ -1176,6 +1179,28 @@ class TestMetricsJsonSignConvention:
         run_logger.result.return_value = (False, {})
         models_artifact, extra_train_path, html_artifact, experiment_notebook = mock_artifacts
         mock_build_back_testing_json.return_value = {"schema_version": 1}
+
+        model_path = Path(models_artifact.path) / "DeepAR_FULL" / "model.json"
+        original_bytes = None
+        original_dump = json.dump
+        original_replace = Path.replace
+
+        def dump_metadata(data, file, **kwargs):
+            nonlocal original_bytes
+            if rank_failure and isinstance(data, dict) and data.get("name") == "DeepAR_FULL" and "rank" in data:
+                original_bytes = model_path.read_bytes()
+                if rank_failure == "write":
+                    file.write("{")
+                    raise OSError("rank write failed")
+            return original_dump(data, file, **kwargs)
+
+        def replace_metadata(path, target):
+            if rank_failure == "replace" and target == model_path:
+                raise OSError("rank replace failed")
+            return original_replace(path, target)
+
+        monkeypatch.setattr(json, "dump", dump_metadata)
+        monkeypatch.setattr(Path, "replace", replace_metadata)
 
         mock_predictor = mock.MagicMock()
         mock_predictor.leaderboard.return_value = _mock_leaderboard(["DeepAR", "TFT"])
@@ -1250,9 +1275,20 @@ class TestMetricsJsonSignConvention:
         )
         for expected_rank, row in enumerate(rows, start=1):
             exported_model = json.loads((Path(models_artifact.path) / row["model"] / "model.json").read_text())
-            assert type(exported_model["rank"]) is int
-            assert exported_model["rank"] == expected_rank
+            if rank_failure and row["model"] == "DeepAR_FULL":
+                assert "rank" not in exported_model
+                assert model_path.read_bytes() == original_bytes
+                assert not model_path.with_suffix(".json.tmp").exists()
+                assert "retaining its successful export" in caplog.text
+            else:
+                assert type(exported_model["rank"]) is int
+                assert exported_model["rank"] == expected_rank
             assert exported_model == next(model for model in context["models"] if model["name"] == row["model"])
+        assert len(context["models"]) == 2
+        assert {call.kwargs["model_name"] for call in run_logger.log_model.call_args_list} == {
+            "DeepAR_FULL",
+            "TFT_FULL",
+        }
         assert "-0.4200" not in Path(html_artifact.path).read_text()
         mock_run_logger.assert_called_once_with(
             task_type="time_series",

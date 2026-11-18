@@ -236,14 +236,55 @@ class TestBackTestingCharts:
         assert "Overall MASE (mean across 2 validation windows, all series): 0.4" in output
 
     @pytest.mark.parametrize(
-        ("eval_metric", "ranking_metric", "ranking_label"),
+        ("eval_metric", "ranking_metric", "ranking_label", "metrics", "metric_label"),
         [
-            ("MASE", "mean_absolute_percentage_error", "ranked by MAPE (fallback for MASE)"),
-            ("mean_absolute_percentage_error", "mean_absolute_percentage_error", "ranked by MAPE"),
-            ("MASE", None, "ranking metric unavailable (legacy artifact)"),
+            (
+                "MASE",
+                "mean_absolute_percentage_error",
+                "ranked by MAPE (fallback for MASE)",
+                {"MASE": 0.4, "MAPE": 5.0},
+                "MAPE=5%",
+            ),
+            (
+                "MASE",
+                "mean_absolute_percentage_error",
+                "ranked by MAPE (fallback for MASE)",
+                {"RMSE": 2.0, "MASE": 0.4},
+                "MASE=0.4",
+            ),
+            (
+                "mean_absolute_percentage_error",
+                "mean_absolute_percentage_error",
+                "ranked by MAPE",
+                {"mean_absolute_percentage_error": 5.0},
+                "MAPE=5%",
+            ),
+            (
+                "MASE",
+                None,
+                "ranking metric unavailable (legacy artifact)",
+                {"mean_absolute_percentage_error": 5.0},
+                "MAPE=5%",
+            ),
+            (
+                "MASE",
+                "mean_absolute_percentage_error",
+                "ranked by MAPE (fallback for MASE)",
+                {"RMSE": 2.0, "MAPE": float("nan"), "MASE": 0.4},
+                "MASE=0.4",
+            ),
+            (
+                "MASE",
+                "mean_absolute_percentage_error",
+                "ranked by MAPE (fallback for MASE)",
+                {"RMSE": 2.0, "MASE": float("inf")},
+                "RMSE=2",
+            ),
         ],
     )
-    def test_render_back_testing_forecast_charts_runs(self, eval_metric, ranking_metric, ranking_label):
+    def test_render_back_testing_forecast_charts_runs(
+        self, eval_metric, ranking_metric, ranking_label, metrics, metric_label
+    ):
         """Forecast charts entry point renders matplotlib panels only."""
         pytest.importorskip("matplotlib")
         import matplotlib
@@ -261,7 +302,7 @@ class TestBackTestingCharts:
                     "windows": [
                         {
                             "window_id": 0,
-                            "metrics": {"mean_absolute_percentage_error": 5.0},
+                            "metrics": metrics,
                             "forecast_data": self._sample_forecast_rows(),
                         },
                     ],
@@ -272,7 +313,7 @@ class TestBackTestingCharts:
             payload["series_analysis"]["ranking_metric"] = ranking_metric
         render_back_testing_forecast_charts(payload)
         figure = plt.gcf()
-        assert figure.axes[0].get_title() == "Window 0 (MAPE=5)"
+        assert figure.axes[0].get_title() == f"Window 0 ({metric_label})"
         assert figure._suptitle.get_text() == f"Best performer: A — {ranking_label}"
         # Labels change, actual/predicted curves and interval bounds stay intact.
         assert list(figure.axes[0].lines[0].get_ydata()) == [100.0, 110.0]

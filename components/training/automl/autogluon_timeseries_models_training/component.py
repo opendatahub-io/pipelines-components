@@ -441,7 +441,7 @@ def autogluon_timeseries_models_training(
         # has no callback API, so there is no live per-candidate streaming during fit().
         # Best-effort: a disabled logger is a no-op. Entered via ExitStack to avoid
         # re-indenting the loop; closed just before status recording below.
-        from contextlib import ExitStack
+        from contextlib import ExitStack, suppress
 
         from kfp_components.components.training.automl.shared.mlflow_tracking import (
             experiment_run_logger,
@@ -690,9 +690,23 @@ def autogluon_timeseries_models_training(
             # Persist the final leaderboard position for consumers loading individual model.json files.
             for rank, model_name_full in enumerate(leaderboard_df["model"], start=1):
                 model_metadata = models_by_name[model_name_full]
-                model_metadata["rank"] = rank
-                with (Path(models_artifact.path) / model_name_full / "model.json").open("w", encoding="utf-8") as f:
-                    json.dump(model_metadata, f, indent=2)
+                model_path = Path(models_artifact.path) / model_name_full / "model.json"
+                temporary_path = model_path.with_suffix(".json.tmp")
+                try:
+                    with temporary_path.open("w", encoding="utf-8") as f:
+                        json.dump({**model_metadata, "rank": rank}, f, indent=2)
+                    temporary_path.replace(model_path)
+                except OSError as exc:
+                    # Keep the successful per-model export and its metadata unchanged.
+                    logger.warning(
+                        "Could not persist rank for model '%s'; retaining its successful export: %s",
+                        model_name_full,
+                        exc,
+                    )
+                    with suppress(OSError):
+                        temporary_path.unlink(missing_ok=True)
+                else:
+                    model_metadata["rank"] = rank
 
             _metric_cols = [c for c in leaderboard_df.columns if c not in ("model", "notebook", "predictor")]
             leaderboard_df[_metric_cols] = leaderboard_df[_metric_cols].map(_format_metric_value)

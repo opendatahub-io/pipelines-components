@@ -501,7 +501,7 @@ class TestRagTemplatesOptimizationRun:
         ("score_a", "score_b", "expected_order"),
         [
             (0.9, 0.95, ["pattern_b", "pattern_a"]),
-            (0.90001, 0.90002, ["pattern_b", "pattern_a"]),
+            (0.90002, 0.90001, ["pattern_a", "pattern_b"]),
             (0.9, 0.9, ["pattern_b", "pattern_a"]),
             (None, 0.95, ["pattern_b", "pattern_a"]),
             (0.9, None, ["pattern_a", "pattern_b"]),

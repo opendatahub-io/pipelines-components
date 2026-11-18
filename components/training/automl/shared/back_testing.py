@@ -314,7 +314,7 @@ def _series_ranking_metric(eval_metric: str, series_averages: dict[Any, dict[str
         if fallback in available_metrics:
             return fallback
 
-    # Last resort: return mean_absolute_percentage_error even if not available (will sort to infinity)
+    # Last resort: retain the default metric; no series is ranked without a finite score.
     return _DEFAULT_SERIES_RANKING_METRIC
 
 
@@ -322,21 +322,19 @@ def _select_best_worst(
     series_averages: dict[Any, dict[str, float]],
     ranking_metric: str,
 ) -> tuple[Any | None, Any | None]:
-    if not series_averages:
+    scores = {
+        item_id: score
+        for item_id, metrics in series_averages.items()
+        if (score := to_finite_float(metrics.get(ranking_metric))) is not None
+    }
+    if not scores:
         return None, None
 
     scorer = _metric_scorer(ranking_metric)
     higher_is_better = scorer is None or scorer.greater_is_better_internal
 
-    def sort_key(item: tuple[Any, dict[str, float]]) -> float:
-        value = item[1].get(ranking_metric)
-        if value is None:
-            # Always sort missing values to the end (worst), regardless of metric direction
-            return float("inf")
-        return -value if higher_is_better else value
-
-    ordered = sorted(series_averages.items(), key=sort_key)
-    return ordered[0][0], ordered[-1][0]
+    ordered = sorted(scores, key=scores.__getitem__, reverse=higher_is_better)
+    return ordered[0], ordered[-1]
 
 
 def _build_series_analysis(

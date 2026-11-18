@@ -410,8 +410,14 @@ def render_back_testing_forecast_charts(back_testing: dict[str, Any]) -> None:
         for index, window in enumerate(item_windows):
             axis = axes[0, index]
             window_id = window.get("window_id", index)
-            metric = pick_window_metric(window.get("metrics") or {}, series_analysis.get("ranking_metric", eval_metric))
-            metric_text = f"{_metric_display_name(metric[0])}={metric[1]:.3g}" if metric else "No finite metric"
+            metrics = window.get("metrics") or {}
+            metric = (
+                pick_window_metric(metrics, series_analysis.get("ranking_metric") or eval_metric, allow_fallback=False)
+                or pick_window_metric(metrics, eval_metric, allow_fallback=False)
+                or pick_window_metric(metrics, eval_metric)
+            )
+            unit = "%" if metric and _normalize_metric(metric[0]) == "MAPE" else ""
+            metric_text = f"{_metric_display_name(metric[0])}={metric[1]:.3g}{unit}" if metric else "No finite metric"
             try:
                 _draw_forecast(
                     axis,
