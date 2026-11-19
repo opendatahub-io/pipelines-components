@@ -171,13 +171,15 @@ Metric export compatibility:
 - Each ``model.json`` and entry in ``models_artifact.metadata.context.models`` may include an integer ``rank``.
   It is optional even in current exports and, when present, matches the final exported leaderboard,
   starting at 1 for the best model. Ranks use unrounded holdout scores. Older artifacts do not contain this field.
+  For default leaderboard order, sort by ``rank`` ascending when all ranks are available.
 - New exports carry ``metrics_convention: natural_v1`` and ``metric_directions`` in ``model.json``,
   ``predictor_metadata.json``, models artifact metadata/context, and leaderboard artifact metadata.
-  Display values directly. Use ``lower_is_better`` / ``higher_is_better`` for sorting and tooltips;
-  ``diagnostic`` has no monotonic direction. ``metrics.json`` remains a flat mapping; its convention is in the accompanying metadata.
-- Older time-series exports without the marker contain raw AutoGluon scores and require separate legacy handling.
-  Do not convert ``natural_v1`` values again or use absolute values. Legacy backtest signs depend on the metric:
-  older normalization could leave RMSLE negative, while scorer-based normalization exports it as positive.
+  Display values directly. Use ``lower_is_better`` / ``higher_is_better`` for tooltips and for ordering when ranks are missing.
+  A ``diagnostic`` metric has no optimization direction. ``metrics.json`` remains a flat mapping with its convention
+  recorded in the accompanying metadata.
+- Older time-series exports without the marker contain raw AutoGluon scores. Sort those scores descending.
+  Legacy backtest signs depend on the metric. Older normalization could leave RMSLE negative, while scorer-based
+  normalization exports it as positive.
 - MLflow records ``metrics_convention`` and the evaluation ``metric_direction`` on parent and model runs;
   parent best/worst scores and best-model selection follow that direction.
 - ``back_testing.json`` includes ``series_analysis.ranking_metric``. Notebook headings identify this metric and any fallback;

@@ -414,9 +414,14 @@ class TestMlflowPatternLogger:
         assert logged is False
         assert "boom" in info["mlflow_child_run_errors"]
 
-    def test_finalize_reports_best_pattern(self, logger_and_mlflow):
-        """The best score seen across patterns is summarized on the parent run."""
+    @pytest.mark.parametrize("nonfinite_score", [float("inf"), float("-inf"), float("nan")])
+    def test_finalize_reports_best_pattern(self, logger_and_mlflow, nonfinite_score):
+        """The best finite optimization score is summarized on the parent run."""
         run_logger, fake = logger_and_mlflow
+        invalid = _pattern_payload(name="invalid")
+        invalid["evaluation"]["metrics"][1]["scores"]["mean"] = nonfinite_score
+        assert pattern_score(invalid) is None
+        run_logger.log_pattern(invalid)
         run_logger.log_pattern(_pattern_payload(name="p1"))
         high = _pattern_payload(name="p2")
         high["evaluation"]["metrics"][1]["scores"]["mean"] = 0.91
@@ -425,7 +430,7 @@ class TestMlflowPatternLogger:
 
         parent = fake.runs["parent-run-1"]
         assert parent["metrics"]["best_pattern_score"] == 0.91
-        assert parent["metrics"]["rag_pattern_count"] == 2.0
+        assert parent["metrics"]["rag_pattern_count"] == 3.0
         assert parent["params"]["best_pattern_name"] == "p2"
 
     def test_finalize_does_not_copy_leaderboard(self, logger_and_mlflow):

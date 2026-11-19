@@ -7,6 +7,7 @@ import sys
 import threading
 from contextlib import contextmanager
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 import pytest
@@ -48,7 +49,7 @@ def isolated_sys_modules():
             if sub == "autogluon.core.metrics":
                 _m.METRICS = {
                     "binary": {
-                        k: mock.MagicMock()
+                        k: SimpleNamespace(name=k)
                         for k in (
                             "accuracy",
                             "balanced_accuracy",
@@ -65,7 +66,7 @@ def isolated_sys_modules():
                         )
                     },
                     "multiclass": {
-                        k: mock.MagicMock()
+                        k: SimpleNamespace(name=k)
                         for k in (
                             "accuracy",
                             "balanced_accuracy",
@@ -79,7 +80,7 @@ def isolated_sys_modules():
                         )
                     },
                     "regression": {
-                        k: mock.MagicMock()
+                        k: SimpleNamespace(name=k)
                         for k in (
                             "r2",
                             "mean_squared_error",
@@ -96,6 +97,12 @@ def isolated_sys_modules():
                         )
                     },
                 }
+                for alias, canonical in (
+                    ("mse", "mean_squared_error"),
+                    ("rmse", "root_mean_squared_error"),
+                    ("mae", "mean_absolute_error"),
+                ):
+                    _m.METRICS["regression"][alias] = _m.METRICS["regression"][canonical]
             mocked_modules[sub] = _m
 
         def _roc_auc_score_side_effect(y_true, y_score):
@@ -1443,12 +1450,14 @@ class TestAutogluonModelsTrainingUnitTests:
             ("mae", "mean_absolute_error", "r2", (0.8, 0.9), [1, 2]),
         ],
     )
+    @mock.patch("kfp_components.components.training.automl.shared.mlflow_tracking.experiment_run_logger")
     @mock.patch("pandas.read_parquet")
     @mock.patch("autogluon.tabular.TabularPredictor")
     def test_context_models_metadata(
         self,
         mock_predictor_class,
         mock_read_parquet,
+        mock_run_logger,
         tmp_path,
         eval_metric,
         resolved_metric,
@@ -1456,7 +1465,8 @@ class TestAutogluonModelsTrainingUnitTests:
         scores,
         expected_ranks,
     ):
-        """model.json and context metadata contain ranks matching the final unrounded leaderboard."""
+        """Exported ranks use the unrounded scores under the same key MLflow tracks."""
+        mock_run_logger.return_value.__enter__.return_value.result.return_value = (False, {})
         top_models = ["LightGBM_BAG_L1", "NeuralNetFastAI_BAG_L1"]
         mock_predictor = mock.MagicMock()
         mock_predictor_clone = mock.MagicMock()
@@ -1534,6 +1544,7 @@ class TestAutogluonModelsTrainingUnitTests:
         leaderboard_models = [row["model"] for row in json.loads(html_artifact.metadata["data"])]
         assert leaderboard_models == [model["name"] for model in sorted(models, key=lambda model: model["rank"])]
         assert result.best_model_name == context["best_model_name"] == leaderboard_models[0]
+        assert mock_run_logger.call_args.kwargs["eval_metric"] == resolved_metric
 
         # Shared context fields still present alongside models
         assert context["task_type"] == "regression"

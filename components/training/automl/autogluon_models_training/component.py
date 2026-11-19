@@ -247,6 +247,7 @@ def autogluon_models_training(
             raise ValueError("Test data is empty. Ensure the data loader produced valid test data.")
         if not eval_metric:
             eval_metric = "r2" if task_type == "regression" else "accuracy"
+        score_key = METRICS[task_type][eval_metric].name
 
         extra_train_df = None
         if extra_train_data_path.strip():
@@ -306,7 +307,7 @@ def autogluon_models_training(
             run_logger = mlflow_stack.enter_context(
                 experiment_run_logger(
                     task_type=task_type,
-                    eval_metric=eval_metric,
+                    eval_metric=score_key,
                     run_name=effective_run_name,
                 )
             )
@@ -914,7 +915,6 @@ def autogluon_models_training(
             if not leaderboard_rows:
                 raise RuntimeError("Leaderboard rows are empty; no models available for ranking.")
             leaderboard_df = pd.DataFrame(leaderboard_rows)
-            score_key = getattr(predictor.eval_metric, "name", str(predictor.eval_metric))
             if score_key in leaderboard_rows[0]:
                 leaderboard_df = leaderboard_df.sort_values(by=score_key, ascending=False, na_position="last")
             else:
