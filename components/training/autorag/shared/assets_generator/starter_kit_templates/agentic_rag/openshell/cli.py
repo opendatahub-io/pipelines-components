@@ -7,13 +7,15 @@ with ``python3 openshell/cli.py <command>`` or preview it with
 ``python3 openshell/cli.py <command> --dry-run``.
 """
 
-from __future__ import annotations
-
 import argparse
 import json
 import os
 import sys
 from pathlib import Path
+
+if __package__ in (None, ""):
+    # ``python3 openshell/cli.py`` puts ``openshell/`` on sys.path, not the kit root.
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from openshell.core import cluster, log, sandbox
 from openshell.core.config import KitConfig

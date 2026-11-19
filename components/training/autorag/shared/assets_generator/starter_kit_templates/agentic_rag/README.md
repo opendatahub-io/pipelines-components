@@ -15,8 +15,16 @@ and answer using the evidence found.
 
 ### Prerequisites
 
-- An OpenShift cluster with `oc` logged in and permission to create the required
-  resources.
+- An OpenShift cluster with `oc` logged in and the permissions the deployment
+  needs:
+  - `admin` (or an equivalent role) in the agent namespace, to manage
+    BuildConfigs and builds, Secrets, ServiceAccounts, and Routes, to create
+    bound ServiceAccount tokens, and to grant `system:image-puller` there.
+  - Read access to the `openshell-client-tls` Secret and the
+    `openshell-gateway` Route in the `openshell` namespace.
+  - Cluster-wide read access to `ingresses.config/cluster`.
+  - Access to the cluster OpenShell gateway through its registered mTLS
+    certificates.
 - An OpenShell gateway installed on the cluster by an administrator (one-time
   cluster prerequisite, not part of this starter kit).
 - The `openshell` CLI installed and available on `PATH`. The gateway registration and
@@ -68,6 +76,7 @@ stays an environment-only setting (`OPENSHELL_NAMESPACE`, default `openshell`).
 Run the following commands from the starter-kit root directory:
 
 ```bash
+uv lock
 make build-openshell
 make refresh-certs
 make deploy-openshell

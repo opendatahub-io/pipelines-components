@@ -5,8 +5,6 @@ The CLI keeps the shell-era output shape (``==> step``, indented details,
 Pass ``--verbose`` (or ``KIT_VERBOSE=1``) to log every external command.
 """
 
-from __future__ import annotations
-
 import logging
 import os
 import re
@@ -22,11 +20,13 @@ _SECRET_ARG_RE = re.compile(
     r"^((?:--from-literal=)?[A-Za-z0-9_]*(?:KEY|TOKEN|PASSWORD|SECRET)[A-Za-z0-9_]*)=.*$",
     re.IGNORECASE | re.DOTALL,
 )
+_URI_CREDENTIAL_RE = re.compile(r"([A-Za-z][A-Za-z0-9+.\-]*://)[^/\s@]*@")
 
 
 def _redact(argv: Sequence[str]) -> str:
     """Render *argv* as a shell line with credential values masked."""
-    return shlex.join(_SECRET_ARG_RE.sub(r"\1=***", str(part)) for part in argv)
+    parts = (_URI_CREDENTIAL_RE.sub(r"\1***@", _SECRET_ARG_RE.sub(r"\1=***", str(part))) for part in argv)
+    return shlex.join(parts)
 
 
 class _MaxLevel(logging.Filter):

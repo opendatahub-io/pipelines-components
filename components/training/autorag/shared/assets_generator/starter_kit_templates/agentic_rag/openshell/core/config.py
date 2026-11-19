@@ -5,8 +5,6 @@ Precedence matches the previous shell implementation: variables defined in
 with ``set -a``; both win over ``values.yaml`` and the built-in defaults.
 """
 
-from __future__ import annotations
-
 import os
 import re
 import shutil
@@ -17,6 +15,7 @@ from typing import Callable, Mapping
 _SECTION_RE = re.compile(r"^([A-Za-z0-9_.-]+):\s*(.*)$")
 _COMMENT_RE = re.compile(r"\s+#")
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
+_QUOTES = ("'", '"')
 
 
 def _clean(value: str) -> str:
@@ -49,17 +48,62 @@ def parse_values(text: str) -> dict[str, dict[str, str]]:
     return data
 
 
+def _closing_quote(value: str, quote: str) -> int | None:
+    """Return the index of the quote that terminates *value*, honoring escapes."""
+    escaped = False
+    for index, character in enumerate(value):
+        if escaped:
+            escaped = False
+        elif character == "\\" and quote == '"':
+            escaped = True
+        elif character == quote:
+            return index
+    return None
+
+
+def _read_quoted(lines: list[str], first: str, index: int) -> tuple[str, int]:
+    """Read a quoted value that may continue over the following lines."""
+    quote = first[0]
+    body = first[1:]
+    while True:
+        end = _closing_quote(body, quote)
+        if end is not None:
+            body = body[:end]
+            break
+        if index >= len(lines):
+            break
+        body += "\n" + lines[index]
+        index += 1
+    if quote == '"':
+        body = body.replace('\\"', '"').replace("\\\\", "\\")
+    return body, index
+
+
 def parse_dotenv(text: str) -> dict[str, str]:
-    """Parse the ``KEY=VALUE`` subset of a ``.env`` file."""
+    """Parse the ``KEY=VALUE`` subset of a ``.env`` file.
+
+    Quoted values may span several lines (for example PEM certificates) and keep
+    their content, including ``#`` and escaped quotes. Inline comments are
+    stripped from unquoted values only.
+    """
     values: dict[str, str] = {}
-    for raw in text.splitlines():
-        line = raw.strip()
+    lines = text.splitlines()
+    index = 0
+    while index < len(lines):
+        line = lines[index].strip()
+        index += 1
         if not line or line.startswith("#") or "=" not in line:
             continue
         if line.startswith("export "):
-            line = line[len("export ") :]
-        key, _, value = line.partition("=")
-        values[key.strip()] = _clean(value)
+            line = line[len("export ") :].lstrip()
+        key, _, raw = line.partition("=")
+        raw = raw.lstrip()
+        if raw[:1] in _QUOTES:
+            value, index = _read_quoted(lines, raw, index)
+        else:
+            value = _COMMENT_RE.split(raw, maxsplit=1)[0].strip()
+        if key.strip():
+            values[key.strip()] = value
     return values
 
 

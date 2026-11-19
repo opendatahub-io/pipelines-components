@@ -1,7 +1,5 @@
 """OpenShift helpers: images, BuildConfigs, routes, and secrets."""
 
-from __future__ import annotations
-
 import base64
 import json
 import os
@@ -225,8 +223,11 @@ def refresh_certs(config: KitConfig, cli) -> None:
         host = route_host(config.openshell_namespace, "openshell-gateway")
         if host:
             log.step(f"Registering gateway '{config.gateway_name}' at https://{host}...")
-            cli.gateway(["gateway", "remove", config.gateway_name], check=False)
-            cli.gateway(["gateway", "add", f"https://{host}", "--local", "--name", config.gateway_name])
+            cli.call(["gateway", "remove", config.gateway_name], with_gateway=False, check=False)
+            cli.call(
+                ["gateway", "add", f"https://{host}", "--local", "--name", config.gateway_name],
+                with_gateway=False,
+            )
     if not cli.connected():
         raise KitError(
             f"ERROR: gateway '{config.gateway_name}' is not registered or not reachable over mTLS.\n"
@@ -260,7 +261,7 @@ def read_secret(namespace: str, name: str, key: str) -> str:
     if key not in data:
         return ""
     try:
-        return base64.b64decode(data[key]).decode("utf-8").strip()
+        return base64.b64decode(data[key]).decode("utf-8")
     except (ValueError, UnicodeDecodeError):
         return ""
 

@@ -1,8 +1,7 @@
 """OpenShell sandbox lifecycle: create, egress, agent, route."""
 
-from __future__ import annotations
-
 import base64
+import hashlib
 import json
 import re
 import shlex
@@ -79,12 +78,29 @@ class OpenShell:
         return prefix + args
 
     def _local_env(self) -> dict[str, str]:
-        """Point a local CLI at the configured state directory when possible."""
-        env = {"OPENSHELL_WORKSPACE": self.config.workspace}
-        state = self.config.cli_state
+        """Point a local CLI at the configured state directory."""
+        return {
+            "OPENSHELL_WORKSPACE": self.config.workspace,
+            "XDG_CONFIG_HOME": str(self._config_home()),
+        }
+
+    def _config_home(self) -> Path:
+        """Return an ``XDG_CONFIG_HOME`` whose ``openshell`` entry is the CLI state."""
+        state = self.config.cli_state.resolve()
         if state.name == "openshell":
-            env["XDG_CONFIG_HOME"] = str(state.parent)
-        return env
+            return state.parent
+        # The CLI always reads ``<XDG_CONFIG_HOME>/openshell``, so a state
+        # directory with another name is exposed through a stable link.
+        digest = hashlib.sha256(str(state).encode("utf-8")).hexdigest()[:12]
+        home = Path(tempfile.gettempdir()) / "agentic-rag-kit" / digest
+        link = home / "openshell"
+        if not log.dry_run():
+            home.mkdir(parents=True, exist_ok=True)
+            if link.is_symlink() and link.resolve() != state:
+                link.unlink()
+            if not link.exists() and not link.is_symlink():
+                link.symlink_to(state, target_is_directory=True)
+        return home
 
     def call(
         self,
