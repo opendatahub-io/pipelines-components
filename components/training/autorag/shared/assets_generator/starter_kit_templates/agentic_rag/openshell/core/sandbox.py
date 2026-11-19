@@ -1,7 +1,6 @@
 """OpenShell sandbox lifecycle: create, egress, agent, route."""
 
 import base64
-import hashlib
 import json
 import re
 import shlex
@@ -64,6 +63,7 @@ class OpenShell:
 
     def __init__(self, config: KitConfig) -> None:
         self.config = config
+        self._xdg_home: tempfile.TemporaryDirectory | None = None
 
     def command(self, args: list[str], *, with_gateway: bool = True) -> list[str]:
         """Build the full argv for the OpenShell CLI."""
@@ -89,18 +89,14 @@ class OpenShell:
         state = self.config.cli_state.resolve()
         if state.name == "openshell":
             return state.parent
+        if log.dry_run():
+            return Path(tempfile.gettempdir()) / "agentic-rag-kit-preview"
         # The CLI always reads ``<XDG_CONFIG_HOME>/openshell``, so a state
-        # directory with another name is exposed through a stable link.
-        digest = hashlib.sha256(str(state).encode("utf-8")).hexdigest()[:12]
-        home = Path(tempfile.gettempdir()) / "agentic-rag-kit" / digest
-        link = home / "openshell"
-        if not log.dry_run():
-            home.mkdir(parents=True, exist_ok=True)
-            if link.is_symlink() and link.resolve() != state:
-                link.unlink()
-            if not link.exists() and not link.is_symlink():
-                link.symlink_to(state, target_is_directory=True)
-        return home
+        # directory with another name is exposed through a private link.
+        if self._xdg_home is None:
+            self._xdg_home = tempfile.TemporaryDirectory(prefix="agentic-rag-kit-")
+            (Path(self._xdg_home.name) / "openshell").symlink_to(state, target_is_directory=True)
+        return Path(self._xdg_home.name)
 
     def call(
         self,

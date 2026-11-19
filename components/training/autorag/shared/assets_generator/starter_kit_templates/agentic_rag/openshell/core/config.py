@@ -12,6 +12,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Mapping
 
+from openshell.core.log import KitError
+
 _SECTION_RE = re.compile(r"^([A-Za-z0-9_.-]+):\s*(.*)$")
 _COMMENT_RE = re.compile(r"\s+#")
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
@@ -61,14 +63,16 @@ def _closing_quote(value: str, quote: str) -> int | None:
     return None
 
 
-def _read_quoted(lines: list[str], first: str, index: int) -> tuple[str, int]:
+def _read_quoted(lines: list[str], first: str, index: int) -> tuple[str, int, bool]:
     """Read a quoted value that may continue over the following lines."""
     quote = first[0]
     body = first[1:]
+    closed = False
     while True:
         end = _closing_quote(body, quote)
         if end is not None:
             body = body[:end]
+            closed = True
             break
         if index >= len(lines):
             break
@@ -76,7 +80,7 @@ def _read_quoted(lines: list[str], first: str, index: int) -> tuple[str, int]:
         index += 1
     if quote == '"':
         body = body.replace('\\"', '"').replace("\\\\", "\\")
-    return body, index
+    return body, index, closed
 
 
 def parse_dotenv(text: str) -> dict[str, str]:
@@ -99,7 +103,9 @@ def parse_dotenv(text: str) -> dict[str, str]:
         key, _, raw = line.partition("=")
         raw = raw.lstrip()
         if raw[:1] in _QUOTES:
-            value, index = _read_quoted(lines, raw, index)
+            value, index, closed = _read_quoted(lines, raw, index)
+            if not closed:
+                raise KitError(f"ERROR: unterminated quoted value for {key.strip()} in .env")
         else:
             value = _COMMENT_RE.split(raw, maxsplit=1)[0].strip()
         if key.strip():

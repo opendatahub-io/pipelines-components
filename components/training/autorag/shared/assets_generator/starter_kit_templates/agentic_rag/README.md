@@ -20,8 +20,9 @@ and answer using the evidence found.
   - `admin` (or an equivalent role) in the agent namespace, to manage
     BuildConfigs and builds, Secrets, ServiceAccounts, and Routes, to create
     bound ServiceAccount tokens, and to grant `system:image-puller` there.
-  - Read access to the `openshell-client-tls` Secret and the
-    `openshell-gateway` Route in the `openshell` namespace.
+  - In the `openshell` namespace, read access to the `openshell-client-tls`
+    Secret and the `openshell-gateway` Route, plus permission to create
+    `serviceaccounts/token` for the sandbox ServiceAccount (`make rotate-tokens`).
   - Cluster-wide read access to `ingresses.config/cluster`.
   - Access to the cluster OpenShell gateway through its registered mTLS
     certificates.
