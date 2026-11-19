@@ -10,7 +10,7 @@ Runs search-space construction, evaluator setup, and the optimization experiment
 
 Generated indexing specs forward ``settings.generation.language.code`` as ``ocr_lang`` so production extraction uses the optimization run's OCR language.
 
-Each ``pattern.json`` includes a top-level integer ``rank`` (1 = best), also included in artifact metadata. Ranking uses unrounded optimization scores.
+Each ``pattern.json`` includes a top-level integer ``rank`` (1 = best), also included in artifact metadata. Ranking uses the emitted optimization mean before HTML formatting, which may already be rounded to four decimal places.
 
 ## Inputs 📥
 

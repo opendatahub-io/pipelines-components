@@ -40,6 +40,9 @@ def metric_metadata(monkeypatch):
         )
         for name in ("MASE", "MAPE", "RMSE", "MAE", "MAEB", "WAPEB", "MQL", "BIAS", "RMSLE", "SQL")
     }
+    metrics.AVAILABLE_METRICS["synthetic_higher"] = mock.Mock(
+        return_value=mock.Mock(sign=1, greater_is_better_internal=True)
+    )
     monkeypatch.setitem(sys.modules, "autogluon.timeseries.metrics", metrics)
 
 
@@ -276,6 +279,17 @@ class TestSeriesRanking:
         }
         assert _series_ranking_metric("mean_absolute_percentage_error", series_averages) == "root_mean_squared_error"
 
+    @pytest.mark.parametrize("invalid_score", [None, float("nan"), float("inf"), float("-inf")])
+    @pytest.mark.parametrize("finite_mape", [None, 5.0])
+    def test_series_ranking_metric_requires_finite_scores(self, invalid_score, finite_mape):
+        """Prefer any finite MAPE, falling back to RMSE when all MAPE scores are invalid."""
+        series_averages = {
+            "A": {"mean_absolute_percentage_error": invalid_score, "root_mean_squared_error": 10.0},
+            "B": {"mean_absolute_percentage_error": finite_mape, "root_mean_squared_error": 12.0},
+        }
+        expected = "root_mean_squared_error" if finite_mape is None else "mean_absolute_percentage_error"
+        assert _series_ranking_metric("mean_absolute_percentage_error", series_averages) == expected
+
     def test_series_ranking_metric_uses_mae_as_last_resort(self):
         """Uses mean_absolute_error when both mean_absolute_percentage_error and root_mean_squared_error unavailable."""
         series_averages = {"A": {"mean_absolute_error": 5.0}, "B": {"mean_absolute_error": 6.0}}
@@ -345,7 +359,7 @@ class TestSeriesAnalysis:
         assert "mean_absolute_percentage_error" in metrics
         assert metrics["mean_absolute_percentage_error"] == pytest.approx(5.0)
 
-    @pytest.mark.parametrize("ranking_metric", ["mean_absolute_percentage_error", "R2"])
+    @pytest.mark.parametrize("ranking_metric", ["mean_absolute_percentage_error", "synthetic_higher"])
     @pytest.mark.parametrize("invalid_score", [None, float("nan"), float("inf"), float("-inf")])
     def test_select_best_worst_excludes_invalid_scores(self, ranking_metric, invalid_score):
         """Neither extreme may select a series without a finite ranking score."""

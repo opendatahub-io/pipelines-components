@@ -512,6 +512,13 @@ class TestRagTemplatesOptimizationRun:
         ]
         search_space_path = _write_search_space_report(tmp_path)
         rag_patterns, leaderboard_html = _artifacts(tmp_path)
+        starter_kit = mock.MagicMock()
+        starter_kit.path = str(tmp_path / "starter_kit" / "starter_kit.zip")
+        starter_kit.uri = "gs://bucket/starter_kit"
+        starter_kit.metadata = {}
+
+        def reject_constant(value):
+            raise ValueError(f"Non-standard JSON constant: {value}")
 
         with mock.patch.dict("sys.modules", mocks.modules):
             rag_templates_optimization.python_func(
@@ -525,6 +532,7 @@ class TestRagTemplatesOptimizationRun:
                 input_data_secret_name="s3-input-connection",
                 input_data_bucket_name="customer-docs",
                 leaderboard=leaderboard_html,
+                starter_kit=starter_kit,
             )
 
         expected_order = ["pattern_best", "pattern_weak", "pattern_invalid"]
@@ -533,7 +541,11 @@ class TestRagTemplatesOptimizationRun:
         for rank, pattern in enumerate(patterns, start=1):
             assert pattern["rank"] == rank
             pattern_path = Path(rag_patterns.path) / pattern["name"] / "pattern.json"
-            assert json.loads(pattern_path.read_text(encoding="utf-8"))["rank"] == rank
+            exported = json.loads(pattern_path.read_text(encoding="utf-8"), parse_constant=reject_constant)
+            assert exported["rank"] == rank
+            mean = exported["evaluation"]["metrics"][0]["scores"]["mean"]
+            assert mean == {"pattern_best": 0.9, "pattern_weak": 0.1, "pattern_invalid": None}[pattern["name"]]
+            assert exported == pattern
 
         mocks.generate_starter_kit.assert_called_once()
         assert mocks.generate_starter_kit.call_args.args[0]["name"] == "pattern_best"

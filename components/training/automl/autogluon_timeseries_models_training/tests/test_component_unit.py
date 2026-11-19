@@ -1141,11 +1141,13 @@ class TestMetricsJsonSignConvention:
 
     @pytest.mark.parametrize("rank_failure", [None, "write", "replace"])
     @pytest.mark.parametrize(
-        ("eval_metric", "best_model", "second_mase"),
+        ("eval_metric", "best_model", "second_mase", "second_higher"),
         [
-            ("mean_absolute_scaled_error", "TFT_FULL", 0.30),
-            ("higher_score", "DeepAR_FULL", 0.30),
-            ("mean_absolute_scaled_error", "TFT_FULL", 0.41999),  # Same displayed score as DeepAR.
+            ("mean_absolute_scaled_error", "TFT_FULL", 0.30, -0.8),
+            ("higher_score", "DeepAR_FULL", 0.30, -0.8),
+            ("mean_absolute_scaled_error", "TFT_FULL", 0.41999, -0.8),  # Same displayed score as DeepAR.
+            ("mean_absolute_scaled_error", "DeepAR_FULL", 0.42, -0.8),
+            ("higher_score", "DeepAR_FULL", 0.30, -0.1),
         ],
     )
     @mock.patch("kfp_components.components.training.automl.shared.mlflow_tracking.experiment_run_logger")
@@ -1166,6 +1168,7 @@ class TestMetricsJsonSignConvention:
         eval_metric,
         best_model,
         second_mase,
+        second_higher,
         monkeypatch,
         rank_failure,
         caplog,
@@ -1213,7 +1216,7 @@ class TestMetricsJsonSignConvention:
         mock_refit_predictor.evaluate.return_value = {"MASE": -0.42, "MSE": -1.0, "BIAS": -0.3, "HIGHER": -0.1}
 
         second_refit = mock.MagicMock()
-        second_refit.evaluate.return_value = {"MASE": -second_mase, "MSE": -0.5, "BIAS": 0.2, "HIGHER": -0.8}
+        second_refit.evaluate.return_value = {"MASE": -second_mase, "MSE": -0.5, "BIAS": 0.2, "HIGHER": second_higher}
         mock_predictor_cls.side_effect = [mock_predictor, mock_refit_predictor, second_refit]
         _configure_predictor_api(mock_predictor_cls)
         # from_data_frame is called for: train, test, and once per model for build_predict_sample_artifact

@@ -40,7 +40,8 @@ def rag_templates_optimization(
     ``ocr_lang`` so production extraction uses the optimization run's OCR language.
 
     Each ``pattern.json`` includes a top-level integer ``rank`` (1 = best), also
-    included in artifact metadata. Ranking uses unrounded optimization scores.
+    included in artifact metadata. Ranking uses the emitted optimization mean before HTML formatting,
+    which may already be rounded to four decimal places.
 
     Args:
         extracted_text: Path to extracted text documents.
@@ -208,6 +209,16 @@ def rag_templates_optimization(
                 return score if math.isfinite(score) else float("-inf")
         return float("-inf")
 
+    def _replace_nonfinite_values(value):
+        """Replace non-finite numbers with null for strict JSON exports."""
+        if isinstance(value, dict):
+            return {key: _replace_nonfinite_values(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [_replace_nonfinite_values(item) for item in value]
+        if isinstance(value, float) and not math.isfinite(value):
+            return None
+        return value
+
     def _generate_output_artifacts(
         patterns_raw: list[dict],
         output_dir: Path,
@@ -299,8 +310,9 @@ def rag_templates_optimization(
                 test_data_key=test_data_key,
             )
 
+            pattern_data = _replace_nonfinite_values(pattern_data)
             with (patt_dir / "pattern.json").open("w", encoding="utf-8") as f:
-                json.dump(pattern_data, f, indent=2, ensure_ascii=False)
+                json.dump(pattern_data, f, indent=2, ensure_ascii=False, allow_nan=False)
 
             with (patt_dir / "evaluation_results.json").open("w", encoding="utf-8") as f:
                 json.dump(pattern.get("evaluation_results", []), f, indent=2, ensure_ascii=False)

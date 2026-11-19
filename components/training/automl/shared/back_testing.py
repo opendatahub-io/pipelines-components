@@ -304,7 +304,7 @@ def _series_ranking_metric(eval_metric: str, series_averages: dict[Any, dict[str
     # Collect all available metrics across all series
     available_metrics: set[str] = set()
     for metrics in series_averages.values():
-        available_metrics.update(metrics.keys())
+        available_metrics.update(key for key, score in metrics.items() if to_finite_float(score) is not None)
 
     if eval_metric in _SERIES_POINT_METRICS and eval_metric in available_metrics:
         return eval_metric

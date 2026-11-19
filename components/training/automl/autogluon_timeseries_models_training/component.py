@@ -681,7 +681,7 @@ def autogluon_timeseries_models_training(
 
             # Successful models have a finite eval_metric; rank before rounding for display.
             leaderboard_df = pd.DataFrame(leaderboard_rows).sort_values(
-                by=eval_metric, ascending=metric_direction == "lower_is_better", na_position="last"
+                by=eval_metric, ascending=metric_direction == "lower_is_better", na_position="last", kind="stable"
             )
             n = len(leaderboard_df)
             best_model_name = str(leaderboard_df.iloc[0]["model"])

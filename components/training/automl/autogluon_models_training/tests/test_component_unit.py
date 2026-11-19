@@ -1434,17 +1434,27 @@ class TestAutogluonModelsTrainingUnitTests:
         mock_predictor.clone.assert_called_once()
 
     @pytest.mark.parametrize(
-        ("eval_metric", "scores", "expected_ranks"),
+        ("eval_metric", "resolved_metric", "score_key", "scores", "expected_ranks"),
         [
-            ("r2", (0.9, 0.85), [1, 2]),
-            ("r2", (0.90001, 0.90002), [2, 1]),
-            ("root_mean_squared_error", (-0.42, -0.31), [2, 1]),
+            ("r2", "r2", "r2", (0.9, 0.85), [1, 2]),
+            ("r2", "r2", "r2", (0.90001, 0.90002), [2, 1]),
+            ("root_mean_squared_error", "root_mean_squared_error", "root_mean_squared_error", (-0.42, -0.31), [2, 1]),
+            ("rmse", "root_mean_squared_error", "root_mean_squared_error", (-0.42, -0.31), [2, 1]),
+            ("mae", "mean_absolute_error", "r2", (0.8, 0.9), [1, 2]),
         ],
     )
     @mock.patch("pandas.read_parquet")
     @mock.patch("autogluon.tabular.TabularPredictor")
     def test_context_models_metadata(
-        self, mock_predictor_class, mock_read_parquet, tmp_path, eval_metric, scores, expected_ranks
+        self,
+        mock_predictor_class,
+        mock_read_parquet,
+        tmp_path,
+        eval_metric,
+        resolved_metric,
+        score_key,
+        scores,
+        expected_ranks,
     ):
         """model.json and context metadata contain ranks matching the final unrounded leaderboard."""
         top_models = ["LightGBM_BAG_L1", "NeuralNetFastAI_BAG_L1"]
@@ -1454,15 +1464,16 @@ class TestAutogluonModelsTrainingUnitTests:
         mock_predictor.clone.return_value = mock_predictor_clone
         mock_predictor.problem_type = "regression"
         mock_predictor.label = "target"
-        mock_predictor.eval_metric = eval_metric
+        mock_predictor.eval_metric = mock.Mock(name=resolved_metric)
+        mock_predictor.eval_metric.name = resolved_metric
         _mock_leaderboard_top_models(mock_predictor, top_models)
         # Use distinct prediction objects per model so evaluate_predictions can return
         # the correct metrics regardless of concurrent execution order.
         lgbm_preds = mock.MagicMock(name="lgbm_preds")
         cat_preds = mock.MagicMock(name="cat_preds")
         _metrics_by_pred = {
-            id(lgbm_preds): {"r2": 0.9, "root_mean_squared_error": 0.31, eval_metric: scores[0]},
-            id(cat_preds): {"r2": 0.85, "root_mean_squared_error": 0.42, eval_metric: scores[1]},
+            id(lgbm_preds): {"r2": 0.9, "root_mean_squared_error": 0.31, score_key: scores[0]},
+            id(cat_preds): {"r2": 0.85, "root_mean_squared_error": 0.42, score_key: scores[1]},
         }
         mock_predictor_clone.predict.side_effect = lambda df, model: lgbm_preds if "LightGBM" in model else cat_preds
         mock_predictor_clone.evaluate_predictions.side_effect = lambda y_true, y_pred: _metrics_by_pred[id(y_pred)]

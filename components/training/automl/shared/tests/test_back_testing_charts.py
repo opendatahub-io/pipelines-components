@@ -242,15 +242,15 @@ class TestBackTestingCharts:
                 "MASE",
                 "mean_absolute_percentage_error",
                 "ranked by MAPE (fallback for MASE)",
-                {"MASE": 0.4, "MAPE": 5.0},
+                {"mean_absolute_percentage_error": 5.0, "root_mean_squared_error": 2.0, "mean_absolute_error": 1.0},
                 "MAPE=5%",
             ),
             (
                 "MASE",
                 "mean_absolute_percentage_error",
                 "ranked by MAPE (fallback for MASE)",
-                {"RMSE": 2.0, "MASE": 0.4},
-                "MASE=0.4",
+                {"root_mean_squared_error": 2.0, "mean_absolute_error": 1.0},
+                "RMSE=2",
             ),
             (
                 "mean_absolute_percentage_error",
@@ -295,7 +295,10 @@ class TestBackTestingCharts:
         payload = {
             "eval_metric": eval_metric,
             "target": "sales",
-            "per_window_metrics": [{"window_id": 0, "test_start": "2025-01-03"}],
+            "per_window_metrics": [
+                {"window_id": 0, "test_start": "2025-01-03"},
+                {"window_id": 1, "test_start": "2025-01-05"},
+            ],
             "series_analysis": {
                 "best_performer": {
                     "item_id": "A",
@@ -303,6 +306,11 @@ class TestBackTestingCharts:
                         {
                             "window_id": 0,
                             "metrics": metrics,
+                            "forecast_data": self._sample_forecast_rows(),
+                        },
+                        {
+                            "window_id": 1,
+                            "metrics": {"root_mean_squared_error": 2.0, "mean_absolute_error": 1.0},
                             "forecast_data": self._sample_forecast_rows(),
                         },
                     ],
@@ -314,6 +322,7 @@ class TestBackTestingCharts:
         render_back_testing_forecast_charts(payload)
         figure = plt.gcf()
         assert figure.axes[0].get_title() == f"Window 0 ({metric_label})"
+        assert figure.axes[1].get_title() == "Window 1 (RMSE=2)"
         assert figure._suptitle.get_text() == f"Best performer: A — {ranking_label}"
         # Labels change, actual/predicted curves and interval bounds stay intact.
         assert list(figure.axes[0].lines[0].get_ydata()) == [100.0, 110.0]

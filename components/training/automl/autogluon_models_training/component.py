@@ -914,12 +914,13 @@ def autogluon_models_training(
             if not leaderboard_rows:
                 raise RuntimeError("Leaderboard rows are empty; no models available for ranking.")
             leaderboard_df = pd.DataFrame(leaderboard_rows)
-            if eval_metric in leaderboard_rows[0]:
-                leaderboard_df = leaderboard_df.sort_values(by=eval_metric, ascending=False, na_position="last")
+            score_key = getattr(predictor.eval_metric, "name", str(predictor.eval_metric))
+            if score_key in leaderboard_rows[0]:
+                leaderboard_df = leaderboard_df.sort_values(by=score_key, ascending=False, na_position="last")
             else:
                 logger.warning(
                     "eval_metric '%s' not found in row keys %s; preserving refit order.",
-                    eval_metric,
+                    score_key,
                     list(leaderboard_rows[0].keys()),
                 )
             n = len(leaderboard_df)

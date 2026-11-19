@@ -390,12 +390,26 @@ class TestMlflowExperimentLogger:
     def test_natural_metrics_use_direction_in_tracking(self, monkeypatch, tmp_path, direction, best_model, best, worst):
         """Model metrics pass through once; parent aggregates select the correct extrema."""
         _set_kfp_mlflow_config(monkeypatch, parent_run_id="parent-run", experiment_id="1")
-        mlflow = _make_mock_mlflow(
-            _mock_run_context("parent-run", "1"),
-            [
-                _mock_run_context("child-1", "1"),
-                _mock_run_context("child-2", "1"),
-            ],
+        parent_ctx = _mock_run_context("parent-run", "1")
+        child_contexts = [_mock_run_context("child-1", "1"), _mock_run_context("child-2", "1")]
+        mlflow = _make_mock_mlflow(parent_ctx, child_contexts)
+        active_runs = []
+        for context in [parent_ctx, *child_contexts]:
+
+            def enter_run(context=context):
+                active_runs.append(context)
+                return context
+
+            def exit_run(*_):
+                active_runs.pop()
+                return False
+
+            context.__enter__.side_effect = enter_run
+            context.__exit__.side_effect = exit_run
+        mlflow.active_run.side_effect = lambda: active_runs[-1] if active_runs else None
+        logged_params = []
+        mlflow.log_params.side_effect = lambda payload: logged_params.append(
+            (mlflow.active_run().info.run_id, dict(payload))
         )
         _run_logger_lifecycle(
             mlflow,
@@ -417,12 +431,18 @@ class TestMlflowExperimentLogger:
         assert mock.call("best_score", best) in mlflow.log_metric.call_args_list
         assert mock.call("worst_score", worst) in mlflow.log_metric.call_args_list
         mlflow.log_param.assert_called_with("best_model_name", best_model)
-        payloads = [call.args[0] for call in mlflow.log_params.call_args_list]
-        parent_payloads = [payload for payload in payloads if payload.get("task_type") == "time_series"]
-        child_payloads = {payload["model_name"]: payload for payload in payloads if "model_name" in payload}
+        parent_payloads = [
+            (run_id, payload) for run_id, payload in logged_params if payload.get("task_type") == "time_series"
+        ]
+        child_payloads = {
+            payload["model_name"]: (run_id, payload) for run_id, payload in logged_params if "model_name" in payload
+        }
         assert len(parent_payloads) == 1
+        assert parent_payloads[0][0] == "parent-run"
         assert set(child_payloads) == {"DeepAR_FULL", "TFT_FULL"}
-        for payload in [*parent_payloads, *child_payloads.values()]:
+        assert child_payloads["DeepAR_FULL"][0] == "child-1"
+        assert child_payloads["TFT_FULL"][0] == "child-2"
+        for _, payload in [*parent_payloads, *child_payloads.values()]:
             assert payload["metrics_convention"] == "natural_v1"
             assert payload["metric_direction"] == direction
 
