@@ -39,6 +39,10 @@ def rag_templates_optimization(
     Generated indexing specs forward ``settings.generation.language.code`` as
     ``ocr_lang`` so production extraction uses the optimization run's OCR language.
 
+    Each ``pattern.json`` includes a top-level integer ``rank`` (1 = best), also
+    included in artifact metadata. Ranking uses the emitted optimization mean before HTML formatting,
+    which may already be rounded to four decimal places.
+
     Args:
         extracted_text: Path to extracted text documents.
         test_data: Path to benchmark test data JSON.
@@ -98,6 +102,7 @@ def rag_templates_optimization(
     """
     import json
     import logging
+    import math
     import os
     import shutil
     import tempfile
@@ -191,7 +196,7 @@ def rag_templates_optimization(
         return evaluators
 
     def _optimization_score(pattern_data: dict) -> float:
-        """Return the mean score of the metric selected for optimization."""
+        """Return the finite optimization mean, or rank missing/non-finite scores last."""
         evaluation = pattern_data.get("evaluation") or {}
         metrics = evaluation.get("metrics", []) if isinstance(evaluation, dict) else []
         for metric in metrics:
@@ -200,8 +205,19 @@ def rag_templates_optimization(
             scores = metric.get("scores") or {}
             score = scores.get("mean") if isinstance(scores, dict) else None
             if score is not None:
-                return float(score)
+                score = float(score)
+                return score if math.isfinite(score) else float("-inf")
         return float("-inf")
+
+    def _replace_nonfinite_values(value):
+        """Replace non-finite numbers with null for strict JSON exports."""
+        if isinstance(value, dict):
+            return {key: _replace_nonfinite_values(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [_replace_nonfinite_values(item) for item in value]
+        if isinstance(value, float) and not math.isfinite(value):
+            return None
+        return value
 
     def _generate_output_artifacts(
         patterns_raw: list[dict],
@@ -213,11 +229,15 @@ def rag_templates_optimization(
         """Write per-pattern artefacts (JSON, notebooks, evaluation results)."""
         patterns: list[dict] = []
 
-        for pattern in patterns_raw:
+        ranked_patterns = sorted(
+            patterns_raw, key=lambda pattern: _optimization_score(pattern["payload"]), reverse=True
+        )
+        for rank, pattern in enumerate(ranked_patterns, start=1):
             patt_dir = output_dir / pattern.get("payload").get("name")
             patt_dir.mkdir(parents=True, exist_ok=True)
 
             pattern_data = pattern.get("payload")
+            pattern_data["rank"] = rank
             settings = pattern_data["settings"]
             # Retry with excerpts after a context-window overflow so a large
             # retrieval result does not make the deployed agent unusable.
@@ -290,8 +310,9 @@ def rag_templates_optimization(
                 test_data_key=test_data_key,
             )
 
+            pattern_data = _replace_nonfinite_values(pattern_data)
             with (patt_dir / "pattern.json").open("w", encoding="utf-8") as f:
-                json.dump(pattern_data, f, indent=2, ensure_ascii=False)
+                json.dump(pattern_data, f, indent=2, ensure_ascii=False, allow_nan=False)
 
             with (patt_dir / "evaluation_results.json").open("w", encoding="utf-8") as f:
                 json.dump(pattern.get("evaluation_results", []), f, indent=2, ensure_ascii=False)
@@ -584,7 +605,7 @@ def rag_templates_optimization(
             starter_kit.set_path(str(starter_kit_path))
 
             if patterns:
-                best_pattern = max(patterns, key=_optimization_score)
+                best_pattern = patterns[0]
                 with tempfile.TemporaryDirectory() as temp_dir:
                     generated_zip = generate_starter_kit(best_pattern, temp_dir)
                     shutil.copyfile(generated_zip, starter_kit_path)

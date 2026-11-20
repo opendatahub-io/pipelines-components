@@ -527,12 +527,19 @@ class MlflowExperimentLogger:
         *,
         task_type: str,
         eval_metric: str,
+        metric_direction: str = "higher_is_better",
+        metrics_convention: str = "autogluon_raw",
     ) -> None:
         """Store MLflow handles and tracking config; disabled when either is missing."""
         self._mlflow = mlflow
         self._config = config
         self._task_type = task_type
         self._eval_metric = eval_metric
+        self._metric_metadata = {
+            "metric_direction": metric_direction,
+            "metrics_convention": metrics_convention,
+        }
+        self._higher_is_better = metric_direction == "higher_is_better"
         self.enabled = mlflow is not None and config is not None
         # MLflow was injected by the platform (KFP_MLFLOW_CONFIG present). Distinct from
         # ``enabled``, which also requires the mlflow package and an open parent run -- so
@@ -595,6 +602,7 @@ class MlflowExperimentLogger:
             self._mlflow.set_tags(tags_to_set)
             # task_type is a run parameter (per the MLflow integration ADR), not a tag.
             parent_params: dict[str, Any] = {
+                **self._metric_metadata,
                 "task_type": self._task_type,
                 "eval_metric": self._eval_metric,
             }
@@ -692,6 +700,7 @@ class MlflowExperimentLogger:
             task_metrics = _metrics_for_task(self._task_type, metrics)
 
             child_params: dict[str, Any] = {
+                **self._metric_metadata,
                 "model_name": model_name,
                 "model_type": model_type,
                 "stack_level": stack_level,
@@ -756,9 +765,11 @@ class MlflowExperimentLogger:
             if total_fit_time_seconds is not None:
                 self._mlflow.log_metric("total_fit_time_seconds", float(total_fit_time_seconds))
             scores = _aggregate_scores(self._valid_metrics, self._eval_metric)
+            best = max if self._higher_is_better else min
+            worst = min if self._higher_is_better else max
             if scores:
-                self._mlflow.log_metric("best_score", max(scores))
-                self._mlflow.log_metric("worst_score", min(scores))
+                self._mlflow.log_metric("best_score", best(scores))
+                self._mlflow.log_metric("worst_score", worst(scores))
                 self._mlflow.log_metric("mean_score", sum(scores) / len(scores))
             self._mlflow.log_metric("num_models_trained", len(self._valid_metrics))
 
@@ -774,10 +785,12 @@ class MlflowExperimentLogger:
                 self._mlflow.set_tag("child_run_errors", json.dumps(self._child_run_errors)[:500])
 
             if self._valid_metrics:
-                best_model_name = max(
+                best_model_name = best(
                     self._valid_metrics,
                     key=lambda name: float(
-                        _normalize_model_metrics(self._valid_metrics[name]).get(self._eval_metric, float("-inf"))
+                        _normalize_model_metrics(self._valid_metrics[name]).get(
+                            self._eval_metric, float("-inf") if self._higher_is_better else float("inf")
+                        )
                     ),
                 )
                 self._mlflow.log_param("best_model_name", best_model_name)
@@ -827,6 +840,8 @@ def experiment_run_logger(
     task_type: str,
     eval_metric: str,
     run_name: str = "",
+    metric_direction: str = "higher_is_better",
+    metrics_convention: str = "autogluon_raw",
 ) -> Iterator[MlflowExperimentLogger]:
     """Yield an :class:`MlflowExperimentLogger` bound to the parent run.
 
@@ -850,6 +865,8 @@ def experiment_run_logger(
         config,
         task_type=task_type,
         eval_metric=eval_metric,
+        metric_direction=metric_direction,
+        metrics_convention=metrics_convention,
     )
     if not run_logger.enabled:
         if config is not None:

@@ -423,7 +423,8 @@ def build_leaderboard_html(  # pylint: disable=too-many-locals,too-many-branches
                         pass
         return (True, 0)
 
-    evaluations.sort(key=_optimization_score)
+    # New exports carry the canonical rank; older artifacts retain score-based ordering.
+    evaluations.sort(key=lambda pattern: (pattern.get("rank", float("inf")), _optimization_score(pattern)))
 
     # Discover metric columns present in data
     all_metric_names: list[str] = []

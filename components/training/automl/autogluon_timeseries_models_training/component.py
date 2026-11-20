@@ -105,7 +105,6 @@ def autogluon_timeseries_models_training(
     """
     import json
     import logging
-    import math
     import time
     from pathlib import Path
 
@@ -117,7 +116,10 @@ def autogluon_timeseries_models_training(
 
     logger = logging.getLogger(__name__)
 
-    from kfp_components.components.training.automl.shared.back_testing import build_back_testing_json
+    from kfp_components.components.training.automl.shared.back_testing import (
+        build_back_testing_json,
+        filter_finite_metrics,
+    )
     from kfp_components.components.training.automl.shared.back_testing_charts import (
         notebook_backtest_charts_source,
     )
@@ -158,6 +160,19 @@ def autogluon_timeseries_models_training(
                 raise TypeError(f"{param} must be a non-empty string.")
         if eval_metric not in METRIC_ALIASES:
             raise ValueError(f"eval_metric must be one of {sorted(METRIC_ALIASES)}; got {eval_metric!r}.")
+        # Scorer metadata restores natural values, including legitimately signed diagnostics.
+        metric_directions = {}
+        for name, scorer_cls in AVAILABLE_METRICS.items():
+            name = _acronym_to_snake.get(name, name)
+            scorer = scorer_cls()
+            metric_directions[name] = "higher_is_better" if scorer.greater_is_better_internal else "lower_is_better"
+            if scorer.evaluate_only:
+                metric_directions[name] = "diagnostic"
+        metric_export_metadata = {
+            "metrics_convention": "natural_v1",
+            "metric_directions": metric_directions,
+        }
+        metric_direction = metric_directions[eval_metric]
         if not isinstance(top_n, int):
             raise TypeError("top_n must be an integer.")
         if top_n <= 0 or top_n > TOP_N_MAX:
@@ -426,7 +441,7 @@ def autogluon_timeseries_models_training(
         # has no callback API, so there is no live per-candidate streaming during fit().
         # Best-effort: a disabled logger is a no-op. Entered via ExitStack to avoid
         # re-indenting the loop; closed just before status recording below.
-        from contextlib import ExitStack
+        from contextlib import ExitStack, suppress
 
         from kfp_components.components.training.automl.shared.mlflow_tracking import (
             experiment_run_logger,
@@ -443,6 +458,8 @@ def autogluon_timeseries_models_training(
                     task_type="time_series",
                     eval_metric=eval_metric,
                     run_name=effective_run_name,
+                    metric_direction=metric_direction,
+                    metrics_convention="natural_v1",
                 )
             )
             # Non-secret dataset identity for the parent run; credentials stay in the K8s secret.
@@ -488,21 +505,8 @@ def autogluon_timeseries_models_training(
                         model_name_full,
                         time.perf_counter() - evaluation_started,
                     )
-                    # Keep raw AutoGluon evaluate() signs for metrics.json (higher-is-better / negated errors)
-                    # so Phase C leaderboard sorting (ascending=False) stays correct.
-                    # back_testing.json normalizes separately.
-                    # Remap uppercase acronym keys (e.g. "MASE") to snake_case (e.g. "mean_absolute_scaled_error").
-                    metrics_dict = {}
-                    for k, v in metrics.items():
-                        if hasattr(v, "item"):
-                            v = float(v)
-                        if isinstance(v, (int, float)) and math.isfinite(v):
-                            normalized_key = _acronym_to_snake.get(k)
-                            if normalized_key is None:
-                                if k not in AVAILABLE_METRICS:
-                                    logger.warning("Unrecognized metric key %r from evaluate(); storing as-is.", k)
-                                normalized_key = k
-                            metrics_dict[normalized_key] = v
+                    # Normalize signs once, before exporting or tracking; keep canonical snake_case keys.
+                    metrics_dict = {_acronym_to_snake.get(k, k): v for k, v in filter_finite_metrics(metrics).items()}
 
                     if eval_metric not in metrics_dict:
                         raise ValueError(
@@ -512,6 +516,7 @@ def autogluon_timeseries_models_training(
 
                     # Save additional metadata about the selected model
                     predictor_metadata = {
+                        **metric_export_metadata,
                         "model_name": model_name_full,
                         "base_model": model_name,
                         "prediction_length": prediction_length,
@@ -598,6 +603,7 @@ def autogluon_timeseries_models_training(
                         model_location["back_testing"] = str(Path(model_name_full) / "metrics" / "back_testing.json")
 
                     model_metadata = {
+                        **metric_export_metadata,
                         "name": model_name_full,
                         "refit": refit_plan.metadata(model_name),
                         "location": model_location,
@@ -659,37 +665,49 @@ def autogluon_timeseries_models_training(
                 _format_metric_value,
             )
 
-            eval_results_by_model = {m["name"]: m["metrics"]["test_data"] for m in models_metadata}
+            models_by_name = {model["name"]: model for model in models_metadata}
             base_uri = models_artifact.uri.rstrip("/")
             leaderboard_rows = []
-            for model_name_full in model_names_full:
+            for model_name_full, model_metadata in models_by_name.items():
                 model_uri = f"{base_uri}/{model_name_full}"
                 leaderboard_rows.append(
                     {
                         "model": model_name_full,
-                        **eval_results_by_model[model_name_full],
+                        **model_metadata["metrics"]["test_data"],
                         "notebook": f"{model_uri}/notebooks/automl_predictor_notebook.ipynb",
                         "predictor": f"{model_uri}/predictor",
                     }
                 )
 
-            # AutoGluon negates error metrics (e.g. mean_absolute_scaled_error -> negative)
-            # so descending = best model first.
-            # Sort on raw (unrounded) values so close scores cannot flip rank after rounding.
-            if not leaderboard_rows:
-                raise RuntimeError("Leaderboard rows are empty; no models available for ranking.")
-            leaderboard_df = pd.DataFrame(leaderboard_rows)
-            if eval_metric in leaderboard_rows[0]:
-                leaderboard_df = leaderboard_df.sort_values(by=eval_metric, ascending=False, na_position="last")
-            else:
-                logger.warning(
-                    "eval_metric '%s' not found in row keys %s; preserving refit order.",
-                    eval_metric,
-                    list(leaderboard_rows[0].keys()),
-                )
+            # Successful models have a finite eval_metric; rank before rounding for display.
+            leaderboard_df = pd.DataFrame(leaderboard_rows).sort_values(
+                by=eval_metric, ascending=metric_direction == "lower_is_better", na_position="last", kind="stable"
+            )
             n = len(leaderboard_df)
             best_model_name = str(leaderboard_df.iloc[0]["model"])
             leaderboard_df.index = pd.RangeIndex(start=1, stop=n + 1, name="rank")
+
+            # Persist the final leaderboard position for consumers loading individual model.json files.
+            for rank, model_name_full in enumerate(leaderboard_df["model"], start=1):
+                model_metadata = models_by_name[model_name_full]
+                model_path = Path(models_artifact.path) / model_name_full / "model.json"
+                temporary_path = model_path.with_suffix(".json.tmp")
+                try:
+                    with temporary_path.open("w", encoding="utf-8") as f:
+                        json.dump({**model_metadata, "rank": rank}, f, indent=2)
+                    temporary_path.replace(model_path)
+                except OSError as exc:
+                    # Keep the successful per-model export and its metadata unchanged.
+                    logger.warning(
+                        "Could not persist rank for model '%s'; retaining its successful export: %s",
+                        model_name_full,
+                        exc,
+                    )
+                    with suppress(OSError):
+                        temporary_path.unlink(missing_ok=True)
+                else:
+                    model_metadata["rank"] = rank
+
             _metric_cols = [c for c in leaderboard_df.columns if c not in ("model", "notebook", "predictor")]
             leaderboard_df[_metric_cols] = leaderboard_df[_metric_cols].map(_format_metric_value)
             html_table = _build_leaderboard_table(leaderboard_df)
@@ -709,6 +727,7 @@ def autogluon_timeseries_models_training(
             with open(html_artifact.path, "w", encoding="utf-8") as f:
                 f.write(html_content)
 
+            html_artifact.metadata.update(metric_export_metadata)
             html_artifact.metadata["data"] = leaderboard_df.to_json(orient="records")
             html_artifact.metadata["display_name"] = "automl_leaderboard"
             status.record(
@@ -792,7 +811,9 @@ def autogluon_timeseries_models_training(
                 )
 
             models_artifact.metadata["model_names"] = json.dumps(model_names_full)
+            models_artifact.metadata.update(metric_export_metadata)
             models_artifact.metadata["context"] = {
+                **metric_export_metadata,
                 "data_config": {
                     "sampling_config": sampling_config,
                     "split_config": split_config,

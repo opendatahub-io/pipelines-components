@@ -247,6 +247,7 @@ def autogluon_models_training(
             raise ValueError("Test data is empty. Ensure the data loader produced valid test data.")
         if not eval_metric:
             eval_metric = "r2" if task_type == "regression" else "accuracy"
+        score_key = METRICS[task_type][eval_metric].name
 
         extra_train_df = None
         if extra_train_data_path.strip():
@@ -306,7 +307,7 @@ def autogluon_models_training(
             run_logger = mlflow_stack.enter_context(
                 experiment_run_logger(
                     task_type=task_type,
-                    eval_metric=eval_metric,
+                    eval_metric=score_key,
                     run_name=effective_run_name,
                 )
             )
@@ -865,8 +866,6 @@ def autogluon_models_training(
                 if inference_block is not None:
                     model_metadata["inference"] = inference_block
                 models_metadata.append(model_metadata)
-                with (Path(models_artifact.path) / model_name_full / "model.json").open("w", encoding="utf-8") as f:
-                    json.dump(model_metadata, f, indent=2)
 
                 # Log this model to MLflow as a nested child run as soon as it is finalized, so
                 # the experiment updates live. Kept sequential (out of the ThreadPoolExecutor
@@ -916,17 +915,26 @@ def autogluon_models_training(
             if not leaderboard_rows:
                 raise RuntimeError("Leaderboard rows are empty; no models available for ranking.")
             leaderboard_df = pd.DataFrame(leaderboard_rows)
-            if eval_metric in leaderboard_rows[0]:
-                leaderboard_df = leaderboard_df.sort_values(by=eval_metric, ascending=False, na_position="last")
+            if score_key in leaderboard_rows[0]:
+                leaderboard_df = leaderboard_df.sort_values(by=score_key, ascending=False, na_position="last")
             else:
                 logger.warning(
                     "eval_metric '%s' not found in row keys %s; preserving refit order.",
-                    eval_metric,
+                    score_key,
                     list(leaderboard_rows[0].keys()),
                 )
             n = len(leaderboard_df)
             best_model_name = str(leaderboard_df.iloc[0]["model"])
             leaderboard_df.index = pd.RangeIndex(start=1, stop=n + 1, name="rank")
+
+            # Persist the final rank before rounding scores for display.
+            ranks = {name: rank for rank, name in enumerate(leaderboard_df["model"], start=1)}
+            for model_metadata in models_metadata:
+                model_name_full = model_metadata["name"]
+                model_metadata["rank"] = ranks[model_name_full]
+                with (Path(models_artifact.path) / model_name_full / "model.json").open("w", encoding="utf-8") as f:
+                    json.dump(model_metadata, f, indent=2)
+
             _metric_cols = [c for c in leaderboard_df.columns if c not in ("model", "notebook", "predictor")]
             leaderboard_df[_metric_cols] = leaderboard_df[_metric_cols].map(_format_metric_value)
             html_table = _build_leaderboard_table(leaderboard_df)

@@ -10,6 +10,8 @@ Runs search-space construction, evaluator setup, and the optimization experiment
 
 Generated indexing specs forward ``settings.generation.language.code`` as ``ocr_lang`` so production extraction uses the optimization run's OCR language.
 
+Each ``pattern.json`` includes a top-level integer ``rank`` (1 = best), also included in artifact metadata. Ranking uses the emitted optimization mean before HTML formatting, which may already be rounded to four decimal places.
+
 ## Inputs 📥
 
 | Parameter | Type | Default | Description |
@@ -110,7 +112,7 @@ def example_pipeline(
   - autorag
   - optimization
   - rag-patterns
-- **Last Verified**: 2026-11-12 00:00:00+00:00
+- **Last Verified**: 2026-11-18 00:00:00+00:00
 - **Owners**:
   - No Parent Owners: Yes
   - Approvers:

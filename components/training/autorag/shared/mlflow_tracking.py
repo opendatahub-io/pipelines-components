@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import re
 import sys
@@ -494,12 +495,12 @@ def optimization_metric_key(payload: dict[str, Any]) -> str:
 
 
 def pattern_score(payload: dict[str, Any]) -> float | None:
-    """Return the pattern's score on the optimization metric, or ``None``."""
+    """Return the pattern's finite score on the optimization metric, or ``None``."""
     evaluation = payload.get("evaluation") or {}
     for entry in evaluation.get("metrics") or []:
         if isinstance(entry, dict) and entry.get("optimization_metric"):
             mean = (entry.get("scores") or {}).get("mean")
-            if isinstance(mean, (int, float)) and not isinstance(mean, bool):
+            if isinstance(mean, (int, float)) and not isinstance(mean, bool) and math.isfinite(mean):
                 return float(mean)
     return None
 
