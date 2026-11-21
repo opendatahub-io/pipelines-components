@@ -8,9 +8,9 @@ Load and split timeseries data from S3 for AutoGluon training.
 
 This component scans the entire CSV from S3 and retains the latest observations per series (up to 100 MiB of pandas data for the ``"speed"`` preset, up to 1 GiB for ``"balanced"``, and up to 10 GiB for ``"quality"``), applies light **cleansing** (replace ``+/-inf`` with NaN so AutoGluon can apply
 its own missing-value logic; require parseable timestamps and non-null ids; drop duplicate ``(id_column, timestamp_column)`` keys, keeping the last file occurrence). Timestamp order determines recency even for unsorted inputs. Small sources stay in RAM; larger sources use temporary Parquet files and
-a SQLite timestamp index on the workspace. No second S3 download is required. Source/retained counts and timestamp ranges per series are saved as JSONL profiles in ``component_status``. The component then performs a two-stage **per-series temporal** split for efficient AutoGluon training: 1. Primary
-split (default 80/20): for each distinct ``id_column`` value, the earliest (1 - test_size) fraction of rows by ``timestamp_column`` goes to the train portion and the remainder to the test set (so every series with at least two rows contributes holdout data; single-row series stay in train only). 2.
-Secondary split (default 30/70 of each series' train rows): early segment to selection-train, later segment to extra-train.
+a SQLite timestamp index on the workspace. No second S3 download is required. Source/retained counts and timestamp ranges per series are saved as JSONL profiles in ``component_status``. Irregular series are reported before splitting; training resolves their frequency automatically or uses the
+pipeline's explicit ``freq`` parameter. The component then performs a two-stage **per-series temporal** split for efficient AutoGluon training: 1. Primary split (default 80/20): for each distinct ``id_column`` value, the earliest (1 - test_size) fraction of rows by ``timestamp_column`` goes to the
+train portion and the remainder to the test set (so every series with at least two rows contributes holdout data; single-row series stay in train only). 2. Secondary split (default 30/70 of each series' train rows): early segment to selection-train, later segment to extra-train.
 
 The test set is written to an S3 artifact, while train Parquet files (selection-train and extra-train, Snappy-compressed) are written to the PVC workspace for sharing across pipeline steps.
 
@@ -96,7 +96,7 @@ def example_pipeline(
   - timeseries
   - automl
   - data-loading
-- **Last Verified**: 2026-10-20 00:00:00+00:00
+- **Last Verified**: 2026-11-18 00:00:00+00:00
 - **Owners**:
   - No Parent Owners: Yes
   - Approvers:

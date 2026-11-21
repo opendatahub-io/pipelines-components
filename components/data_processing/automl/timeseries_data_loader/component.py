@@ -47,6 +47,8 @@ def timeseries_data_loader(
     in RAM; larger sources use temporary Parquet files and a SQLite timestamp index
     on the workspace. No second S3 download is required. Source/retained counts and
     timestamp ranges per series are saved as JSONL profiles in ``component_status``.
+    Irregular series are reported before splitting; training resolves their frequency
+    automatically or uses the pipeline's explicit ``freq`` parameter.
     The component then performs a two-stage
     **per-series temporal** split for efficient AutoGluon training:
     1. Primary split (default 80/20): for each distinct ``id_column`` value, the earliest
@@ -433,10 +435,26 @@ def timeseries_data_loader(
                 "Provide a larger dataset or fix invalid timestamps, null ids, and duplicate keys."
             )
 
+        irregular_series = sum(
+            len(timestamps) >= 3 and pd.infer_freq(pd.DatetimeIndex(timestamps)) is None
+            for _, timestamps in df.groupby(id_column, sort=False)[timestamp_column]
+        )
+        frequency_warning = None
+        if irregular_series:
+            text = (
+                f"Detected {irregular_series} series with irregular timestamps before splitting. "
+                "Set the pipeline freq parameter to the expected frequency, or let training try to infer "
+                "a common grid from gaps. Resampling may insert missing values for gaps."
+            )
+            logger.warning(text)
+            frequency_warning = {"level": "warning", "text": text}
+
         status.record(
             "prepare_data",
             "completed",
+            message=frequency_warning,
             metrics={
+                "irregular_series": irregular_series,
                 "rows": n_valid,
                 "sampled_rows": n_valid,
                 "sampled_in_memory_bytes": int(df.memory_usage(deep=True).sum()),

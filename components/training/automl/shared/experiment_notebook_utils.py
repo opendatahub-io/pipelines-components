@@ -138,6 +138,7 @@ class TimeseriesExperimentNotebookConfig:  # pylint: disable=too-many-instance-a
     top_n: int
     eval_metric: str
     preset: str
+    freq: str = ""
 
     @property
     def include_user_test_data(self) -> bool:
@@ -172,6 +173,7 @@ def timeseries_experiment_notebook_replacements(
 ) -> dict[str, str]:
     """Build placeholder replacements for the timeseries experiment notebook template."""
     return {
+        "<REPLACE_FREQ>": _py_str(config.freq),
         "<REPLACE_S3_SECRET>": _py_str(config.train_data_secret_name),
         "<REPLACE_DATA_BUCKET>": _py_str(config.train_data_bucket_name),
         "<REPLACE_DATA_FILE_KEY>": _py_str(config.train_data_file_key),
