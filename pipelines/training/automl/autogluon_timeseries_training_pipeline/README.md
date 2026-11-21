@@ -30,10 +30,10 @@ Pipeline stages:
 
 0. **Component stage map**: Publishes the static component-to-stage-to-step map as a KFP artifact for dashboards before data loading.
 
-1. **Data loading & splitting** (``timeseries_data_loader``): Scans the entire CSV from S3, retaining the latest observations per series (up to 100 MiB of pandas data for "speed", up to 1 GiB for "balanced", and up to 10 GiB for "quality"). Large sources use a temporary Parquet/SQLite spool in the
-workspace, so unsorted inputs do not require loading the entire source into RAM or downloading it twice. Per-series source, retained and split ranges/counts are recorded in the loader status artifact. The loader replaces ``+/-inf`` with NaN (missing targets stay for AutoGluon), requires parseable
-timestamps and non-null ids (or injects ``__synthetic_item_id`` for two-column datasets when ``id_column=""``), deduplicates ``(id_column, timestamp_column)``, then applies a two-stage **per-series temporal** split on ``id_column`` / ``timestamp_column``: default **80/20** train vs test per series,
-then **30/70** of each series' train rows into ``models_selection_train_dataset.parquet`` and ``extra_train_dataset.parquet`` under ``{workspace_path}/datasets/``. The test split is written to the ``sampled_test_dataset`` artifact.
+1. **Data loading & splitting** (``timeseries_data_loader``): Scans the entire CSV or Parquet source from S3, retaining the latest observations per series (up to 100 MiB of pandas data for "speed", up to 1 GiB for "balanced", and up to 10 GiB for "quality"). Large sources use a temporary
+Parquet/SQLite spool in the workspace, so unsorted inputs do not require loading the entire source into RAM or downloading it twice. Per-series source, retained and split ranges/counts are recorded in the loader status artifact. The loader replaces ``+/-inf`` with NaN (missing targets stay for
+AutoGluon), requires parseable timestamps and non-null ids (or injects ``__synthetic_item_id`` for two-column datasets when ``id_column=""``), deduplicates ``(id_column, timestamp_column)``, then applies a two-stage **per-series temporal** split on ``id_column`` / ``timestamp_column``: default
+**80/20** train vs test per series, then **30/70** of each series' train rows into ``models_selection_train_dataset.parquet`` and ``extra_train_dataset.parquet`` under ``{workspace_path}/datasets/``. The test split is written to the ``sampled_test_dataset`` artifact.
 
 2. **Model generation + full refit** (``autogluon_timeseries_models_training``): Trains multiple AutoGluon TimeSeries models on the selection split, picks top ``top_n``, and refits each selected model on the full train portion (**selection + extra** splits). The component writes all refitted models
 to a single combined ``models_artifact``.
@@ -44,7 +44,7 @@ to a single combined ``models_artifact``.
 | --------- | ---- | ------- | ----------- |
 | `train_data_secret_name` | `str` | `None` | Kubernetes secret name containing S3 credentials (e.g. AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_S3_ENDPOINT, AWS_DEFAULT_REGION). Used for training data and optional user-provided external test data. |
 | `train_data_bucket_name` | `str` | `None` | S3-compatible bucket name containing the time series data file. |
-| `train_data_file_key` | `str` | `None` | S3 object key of the CSV data file. When ``id_column`` is provided, file must include columns for id, timestamp, and target. When ``id_column=""`` (single-series mode), file must have exactly timestamp and target columns (the loader injects ``__synthetic_item_id``). Optional columns for known covariates. |
+| `train_data_file_key` | `str` | `None` | S3 object key of the training data file, CSV or Parquet. When ``id_column`` is provided, file must include columns for id, timestamp, and target. When ``id_column=""`` (single-series mode), file must have exactly timestamp and target columns (the loader injects ``__synthetic_item_id``). Optional columns for known covariates. |
 | `target` | `str` | `None` | Name of the column containing the numeric values to forecast. Corresponds to :attr:`~autogluon.timeseries.TimeSeriesDataFrame` target column. |
 | `timestamp_column` | `str` | `None` | Name of the column containing the timestamp/datetime for each observation. Passed as ``timestamp_column`` when constructing TimeSeriesDataFrame; result uses ``timestamp`` as the second index level. |
 | `id_column` | `str` | `""` | Name of the column that identifies each time series (e.g. product_id, store_id). Pass an empty string ("") for single-series two-column datasets (timestamp + target only); the loader will inject a synthetic ID column. Passed as ``id_column`` when constructing TimeSeriesDataFrame; result uses ``item_id``. |
@@ -54,7 +54,7 @@ to a single combined ``models_artifact``.
 | `eval_metric` | `str` | `mean_absolute_scaled_error` | Metric for model ranking in snake_case (e.g. ``"mean_absolute_scaled_error"``, ``"weighted_quantile_loss"``) or legacy uppercase acronym form. Defaults to ``"mean_absolute_scaled_error"``. |
 | `preset` | `str` | `speed` | Training quality tier. ``"speed"`` (default, 4 vCPU / 16 GiB, AutoGluon ``medium_quality``), ``"balanced"`` (8 vCPU / 32 GiB, AutoGluon ``high_quality``), or ``"quality"`` (two-hour selection budget, 16 vCPU / 64 GiB, AutoGluon ``best_quality``). |
 | `test_data_bucket_name` | `str` | `""` | Optional S3-compatible bucket name for a user-provided test dataset. Default: empty string (use the per-series holdout split from training data). |
-| `test_data_file_key` | `str` | `""` | Optional S3 object key for a user-provided test CSV file. Default: empty string (use the per-series holdout split from training data). |
+| `test_data_file_key` | `str` | `""` | Optional S3 object key for a user-provided test data file, CSV or Parquet. Default: empty string (use the per-series holdout split from training data). |
 
 ## Metadata 🗂️
 

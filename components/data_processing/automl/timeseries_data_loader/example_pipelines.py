@@ -17,7 +17,7 @@ def example_pipeline(
     """Example pipeline using timeseries_data_loader.
 
     Args:
-        file_key: S3 key of the data file.
+        file_key: S3 key of the data file (CSV or Parquet).
         bucket_name: S3 bucket name.
         workspace_path: Path to the workspace directory.
         target: Name of the target column.
@@ -33,4 +33,37 @@ def example_pipeline(
         id_column=id_column,
         timestamp_column=timestamp_column,
         selection_train_size=selection_train_size,
+    )
+
+
+@dsl.pipeline(name="timeseries-data-loader-parquet-example")
+def example_parquet_pipeline(
+    train_file_key: str = "data/timeseries.parquet",
+    test_file_key: str = "data/timeseries_test.parquet",
+    bucket_name: str = "my-bucket",
+    workspace_path: str = "/tmp/workspace",
+    target: str = "value",
+    id_column: str = "item_id",
+    timestamp_column: str = "timestamp",
+):
+    """Example pipeline loading Parquet training data and a Parquet user-provided test dataset.
+
+    Args:
+        train_file_key: S3 key of the Parquet training data file.
+        test_file_key: S3 key of the Parquet user-provided test dataset.
+        bucket_name: S3 bucket name.
+        workspace_path: Path to the workspace directory.
+        target: Name of the target column.
+        id_column: Name of the ID column.
+        timestamp_column: Name of the timestamp column.
+    """
+    timeseries_data_loader(
+        file_key=train_file_key,
+        bucket_name=bucket_name,
+        workspace_path=workspace_path,
+        target=target,
+        id_column=id_column,
+        timestamp_column=timestamp_column,
+        test_data_bucket_name=bucket_name,
+        test_data_file_key=test_file_key,
     )
