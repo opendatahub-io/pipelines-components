@@ -4,14 +4,11 @@
 
 ## Overview 🧾
 
-Run the complete quick-start LoRA GRPO workflow.
+Run the full LoRA GRPO pipeline with minimal parameters.
+
+The minimal pipeline runs the same stages as the [standard LoRA GRPO pipeline](../lora_grpo/README.md). You can choose the model and dataset, tune training parameters, and configure serving.
 
 The pipeline prepares the dataset, submits a single-GPU ART TrainJob, evaluates reward improvement, and registers and deploys the merged model only when the promotion gate passes.
-
-Private S3 dataset inputs use the optional RHOAI data connection Secret specified by ``p08_dataset_data_connection_name``. It defaults to ``s3-secret``. The Secret should provide ``AWS_ACCESS_KEY_ID``, ``AWS_SECRET_ACCESS_KEY``, and ``AWS_DEFAULT_REGION``; it may provide ``AWS_S3_ENDPOINT``. Hugging
-Face, HTTP(S), and local/PVC inputs do not require this Secret.
-
-The following implementation details are intentionally fixed for the minimal variant: the Training Hub runtime, one training GPU, 4 CPU cores, 64Gi worker memory, empty TrainJob labels/annotations, the PyTorch model format, and the standard registry/deployment metadata defaults.
 
 ## Inputs 📥
 
@@ -20,12 +17,12 @@ The following implementation details are intentionally fixed for the minimal var
 | `p01_persistent_pvc` | `str` | `None` | (Required) Name of the ReadWriteMany PVC used for training checkpoints and model serving. To create one: in RHOAI open your Data Science Project -> Cluster Storage -> Create storage, select ReadWriteMany access mode, minimum 50Gi. Enter only the PVC name (not a path). Example: ``grpo-pipeline-pvc`` |
 | `p02_dataset_uri` | `str` | `None` | (Required) Dataset reference. Supported sources: • Hugging Face: ``hf://org/dataset:config``. References are loaded   directly by Training Hub. • Local/PVC: ``pvc://data.jsonl`` • S3: ``s3://bucket/path/data.jsonl`` • HTTP(S): ``https://example.com/data.jsonl`` Local JSON/JSONL, PVC, S3, and HTTP(S) sources are normalized by the preparation component onto the shared PVC. Non-Hugging Face rows are converted to Training Hub's canonical ``messages`` and ``tools`` format. See the [Training Hub loader format](https://github.com/Red-Hat-AI-Innovation-Team/training_hub/blob/main/src/training_hub/algorithms/lora_grpo.py#L381-L394). |
 | `p03_training_model` | `str` | `None` | (Required) HuggingFace model ID of the base model to fine-tune. If the model is gated, configure the ``hf-token`` secret. Examples: ``Qwen/Qwen3-4B`` or ``ibm-granite/granite-3.3-8b-instruct`` |
-| `p04_model_registry_address` | `str` | `None` | (Required) Hostname or IP address of the Model Registry service. Pass only the host or IP, without ``http://``, ``https://``, or the ``/api/model_registry/v1alpha3`` path. |
+| `p04_model_registry_address` | `str` | `None` | (Required) Model Registry service address. Provide the hostname or IP, optionally prefixed with ``http://`` or ``https://``. If no scheme is provided, the component prepends ``http://``. Do not include the ``/api/model_registry/v1alpha3`` path. When using ``https://``, TLS certificate verification is currently disabled by the registry client while the pod's service-account token is used. |
 | `p05_serving_namespace` | `str` | `None` | (Required) OpenShift project where the KServe InferenceService will be created. Must be the same namespace where your PVC is provisioned. Should have KServe enabled - typically your Data Science Project. Example: ``my-ds-project`` |
 | `p06_tokenizer_mode` | `str` | `None` | (Required) vLLM tokenizer mode. Use ``auto`` when the fast tokenizer is compatible, ``slow`` when the model requires its HuggingFace slow tokenizer (for example, Qwen3 in the tested environment), or ``mistral`` for models that require the ``mistral_common`` tokenizer. Do not leave it empty. |
 | `p07_dataset_max_invalid_row_ratio` | `float` | `0.1` | Maximum fraction of invalid rows that the preparation component may skip for local, PVC, S3, and HTTP(S) sources before failing. Defaults to 10% (``0.10``). Enter a fraction between ``0.0`` and ``1.0``; for example, enter ``0.50`` for 50%. Use ``0.0`` for strict validation. It is not applied to direct Hugging Face loading. |
-| `p08_dataset_data_connection_name` | `str` | `s3-secret` | Name of the RHOAI data connection Secret used by the preparation task for private S3 input. It defaults to ``s3-secret``. It is optional for Hugging Face, HTTP(S), and local/PVC input. The Secret should provide ``AWS_ACCESS_KEY_ID``, ``AWS_SECRET_ACCESS_KEY``, and ``AWS_DEFAULT_REGION``; it may provide ``AWS_S3_ENDPOINT``. |
-| `p09_training_num_iterations` | `int` | `5` | Number of GRPO policy-gradient update steps. Each iteration generates ``group_size`` rollouts per prompt and updates the LoRA adapter. The promotion gate (stage 3) requires ``final_reward > initial_reward``. Increase the completion timeout when using higher iteration counts, larger models, or slower hardware. |
+| `p08_dataset_data_connection_name` | `str` | `s3-secret` | Name of the RHOAI data connection Secret used by the preparation task for private S3 input. It defaults to ``s3-secret``. It is not needed for Hugging Face, HTTP(S), and local/PVC input. The Secret should provide ``AWS_ACCESS_KEY_ID``, ``AWS_SECRET_ACCESS_KEY``, and ``AWS_DEFAULT_REGION``; it may provide ``AWS_S3_ENDPOINT``. |
+| `p09_training_num_iterations` | `int` | `5` | Number of GRPO policy-gradient update steps. Each iteration generates ``group_size`` rollouts per prompt and updates the LoRA adapter. The promotion gate (stage 3) requires ``final_reward > initial_reward``. Increase the timeout in ``p15_training_completion_timeout_seconds`` when using higher iteration counts, larger models, or slower hardware. |
 | `p10_training_group_size` | `int` | `4` | Rollouts generated per prompt to estimate relative reward advantage. Higher = better gradient signal but more memory and time. Default 4 is suitable for single-GPU runs. |
 | `p11_training_prompt_batch_size` | `int` | `50` | Prompts processed per GRPO update step. Total rollout batch = ``prompt_batch_size x group_size`` (e.g., 50 x 4 = 200). Reduce if you hit out-of-memory errors. Example: ``50`` |
 | `p12_training_lora_r` | `int` | `16` | LoRA adapter rank. Higher = more adapter capacity but slower training and more memory. Typical values: 8 (lightweight), 16 (balanced), 32 (high capacity). Example: ``16`` |
