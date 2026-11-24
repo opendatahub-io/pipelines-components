@@ -14,7 +14,7 @@ DCH_SDK = (
     base_image="python:3.12-bookworm",
     packages_to_install=[DCH_SDK, "psycopg[binary]==3.3.4"],
 )
-def dch_connection_smoke_test(
+def db_table_2_parquet(
     dch_host: str,
     connection_id: str,
     trusted_host: str,

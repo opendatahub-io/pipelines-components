@@ -1,5 +1,5 @@
 ---
-name: dch_connection_smoke_test
+name: db_table_2_parquet
 description: >-
   Verify a saved PostgreSQL Data Connect Hub connection, snapshot a selected table as Parquet,
   and publish an HTML report from one KFP task.

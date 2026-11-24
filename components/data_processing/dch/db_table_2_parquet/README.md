@@ -1,4 +1,4 @@
-# Dch Connection Smoke Test ✨
+# Db Table 2 Parquet ✨
 
 > ⚠️ **Stability: alpha** — This asset is not yet stable and may change.
 
@@ -77,7 +77,7 @@ def train_automl_from_dch_snapshot(
 
 ## Metadata 🗂️
 
-- **Name**: dch_connection_smoke_test
+- **Name**: db_table_2_parquet
 - **Description**: Verify a saved PostgreSQL Data Connect Hub connection, snapshot a selected table as Parquet, and publish an HTML report from one KFP task.
 - **Stability**: alpha
 - **Dependencies**:
@@ -128,8 +128,8 @@ the current connection and captures fresh data.
 
 ```python
 from kfp import dsl
-from kfp_components.components.data_processing.dch_connection_smoke_test import (
-    dch_connection_smoke_test,
+from kfp_components.components.data_processing.dch.db_table_2_parquet import (
+    db_table_2_parquet,
 )
 
 DCH_GATEWAY = "dch-gateway.example.com:443"
@@ -137,7 +137,7 @@ DCH_GATEWAY = "dch-gateway.example.com:443"
 
 @dsl.pipeline(name="check-dch-connection")
 def smoke_test(connection_id: str, table_name: str, table_schema: str = "public") -> str:
-    task = dch_connection_smoke_test(
+    task = db_table_2_parquet(
         dch_host=DCH_GATEWAY,
         connection_id=connection_id,
         trusted_host=DCH_GATEWAY,
@@ -158,7 +158,7 @@ table, row and column counts, file size, check results, and the exact Parquet UR
 Compile the [AutoGluon example](example_pipelines.py) from the installed package:
 
 ```sh
-python -c 'from kfp import compiler; from kfp_components.components.data_processing.dch_connection_smoke_test.example_pipelines import train_automl_from_dch_snapshot as pipeline; compiler.Compiler().compile(pipeline, "train-automl-from-dch-snapshot.yaml")'
+python -c 'from kfp import compiler; from kfp_components.components.data_processing.dch.db_table_2_parquet.example_pipelines import train_automl_from_dch_snapshot as pipeline; compiler.Compiler().compile(pipeline, "train-automl-from-dch-snapshot.yaml")'
 ```
 
 Upload the YAML and run it on a pipeline server with read access to the same artifact store.
