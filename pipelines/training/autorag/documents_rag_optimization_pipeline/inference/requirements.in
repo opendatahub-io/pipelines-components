@@ -3,3 +3,6 @@
 ai4rag==0.25.4
 # RHAI hf-xet 1.8.0 lacks ppc64le/s390x wheels; retain all supported architectures.
 hf-xet==1.7.0
+# RAG server payload from the starter kit (main.py / auth_wrapper.py).
+fastapi>=0.115
+uvicorn>=0.34
