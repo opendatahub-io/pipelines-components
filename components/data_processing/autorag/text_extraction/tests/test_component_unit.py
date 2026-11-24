@@ -852,14 +852,12 @@ class TestTextExtractionUnitTests:
         descriptor_artifact = _write_descriptor(tmp_path, {"bucket": "b", "documents": [{"key": "report.pdf"}]})
         output_artifact = SimpleNamespace(path=str(tmp_path / "output"))
         component_status = SimpleNamespace(path=str(tmp_path / "status"), metadata={})
-        embedded_artifact = SimpleNamespace(path=str(_AUTORAG_SHARED / "runtime_embed" / "component_status.py"))
 
         with mock.patch.dict("sys.modules", modules):
             text_extraction.python_func(
                 documents_descriptor=descriptor_artifact,
                 extracted_text=output_artifact,
                 component_status=component_status,
-                embedded_artifact=embedded_artifact,
                 preset="balanced",
                 gpu_acceleration=True,
             )
