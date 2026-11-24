@@ -2,4 +2,4 @@
 
 This subcategory contains components in the **Dch** group:
 
-- [Db Table 2 Parquet](./db_table_2_parquet/README.md): Check DCH access and export the selected PostgreSQL table through Flight SQL.
+- [Export Table To Parquet](./export_table_to_parquet/README.md): Check DCH access and export the selected PostgreSQL table through Flight SQL.

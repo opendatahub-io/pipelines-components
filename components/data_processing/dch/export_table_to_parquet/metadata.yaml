@@ -1,5 +1,5 @@
 ---
-name: db_table_2_parquet
+name: export_table_to_parquet
 description: >-
   Verify a saved PostgreSQL Data Connect Hub connection, snapshot a selected table as Parquet,
   and publish an HTML report from one KFP task.

@@ -11,7 +11,7 @@ from unittest.mock import MagicMock
 import pytest
 from kfp import compiler, dsl
 
-from ..component import db_table_2_parquet
+from ..component import export_table_to_parquet
 
 GATEWAY = "dch-gateway.example.com:443"
 CONNECTION_ID = "saved-connection"
@@ -68,9 +68,9 @@ def services(monkeypatch):
 def test_component_compiles(tmp_path):
     """Compile the component and check its artifact and parameter interfaces."""
     output = tmp_path / "component.yaml"
-    compiler.Compiler().compile(db_table_2_parquet, str(output))
+    compiler.Compiler().compile(export_table_to_parquet, str(output))
     assert output.stat().st_size > 0
-    spec = db_table_2_parquet.component_spec
+    spec = export_table_to_parquet.component_spec
     assert set(spec.inputs) == {"dch_host", "connection_id", "trusted_host", "table_name", "table_schema"}
     assert set(spec.outputs) == {"snapshot", "report", "snapshot_uri"}
 
@@ -84,7 +84,7 @@ def outputs(tmp_path):
 def test_rejects_an_untrusted_host_before_using_the_token(services, outputs, capsys):
     """Keep the Kubernetes bearer token within the configured gateway."""
     with pytest.raises(SystemExit) as failure:
-        db_table_2_parquet.python_func("untrusted.example.com", CONNECTION_ID, GATEWAY, "training", *outputs)
+        export_table_to_parquet.python_func("untrusted.example.com", CONNECTION_ID, GATEWAY, "training", *outputs)
     assert failure.value.code == 1
     services.client.assert_not_called()
     services.secret_read.assert_not_called()
@@ -95,7 +95,7 @@ def test_checks_flight_and_direct_postgres(services, outputs, capsys):
     """Exercise both routes and omit the source credentials from check logs."""
     import pyarrow.parquet as pq
 
-    result = db_table_2_parquet.python_func(
+    result = export_table_to_parquet.python_func(
         GATEWAY, CONNECTION_ID, GATEWAY, 'training"<view>', *outputs, table_schema="ml"
     )
     snapshot, report = outputs
@@ -135,7 +135,7 @@ def test_failed_rest_lookup_skips_secret_access(services, outputs, capsys):
     """Report authorization errors without logging sensitive response details."""
     services.dch.get_connection.side_effect = services.error(f"Failure with {TOKEN} and {URI}")
     with pytest.raises(SystemExit) as failure:
-        db_table_2_parquet.python_func(GATEWAY, CONNECTION_ID, GATEWAY, "training", *outputs)
+        export_table_to_parquet.python_func(GATEWAY, CONNECTION_ID, GATEWAY, "training", *outputs)
     assert failure.value.code == 1
     services.dch.read.assert_not_called()
     services.secret_read.assert_not_called()
@@ -155,7 +155,7 @@ def test_writes_valid_parquet_for_an_empty_table(services, outputs):
     schema = pa.schema([("id", pa.int64()), ("label", pa.string())])
     services.dch.read_batches.side_effect = lambda *_: (batch for batch in [])
     services.dch.read.side_effect = [services.dch.read.return_value, schema.empty_table()]
-    db_table_2_parquet.python_func(GATEWAY, CONNECTION_ID, GATEWAY, "empty_training", *outputs)
+    export_table_to_parquet.python_func(GATEWAY, CONNECTION_ID, GATEWAY, "empty_training", *outputs)
     snapshot, _ = outputs
     assert pq.read_schema(snapshot.path) == schema
     assert pq.ParquetFile(snapshot.path).metadata.num_rows == 0
@@ -172,7 +172,7 @@ def test_removes_partial_snapshot_if_flight_fails(services, outputs, capsys):
 
     services.dch.read_batches.side_effect = broken_batches
     with pytest.raises(SystemExit) as failure:
-        db_table_2_parquet.python_func(GATEWAY, CONNECTION_ID, GATEWAY, "training", *outputs)
+        export_table_to_parquet.python_func(GATEWAY, CONNECTION_ID, GATEWAY, "training", *outputs)
     assert failure.value.code == 1
     assert not any(Path(artifact.path).exists() for artifact in outputs)
     assert not list(Path(outputs[0].path).parent.iterdir())

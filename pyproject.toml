@@ -67,7 +67,7 @@ packages = [
     "kfp_components.components.data_processing.autorag.text_extraction",
     "kfp_components.components.data_processing.dataset_download",
     "kfp_components.components.data_processing.dch",
-    "kfp_components.components.data_processing.dch.db_table_2_parquet",
+    "kfp_components.components.data_processing.dch.export_table_to_parquet",
     "kfp_components.components.data_processing.download_model",
     "kfp_components.components.data_processing.ingest_to_milvus",
     "kfp_components.components.data_processing.parse_and_chunk",
