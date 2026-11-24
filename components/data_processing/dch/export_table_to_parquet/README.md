@@ -108,8 +108,9 @@ def train_automl_from_dch_snapshot(
 Run in the DCH tenant namespace that owns the connection. Configure a DSPA with an S3-backed
 artifact store and use its default pipeline root. The task pod needs access to the DCH gateway
 over HTTPS and Flight SQL, the Kubernetes API, and PostgreSQL. DCH Flight also needs access to
-PostgreSQL. The task installs its dependencies from GitHub and PyPI and uses ephemeral disk to
-stage the complete Parquet file before KFP uploads it.
+PostgreSQL. The task uses the Red Hat UBI 9 Python 3.12 image from `registry.access.redhat.com`.
+It installs its dependencies from GitHub and PyPI and uses ephemeral disk to stage the complete
+Parquet file before KFP uploads it.
 
 ### 1. Configure gateway TLS trust
 

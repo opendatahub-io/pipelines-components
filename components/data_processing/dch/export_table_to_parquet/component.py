@@ -11,7 +11,7 @@ DCH_SDK = (
 
 
 @dsl.component(
-    base_image="python:3.12-bookworm",
+    base_image="registry.access.redhat.com/ubi9/python-312:latest",
     packages_to_install=[DCH_SDK, "psycopg[binary]==3.3.4"],
 )
 def export_table_to_parquet(
