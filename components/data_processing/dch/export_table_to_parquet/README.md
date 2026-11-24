@@ -105,22 +105,121 @@ def train_automl_from_dch_snapshot(
 
 ## Prerequisites
 
-- Run the task in the tenant namespace that owns the saved, Flight-enabled PostgreSQL connection.
-- The task uses its mounted Kubernetes ServiceAccount token and namespace. The token audience must
-  be accepted by DCH. Grant the runner `dch-read` in the tenant for REST metadata and Flight SQL.
-- The pod must trust the DCH gateway's TLS certificate. On OpenShift AI, configure the DSPA CA
-  bundle when the gateway uses a private issuer. The component uses the launcher's
-  `SSL_CERT_FILE` when set.
-- Grant DCH Flight `get` on the connection's exact credential Secret. Grant the pipeline runner
-  `get` on the same Secret for the direct PostgreSQL check. The Secret contains `URI` and
-  optionally `CA_CERT` for the PostgreSQL server.
-- The task pod needs network access to the DCH gateway, the Kubernetes API, and PostgreSQL.
-  The task installs its dependencies at startup and needs access to GitHub and PyPI.
-- Use the DSPA's S3-backed artifact store as the pipeline root. The PostgreSQL role needs
-  read access to the selected table and the task needs enough ephemeral disk to stage the
-  complete Parquet file.
+Run in the DCH tenant namespace that owns the connection. Configure a DSPA with an S3-backed
+artifact store and use its default pipeline root. The task pod needs access to the DCH gateway
+over HTTPS and Flight SQL, the Kubernetes API, and PostgreSQL. DCH Flight also needs access to
+PostgreSQL. The task installs its dependencies from GitHub and PyPI and uses ephemeral disk to
+stage the complete Parquet file before KFP uploads it.
+
+### 1. Configure gateway TLS trust
+
+Use the public CA bundle that validates the DCH gateway when the gateway uses a private issuer.
+The component uses the launcher's `SSL_CERT_FILE` when set. Set the names for your deployment
+and check the existing DSPA CA reference.
+
+```sh
+TENANT_NAMESPACE=your-project
+DSPA_NAME=your-dspa
+RUNNER_SA="pipeline-runner-${DSPA_NAME}"
+
+oc get dspa "$DSPA_NAME" -n "$TENANT_NAMESPACE" -o jsonpath='{.spec.apiServer.cABundle}{"\n"}'
+```
+
+If the reference is empty, create a ConfigMap from your public CA PEM file and configure the
+DSPA to use it.
+
+```sh
+oc create configmap dch-ingress-ca -n "$TENANT_NAMESPACE" --from-file=ca-bundle.crt=/path/to/dch-ingress-ca.pem
+oc patch dspa "$DSPA_NAME" -n "$TENANT_NAMESPACE" --type=merge \
+  -p '{"spec":{"apiServer":{"cABundle":{"configMapName":"dch-ingress-ca","configMapKey":"ca-bundle.crt"}}}}'
+oc rollout status "deployment/ds-pipeline-$DSPA_NAME" -n "$TENANT_NAMESPACE"
+```
+
+If DSPA already points to a CA ConfigMap, add the DCH issuer CA to its referenced key and
+preserve the other certificates. Start a new run after DSPA reconciles and check for
+`using launcher CA bundle` in the task log.
+[OpenShift AI certificate configuration](https://docs.redhat.com/en/documentation/red_hat_openshift_ai_self-managed/3.5/html/installing_and_uninstalling_openshift_ai_self-managed/working-with-certificates_certs)
+
+### 2. Grant the runner access to the DCH APIs
+
+The component reads the Kubernetes ServiceAccount token and namespace mounted in the task pod.
+DCH must accept the token's audience. If the task pod uses a different ServiceAccount, set
+`RUNNER_SA` to its actual `.spec.serviceAccountName`. Bind `dch-read` in the tenant namespace
+to allow the REST connection lookup and Flight query.
+[DCH tenant authorization and authentication](https://github.com/opendatahub-io/data-connect-hub/blob/6d58bc9975a431c8f8a9040e610520d20c980f36/docs/user-guide/auth.md#24-grant-users-access-to-flight-and-rest-apis)
+
+```sh
+oc create rolebinding dch-pipeline-runner-read -n "$TENANT_NAMESPACE" \
+  --clusterrole=dch-read --serviceaccount="$TENANT_NAMESPACE:$RUNNER_SA"
+```
+
+### 3. Create or select the PostgreSQL connection
+
+Use a saved, Flight-enabled `Postgres` connection in the tenant. Save its ID and its
+`credentials_ref.secret` name. The Secret must contain `URI` and can contain `CA_CERT`
+if PostgreSQL uses a private CA. The database role must be able to read both
+`pg_catalog.pg_namespace` and the selected table.
+[DCH PostgreSQL connector requirements](https://github.com/opendatahub-io/data-connect-hub/blob/6d58bc9975a431c8f8a9040e610520d20c980f36/docs/user-guide/connectors.md)
+· [DCH connection creation](https://github.com/opendatahub-io/data-connect-hub/blob/6d58bc9975a431c8f8a9040e610520d20c980f36/docs/user-guide/getting-started-ocp.md#create-connection)
+
+To create a connection through REST, the API caller needs `dch-read-write`. If you submit
+inline credentials so DCH creates the Secret, grant the REST ServiceAccount
+`dch-rest-service-secret-access` in the tenant. With an existing Secret reference, the
+REST ServiceAccount needs `get` on that Secret if you run the connection readiness check.
+[DCH REST Secret permissions](https://github.com/opendatahub-io/data-connect-hub/blob/6d58bc9975a431c8f8a9040e610520d20c980f36/docs/user-guide/auth.md#23-grant-rest-service-permission-to-manage-connection-secrets)
+· [DCH readiness troubleshooting](https://github.com/opendatahub-io/data-connect-hub/blob/6d58bc9975a431c8f8a9040e610520d20c980f36/docs/user-guide/auth.md#connection-creation-succeeds-but-readiness-reports-secret-cannot-be-read)
+
+```sh
+DCH_REST_NAMESPACE=your-rest-namespace
+DCH_REST_SA=your-rest-service-account
+
+oc create rolebinding dch-rest-service-secret-access -n "$TENANT_NAMESPACE" \
+  --clusterrole=dch-rest-service-secret-access --serviceaccount="$DCH_REST_NAMESPACE:$DCH_REST_SA"
+```
+
+### 4. Grant access to the connection Secret
+
+Find the Flight deployment that serves your gateway and use its namespace and ServiceAccount.
+Grant Flight `get` on the exact Secret so it can query PostgreSQL. Grant the runner the same
+scoped permission for the direct PostgreSQL check.
+[DCH Flight Secret access](https://github.com/opendatahub-io/data-connect-hub/blob/6d58bc9975a431c8f8a9040e610520d20c980f36/docs/user-guide/auth.md#22-grant-flight-service-permission-to-read-connection-secrets)
+
+```sh
+oc get deployments -A -l app.kubernetes.io/part-of=data-connect-hub \
+  -o custom-columns='NAMESPACE:.metadata.namespace,DEPLOYMENT:.metadata.name,SA:.spec.template.spec.serviceAccountName'
+
+CREDENTIAL_SECRET_NAME=your-connection-secret
+FLIGHT_NAMESPACE=your-flight-namespace
+FLIGHT_SA=your-flight-service-account
+
+oc create role dch-connection-secret-reader -n "$TENANT_NAMESPACE" \
+  --verb=get --resource=secrets --resource-name="$CREDENTIAL_SECRET_NAME"
+oc create rolebinding dch-flight-source-secret -n "$TENANT_NAMESPACE" \
+  --role=dch-connection-secret-reader --serviceaccount="$FLIGHT_NAMESPACE:$FLIGHT_SA"
+oc create rolebinding dch-runner-source-secret -n "$TENANT_NAMESPACE" \
+  --role=dch-connection-secret-reader --serviceaccount="$TENANT_NAMESPACE:$RUNNER_SA"
+```
+
+For readiness checks on a connection that references an existing Secret, set the REST
+ServiceAccount variables from step 3 and bind the scoped Role to that account as well.
+
+```sh
+oc create rolebinding dch-rest-source-secret -n "$TENANT_NAMESPACE" \
+  --role=dch-connection-secret-reader --serviceaccount="$DCH_REST_NAMESPACE:$DCH_REST_SA"
+```
+
+Verify both grants from an account that can impersonate the ServiceAccounts.
+
+```sh
+oc auth can-i get "secret/$CREDENTIAL_SECRET_NAME" -n "$TENANT_NAMESPACE" \
+  --as="system:serviceaccount:$FLIGHT_NAMESPACE:$FLIGHT_SA"
+oc auth can-i get "secret/$CREDENTIAL_SECRET_NAME" -n "$TENANT_NAMESPACE" \
+  --as="system:serviceaccount:$TENANT_NAMESPACE:$RUNNER_SA"
+```
 
 ## Use in a pipeline
+
+To run the component as a standalone pipeline, use the [DCH table export pipeline](../../../../pipelines/data_processing/dch/export_table_to_parquet/README.md).
 
 Set the trusted host when composing the pipeline, using your own gateway address. The run
 supplies the saved connection ID and exact table name. Set caching off so every run exercises
@@ -157,8 +256,13 @@ table, row and column counts, file size, check results, and the exact Parquet UR
 
 Compile the [AutoGluon example](example_pipelines.py) from the installed package:
 
-```sh
-python -c 'from kfp import compiler; from kfp_components.components.data_processing.dch.export_table_to_parquet.example_pipelines import train_automl_from_dch_snapshot as pipeline; compiler.Compiler().compile(pipeline, "train-automl-from-dch-snapshot.yaml")'
+```python
+from kfp import compiler
+from kfp_components.components.data_processing.dch.export_table_to_parquet.example_pipelines import (
+    train_automl_from_dch_snapshot,
+)
+
+compiler.Compiler().compile(train_automl_from_dch_snapshot, "train-automl-from-dch-snapshot.yaml")
 ```
 
 Upload the YAML and run it on a pipeline server with read access to the same artifact store.

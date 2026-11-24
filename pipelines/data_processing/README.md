@@ -7,4 +7,5 @@ This directory contains pipelines in the **Data Processing** category:
 ## Subcategories
 
 - [AutoRAG](./autorag/README.md)
+- [Dch](./dch/README.md)
 - [Ray Data](./ray_data/README.md)
