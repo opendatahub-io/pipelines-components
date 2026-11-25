@@ -4,7 +4,7 @@
 
 ## Overview 🧾
 
-Check DCH access, then export the selected table and an HTML report.
+Export a DCH table as Parquet and publish an HTML summary.
 
 ## Inputs 📥
 

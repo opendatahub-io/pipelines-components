@@ -17,11 +17,11 @@ DCH_SDK = (
 def export_table_to_parquet(
     dch_host: str,
     connection_id: str,
-    trusted_host: str,
     source_table: str,
     snapshot: dsl.Output[dsl.Dataset],
     report: dsl.Output[dsl.HTML],
     max_snapshot_size_bytes: int = 1_073_741_824,
+    trusted_host: str = "",
 ) -> NamedTuple("Outputs", [("snapshot_uri", str)]):
     """Export a relational table through a saved DCH Flight SQL connection.
 
@@ -32,12 +32,12 @@ def export_table_to_parquet(
     Args:
         dch_host: DCH gateway hostname and optional port requested for the run.
         connection_id: ID of a saved SQL-capable relational DCH connection in the task namespace.
-        trusted_host: Optional HTTPS gateway restriction set by the pipeline author.
-            An empty value uses dch_host as the endpoint for the task ServiceAccount token.
         source_table: Source table in schema.table_name format, such as analytics.customers.
         snapshot: Parquet dataset artifact.
-        report: HTML report with check results and snapshot statistics.
+        report: HTML report with the source table, snapshot statistics, and artifact URI.
         max_snapshot_size_bytes: Maximum size in bytes of the staged Parquet file, including its footer.
+        trusted_host: Optional HTTPS gateway restriction set by the pipeline author.
+            An empty value uses dch_host as the endpoint for the task ServiceAccount token.
 
     Returns:
         The exact artifact URI of the Parquet file.
@@ -65,10 +65,10 @@ def export_table_to_parquet(
             "Task ServiceAccount token",
             "DCH connection lookup",
             "Parquet snapshot",
+            "HTML report",
         ),
         "SKIP",
     )
-    details = {}
 
     class SnapshotSizeLimitExceeded(ValueError):
         """A Parquet write would exceed the configured size limit."""
@@ -86,7 +86,6 @@ def export_table_to_parquet(
 
     def record(name, status, detail):
         checks[name] = status
-        details[name] = detail
         print(f"[{status}] {name} | {detail}", flush=True)
 
     def log_failure(name, exc):
@@ -223,7 +222,7 @@ def export_table_to_parquet(
             with BoundedSnapshotWriter(temporary_path.open("wb", buffering=0)) as sink:
                 first_batch = next(batches, None)
                 if first_batch is None:
-                    empty_table = client.read(f"{query} LIMIT 0", connection_id)
+                    empty_table = client.read(f"{query} WHERE 1 = 0", connection_id)
                     schema = empty_table.schema
                     pq.write_table(empty_table, sink)
                 else:
@@ -245,33 +244,26 @@ def export_table_to_parquet(
         record(name, "PASS", f"Wrote {row_count:,} rows and {len(schema):,} columns to {snapshot.uri}.")
 
     def write_report():
-        check_rows = "".join(
-            f"<tr><th scope='row'>{escape(name)}</th><td>{status}</td><td>{escape(details[name])}</td></tr>"
-            for name, status in checks.items()
-        )
         metadata = snapshot.metadata
         report_path = Path(report.path)
         report_path.parent.mkdir(parents=True, exist_ok=True)
         report_path.write_text(
             "<!doctype html><html lang='en'><meta charset='utf-8'>"
-            "<title>DCH table snapshot</title><body><h1>DCH table snapshot</h1>"
-            "<p>Overall result: <strong>PASS</strong></p><dl>"
+            "<title>DCH table snapshot</title><body><h1>DCH table snapshot</h1><dl>"
             f"<dt>Table</dt><dd><code>{escape('.'.join(table_parts))}</code></dd>"
             f"<dt>Rows</dt><dd>{metadata['row_count']:,}</dd>"
             f"<dt>Columns</dt><dd>{metadata['column_count']:,}</dd>"
             f"<dt>Parquet size</dt><dd>{metadata['size_bytes']:,} bytes</dd>"
-            f"<dt>Location</dt><dd><code>{escape(snapshot.uri)}</code></dd></dl>"
-            "<h2>Checks</h2><table><thead><tr><th>Check</th><th>Status</th>"
-            f"<th>Detail</th></tr></thead><tbody>{check_rows}</tbody></table></body></html>",
+            f"<dt>Location</dt><dd><code>{escape(snapshot.uri)}</code></dd></dl></body></html>",
             encoding="utf-8",
         )
+        record("HTML report", "PASS", "Wrote the snapshot summary.")
 
     print("[START] DCH table export", flush=True)
     tenant = run_checks()
     if tenant is not None:
         try:
             write_snapshot(tenant)
-            write_report()
         except SnapshotSizeLimitExceeded:
             record(
                 "Parquet snapshot",
@@ -281,6 +273,11 @@ def export_table_to_parquet(
             )
         except (DCHError, pa.ArrowException, OSError, ValueError) as exc:
             log_failure("Parquet snapshot", exc)
+        else:
+            try:
+                write_report()
+            except (OSError, ValueError) as exc:
+                record("HTML report", "FAIL", f"Could not write the snapshot summary ({type(exc).__name__}).")
     for name, status in checks.items():
         if status == "SKIP":
             print(f"[SKIP] {name} | A prerequisite check did not pass.", flush=True)

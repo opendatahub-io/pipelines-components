@@ -1,1 +1,1 @@
-"""Tests for the DCH connection smoke test component."""
+"""Tests for the DCH table export component."""

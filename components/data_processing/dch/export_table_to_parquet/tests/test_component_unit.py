@@ -64,6 +64,7 @@ def test_component_compiles(tmp_path):
         "max_snapshot_size_bytes",
     }
     assert spec.inputs["max_snapshot_size_bytes"].default == 1_073_741_824
+    assert spec.inputs["trusted_host"].default == ""
     assert set(spec.outputs) == {"snapshot", "report", "snapshot_uri"}
 
 
@@ -76,7 +77,9 @@ def outputs(tmp_path):
 def test_rejects_an_untrusted_host_before_using_the_token(services, outputs, capsys):
     """Keep the bearer token within the gateway when the pipeline author pins one."""
     with pytest.raises(SystemExit) as failure:
-        export_table_to_parquet.python_func("untrusted.example.com", CONNECTION_ID, GATEWAY, SOURCE_TABLE, *outputs)
+        export_table_to_parquet.python_func(
+            "untrusted.example.com", CONNECTION_ID, SOURCE_TABLE, *outputs, trusted_host=GATEWAY
+        )
     assert failure.value.code == 1
     services.client.assert_not_called()
     assert "[FAIL] Gateway and input" in capsys.readouterr().out
@@ -84,7 +87,7 @@ def test_rejects_an_untrusted_host_before_using_the_token(services, outputs, cap
 
 def test_uses_runtime_gateway_when_no_gateway_is_pinned(services, outputs):
     """Use the HTTPS gateway selected at run time for a generic pipeline."""
-    result = export_table_to_parquet.python_func(f"https://{GATEWAY}/", CONNECTION_ID, "", SOURCE_TABLE, *outputs)
+    result = export_table_to_parquet.python_func(f"https://{GATEWAY}/", CONNECTION_ID, SOURCE_TABLE, *outputs)
 
     assert result == (outputs[0].uri,)
     assert services.client.call_args.kwargs["endpoint"] == f"https://{GATEWAY}"
@@ -94,7 +97,7 @@ def test_uses_runtime_gateway_when_no_gateway_is_pinned(services, outputs):
 def test_rejects_invalid_runtime_gateway(services, outputs, capsys, gateway):
     """Reject missing or malformed gateways before opening a DCH client."""
     with pytest.raises(SystemExit) as failure:
-        export_table_to_parquet.python_func(gateway, CONNECTION_ID, "", SOURCE_TABLE, *outputs)
+        export_table_to_parquet.python_func(gateway, CONNECTION_ID, SOURCE_TABLE, *outputs)
 
     assert failure.value.code == 1
     services.client.assert_not_called()
@@ -105,7 +108,7 @@ def test_rejects_invalid_runtime_gateway(services, outputs, capsys, gateway):
 def test_rejects_invalid_qualified_table(services, outputs, capsys, source_table):
     """Require a nonempty schema and table before contacting DCH."""
     with pytest.raises(SystemExit) as failure:
-        export_table_to_parquet.python_func(GATEWAY, CONNECTION_ID, "", source_table, *outputs)
+        export_table_to_parquet.python_func(GATEWAY, CONNECTION_ID, source_table, *outputs)
 
     assert failure.value.code == 1
     services.client.assert_not_called()
@@ -116,7 +119,7 @@ def test_exports_selected_table_through_flight(services, outputs, capsys):
     """Quote each identifier and publish the selected table and export report."""
     import pyarrow.parquet as pq
 
-    result = export_table_to_parquet.python_func(GATEWAY, CONNECTION_ID, GATEWAY, 'ml.training"<view>', *outputs)
+    result = export_table_to_parquet.python_func(GATEWAY, CONNECTION_ID, 'ml.training"<view>', *outputs)
     snapshot, report = outputs
     assert result == (snapshot.uri,)
     assert snapshot.uri.endswith(".parquet")
@@ -130,6 +133,7 @@ def test_exports_selected_table_through_flight(services, outputs, capsys):
     html = Path(report.path).read_text()
     assert "ml.training&quot;&lt;view&gt;" in html
     assert snapshot.uri in html and "<dt>Rows</dt><dd>3</dd>" in html
+    assert "<table>" not in html
     assert TOKEN not in html
     options = services.client.call_args.kwargs
     assert options["endpoint"] == GATEWAY
@@ -148,7 +152,7 @@ def test_failed_rest_lookup_skips_export(services, outputs, capsys):
     """Report authorization errors without logging sensitive response details."""
     services.dch.get_connection.side_effect = services.error(f"Failure with {TOKEN}")
     with pytest.raises(SystemExit) as failure:
-        export_table_to_parquet.python_func(GATEWAY, CONNECTION_ID, GATEWAY, SOURCE_TABLE, *outputs)
+        export_table_to_parquet.python_func(GATEWAY, CONNECTION_ID, SOURCE_TABLE, *outputs)
     assert failure.value.code == 1
     services.dch.read.assert_not_called()
     services.dch.read_batches.assert_not_called()
@@ -167,11 +171,11 @@ def test_writes_valid_parquet_for_an_empty_table(services, outputs):
     schema = pa.schema([("id", pa.int64()), ("label", pa.string())])
     services.dch.read_batches.side_effect = lambda *_: (batch for batch in [])
     services.dch.read.return_value = schema.empty_table()
-    export_table_to_parquet.python_func(GATEWAY, CONNECTION_ID, GATEWAY, "public.empty_training", *outputs)
+    export_table_to_parquet.python_func(GATEWAY, CONNECTION_ID, "public.empty_training", *outputs)
     snapshot, _ = outputs
     assert pq.read_schema(snapshot.path) == schema
     assert pq.ParquetFile(snapshot.path).metadata.num_rows == 0
-    services.dch.read.assert_called_once_with('SELECT * FROM "public"."empty_training" LIMIT 0', CONNECTION_ID)
+    services.dch.read.assert_called_once_with('SELECT * FROM "public"."empty_training" WHERE 1 = 0', CONNECTION_ID)
 
 
 def test_removes_partial_snapshot_if_flight_fails(services, outputs, capsys):
@@ -184,7 +188,7 @@ def test_removes_partial_snapshot_if_flight_fails(services, outputs, capsys):
 
     services.dch.read_batches.side_effect = broken_batches
     with pytest.raises(SystemExit) as failure:
-        export_table_to_parquet.python_func(GATEWAY, CONNECTION_ID, GATEWAY, SOURCE_TABLE, *outputs)
+        export_table_to_parquet.python_func(GATEWAY, CONNECTION_ID, SOURCE_TABLE, *outputs)
     assert failure.value.code == 1
     assert not any(Path(artifact.path).exists() for artifact in outputs)
     assert not list(Path(outputs[0].path).parent.iterdir())
@@ -193,12 +197,32 @@ def test_removes_partial_snapshot_if_flight_fails(services, outputs, capsys):
     assert TOKEN not in output
 
 
+def test_logs_report_failure_separately_from_snapshot(services, outputs, capsys, monkeypatch):
+    """Attribute a report write failure to the report after the snapshot succeeds."""
+    snapshot, report = outputs
+    original_write = Path.write_text
+
+    def write_text(path, *args, **kwargs):
+        if path == Path(report.path):
+            raise PermissionError("Permission denied")
+        return original_write(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", write_text)
+    with pytest.raises(SystemExit) as failure:
+        export_table_to_parquet.python_func(GATEWAY, CONNECTION_ID, SOURCE_TABLE, *outputs)
+
+    assert failure.value.code == 1
+    assert Path(snapshot.path).is_file()
+    output = capsys.readouterr().out
+    assert "[PASS] Parquet snapshot" in output
+    assert "[FAIL] HTML report | Could not write the snapshot summary (PermissionError)." in output
+    assert "[FAIL] Parquet snapshot" not in output
+
+
 def test_rejects_nonpositive_snapshot_limit(services, outputs, capsys):
     """Reject an invalid size limit before contacting DCH."""
     with pytest.raises(SystemExit) as failure:
-        export_table_to_parquet.python_func(
-            GATEWAY, CONNECTION_ID, GATEWAY, SOURCE_TABLE, *outputs, max_snapshot_size_bytes=0
-        )
+        export_table_to_parquet.python_func(GATEWAY, CONNECTION_ID, SOURCE_TABLE, *outputs, max_snapshot_size_bytes=0)
     assert failure.value.code == 1
     services.client.assert_not_called()
     assert "max_snapshot_size_bytes must be a positive integer" in capsys.readouterr().out
@@ -215,9 +239,7 @@ def test_stops_reading_and_removes_snapshot_when_a_batch_exceeds_limit(services,
     services.dch.read_batches.side_effect = oversized_batches
 
     with pytest.raises(SystemExit) as failure:
-        export_table_to_parquet.python_func(
-            GATEWAY, CONNECTION_ID, GATEWAY, SOURCE_TABLE, *outputs, max_snapshot_size_bytes=128
-        )
+        export_table_to_parquet.python_func(GATEWAY, CONNECTION_ID, SOURCE_TABLE, *outputs, max_snapshot_size_bytes=128)
     assert failure.value.code == 1
     assert not list(Path(outputs[0].path).parent.iterdir())
     output = capsys.readouterr().out
@@ -234,18 +256,18 @@ def test_enforces_limit_including_parquet_footer(services, outputs, tmp_path, ca
         services.dch.read_batches.side_effect = lambda *_: (batch for batch in [])
         services.dch.read.return_value = pa.schema([("id", pa.int64())]).empty_table()
     run = export_table_to_parquet.python_func
-    run(GATEWAY, CONNECTION_ID, GATEWAY, SOURCE_TABLE, *outputs)
+    run(GATEWAY, CONNECTION_ID, SOURCE_TABLE, *outputs)
     file_size = Path(outputs[0].path).stat().st_size
 
     exact = dsl.Dataset(uri=str(tmp_path / "exact")), dsl.HTML(uri=str(tmp_path / "exact-report"))
-    run(GATEWAY, CONNECTION_ID, GATEWAY, SOURCE_TABLE, *exact, max_snapshot_size_bytes=file_size)
+    run(GATEWAY, CONNECTION_ID, SOURCE_TABLE, *exact, max_snapshot_size_bytes=file_size)
     assert Path(exact[0].path).stat().st_size == file_size
     assert pq.ParquetFile(exact[0].path).metadata.num_rows == (0 if empty else 3)
 
     rejected = tmp_path / "rejected"
     capped = dsl.Dataset(uri=str(rejected / "snapshot")), dsl.HTML(uri=str(rejected / "report"))
     with pytest.raises(SystemExit) as failure:
-        run(GATEWAY, CONNECTION_ID, GATEWAY, SOURCE_TABLE, *capped, max_snapshot_size_bytes=file_size - 1)
+        run(GATEWAY, CONNECTION_ID, SOURCE_TABLE, *capped, max_snapshot_size_bytes=file_size - 1)
     assert failure.value.code == 1
     assert not list(rejected.iterdir())
     assert "[FAIL] Parquet snapshot | Parquet file exceeds max_snapshot_size_bytes" in capsys.readouterr().out

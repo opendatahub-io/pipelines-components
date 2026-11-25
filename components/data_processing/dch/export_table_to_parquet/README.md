@@ -14,11 +14,11 @@ Uses the gateway CA and task token to look up the saved connection and read the 
 | --------- | ---- | ------- | ----------- |
 | `dch_host` | `str` | `None` | DCH gateway hostname and optional port requested for the run. |
 | `connection_id` | `str` | `None` | ID of a saved SQL-capable relational DCH connection in the task namespace. |
-| `trusted_host` | `str` | `None` | Optional HTTPS gateway restriction set by the pipeline author. An empty value uses dch_host as the endpoint for the task ServiceAccount token. |
 | `source_table` | `str` | `None` | Source table in schema.table_name format, such as analytics.customers. |
 | `snapshot` | `dsl.Output[dsl.Dataset]` | `None` | Parquet dataset artifact. |
-| `report` | `dsl.Output[dsl.HTML]` | `None` | HTML report with check results and snapshot statistics. |
+| `report` | `dsl.Output[dsl.HTML]` | `None` | HTML report with the source table, snapshot statistics, and artifact URI. |
 | `max_snapshot_size_bytes` | `int` | `1073741824` | Maximum size in bytes of the staged Parquet file, including its footer. |
+| `trusted_host` | `str` | `""` | Optional HTTPS gateway restriction set by the pipeline author. An empty value uses dch_host as the endpoint for the task ServiceAccount token. |
 
 ## Outputs 📤
 
@@ -89,7 +89,6 @@ def train_automl_from_dch_snapshot(
   - data_processing
   - data_connect_hub
   - sql
-  - smoke_test
 - **Last Verified**: 2026-11-24 00:00:00+00:00
 - **Owners**:
   - Approvers:
@@ -268,22 +267,20 @@ from kfp_components.components.data_processing.dch.export_table_to_parquet impor
     export_table_to_parquet,
 )
 
-@dsl.pipeline(name="check-dch-connection")
-def smoke_test(DCH_HOST: str, connection_id: str, source_table: str) -> str:
+@dsl.pipeline(name="export-dch-table")
+def export_dch_table(DCH_HOST: str, connection_id: str, source_table: str) -> str:
     task = export_table_to_parquet(
         dch_host=DCH_HOST,
         connection_id=connection_id,
-        trusted_host="",
         source_table=source_table,
     ).set_caching_options(False)
     return task.outputs["snapshot_uri"]
 ```
 
-The task logs each check and exits with status 1 when a check fails.
-DCH Flight queries the selected table. The task
-reads it in Arrow batches and writes one Parquet file. KFP uploads the dataset
-and HTML report using its configured artifact-store credentials. The report includes
-the table, row and column counts, file size, check results, and the exact Parquet URI.
+The task streams the selected table in Arrow batches through DCH Flight and writes one
+Parquet file. KFP uploads the dataset and HTML report using its artifact-store credentials.
+The report includes the table, row and column counts, file size, and the Parquet URI.
+Connection checks and errors appear in the task log.
 
 ## Train from the snapshot
 

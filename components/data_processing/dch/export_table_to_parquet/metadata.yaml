@@ -15,7 +15,6 @@ tags:
   - data_processing
   - data_connect_hub
   - sql
-  - smoke_test
 lastVerified: 2026-11-24T00:00:00Z
 ci:
   compile_check: true
