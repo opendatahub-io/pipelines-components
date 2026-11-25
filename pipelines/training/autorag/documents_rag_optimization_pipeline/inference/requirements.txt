@@ -20,17 +20,21 @@ aiosignal==1.4.0 \
     # via aiohttp
 annotated-doc==0.0.5 \
     --hash=sha256:6060b21cc31c7caecc01f9b833fe49d81294c14e1fcc80362546126939167155
-    # via typer
+    # via
+    #   fastapi
+    #   typer
 annotated-types==0.8.0 \
     --hash=sha256:20c363a73ef38607a829a6697a8d43dfb355b71bdd2d3f2fe03e0a4f5c53b7be
     # via pydantic
 anyio==4.15.1 \
     --hash=sha256:1f6751f9810365d0ba4a86133a026db60c1f7f4054925e5ca6ee9b78a69cd748
     # via
+    #   fastapi
     #   httpx
     #   httpx2
     #   langsmith
     #   openai
+    #   starlette
 appdirs==1.4.4 \
     --hash=sha256:75ca3ec031f13969bb0817c7280570345180f778dae67560ededfefd8918f77e
     # via ragas
@@ -75,6 +79,7 @@ click==8.5.0 \
     # via
     #   huggingface-hub
     #   instructor
+    #   uvicorn
 cloudpickle==3.1.2 \
     --hash=sha256:61e739b078e5be0694878bb530e91781a5de84833e6ed4f20c24efa275631ab9
     # via joblib
@@ -127,6 +132,9 @@ faiss-cpu==1.12.0 \
     --hash=sha256:7490104b1ee98f85e199ff664454fca13d187f27e62820cb51962737c686ae21 \
     --hash=sha256:fc81bc35bb075adb2de9b45fa5052413c1c3e7c0f223912a89e6d91ec1f5a44c
     # via milvus-lite
+fastapi==0.165.0 \
+    --hash=sha256:9fd7d42c0653763a4ea11357faaf5b1c0e48ce8c5830d45b016d37c30c57c524
+    # via -r requirements.in
 filelock==4.2.4 \
     --hash=sha256:3d723ed8b277d7f85b3c581d40b5a0a1b168ce93a200899ef2885ab68a39e9f4
     # via
@@ -163,6 +171,7 @@ h11==0.16.0 \
     # via
     #   httpcore
     #   httpcore2
+    #   uvicorn
 hf-xet==1.7.0 \
     --hash=sha256:34aa84458ea1603938db899bf34afff6cf332b61338d970c27e6f01b768e0164 \
     --hash=sha256:6068f19615394ff08cceda850bffc3ce531b8ef7f7f0b0bff0a2e43b5c58d8f4 \
@@ -398,6 +407,9 @@ openai==2.53.0 \
     #   instructor
     #   langchain-openai
     #   ragas
+opentelemetry-api==1.45.2 \
+    --hash=sha256:1c2c5b7c518aa7582459a623dfe4523b66a05add1fdef2f18fb8cc6fd3026766
+    # via fastapi
 orjson==3.13.0 \
     --hash=sha256:96ae3f4fcf90ca2769e197942928704791a9fe6390b9cf20361a3f3491a5f5d5 \
     --hash=sha256:99e16a0bec5ac996a90a57435e499621f0df36411b70ebe50ccab0ce95b6a1f7 \
@@ -484,6 +496,7 @@ pydantic==2.11.10 \
     #   ai4rag
     #   docling-core
     #   docling-slim
+    #   fastapi
     #   instructor
     #   langchain
     #   langchain-classic
@@ -655,6 +668,9 @@ sqlalchemy==2.1.6 \
     # via
     #   langchain-classic
     #   langchain-community
+starlette==1.10.0 \
+    --hash=sha256:eb469c1350344a5732ad0094fab503e12e1fe4aa70237a7797e64d3299604bc4
+    # via fastapi
 tabulate==0.10.0 \
     --hash=sha256:22ebd5d78937d9212287603eb3ba77a5f76e915a11d62b7131cc86be6d1c2788
     # via docling-core
@@ -750,6 +766,7 @@ typing-extensions==4.16.0 \
     #   aiosignal
     #   anyio
     #   docling-core
+    #   fastapi
     #   grpcio
     #   httpx2
     #   huggingface-hub
@@ -757,12 +774,14 @@ typing-extensions==4.16.0 \
     #   langchain-protocol
     #   langsmith
     #   openai
+    #   opentelemetry-api
     #   pydantic
     #   pydantic-core
     #   pydantic-settings
     #   python-utils
     #   referencing
     #   sqlalchemy
+    #   starlette
     #   typing-inspect
     #   typing-inspection
 typing-inspect==0.9.0 \
@@ -771,6 +790,7 @@ typing-inspect==0.9.0 \
 typing-inspection==0.4.4 \
     --hash=sha256:b6eb66af055e575c1a9d77cce4dbc972399c9de3fbcacdae65e35d03c25a6cee
     # via
+    #   fastapi
     #   pydantic
     #   pydantic-settings
 tzdata==2026.6 \
@@ -793,6 +813,9 @@ uuid-utils==0.19.0 \
     # via
     #   langchain-core
     #   langsmith
+uvicorn==0.54.0 \
+    --hash=sha256:eaa39c36fbbe4eed3442f8aa762c37be8f0302d4cbd707cbfec2e8773b3bc5b9
+    # via -r requirements.in
 websockets==17.3 \
     --hash=sha256:0bc2c728a05e94cf3fa07573bd59f484e9ca066034a3ea4f16172a1bd093856a \
     --hash=sha256:0c148a0c81ccd6eb4361efbe9c92f6ff84adf6b811e30b12ef7a9acfbaffc246 \
