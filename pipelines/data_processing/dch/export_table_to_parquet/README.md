@@ -1,4 +1,4 @@
-# Dch Export Table To Parquet ✨
+# Data Connect Hub Export Table To Parquet ✨
 
 > ⚠️ **Stability: alpha** — This asset is not yet stable and may change.
 
