@@ -40,9 +40,13 @@ Export a DCH table as CSV or Parquet and publish an HTML summary.
 - **Last Verified**: 2026-11-24 00:00:00+00:00
 - **Owners**:
   - Approvers:
+    - mateusz-szewczyk-dev
     - LukaszCmielowski
+    - Mateusz-Switala
+    - jakub-walaszczyk
   - Reviewers:
-    - LukaszCmielowski
+    - mateusz-szewczyk-dev
+    - Mateusz-Switala
 
 ## Additional Resources 📚
 

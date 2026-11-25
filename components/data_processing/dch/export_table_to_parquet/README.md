@@ -45,9 +45,13 @@ Uses the gateway CA and task token to look up the saved connection and read the 
 - **Last Verified**: 2026-11-24 00:00:00+00:00
 - **Owners**:
   - Approvers:
+    - mateusz-szewczyk-dev
     - LukaszCmielowski
+    - Mateusz-Switala
+    - jakub-walaszczyk
   - Reviewers:
-    - LukaszCmielowski
+    - mateusz-szewczyk-dev
+    - Mateusz-Switala
 
 ## Additional Resources 📚
 

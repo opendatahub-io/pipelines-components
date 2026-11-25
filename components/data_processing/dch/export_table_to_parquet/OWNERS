@@ -1,5 +1,9 @@
 ---
 approvers:
+  - mateusz-szewczyk-dev
   - LukaszCmielowski
+  - Mateusz-Switala
+  - jakub-walaszczyk
 reviewers:
-  - LukaszCmielowski
+  - mateusz-szewczyk-dev
+  - Mateusz-Switala
