@@ -2,7 +2,7 @@
 name: export_table_to_parquet
 description: >-
   Export a relational table through a saved Data Connect Hub Flight SQL connection
-  as Parquet and publish an HTML report from one KFP task.
+  as CSV or Parquet and publish an HTML report from one KFP task.
 stability: alpha
 dependencies:
   kubeflow:
@@ -15,6 +15,8 @@ tags:
   - data_processing
   - data_connect_hub
   - sql
+  - csv
+  - parquet
 lastVerified: 2026-11-24T00:00:00Z
 ci:
   compile_check: true

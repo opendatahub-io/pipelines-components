@@ -1,5 +1,6 @@
 """Unit tests for DCH table export."""
 
+import csv
 import sys
 from io import BufferedWriter
 from pathlib import Path
@@ -63,8 +64,10 @@ def test_component_compiles(tmp_path):
         "connection_id",
         "trusted_host",
         "source_table",
+        "output_format",
     }
     assert spec.inputs["trusted_host"].default == ""
+    assert spec.inputs["output_format"].default == "parquet"
     assert set(spec.outputs) == {"snapshot", "report", "snapshot_uri"}
 
 
@@ -148,6 +151,53 @@ def test_exports_selected_table_through_flight(services, outputs, capsys):
     assert TOKEN not in output
 
 
+def test_exports_csv_with_one_header_and_quoted_fields(services, outputs):
+    """Write multiple CSV batches using one header and preserve punctuation and newlines."""
+    import pyarrow as pa
+
+    values = ['quoted "value"', "contains,comma", "two\nlines"]
+    services.dch.read_batches.side_effect = lambda *_: (
+        pa.record_batch({"label": batch}) for batch in (values[:2], values[2:])
+    )
+    result = export_table_to_parquet.python_func(GATEWAY, CONNECTION_ID, SOURCE_TABLE, *outputs, output_format="csv")
+
+    snapshot, report = outputs
+    assert result == (snapshot.uri,)
+    assert snapshot.uri.endswith(".csv")
+    with Path(snapshot.path).open(encoding="utf-8", newline="") as stream:
+        assert list(csv.reader(stream)) == [["label"], *[[value] for value in values]]
+    assert snapshot.metadata == {
+        "format": "csv",
+        "row_count": 3,
+        "column_count": 1,
+        "size_bytes": Path(snapshot.path).stat().st_size,
+    }
+    assert "<dt>Format</dt><dd>CSV</dd>" in Path(report.path).read_text()
+
+
+def test_rejects_unknown_output_format(services, outputs, capsys):
+    """Reject an unsupported format before contacting DCH."""
+    with pytest.raises(SystemExit) as failure:
+        export_table_to_parquet.python_func(GATEWAY, CONNECTION_ID, SOURCE_TABLE, *outputs, output_format="json")
+
+    assert failure.value.code == 1
+    services.client.assert_not_called()
+    assert "Set output_format to csv or parquet." in capsys.readouterr().out
+
+
+def test_csv_reports_unsupported_column_type(services, outputs, capsys):
+    """Point to Parquet and clean up when Arrow CSV cannot write a nested column."""
+    import pyarrow as pa
+
+    services.dch.read_batches.side_effect = lambda *_: (batch for batch in [pa.record_batch({"values": [[1, 2]]})])
+    with pytest.raises(SystemExit) as failure:
+        export_table_to_parquet.python_func(GATEWAY, CONNECTION_ID, SOURCE_TABLE, *outputs, output_format="csv")
+
+    assert failure.value.code == 1
+    assert not list(Path(outputs[0].path).parent.iterdir())
+    assert "Set output_format=parquet" in capsys.readouterr().out
+
+
 def test_failed_rest_lookup_skips_export(services, outputs, capsys):
     """Report authorization errors without logging sensitive response details."""
     services.dch.get_connection.side_effect = services.error(f"Failure with {TOKEN}")
@@ -159,11 +209,12 @@ def test_failed_rest_lookup_skips_export(services, outputs, capsys):
     assert not any(Path(artifact.path).exists() for artifact in outputs)
     output = capsys.readouterr().out
     assert "[FAIL] DCH connection lookup" in output and "HTTP 403" in output
-    assert "[SKIP] Parquet snapshot" in output
+    assert "[SKIP] Table snapshot" in output
     assert TOKEN not in output
 
 
-def test_writes_valid_parquet_for_an_empty_table(services, outputs):
+@pytest.mark.parametrize("output_format", ["csv", "parquet"])
+def test_writes_valid_snapshot_for_an_empty_table(services, outputs, output_format):
     """Recover the schema when Flight emits no batches for an empty table."""
     import pyarrow as pa
     import pyarrow.parquet as pq
@@ -171,10 +222,18 @@ def test_writes_valid_parquet_for_an_empty_table(services, outputs):
     schema = pa.schema([("id", pa.int64()), ("label", pa.string())])
     services.dch.read_batches.side_effect = lambda *_: (batch for batch in [])
     services.dch.read.return_value = schema.empty_table()
-    export_table_to_parquet.python_func(GATEWAY, CONNECTION_ID, "public.empty_training", *outputs)
+    export_table_to_parquet.python_func(
+        GATEWAY, CONNECTION_ID, "public.empty_training", *outputs, output_format=output_format
+    )
     snapshot, _ = outputs
-    assert pq.read_schema(snapshot.path) == schema
-    assert pq.ParquetFile(snapshot.path).metadata.num_rows == 0
+    assert snapshot.uri.endswith(f".{output_format}")
+    assert snapshot.metadata["row_count"] == 0
+    if output_format == "csv":
+        with Path(snapshot.path).open(encoding="utf-8", newline="") as stream:
+            assert list(csv.reader(stream)) == [["id", "label"]]
+    else:
+        assert pq.read_schema(snapshot.path) == schema
+        assert pq.ParquetFile(snapshot.path).metadata.num_rows == 0
     services.dch.read.assert_called_once_with('SELECT * FROM "public"."empty_training" WHERE 1 = 0', CONNECTION_ID)
 
 
@@ -193,7 +252,7 @@ def test_removes_partial_snapshot_if_flight_fails(services, outputs, capsys):
     assert not any(Path(artifact.path).exists() for artifact in outputs)
     assert not list(Path(outputs[0].path).parent.iterdir())
     output = capsys.readouterr().out
-    assert "[FAIL] Parquet snapshot" in output
+    assert "[FAIL] Table snapshot" in output
     assert TOKEN not in output
 
 
@@ -214,9 +273,9 @@ def test_logs_report_failure_separately_from_snapshot(services, outputs, capsys,
     assert failure.value.code == 1
     assert Path(snapshot.path).is_file()
     output = capsys.readouterr().out
-    assert "[PASS] Parquet snapshot" in output
+    assert "[PASS] Table snapshot" in output
     assert "[FAIL] HTML report | Could not write the snapshot summary (PermissionError)." in output
-    assert "[FAIL] Parquet snapshot" not in output
+    assert "[FAIL] Table snapshot" not in output
 
 
 def _simulate_written_bytes(monkeypatch, written_bytes):
@@ -229,27 +288,31 @@ def _simulate_written_bytes(monkeypatch, written_bytes):
     monkeypatch.setattr("io.BufferedWriter", NearCapacityWriter)
 
 
-def test_stops_reading_and_removes_snapshot_when_a_batch_exceeds_limit(services, outputs, capsys, monkeypatch):
+@pytest.mark.parametrize("output_format", ["csv", "parquet"])
+def test_stops_reading_and_removes_snapshot_when_a_batch_exceeds_limit(
+    services, outputs, capsys, monkeypatch, output_format
+):
     """Abort the stream on an oversized write and clean up the staged file."""
     import pyarrow as pa
 
     def oversized_batches(*_):
-        yield pa.record_batch({"blob": [Random(0).randbytes(2048)]})
+        yield pa.record_batch({"value": [Random(0).randbytes(2048).hex()]})
         pytest.fail("The export requested another batch after exceeding its size limit")
 
     services.dch.read_batches.side_effect = oversized_batches
     _simulate_written_bytes(monkeypatch, SNAPSHOT_LIMIT_BYTES - 128)
 
     with pytest.raises(SystemExit) as failure:
-        export_table_to_parquet.python_func(GATEWAY, CONNECTION_ID, SOURCE_TABLE, *outputs)
+        export_table_to_parquet.python_func(GATEWAY, CONNECTION_ID, SOURCE_TABLE, *outputs, output_format=output_format)
     assert failure.value.code == 1
     assert not list(Path(outputs[0].path).parent.iterdir())
     output = capsys.readouterr().out
-    assert "[FAIL] Parquet snapshot | Parquet file exceeds the 1 GiB limit (1,073,741,824 bytes)" in output
+    assert "[FAIL] Table snapshot | Snapshot file exceeds the 1 GiB limit (1,073,741,824 bytes)" in output
 
 
 @pytest.mark.parametrize("empty", [False, True])
-def test_enforces_limit_including_parquet_footer(services, outputs, tmp_path, capsys, monkeypatch, empty):
+@pytest.mark.parametrize("output_format", ["csv", "parquet"])
+def test_enforces_limit_for_complete_file(services, outputs, tmp_path, capsys, monkeypatch, empty, output_format):
     """Allow an exact fit and reject a one-byte overflow, even for an empty table."""
     import pyarrow as pa
     import pyarrow.parquet as pq
@@ -258,20 +321,23 @@ def test_enforces_limit_including_parquet_footer(services, outputs, tmp_path, ca
         services.dch.read_batches.side_effect = lambda *_: (batch for batch in [])
         services.dch.read.return_value = pa.schema([("id", pa.int64())]).empty_table()
     run = export_table_to_parquet.python_func
-    run(GATEWAY, CONNECTION_ID, SOURCE_TABLE, *outputs)
+    run(GATEWAY, CONNECTION_ID, SOURCE_TABLE, *outputs, output_format=output_format)
     file_size = Path(outputs[0].path).stat().st_size
 
     _simulate_written_bytes(monkeypatch, SNAPSHOT_LIMIT_BYTES - file_size)
     exact = dsl.Dataset(uri=str(tmp_path / "exact")), dsl.HTML(uri=str(tmp_path / "exact-report"))
-    run(GATEWAY, CONNECTION_ID, SOURCE_TABLE, *exact)
+    run(GATEWAY, CONNECTION_ID, SOURCE_TABLE, *exact, output_format=output_format)
     assert Path(exact[0].path).stat().st_size == file_size
-    assert pq.ParquetFile(exact[0].path).metadata.num_rows == (0 if empty else 3)
+    if output_format == "csv":
+        assert Path(exact[0].path).read_bytes() == Path(outputs[0].path).read_bytes()
+    else:
+        assert pq.ParquetFile(exact[0].path).metadata.num_rows == (0 if empty else 3)
 
     rejected = tmp_path / "rejected"
     capped = dsl.Dataset(uri=str(rejected / "snapshot")), dsl.HTML(uri=str(rejected / "report"))
     _simulate_written_bytes(monkeypatch, SNAPSHOT_LIMIT_BYTES - file_size + 1)
     with pytest.raises(SystemExit) as failure:
-        run(GATEWAY, CONNECTION_ID, SOURCE_TABLE, *capped)
+        run(GATEWAY, CONNECTION_ID, SOURCE_TABLE, *capped, output_format=output_format)
     assert failure.value.code == 1
     assert not list(rejected.iterdir())
-    assert "[FAIL] Parquet snapshot | Parquet file exceeds the 1 GiB limit" in capsys.readouterr().out
+    assert "[FAIL] Table snapshot | Snapshot file exceeds the 1 GiB limit" in capsys.readouterr().out

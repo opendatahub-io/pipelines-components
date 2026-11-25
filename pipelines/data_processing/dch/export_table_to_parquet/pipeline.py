@@ -8,7 +8,7 @@ from kfp_components.components.data_processing.dch.export_table_to_parquet impor
 
 
 class SnapshotOutputs(NamedTuple):
-    """Artifacts and the exact Parquet URI published by a successful run."""
+    """Artifacts and the exact snapshot URI published by a successful run."""
 
     snapshot: dsl.Dataset
     report: dsl.HTML
@@ -25,29 +25,32 @@ def create_export_table_to_parquet_pipeline(trusted_host: str = "") -> GraphComp
         The KFP graph to compile for the deployment.
     """
 
-    @dsl.pipeline(name="dch-export-table-to-parquet")
+    @dsl.pipeline(name="dch-export-table-to-parquet", display_name="DCH Table Export")
     def pipeline(
         DCH_HOST: str,
         connection_id: str,
         source_table: str,
+        output_format: str = "csv",
     ) -> SnapshotOutputs:
-        """Export a DCH table as Parquet and publish an HTML summary.
+        """Export a DCH table as CSV or Parquet and publish an HTML summary.
 
         Args:
             DCH_HOST: DCH gateway hostname and optional port for the run.
             connection_id: ID of the saved SQL-capable relational DCH connection in the run namespace.
             source_table: Source table in schema.table_name format, such as analytics.customers.
+            output_format: Snapshot format, either csv (default) or parquet.
 
         Returns:
-            The Parquet Dataset, HTML report, and exact Parquet URI.
+            The Dataset, HTML report, and exact snapshot URI.
         """
         task = export_table_to_parquet(
             dch_host=DCH_HOST,
             connection_id=connection_id,
             trusted_host=trusted_host,
             source_table=source_table,
+            output_format=output_format,
         )
-        task.set_caching_options(False)
+        task.set_display_name("export-table").set_caching_options(False)
         return SnapshotOutputs(
             snapshot=task.outputs["snapshot"],
             report=task.outputs["report"],

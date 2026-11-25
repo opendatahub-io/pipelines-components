@@ -1,6 +1,6 @@
 ---
 name: dch-export-table-to-parquet
-description: Export a relational table through DCH Flight SQL and publish a Parquet artifact and HTML report.
+description: Export a relational table through DCH Flight SQL as CSV or Parquet and publish an HTML report.
 stability: alpha
 dependencies:
   kubeflow:
@@ -13,6 +13,7 @@ tags:
   - data_processing
   - data_connect_hub
   - sql
+  - csv
   - parquet
 lastVerified: 2026-11-24T00:00:00Z
 ci:

@@ -1,4 +1,4 @@
-"""Export a relational table from a saved DCH connection as a Parquet snapshot."""
+"""Export a relational table from a saved DCH connection as CSV or Parquet."""
 
 from typing import NamedTuple
 
@@ -21,30 +21,33 @@ def export_table_to_parquet(
     snapshot: dsl.Output[dsl.Dataset],
     report: dsl.Output[dsl.HTML],
     trusted_host: str = "",
+    output_format: str = "parquet",
 ) -> NamedTuple("Outputs", [("snapshot_uri", str)]):
     """Export a relational table through a saved DCH Flight SQL connection.
 
     Uses the gateway CA and task token to look up the saved connection and read
-    the selected table through Flight SQL. Publishes a Parquet dataset and
+    the selected table through Flight SQL. Publishes a CSV or Parquet dataset and
     HTML report through KFP.
 
     Args:
         dch_host: DCH gateway hostname and optional port requested for the run.
         connection_id: ID of a saved SQL-capable relational DCH connection in the task namespace.
         source_table: Source table in schema.table_name format, such as analytics.customers.
-        snapshot: Parquet dataset artifact.
+        snapshot: CSV or Parquet dataset artifact.
         report: HTML report with the source table, snapshot statistics, and artifact URI.
         trusted_host: Optional HTTPS gateway restriction set by the pipeline author.
             An empty value uses dch_host as the endpoint for the task ServiceAccount token.
+        output_format: Snapshot format, either csv or parquet.
 
     Returns:
-        The exact artifact URI of the Parquet file.
+        The exact artifact URI of the exported file.
     """
     import os
     import re
     from contextlib import closing
     from html import escape
     from io import BufferedWriter
+    from itertools import chain
     from pathlib import Path
     from tempfile import TemporaryDirectory
     from urllib.parse import urlsplit
@@ -52,9 +55,12 @@ def export_table_to_parquet(
     import pyarrow as pa
     import pyarrow.parquet as pq
     from data_connect_hub import DataConnectClient, DCHError
+    from pyarrow import csv
 
     gateway = (trusted_host or dch_host).strip().rstrip("/")
     table_parts = [identifier.strip() for identifier in source_table.split(".", 2)]
+    output_format = output_format.strip().lower()
+    snapshot_writers = {"csv": csv.CSVWriter, "parquet": pq.ParquetWriter}
     ca = os.getenv("SSL_CERT_FILE") or None
     account = Path("/var/run/secrets/kubernetes.io/serviceaccount")
     snapshot_limit_bytes = 1_073_741_824
@@ -63,14 +69,14 @@ def export_table_to_parquet(
             "Gateway and input",
             "Task ServiceAccount token",
             "DCH connection lookup",
-            "Parquet snapshot",
+            "Table snapshot",
             "HTML report",
         ),
         "SKIP",
     )
 
     class SnapshotSizeLimitExceeded(ValueError):
-        """A Parquet write would exceed the snapshot size limit."""
+        """A write would exceed the snapshot size limit."""
 
     class BoundedSnapshotWriter(BufferedWriter):
         """Check the file position before passing each write to disk."""
@@ -105,6 +111,8 @@ def export_table_to_parquet(
         )
         raw_message = str(exc).lower()
         hint = next((detail for text, detail in hints if text in raw_message), "")
+        if output_format == "csv" and isinstance(exc, pa.ArrowException) and "unsupported type" in raw_message:
+            hint = "Set output_format=parquet to export columns that CSV cannot represent."
         http_status = getattr(exc, "status_code", None)
         details = [type(exc).__name__]
         if isinstance(http_status, int):
@@ -167,6 +175,9 @@ def export_table_to_parquet(
         if len(table_parts) != 2 or not all(table_parts) or "\0" in source_table:
             record(name, "FAIL", "Provide source_table in schema.table_name format, such as analytics.customers.")
             return
+        if output_format not in snapshot_writers:
+            record(name, "FAIL", "Set output_format to csv or parquet.")
+            return
         record(name, "PASS", f"Using DCH gateway {gateway}.")
 
         name = "Task ServiceAccount token"
@@ -199,13 +210,13 @@ def export_table_to_parquet(
         return '"' + identifier.replace('"', '""') + '"'
 
     def write_snapshot(tenant):
-        name = "Parquet snapshot"
+        name = "Table snapshot"
         source = ".".join(quote_identifier(identifier) for identifier in table_parts)
         start(name, f"Reading {source} through DCH Flight SQL.")
         query = f"SELECT * FROM {source}"
         if not snapshot.uri:
             raise ValueError("KFP did not assign a snapshot artifact URI")
-        snapshot.uri += ".parquet"
+        snapshot.uri += f".{output_format}"
         destination = Path(snapshot.path)
         destination.parent.mkdir(parents=True, exist_ok=True)
         row_count = 0
@@ -214,25 +225,22 @@ def export_table_to_parquet(
             dch_client(tenant, flight_timeout=300) as client,
             closing(client.read_batches(query, connection_id)) as batches,
         ):
-            temporary_path = Path(tmp) / "snapshot.parquet"
+            temporary_path = Path(tmp) / f"snapshot.{output_format}"
             with BoundedSnapshotWriter(temporary_path.open("wb", buffering=0)) as sink:
                 first_batch = next(batches, None)
                 if first_batch is None:
-                    empty_table = client.read(f"{query} WHERE 1 = 0", connection_id)
-                    schema = empty_table.schema
-                    pq.write_table(empty_table, sink)
+                    schema = client.read(f"{query} WHERE 1 = 0", connection_id).schema
                 else:
                     schema = first_batch.schema
-                    with pq.ParquetWriter(sink, schema) as writer:
-                        writer.write_batch(first_batch)
-                        row_count = first_batch.num_rows
-                        for batch in batches:
-                            writer.write_batch(batch)
-                            row_count += batch.num_rows
+                    batches = chain((first_batch,), batches)
+                with snapshot_writers[output_format](sink, schema) as writer:
+                    for batch in batches:
+                        writer.write_batch(batch)
+                        row_count += batch.num_rows
             temporary_path.replace(destination)
 
         snapshot.metadata.update(
-            format="parquet",
+            format=output_format,
             row_count=row_count,
             column_count=len(schema),
             size_bytes=destination.stat().st_size,
@@ -249,7 +257,8 @@ def export_table_to_parquet(
             f"<dt>Table</dt><dd><code>{escape('.'.join(table_parts))}</code></dd>"
             f"<dt>Rows</dt><dd>{metadata['row_count']:,}</dd>"
             f"<dt>Columns</dt><dd>{metadata['column_count']:,}</dd>"
-            f"<dt>Parquet size</dt><dd>{metadata['size_bytes']:,} bytes</dd>"
+            f"<dt>Format</dt><dd>{output_format.upper()}</dd>"
+            f"<dt>File size</dt><dd>{metadata['size_bytes']:,} bytes</dd>"
             f"<dt>Location</dt><dd><code>{escape(snapshot.uri)}</code></dd></dl></body></html>",
             encoding="utf-8",
         )
@@ -262,13 +271,13 @@ def export_table_to_parquet(
             write_snapshot(tenant)
         except SnapshotSizeLimitExceeded:
             record(
-                "Parquet snapshot",
+                "Table snapshot",
                 "FAIL",
-                f"Parquet file exceeds the 1 GiB limit ({snapshot_limit_bytes:,} bytes). "
+                f"Snapshot file exceeds the 1 GiB limit ({snapshot_limit_bytes:,} bytes). "
                 "Export a smaller table or view.",
             )
         except (DCHError, pa.ArrowException, OSError, ValueError) as exc:
-            log_failure("Parquet snapshot", exc)
+            log_failure("Table snapshot", exc)
         else:
             try:
                 write_report()

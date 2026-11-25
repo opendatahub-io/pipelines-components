@@ -18,23 +18,27 @@ def test_compiles_a_single_export_task(tmp_path, gateway):
 
     spec = yaml.safe_load(output.read_text())
     assert spec["pipelineInfo"]["name"] == "dch-export-table-to-parquet"
+    assert spec["pipelineInfo"]["displayName"] == "DCH Table Export"
     root = spec["root"]
     inputs = root["inputDefinitions"]["parameters"]
     assert set(inputs) == {
         "DCH_HOST",
         "connection_id",
         "source_table",
+        "output_format",
     }
     assert "defaultValue" not in inputs["source_table"]
     assert "defaultValue" not in inputs["DCH_HOST"]
+    assert inputs["output_format"]["defaultValue"] == "csv"
 
     (task,) = root["dag"]["tasks"].values()
-    assert task["taskInfo"]["name"] == "export-table-to-parquet"
+    assert task["taskInfo"]["name"] == "export-table"
     parameters = task["inputs"]["parameters"]
     assert task["cachingOptions"].get("enableCache", False) is False
     assert parameters["trusted_host"] == {"runtimeValue": {"constant": gateway}}
     assert parameters["dch_host"] == {"componentInputParameter": "DCH_HOST"}
     assert parameters["source_table"] == {"componentInputParameter": "source_table"}
+    assert parameters["output_format"] == {"componentInputParameter": "output_format"}
 
     outputs = root["outputDefinitions"]
     assert outputs["artifacts"]["snapshot"]["artifactType"]["schemaTitle"] == "system.Dataset"
