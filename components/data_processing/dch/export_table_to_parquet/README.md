@@ -4,22 +4,20 @@
 
 ## Overview 🧾
 
-Check DCH access and export the selected PostgreSQL table through Flight SQL.
+Export a relational table through a saved DCH Flight SQL connection.
 
-Uses the gateway CA and task token to look up the saved connection and read the selected table through Flight SQL. Optional diagnostics count catalog rows over Flight and directly against PostgreSQL using the connection's credential Secret. Publishes a Parquet dataset and HTML report through KFP.
+Uses the gateway CA and task token to look up the saved connection and read the selected table through Flight SQL. Publishes a Parquet dataset and HTML report through KFP.
 
 ## Inputs 📥
 
 | Parameter | Type | Default | Description |
 | --------- | ---- | ------- | ----------- |
 | `dch_host` | `str` | `None` | DCH gateway hostname and optional port requested for the run. |
-| `connection_id` | `str` | `None` | ID of a saved PostgreSQL DCH connection in the task namespace. |
-| `trusted_host` | `str` | `None` | Gateway hostname and optional port fixed when composing the pipeline. The component sends the task ServiceAccount token only to this gateway. |
-| `table_name` | `str` | `None` | Exact name of the source table. |
+| `connection_id` | `str` | `None` | ID of a saved SQL-capable relational DCH connection in the task namespace. |
+| `trusted_host` | `str` | `None` | Optional HTTPS gateway restriction set by the pipeline author. An empty value uses dch_host as the endpoint for the task ServiceAccount token. |
+| `source_table` | `str` | `None` | Source table in schema.table_name format, such as analytics.customers. |
 | `snapshot` | `dsl.Output[dsl.Dataset]` | `None` | Parquet dataset artifact. |
 | `report` | `dsl.Output[dsl.HTML]` | `None` | HTML report with check results and snapshot statistics. |
-| `table_schema` | `str` | `public` | Schema containing the source table. |
-| `run_postgres_diagnostics` | `bool` | `False` | Count PostgreSQL catalog rows over Flight SQL and a direct connection. |
 | `max_snapshot_size_bytes` | `int` | `1073741824` | Maximum size in bytes of the staged Parquet file, including its footer. |
 
 ## Outputs 📤
@@ -80,7 +78,7 @@ def train_automl_from_dch_snapshot(
 ## Metadata 🗂️
 
 - **Name**: export_table_to_parquet
-- **Description**: Verify a saved PostgreSQL Data Connect Hub connection, snapshot a selected table as Parquet, and publish an HTML report from one KFP task.
+- **Description**: Export a relational table through a saved Data Connect Hub Flight SQL connection as Parquet and publish an HTML report from one KFP task.
 - **Stability**: alpha
 - **Dependencies**:
   - Kubeflow:
@@ -90,7 +88,7 @@ def train_automl_from_dch_snapshot(
 - **Tags**:
   - data_processing
   - data_connect_hub
-  - postgres
+  - sql
   - smoke_test
 - **Last Verified**: 2026-11-24 00:00:00+00:00
 - **Owners**:
@@ -109,8 +107,8 @@ def train_automl_from_dch_snapshot(
 
 Run in the DCH tenant namespace that owns the connection. Configure a DSPA with an S3-backed
 artifact store and use its default pipeline root. The task pod needs access to the DCH gateway
-over HTTPS and Flight SQL. The DCH Flight service uses the connection Secret to access
-PostgreSQL. The task uses the Red Hat UBI 9 Python 3.12 image from `registry.access.redhat.com`.
+over HTTPS and Flight SQL. The DCH Flight service uses the saved connection to access
+the source database. The task uses the Red Hat UBI 9 Python 3.12 image from `registry.access.redhat.com`.
 It installs its dependencies from GitHub and PyPI and uses ephemeral disk to stage the complete
 Parquet file before KFP uploads it.
 
@@ -119,33 +117,64 @@ to a positive byte limit that leaves space on the task pod for runtime files and
 HTML report. The cap applies to the compressed Parquet file, including its footer.
 If the next write would exceed the limit, the task stops and deletes the staged file.
 
-### 1. Configure gateway TLS trust
+### Check the DSPA artifact store
 
-Use the public CA bundle that validates the DCH gateway when the gateway uses a private issuer.
-The component uses the launcher's `SSL_CERT_FILE` when set. Set the names for your deployment
-and check the existing DSPA CA reference.
+Set the names for your deployment. For an external S3 artifact store, check that the
+DSPA host and region match the bucket's provider and location. The task pod must be
+able to resolve and reach the resulting S3 endpoint and upload to the bucket.
 
 ```sh
 TENANT_NAMESPACE=your-project
 DSPA_NAME=your-dspa
 RUNNER_SA="pipeline-runner-${DSPA_NAME}"
 
+oc get dspa "$DSPA_NAME" -n "$TENANT_NAMESPACE" \
+  -o custom-columns=BUCKET:.spec.objectStorage.externalStorage.bucket,HOST:.spec.objectStorage.externalStorage.host,REGION:.spec.objectStorage.externalStorage.region
+```
+
+For a launcher error such as `PutObject ... no such host`, compare the hostname
+in the log with the provider's endpoint for that bucket. Correct the DSPA host or
+region if they differ.
+
+### 1. Configure gateway TLS trust
+
+Use the public CA bundle that validates the DCH gateway when the gateway uses a private issuer.
+The component uses the launcher's `SSL_CERT_FILE` when set. Check the existing DSPA CA reference.
+
+```sh
 oc get dspa "$DSPA_NAME" -n "$TENANT_NAMESPACE" -o jsonpath='{.spec.apiServer.cABundle}{"\n"}'
 ```
 
-If the reference is empty, create a ConfigMap from your public CA PEM file and configure the
-DSPA to use it.
+If the reference is empty, reuse `dch-ingress-ca` in the tenant namespace if it
+already contains the gateway's issuer CA under `ca-bundle.crt`. Create it from
+the public CA PEM file only if it is missing.
 
 ```sh
 oc create configmap dch-ingress-ca -n "$TENANT_NAMESPACE" --from-file=ca-bundle.crt=/path/to/dch-ingress-ca.pem
+```
+
+Set the DSPA reference for either an existing or a newly created ConfigMap.
+
+```sh
 oc patch dspa "$DSPA_NAME" -n "$TENANT_NAMESPACE" --type=merge \
   -p '{"spec":{"apiServer":{"cABundle":{"configMapName":"dch-ingress-ca","configMapKey":"ca-bundle.crt"}}}}'
+```
+
+If DSPA already has a CA reference, add the gateway's issuer CA to the referenced
+key if it is missing and preserve the other certificates. After the operator
+reconciles, verify that the generated `dsp-trusted-ca-$DSPA_NAME` ConfigMap
+includes the issuer and wait for the pipeline server rollout.
+
+```sh
+oc get configmap "dsp-trusted-ca-$DSPA_NAME" -n "$TENANT_NAMESPACE" \
+  -o jsonpath='{.data.dsp-ca\.crt}' |
+  openssl crl2pkcs7 -nocrl -certfile /dev/stdin |
+  openssl pkcs7 -print_certs -noout
 oc rollout status "deployment/ds-pipeline-$DSPA_NAME" -n "$TENANT_NAMESPACE"
 ```
 
-If DSPA already points to a CA ConfigMap, add the DCH issuer CA to its referenced key and
-preserve the other certificates. Start a new run after DSPA reconciles and check for
-`using launcher CA bundle` in the task log.
+Start a fresh run. A `[PASS] DCH connection lookup` line confirms that the task
+completed the TLS handshake and looked up the saved connection.
 [OpenShift AI certificate configuration](https://docs.redhat.com/en/documentation/red_hat_openshift_ai_self-managed/3.5/html/installing_and_uninstalling_openshift_ai_self-managed/working-with-certificates_certs)
 
 ### 2. Grant the runner access to the DCH APIs
@@ -161,13 +190,14 @@ oc create rolebinding dch-pipeline-runner-read -n "$TENANT_NAMESPACE" \
   --clusterrole=dch-read --serviceaccount="$TENANT_NAMESPACE:$RUNNER_SA"
 ```
 
-### 3. Create or select the PostgreSQL connection
+### 3. Create or select a relational connection
 
-Use a saved, Flight-enabled `Postgres` connection in the tenant. Save its ID and its
-`credentials_ref.secret` name. The Secret must contain `URI` and can contain `CA_CERT`
-if PostgreSQL uses a private CA. The database role must be able to read the
-selected table.
-[DCH PostgreSQL connector requirements](https://github.com/opendatahub-io/data-connect-hub/blob/6d58bc9975a431c8f8a9040e610520d20c980f36/docs/user-guide/connectors.md)
+Use a saved tabular DCH connection whose connector accepts SQL queries over Flight.
+The export uses `SELECT * FROM "schema"."table_name"`, so the connector must accept
+double-quoted, schema-qualified identifiers and the source credentials must have
+read access to the table. Save the connection ID and follow the connector's
+credential and TLS setup instructions.
+[DCH connector requirements](https://github.com/opendatahub-io/data-connect-hub/blob/6d58bc9975a431c8f8a9040e610520d20c980f36/docs/user-guide/connectors.md)
 · [DCH connection creation](https://github.com/opendatahub-io/data-connect-hub/blob/6d58bc9975a431c8f8a9040e610520d20c980f36/docs/user-guide/getting-started-ocp.md#create-connection)
 
 To create a connection through REST, the API caller needs `dch-read-write`. If you submit
@@ -187,8 +217,10 @@ oc create rolebinding dch-rest-service-secret-access -n "$TENANT_NAMESPACE" \
 
 ### 4. Grant Flight access to the connection Secret
 
+If the connector uses a credential Secret, get its name from the saved
+connection's `credentials_ref.secret` field.
 Find the Flight deployment that serves your gateway and use its namespace and ServiceAccount.
-Grant Flight `get` on the exact Secret so it can query PostgreSQL.
+Grant Flight `get` on that Secret so it can query the source database.
 [DCH Flight Secret access](https://github.com/opendatahub-io/data-connect-hub/blob/6d58bc9975a431c8f8a9040e610520d20c980f36/docs/user-guide/auth.md#22-grant-flight-service-permission-to-read-connection-secrets)
 
 ```sh
@@ -220,29 +252,15 @@ oc auth can-i get "secret/$CREDENTIAL_SECRET_NAME" -n "$TENANT_NAMESPACE" \
   --as="system:serviceaccount:$FLIGHT_NAMESPACE:$FLIGHT_SA"
 ```
 
-## Optional direct PostgreSQL diagnostics
-
-Set `run_postgres_diagnostics` to `true` to count rows in `pg_catalog.pg_namespace`
-over both Flight SQL and a direct PostgreSQL connection. The database role needs
-read access to that catalog. The task pod then needs network access to the Kubernetes
-API and PostgreSQL, and the runner needs `get` on the same Secret. A failed diagnostic
-fails that run before it publishes a snapshot.
-
-```sh
-oc create rolebinding dch-runner-source-secret -n "$TENANT_NAMESPACE" \
-  --role=dch-connection-secret-reader --serviceaccount="$TENANT_NAMESPACE:$RUNNER_SA"
-
-oc auth can-i get "secret/$CREDENTIAL_SECRET_NAME" -n "$TENANT_NAMESPACE" \
-  --as="system:serviceaccount:$TENANT_NAMESPACE:$RUNNER_SA"
-```
-
 ## Use in a pipeline
 
 To run the component as a standalone pipeline, use the [DCH table export pipeline](../../../../pipelines/data_processing/dch/export_table_to_parquet/README.md).
 
-Set the trusted host when composing the pipeline, using your own gateway address. The run
-supplies the saved connection ID and exact table name. Set caching off so every run exercises
-the current connection and captures fresh data.
+Supply the DCH gateway, saved connection ID, and `source_table` when creating a run.
+Use the `schema.table_name` format, for example `analytics.customers`.
+The component sends the task ServiceAccount token to the selected HTTPS gateway.
+Set an explicit `trusted_host` when composing the pipeline to restrict that destination.
+Disable caching so each run captures fresh data.
 
 ```python
 from kfp import dsl
@@ -250,23 +268,19 @@ from kfp_components.components.data_processing.dch.export_table_to_parquet impor
     export_table_to_parquet,
 )
 
-DCH_GATEWAY = "dch-gateway.example.com:443"
-
-
 @dsl.pipeline(name="check-dch-connection")
-def smoke_test(connection_id: str, table_name: str, table_schema: str = "public") -> str:
+def smoke_test(DCH_HOST: str, connection_id: str, source_table: str) -> str:
     task = export_table_to_parquet(
-        dch_host=DCH_GATEWAY,
+        dch_host=DCH_HOST,
         connection_id=connection_id,
-        trusted_host=DCH_GATEWAY,
-        table_name=table_name,
-        table_schema=table_schema,
+        trusted_host="",
+        source_table=source_table,
     ).set_caching_options(False)
     return task.outputs["snapshot_uri"]
 ```
 
-The task logs each check and exits with status 1 when a requested check fails.
-During a normal export, DCH Flight queries only the selected table. The task
+The task logs each check and exits with status 1 when a check fails.
+DCH Flight queries the selected table. The task
 reads it in Arrow batches and writes one Parquet file. KFP uploads the dataset
 and HTML report using its configured artifact-store credentials. The report includes
 the table, row and column counts, file size, check results, and the exact Parquet URI.

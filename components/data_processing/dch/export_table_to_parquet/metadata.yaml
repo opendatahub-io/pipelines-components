@@ -1,8 +1,8 @@
 ---
 name: export_table_to_parquet
 description: >-
-  Verify a saved PostgreSQL Data Connect Hub connection, snapshot a selected table as Parquet,
-  and publish an HTML report from one KFP task.
+  Export a relational table through a saved Data Connect Hub Flight SQL connection
+  as Parquet and publish an HTML report from one KFP task.
 stability: alpha
 dependencies:
   kubeflow:
@@ -14,7 +14,7 @@ dependencies:
 tags:
   - data_processing
   - data_connect_hub
-  - postgres
+  - sql
   - smoke_test
 lastVerified: 2026-11-24T00:00:00Z
 ci:

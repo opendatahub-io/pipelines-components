@@ -11,10 +11,8 @@ Check DCH access, then export the selected table and an HTML report.
 | Parameter | Type | Default | Description |
 | --------- | ---- | ------- | ----------- |
 | `DCH_HOST` | `str` | `None` | DCH gateway hostname and optional port for the run. |
-| `connection_id` | `str` | `None` | ID of the saved PostgreSQL connection in the run namespace. |
-| `table_name` | `str` | `None` | Exact PostgreSQL table name. |
-| `table_schema` | `str` | `public` | Schema containing the table. |
-| `run_postgres_diagnostics` | `bool` | `False` | Count PostgreSQL catalog rows over Flight SQL and a direct connection. |
+| `connection_id` | `str` | `None` | ID of the saved SQL-capable relational DCH connection in the run namespace. |
+| `source_table` | `str` | `None` | Source table in schema.table_name format, such as analytics.customers. |
 | `max_snapshot_size_bytes` | `int` | `1073741824` | Maximum size in bytes of the staged Parquet file, including its footer. |
 
 ## Outputs 📤
@@ -26,7 +24,7 @@ Check DCH access, then export the selected table and an HTML report.
 ## Metadata 🗂️
 
 - **Name**: dch-export-table-to-parquet
-- **Description**: Export a selected DCH PostgreSQL table as a Parquet artifact and publish an HTML report.
+- **Description**: Export a relational table through DCH Flight SQL and publish a Parquet artifact and HTML report.
 - **Stability**: alpha
 - **Dependencies**:
   - Kubeflow:
@@ -36,7 +34,7 @@ Check DCH access, then export the selected table and an HTML report.
 - **Tags**:
   - data_processing
   - data_connect_hub
-  - postgres
+  - sql
   - parquet
 - **Last Verified**: 2026-11-24 00:00:00+00:00
 - **Owners**:
@@ -58,8 +56,7 @@ for DSPA artifact storage, gateway TLS, the DCH connection, and ServiceAccount p
 
 ## Compile and run
 
-Use the gateway for the deployment where the pipeline will run. The compiler fixes the trusted
-gateway in the task so a run parameter cannot redirect the pod's ServiceAccount token.
+Compile the pipeline once and enter the DCH gateway when you create a run.
 
 ```python
 from kfp import compiler
@@ -67,26 +64,27 @@ from kfp_components.pipelines.data_processing.dch.export_table_to_parquet import
     create_export_table_to_parquet_pipeline,
 )
 
-pipeline = create_export_table_to_parquet_pipeline(trusted_host="dch-gateway.example.com:443")
+pipeline = create_export_table_to_parquet_pipeline()
 compiler.Compiler().compile(pipeline, package_path="dch-export-table-to-parquet.yaml")
 ```
 
-Upload the YAML to the DSPA in the connection's tenant namespace.
+Upload the YAML to the DSPA in the connection's tenant namespace. Use the
+deployment's DCH HTTPS gateway for `DCH_HOST`. The task sends its
+ServiceAccount token to that endpoint. If pipeline runners can submit runs but
+should not choose the token destination, the pipeline author can set
+`trusted_host` when compiling a version restricted to one gateway.
 
 | Run input | Value |
 | --- | --- |
-| `DCH_HOST` | The same gateway hostname and optional port used during compilation. |
-| `connection_id` | The saved DCH PostgreSQL connection ID. |
-| `table_name` | The exact name of the table to export. |
-| `table_schema` | The schema containing the table. Defaults to `public`. |
-| `run_postgres_diagnostics` | Set to `true` to run catalog queries over Flight SQL and directly against PostgreSQL. Defaults to `false`. |
+| `DCH_HOST` | The deployment's DCH HTTPS gateway hostname and optional port. |
+| `connection_id` | The saved DCH connection ID for a relational connector that accepts SQL over Flight. |
+| `source_table` | The table in `schema.table_name` format, for example `analytics.customers`. |
 | `max_snapshot_size_bytes` | Maximum staged Parquet file size in bytes. Defaults to 1 GiB. |
 
-For opt-in access requirements, see the
-[PostgreSQL diagnostic setup](../../../../components/data_processing/dch/export_table_to_parquet/README.md#optional-direct-postgresql-diagnostics).
-
-Open the task log for the connection checks. On success, KFP uploads the Parquet `snapshot`
-and HTML `report` to the DSPA artifact store. Exports that exceed the size limit fail
+For the first run, choose a small table. Check for `[PASS] DCH connection lookup`
+and `[PASS] Parquet snapshot` in the task log, then open the HTML `report` and read
+the Parquet file at `snapshot_uri` to verify that KFP uploaded both artifacts to
+the DSPA artifact store. Exports that exceed the size limit fail
 before publishing a snapshot. The `snapshot_uri` output identifies the Parquet
 object. Pass it and a label column to the
 [separate AutoGluon pipeline](../../../../components/data_processing/dch/export_table_to_parquet/README.md#train-from-the-snapshot)

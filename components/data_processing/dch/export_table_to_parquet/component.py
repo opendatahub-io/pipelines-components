@@ -1,4 +1,4 @@
-"""Export a Parquet snapshot from a saved DCH PostgreSQL connection."""
+"""Export a relational table from a saved DCH connection as a Parquet snapshot."""
 
 from typing import NamedTuple
 
@@ -12,36 +12,31 @@ DCH_SDK = (
 
 @dsl.component(
     base_image="registry.access.redhat.com/ubi9/python-312:latest",
-    packages_to_install=[DCH_SDK, "psycopg[binary]==3.3.4"],
+    packages_to_install=[DCH_SDK],
 )
 def export_table_to_parquet(
     dch_host: str,
     connection_id: str,
     trusted_host: str,
-    table_name: str,
+    source_table: str,
     snapshot: dsl.Output[dsl.Dataset],
     report: dsl.Output[dsl.HTML],
-    table_schema: str = "public",
-    run_postgres_diagnostics: bool = False,
     max_snapshot_size_bytes: int = 1_073_741_824,
 ) -> NamedTuple("Outputs", [("snapshot_uri", str)]):
-    """Check DCH access and export the selected PostgreSQL table through Flight SQL.
+    """Export a relational table through a saved DCH Flight SQL connection.
 
     Uses the gateway CA and task token to look up the saved connection and read
-    the selected table through Flight SQL. Optional diagnostics count catalog
-    rows over Flight and directly against PostgreSQL using the connection's
-    credential Secret. Publishes a Parquet dataset and HTML report through KFP.
+    the selected table through Flight SQL. Publishes a Parquet dataset and
+    HTML report through KFP.
 
     Args:
         dch_host: DCH gateway hostname and optional port requested for the run.
-        connection_id: ID of a saved PostgreSQL DCH connection in the task namespace.
-        trusted_host: Gateway hostname and optional port fixed when composing the pipeline.
-            The component sends the task ServiceAccount token only to this gateway.
-        table_name: Exact name of the source table.
+        connection_id: ID of a saved SQL-capable relational DCH connection in the task namespace.
+        trusted_host: Optional HTTPS gateway restriction set by the pipeline author.
+            An empty value uses dch_host as the endpoint for the task ServiceAccount token.
+        source_table: Source table in schema.table_name format, such as analytics.customers.
         snapshot: Parquet dataset artifact.
         report: HTML report with check results and snapshot statistics.
-        table_schema: Schema containing the source table.
-        run_postgres_diagnostics: Count PostgreSQL catalog rows over Flight SQL and a direct connection.
         max_snapshot_size_bytes: Maximum size in bytes of the staged Parquet file, including its footer.
 
     Returns:
@@ -60,29 +55,20 @@ def export_table_to_parquet(
     import pyarrow.parquet as pq
     from data_connect_hub import DataConnectClient, DCHError
 
-    sql = "SELECT COUNT(*) AS row_count FROM pg_catalog.pg_namespace"
+    gateway = (trusted_host or dch_host).strip().rstrip("/")
+    table_parts = [identifier.strip() for identifier in source_table.split(".", 2)]
     ca = os.getenv("SSL_CERT_FILE") or None
     account = Path("/var/run/secrets/kubernetes.io/serviceaccount")
-    flight_check = "DCH Flight SQL catalog count"
-    secret_check = "Kubernetes Secret read"
-    postgres_check = "Direct PostgreSQL SQL"
     checks = dict.fromkeys(
         (
             "Gateway and input",
             "Task ServiceAccount token",
             "DCH connection lookup",
-            flight_check,
-            secret_check,
-            postgres_check,
             "Parquet snapshot",
         ),
         "SKIP",
     )
     details = {}
-    if not run_postgres_diagnostics:
-        details = dict.fromkeys(
-            (flight_check, secret_check, postgres_check), "PostgreSQL diagnostics were not requested."
-        )
 
     class SnapshotSizeLimitExceeded(ValueError):
         """A Parquet write would exceed the configured size limit."""
@@ -114,7 +100,7 @@ def export_table_to_parquet(
             ("unauthenticated", "Check the runner token and the DCH token audience."),
             ("permission denied", "Check the runner's DCH tenant permissions."),
             ("certificate verify failed", "Check the relevant server certificate and CA trust."),
-            ("password authentication failed", "PostgreSQL rejected the saved credentials."),
+            ("password authentication failed", "The source database rejected the saved credentials."),
             ("could not translate host name", "The server hostname could not be resolved."),
             ("connection refused", "The server refused the connection."),
             ("timed out", "The connection or query timed out."),
@@ -122,12 +108,9 @@ def export_table_to_parquet(
         raw_message = str(exc).lower()
         hint = next((detail for text, detail in hints if text in raw_message), "")
         http_status = getattr(exc, "status_code", None)
-        sqlstate = getattr(exc, "sqlstate", None)
         details = [type(exc).__name__]
         if isinstance(http_status, int):
             details.append(f"HTTP {http_status}")
-        if sqlstate and re.fullmatch(r"[0-9A-Z]{5}", sqlstate):
-            details.append(f"SQLSTATE {sqlstate}")
         if http_status == 401:
             hint = "Check the runner token and the DCH token audience."
         elif http_status == 403:
@@ -140,6 +123,8 @@ def export_table_to_parquet(
 
     def authority(value):
         value = value.strip()
+        if "\\" in value or any(character.isspace() or ord(character) < 32 for character in value):
+            raise ValueError("Expected an HTTPS gateway hostname and optional port")
         parsed = urlsplit(value if "://" in value else f"https://{value}")
         if (
             parsed.scheme != "https"
@@ -158,7 +143,7 @@ def export_table_to_parquet(
 
     def dch_client(tenant, flight_timeout):
         return DataConnectClient(
-            endpoint=trusted_host.strip().rstrip("/"),
+            endpoint=gateway,
             tenant_id=tenant,
             token_provider=read_token,
             ca_cert=ca,
@@ -174,7 +159,8 @@ def export_table_to_parquet(
             record(name, "FAIL", "max_snapshot_size_bytes must be a positive integer.")
             return
         try:
-            if authority(dch_host) != authority(trusted_host):
+            requested_authority = authority(dch_host)
+            if trusted_host and requested_authority != authority(trusted_host):
                 record(name, "FAIL", f"DCH_HOST must match the compiled gateway {trusted_host}.")
                 return
         except ValueError:
@@ -183,10 +169,10 @@ def export_table_to_parquet(
         if not re.fullmatch(r"[A-Za-z0-9._-]{1,128}", connection_id):
             record(name, "FAIL", "The connection ID is empty or has an invalid format.")
             return
-        if any(not identifier or "\0" in identifier for identifier in (table_schema, table_name)):
-            record(name, "FAIL", "Provide a valid source schema and table name.")
+        if len(table_parts) != 2 or not all(table_parts) or "\0" in source_table:
+            record(name, "FAIL", "Provide source_table in schema.table_name format, such as analytics.customers.")
             return
-        record(name, "PASS", f"Using trusted gateway {trusted_host}.")
+        record(name, "PASS", f"Using DCH gateway {gateway}.")
 
         name = "Task ServiceAccount token"
         start(name, "Checking the task pod's mounted Kubernetes token and namespace.")
@@ -209,92 +195,17 @@ def export_table_to_parquet(
                     record(name, "FAIL", "The saved connection is not tabular.")
                     return
                 record(name, "PASS", f"DCH REST returned the connection using {trust}.")
-
-                if run_postgres_diagnostics:
-                    name = flight_check
-                    start(name, sql)
-                    count = client.read(sql, connection_id).column("row_count")[0].as_py()
-                    record(name, "PASS", f"COUNT(*) returned {count}.")
         except (DCHError, OSError, ValueError, KeyError, IndexError) as exc:
             log_failure(name, exc)
-            if name == "DCH connection lookup":
-                return
-
-        if run_postgres_diagnostics:
-            check_direct_postgres(connection, tenant)
+            return
         return tenant
-
-    def check_direct_postgres(connection, tenant):
-        import base64
-        import json
-        import ssl
-        from urllib.error import HTTPError
-        from urllib.parse import quote
-        from urllib.request import Request, urlopen
-
-        import psycopg
-
-        name = secret_check
-        secret_name = getattr(getattr(connection, "credentials_ref", None), "secret", None)
-        if not isinstance(secret_name, str) or not re.fullmatch(r"[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?", secret_name):
-            record(name, "FAIL", "DCH returned an invalid Secret name.")
-            return
-        start(name, f"Reading the referenced Secret {secret_name} in namespace {tenant}.")
-        try:
-            namespaced_url = (
-                f"https://kubernetes.default.svc/api/v1/namespaces/{quote(tenant, safe='')}"
-                f"/secrets/{quote(secret_name, safe='')}"
-            )
-            request = Request(namespaced_url, headers={"Authorization": f"Bearer {read_token()}"})
-            context = ssl.create_default_context(cafile=str(account / "ca.crt"))
-            with urlopen(request, context=context, timeout=10) as response:
-                secret = json.load(response)["data"]
-            uri = base64.b64decode(secret["URI"], validate=True).decode().strip()
-            ca_pem = base64.b64decode(secret.get("CA_CERT", ""), validate=True)
-            if not uri.startswith(("postgres://", "postgresql://")):
-                raise ValueError("Expected a PostgreSQL URI")
-        except HTTPError as exc:
-            hint = {
-                401: "Kubernetes rejected the mounted token.",
-                403: "Grant the runner get on this Secret in the run namespace.",
-                404: "Check that the referenced Secret exists in the run namespace.",
-            }.get(exc.code, "The Kubernetes API rejected the Secret read.")
-            record(name, "FAIL", f"HTTP {exc.code} | {hint}")
-            return
-        except OSError:
-            record(name, "FAIL", "Could not reach the Kubernetes API or load its CA certificate.")
-            return
-        except (ValueError, TypeError, KeyError):
-            record(name, "FAIL", "Expected a valid PostgreSQL URI and optional CA_CERT in the Secret.")
-            return
-        record(name, "PASS", "Retrieved the PostgreSQL URI and checked the optional CA key.")
-
-        name = postgres_check
-        start(name, f"Executing with the retrieved credentials. {sql}")
-        try:
-            with TemporaryDirectory() as tmp:
-                options = {}
-                if ca_pem:
-                    ca_file = Path(tmp) / "postgres-ca.pem"
-                    ca_file.write_bytes(ca_pem)
-                    options["sslrootcert"] = str(ca_file)
-                with psycopg.connect(uri, connect_timeout=10, **options) as conn:
-                    conn.read_only = True
-                    conn.execute("SET LOCAL statement_timeout = '20s'")
-                    row = conn.execute(sql).fetchone()
-                    if row is None:
-                        raise ValueError("COUNT(*) returned no row")
-                    (count,) = row
-            record(name, "PASS", f"COUNT(*) returned {count}.")
-        except (psycopg.Error, OSError, ValueError) as exc:
-            log_failure(name, exc)
 
     def quote_identifier(identifier):
         return '"' + identifier.replace('"', '""') + '"'
 
     def write_snapshot(tenant):
         name = "Parquet snapshot"
-        source = f"{quote_identifier(table_schema)}.{quote_identifier(table_name)}"
+        source = ".".join(quote_identifier(identifier) for identifier in table_parts)
         start(name, f"Reading {source} through DCH Flight SQL.")
         query = f"SELECT * FROM {source}"
         if not snapshot.uri:
@@ -345,7 +256,7 @@ def export_table_to_parquet(
             "<!doctype html><html lang='en'><meta charset='utf-8'>"
             "<title>DCH table snapshot</title><body><h1>DCH table snapshot</h1>"
             "<p>Overall result: <strong>PASS</strong></p><dl>"
-            f"<dt>Table</dt><dd><code>{escape(table_schema)}.{escape(table_name)}</code></dd>"
+            f"<dt>Table</dt><dd><code>{escape('.'.join(table_parts))}</code></dd>"
             f"<dt>Rows</dt><dd>{metadata['row_count']:,}</dd>"
             f"<dt>Columns</dt><dd>{metadata['column_count']:,}</dd>"
             f"<dt>Parquet size</dt><dd>{metadata['size_bytes']:,} bytes</dd>"
@@ -357,7 +268,7 @@ def export_table_to_parquet(
 
     print("[START] DCH table export", flush=True)
     tenant = run_checks()
-    if tenant is not None and "FAIL" not in checks.values():
+    if tenant is not None:
         try:
             write_snapshot(tenant)
             write_report()
@@ -372,12 +283,11 @@ def export_table_to_parquet(
             log_failure("Parquet snapshot", exc)
     for name, status in checks.items():
         if status == "SKIP":
-            detail = details.get(name, "A prerequisite check did not pass.")
-            print(f"[SKIP] {name} | {detail}", flush=True)
+            print(f"[SKIP] {name} | A prerequisite check did not pass.", flush=True)
 
     failed = [name for name, status in checks.items() if status == "FAIL"]
     if failed:
         print(f"[FAIL] Overall result | Failed checks: {', '.join(failed)}.", flush=True)
         raise SystemExit(1)
-    print("[PASS] Overall result | All requested checks passed.", flush=True)
+    print("[PASS] Overall result | All checks passed.", flush=True)
     return (snapshot.uri,)
