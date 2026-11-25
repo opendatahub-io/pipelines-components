@@ -14,7 +14,7 @@ PIPELINE_NAME = "autogluon-tabular-training-pipeline"
 @dsl.pipeline(
     name=PIPELINE_NAME,
     description=(
-        "AutoMLL tabular training pipeline for building high-quality models on structured data with minimal "
+        "AutoML tabular training pipeline for building high-quality models on structured data with minimal "
         "effort. Powered by AutoGluon, it automates discovery, ensembling, and selection, then refits top "
         "candidates for maximum accuracy. Delivers production-ready predictors, clear metrics, and a ranked "
         "leaderboard to choose the best deployment option."
