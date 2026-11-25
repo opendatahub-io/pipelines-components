@@ -1,4 +1,4 @@
-"""Create an uploadable KFP pipeline for exporting a DCH PostgreSQL table."""
+"""Create an uploadable KFP pipeline for exporting a relational table through DCH."""
 
 from typing import NamedTuple
 
@@ -15,11 +15,11 @@ class SnapshotOutputs(NamedTuple):
     snapshot_uri: str
 
 
-def create_export_table_to_parquet_pipeline(trusted_host: str) -> GraphComponent:
-    """Build the one-task export pipeline for a deployment's trusted DCH gateway.
+def create_export_table_to_parquet_pipeline(trusted_host: str = "") -> GraphComponent:
+    """Build the one-task export pipeline.
 
     Args:
-        trusted_host: Gateway hostname and optional port fixed in the compiled pipeline.
+        trusted_host: Optional gateway restriction. By default the endpoint is supplied at run time.
 
     Returns:
         The KFP graph to compile for the deployment.
@@ -29,19 +29,15 @@ def create_export_table_to_parquet_pipeline(trusted_host: str) -> GraphComponent
     def pipeline(
         DCH_HOST: str,
         connection_id: str,
-        table_name: str,
-        table_schema: str = "public",
-        run_postgres_diagnostics: bool = False,
+        source_table: str,
         max_snapshot_size_bytes: int = 1_073_741_824,
     ) -> SnapshotOutputs:
-        """Check DCH access, then export the selected table and an HTML report.
+        """Export a DCH table as Parquet and publish an HTML summary.
 
         Args:
             DCH_HOST: DCH gateway hostname and optional port for the run.
-            connection_id: ID of the saved PostgreSQL connection in the run namespace.
-            table_name: Exact PostgreSQL table name.
-            table_schema: Schema containing the table.
-            run_postgres_diagnostics: Count PostgreSQL catalog rows over Flight SQL and a direct connection.
+            connection_id: ID of the saved SQL-capable relational DCH connection in the run namespace.
+            source_table: Source table in schema.table_name format, such as analytics.customers.
             max_snapshot_size_bytes: Maximum size in bytes of the staged Parquet file, including its footer.
 
         Returns:
@@ -51,12 +47,10 @@ def create_export_table_to_parquet_pipeline(trusted_host: str) -> GraphComponent
             dch_host=DCH_HOST,
             connection_id=connection_id,
             trusted_host=trusted_host,
-            table_name=table_name,
-            table_schema=table_schema,
-            run_postgres_diagnostics=run_postgres_diagnostics,
+            source_table=source_table,
             max_snapshot_size_bytes=max_snapshot_size_bytes,
         )
-        task.set_display_name("check-connection").set_caching_options(False)
+        task.set_caching_options(False)
         return SnapshotOutputs(
             snapshot=task.outputs["snapshot"],
             report=task.outputs["report"],
@@ -67,5 +61,5 @@ def create_export_table_to_parquet_pipeline(trusted_host: str) -> GraphComponent
 
 
 def create_pipeline_for_validation() -> GraphComponent:
-    """Build the pipeline for CI using a reserved, non-deployable gateway."""
-    return create_export_table_to_parquet_pipeline(trusted_host="dch-gateway.invalid:443")
+    """Build the default pipeline for CI validation."""
+    return create_export_table_to_parquet_pipeline()
