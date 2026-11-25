@@ -1,6 +1,7 @@
 """Unit tests for validate_base_images.py."""
 
 import tempfile
+import textwrap
 from pathlib import Path
 from unittest.mock import patch
 
@@ -428,6 +429,40 @@ class TestProcessAsset:
             assert not result["errors"]
             assert "python:3.11-slim" in result["base_images"]
             assert "ghcr.io/kubeflow/evaluation:v2.0.0" in result["base_images"]
+
+    def test_process_pipeline_factory(self, tmp_path):
+        """Validate the factory's executor image even if the module imports GraphComponent."""
+        pipeline_path = tmp_path / "pipeline.py"
+        pipeline_path.write_text(
+            textwrap.dedent(
+                """\
+                from kfp import dsl
+                from kfp.dsl.graph_component import GraphComponent
+
+                @dsl.component(base_image="example.invalid/unapproved:1")
+                def task() -> str:
+                    return "result"
+
+                def create_pipeline_for_validation() -> GraphComponent:
+                    @dsl.pipeline
+                    def pipeline() -> str:
+                        return task().output
+                    return pipeline
+                """
+            )
+        )
+        asset = {
+            "path": pipeline_path,
+            "category": "test",
+            "name": "pipeline_factory",
+            "module_path": str(pipeline_path),
+        }
+
+        result = process_asset(asset, "pipeline", str(tmp_path))
+
+        assert result["compiled"]
+        assert not result["errors"]
+        assert result["invalid_base_images"] == {"example.invalid/unapproved:1"}
 
     def test_process_nonexistent_module(self):
         """Test processing a non-existent module returns error."""

@@ -14,6 +14,8 @@ Check DCH access, then export the selected table and an HTML report.
 | `connection_id` | `str` | `None` | ID of the saved PostgreSQL connection in the run namespace. |
 | `table_name` | `str` | `None` | Exact PostgreSQL table name. |
 | `table_schema` | `str` | `public` | Schema containing the table. |
+| `run_postgres_diagnostics` | `bool` | `False` | Count PostgreSQL catalog rows over Flight SQL and a direct connection. |
+| `max_snapshot_size_bytes` | `int` | `1073741824` | Maximum size in bytes of the staged Parquet file, including its footer. |
 
 ## Outputs 📤
 
@@ -77,9 +79,15 @@ Upload the YAML to the DSPA in the connection's tenant namespace.
 | `connection_id` | The saved DCH PostgreSQL connection ID. |
 | `table_name` | The exact name of the table to export. |
 | `table_schema` | The schema containing the table. Defaults to `public`. |
+| `run_postgres_diagnostics` | Set to `true` to run catalog queries over Flight SQL and directly against PostgreSQL. Defaults to `false`. |
+| `max_snapshot_size_bytes` | Maximum staged Parquet file size in bytes. Defaults to 1 GiB. |
+
+For opt-in access requirements, see the
+[PostgreSQL diagnostic setup](../../../../components/data_processing/dch/export_table_to_parquet/README.md#optional-direct-postgresql-diagnostics).
 
 Open the task log for the connection checks. On success, KFP uploads the Parquet `snapshot`
-and HTML `report` to the DSPA artifact store. The `snapshot_uri` output identifies the Parquet
+and HTML `report` to the DSPA artifact store. Exports that exceed the size limit fail
+before publishing a snapshot. The `snapshot_uri` output identifies the Parquet
 object. Pass it and a label column to the
 [separate AutoGluon pipeline](../../../../components/data_processing/dch/export_table_to_parquet/README.md#train-from-the-snapshot)
 to train a tabular model.

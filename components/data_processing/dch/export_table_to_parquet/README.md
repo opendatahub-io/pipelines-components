@@ -6,7 +6,7 @@
 
 Check DCH access and export the selected PostgreSQL table through Flight SQL.
 
-Checks the gateway CA and task token, resolves the connection's credential Secret, and runs the same read-only catalog count through Flight and PostgreSQL. Publishes a Parquet dataset and HTML report through KFP's artifact store.
+Uses the gateway CA and task token to look up the saved connection and read the selected table through Flight SQL. Optional diagnostics count catalog rows over Flight and directly against PostgreSQL using the connection's credential Secret. Publishes a Parquet dataset and HTML report through KFP.
 
 ## Inputs 📥
 
@@ -19,6 +19,8 @@ Checks the gateway CA and task token, resolves the connection's credential Secre
 | `snapshot` | `dsl.Output[dsl.Dataset]` | `None` | Parquet dataset artifact. |
 | `report` | `dsl.Output[dsl.HTML]` | `None` | HTML report with check results and snapshot statistics. |
 | `table_schema` | `str` | `public` | Schema containing the source table. |
+| `run_postgres_diagnostics` | `bool` | `False` | Count PostgreSQL catalog rows over Flight SQL and a direct connection. |
+| `max_snapshot_size_bytes` | `int` | `1073741824` | Maximum size in bytes of the staged Parquet file, including its footer. |
 
 ## Outputs 📤
 
@@ -107,10 +109,15 @@ def train_automl_from_dch_snapshot(
 
 Run in the DCH tenant namespace that owns the connection. Configure a DSPA with an S3-backed
 artifact store and use its default pipeline root. The task pod needs access to the DCH gateway
-over HTTPS and Flight SQL, the Kubernetes API, and PostgreSQL. DCH Flight also needs access to
+over HTTPS and Flight SQL. The DCH Flight service uses the connection Secret to access
 PostgreSQL. The task uses the Red Hat UBI 9 Python 3.12 image from `registry.access.redhat.com`.
 It installs its dependencies from GitHub and PyPI and uses ephemeral disk to stage the complete
 Parquet file before KFP uploads it.
+
+The staged Parquet file is capped at 1 GiB by default. Set `max_snapshot_size_bytes`
+to a positive byte limit that leaves space on the task pod for runtime files and the
+HTML report. The cap applies to the compressed Parquet file, including its footer.
+If the next write would exceed the limit, the task stops and deletes the staged file.
 
 ### 1. Configure gateway TLS trust
 
@@ -158,8 +165,8 @@ oc create rolebinding dch-pipeline-runner-read -n "$TENANT_NAMESPACE" \
 
 Use a saved, Flight-enabled `Postgres` connection in the tenant. Save its ID and its
 `credentials_ref.secret` name. The Secret must contain `URI` and can contain `CA_CERT`
-if PostgreSQL uses a private CA. The database role must be able to read both
-`pg_catalog.pg_namespace` and the selected table.
+if PostgreSQL uses a private CA. The database role must be able to read the
+selected table.
 [DCH PostgreSQL connector requirements](https://github.com/opendatahub-io/data-connect-hub/blob/6d58bc9975a431c8f8a9040e610520d20c980f36/docs/user-guide/connectors.md)
 · [DCH connection creation](https://github.com/opendatahub-io/data-connect-hub/blob/6d58bc9975a431c8f8a9040e610520d20c980f36/docs/user-guide/getting-started-ocp.md#create-connection)
 
@@ -178,11 +185,10 @@ oc create rolebinding dch-rest-service-secret-access -n "$TENANT_NAMESPACE" \
   --clusterrole=dch-rest-service-secret-access --serviceaccount="$DCH_REST_NAMESPACE:$DCH_REST_SA"
 ```
 
-### 4. Grant access to the connection Secret
+### 4. Grant Flight access to the connection Secret
 
 Find the Flight deployment that serves your gateway and use its namespace and ServiceAccount.
-Grant Flight `get` on the exact Secret so it can query PostgreSQL. Grant the runner the same
-scoped permission for the direct PostgreSQL check.
+Grant Flight `get` on the exact Secret so it can query PostgreSQL.
 [DCH Flight Secret access](https://github.com/opendatahub-io/data-connect-hub/blob/6d58bc9975a431c8f8a9040e610520d20c980f36/docs/user-guide/auth.md#22-grant-flight-service-permission-to-read-connection-secrets)
 
 ```sh
@@ -197,8 +203,6 @@ oc create role dch-connection-secret-reader -n "$TENANT_NAMESPACE" \
   --verb=get --resource=secrets --resource-name="$CREDENTIAL_SECRET_NAME"
 oc create rolebinding dch-flight-source-secret -n "$TENANT_NAMESPACE" \
   --role=dch-connection-secret-reader --serviceaccount="$FLIGHT_NAMESPACE:$FLIGHT_SA"
-oc create rolebinding dch-runner-source-secret -n "$TENANT_NAMESPACE" \
-  --role=dch-connection-secret-reader --serviceaccount="$TENANT_NAMESPACE:$RUNNER_SA"
 ```
 
 For readiness checks on a connection that references an existing Secret, set the REST
@@ -209,11 +213,25 @@ oc create rolebinding dch-rest-source-secret -n "$TENANT_NAMESPACE" \
   --role=dch-connection-secret-reader --serviceaccount="$DCH_REST_NAMESPACE:$DCH_REST_SA"
 ```
 
-Verify both grants from an account that can impersonate the ServiceAccounts.
+Verify the Flight grant from an account that can impersonate its ServiceAccount.
 
 ```sh
 oc auth can-i get "secret/$CREDENTIAL_SECRET_NAME" -n "$TENANT_NAMESPACE" \
   --as="system:serviceaccount:$FLIGHT_NAMESPACE:$FLIGHT_SA"
+```
+
+## Optional direct PostgreSQL diagnostics
+
+Set `run_postgres_diagnostics` to `true` to count rows in `pg_catalog.pg_namespace`
+over both Flight SQL and a direct PostgreSQL connection. The database role needs
+read access to that catalog. The task pod then needs network access to the Kubernetes
+API and PostgreSQL, and the runner needs `get` on the same Secret. A failed diagnostic
+fails that run before it publishes a snapshot.
+
+```sh
+oc create rolebinding dch-runner-source-secret -n "$TENANT_NAMESPACE" \
+  --role=dch-connection-secret-reader --serviceaccount="$TENANT_NAMESPACE:$RUNNER_SA"
+
 oc auth can-i get "secret/$CREDENTIAL_SECRET_NAME" -n "$TENANT_NAMESPACE" \
   --as="system:serviceaccount:$TENANT_NAMESPACE:$RUNNER_SA"
 ```
@@ -247,11 +265,11 @@ def smoke_test(connection_id: str, table_name: str, table_schema: str = "public"
     return task.outputs["snapshot_uri"]
 ```
 
-The task logs each check and exits with status 1 when a check fails. Both connectivity queries
-count rows in `pg_catalog.pg_namespace`. After those checks pass, DCH Flight reads the entire
-selected table in Arrow batches and the task writes one Parquet file. KFP uploads the dataset
-and HTML report using its configured artifact-store credentials. The report includes the
-table, row and column counts, file size, check results, and the exact Parquet URI.
+The task logs each check and exits with status 1 when a requested check fails.
+During a normal export, DCH Flight queries only the selected table. The task
+reads it in Arrow batches and writes one Parquet file. KFP uploads the dataset
+and HTML report using its configured artifact-store credentials. The report includes
+the table, row and column counts, file size, check results, and the exact Parquet URI.
 
 ## Train from the snapshot
 

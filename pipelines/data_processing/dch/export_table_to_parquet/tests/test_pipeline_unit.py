@@ -18,14 +18,25 @@ def test_compiles_a_single_export_task(tmp_path):
     assert spec["pipelineInfo"]["name"] == "dch-export-table-to-parquet"
     root = spec["root"]
     inputs = root["inputDefinitions"]["parameters"]
-    assert set(inputs) == {"DCH_HOST", "connection_id", "table_name", "table_schema"}
+    assert set(inputs) == {
+        "DCH_HOST",
+        "connection_id",
+        "table_name",
+        "table_schema",
+        "run_postgres_diagnostics",
+        "max_snapshot_size_bytes",
+    }
     assert inputs["table_schema"]["defaultValue"] == "public"
+    assert inputs["run_postgres_diagnostics"]["defaultValue"] is False
+    assert inputs["max_snapshot_size_bytes"]["defaultValue"] == 1_073_741_824
 
     (task,) = root["dag"]["tasks"].values()
     parameters = task["inputs"]["parameters"]
     assert task["cachingOptions"].get("enableCache", False) is False
     assert parameters["trusted_host"] == {"runtimeValue": {"constant": gateway}}
     assert parameters["dch_host"] == {"componentInputParameter": "DCH_HOST"}
+    assert parameters["run_postgres_diagnostics"] == {"componentInputParameter": "run_postgres_diagnostics"}
+    assert parameters["max_snapshot_size_bytes"] == {"componentInputParameter": "max_snapshot_size_bytes"}
 
     outputs = root["outputDefinitions"]
     assert outputs["artifacts"]["snapshot"]["artifactType"]["schemaTitle"] == "system.Dataset"

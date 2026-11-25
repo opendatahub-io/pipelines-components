@@ -16,7 +16,6 @@ tags:
   - parquet
 lastVerified: 2026-11-24T00:00:00Z
 ci:
-  # The pipeline test compiles the factory with a deployment gateway.
-  compile_check: false
+  compile_check: true
 links:
   documentation: https://github.com/opendatahub-io/data-connect-hub

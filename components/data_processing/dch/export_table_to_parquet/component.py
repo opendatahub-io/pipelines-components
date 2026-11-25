@@ -1,4 +1,4 @@
-"""Validate a saved DCH PostgreSQL connection and export a Parquet snapshot."""
+"""Export a Parquet snapshot from a saved DCH PostgreSQL connection."""
 
 from typing import NamedTuple
 
@@ -22,12 +22,15 @@ def export_table_to_parquet(
     snapshot: dsl.Output[dsl.Dataset],
     report: dsl.Output[dsl.HTML],
     table_schema: str = "public",
+    run_postgres_diagnostics: bool = False,
+    max_snapshot_size_bytes: int = 1_073_741_824,
 ) -> NamedTuple("Outputs", [("snapshot_uri", str)]):
     """Check DCH access and export the selected PostgreSQL table through Flight SQL.
 
-    Checks the gateway CA and task token, resolves the connection's credential
-    Secret, and runs the same read-only catalog count through Flight and PostgreSQL.
-    Publishes a Parquet dataset and HTML report through KFP's artifact store.
+    Uses the gateway CA and task token to look up the saved connection and read
+    the selected table through Flight SQL. Optional diagnostics count catalog
+    rows over Flight and directly against PostgreSQL using the connection's
+    credential Secret. Publishes a Parquet dataset and HTML report through KFP.
 
     Args:
         dch_host: DCH gateway hostname and optional port requested for the run.
@@ -38,24 +41,21 @@ def export_table_to_parquet(
         snapshot: Parquet dataset artifact.
         report: HTML report with check results and snapshot statistics.
         table_schema: Schema containing the source table.
+        run_postgres_diagnostics: Count PostgreSQL catalog rows over Flight SQL and a direct connection.
+        max_snapshot_size_bytes: Maximum size in bytes of the staged Parquet file, including its footer.
 
     Returns:
         The exact artifact URI of the Parquet file.
     """
-    import base64
-    import json
     import os
     import re
-    import ssl
     from contextlib import closing
     from html import escape
+    from io import BufferedWriter
     from pathlib import Path
     from tempfile import TemporaryDirectory
-    from urllib.error import HTTPError
-    from urllib.parse import quote, urlsplit
-    from urllib.request import Request, urlopen
+    from urllib.parse import urlsplit
 
-    import psycopg
     import pyarrow as pa
     import pyarrow.parquet as pq
     from data_connect_hub import DataConnectClient, DCHError
@@ -63,19 +63,37 @@ def export_table_to_parquet(
     sql = "SELECT COUNT(*) AS row_count FROM pg_catalog.pg_namespace"
     ca = os.getenv("SSL_CERT_FILE") or None
     account = Path("/var/run/secrets/kubernetes.io/serviceaccount")
+    flight_check = "DCH Flight SQL catalog count"
+    secret_check = "Kubernetes Secret read"
+    postgres_check = "Direct PostgreSQL SQL"
     checks = dict.fromkeys(
         (
             "Gateway and input",
             "Task ServiceAccount token",
             "DCH connection lookup",
-            "DCH Flight SQL",
-            "Kubernetes Secret read",
-            "Direct PostgreSQL SQL",
+            flight_check,
+            secret_check,
+            postgres_check,
             "Parquet snapshot",
         ),
         "SKIP",
     )
     details = {}
+    if not run_postgres_diagnostics:
+        details = dict.fromkeys(
+            (flight_check, secret_check, postgres_check), "PostgreSQL diagnostics were not requested."
+        )
+
+    class SnapshotSizeLimitExceeded(ValueError):
+        """A Parquet write would exceed the configured size limit."""
+
+    class BoundedSnapshotWriter(BufferedWriter):
+        """Check the file position before passing each write to disk."""
+
+        def write(self, data):
+            if self.tell() + len(data) > max_snapshot_size_bytes:
+                raise SnapshotSizeLimitExceeded
+            return super().write(data)
 
     def start(name, detail):
         print(f"[START] {name} | {detail}", flush=True)
@@ -152,6 +170,9 @@ def export_table_to_parquet(
     def run_checks():
         name = "Gateway and input"
         start(name, "Validating DCH_HOST before sending the ServiceAccount token.")
+        if type(max_snapshot_size_bytes) is not int or max_snapshot_size_bytes <= 0:
+            record(name, "FAIL", "max_snapshot_size_bytes must be a positive integer.")
+            return
         try:
             if authority(dch_host) != authority(trusted_host):
                 record(name, "FAIL", f"DCH_HOST must match the compiled gateway {trusted_host}.")
@@ -189,18 +210,33 @@ def export_table_to_parquet(
                     return
                 record(name, "PASS", f"DCH REST returned the connection using {trust}.")
 
-                name = "DCH Flight SQL"
-                start(name, sql)
-                count = client.read(sql, connection_id).column("row_count")[0].as_py()
-                record(name, "PASS", f"COUNT(*) returned {count}.")
+                if run_postgres_diagnostics:
+                    name = flight_check
+                    start(name, sql)
+                    count = client.read(sql, connection_id).column("row_count")[0].as_py()
+                    record(name, "PASS", f"COUNT(*) returned {count}.")
         except (DCHError, OSError, ValueError, KeyError, IndexError) as exc:
             log_failure(name, exc)
             if name == "DCH connection lookup":
                 return
 
-        name = "Kubernetes Secret read"
-        secret_name = connection.credentials_ref.secret
-        if not re.fullmatch(r"[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?", secret_name):
+        if run_postgres_diagnostics:
+            check_direct_postgres(connection, tenant)
+        return tenant
+
+    def check_direct_postgres(connection, tenant):
+        import base64
+        import json
+        import ssl
+        from urllib.error import HTTPError
+        from urllib.parse import quote
+        from urllib.request import Request, urlopen
+
+        import psycopg
+
+        name = secret_check
+        secret_name = getattr(getattr(connection, "credentials_ref", None), "secret", None)
+        if not isinstance(secret_name, str) or not re.fullmatch(r"[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?", secret_name):
             record(name, "FAIL", "DCH returned an invalid Secret name.")
             return
         start(name, f"Reading the referenced Secret {secret_name} in namespace {tenant}.")
@@ -233,7 +269,7 @@ def export_table_to_parquet(
             return
         record(name, "PASS", "Retrieved the PostgreSQL URI and checked the optional CA key.")
 
-        name = "Direct PostgreSQL SQL"
+        name = postgres_check
         start(name, f"Executing with the retrieved credentials. {sql}")
         try:
             with TemporaryDirectory() as tmp:
@@ -252,7 +288,6 @@ def export_table_to_parquet(
             record(name, "PASS", f"COUNT(*) returned {count}.")
         except (psycopg.Error, OSError, ValueError) as exc:
             log_failure(name, exc)
-        return tenant
 
     def quote_identifier(identifier):
         return '"' + identifier.replace('"', '""') + '"'
@@ -274,19 +309,20 @@ def export_table_to_parquet(
             closing(client.read_batches(query, connection_id)) as batches,
         ):
             temporary_path = Path(tmp) / "snapshot.parquet"
-            first_batch = next(batches, None)
-            if first_batch is None:
-                empty_table = client.read(f"{query} LIMIT 0", connection_id)
-                schema = empty_table.schema
-                pq.write_table(empty_table, temporary_path)
-            else:
-                schema = first_batch.schema
-                with pq.ParquetWriter(temporary_path, schema) as writer:
-                    writer.write_batch(first_batch)
-                    row_count = first_batch.num_rows
-                    for batch in batches:
-                        writer.write_batch(batch)
-                        row_count += batch.num_rows
+            with BoundedSnapshotWriter(temporary_path.open("wb", buffering=0)) as sink:
+                first_batch = next(batches, None)
+                if first_batch is None:
+                    empty_table = client.read(f"{query} LIMIT 0", connection_id)
+                    schema = empty_table.schema
+                    pq.write_table(empty_table, sink)
+                else:
+                    schema = first_batch.schema
+                    with pq.ParquetWriter(sink, schema) as writer:
+                        writer.write_batch(first_batch)
+                        row_count = first_batch.num_rows
+                        for batch in batches:
+                            writer.write_batch(batch)
+                            row_count += batch.num_rows
             temporary_path.replace(destination)
 
         snapshot.metadata.update(
@@ -319,21 +355,29 @@ def export_table_to_parquet(
             encoding="utf-8",
         )
 
-    print("[START] DCH connection smoke test", flush=True)
+    print("[START] DCH table export", flush=True)
     tenant = run_checks()
-    if all(status == "PASS" for name, status in checks.items() if name != "Parquet snapshot"):
+    if tenant is not None and "FAIL" not in checks.values():
         try:
             write_snapshot(tenant)
             write_report()
+        except SnapshotSizeLimitExceeded:
+            record(
+                "Parquet snapshot",
+                "FAIL",
+                f"Parquet file exceeds max_snapshot_size_bytes ({max_snapshot_size_bytes:,} bytes). "
+                "Export a smaller table or raise the limit if the pod has enough disk space.",
+            )
         except (DCHError, pa.ArrowException, OSError, ValueError) as exc:
             log_failure("Parquet snapshot", exc)
     for name, status in checks.items():
         if status == "SKIP":
-            print(f"[SKIP] {name} | A prerequisite check did not pass.", flush=True)
+            detail = details.get(name, "A prerequisite check did not pass.")
+            print(f"[SKIP] {name} | {detail}", flush=True)
 
     failed = [name for name, status in checks.items() if status == "FAIL"]
     if failed:
         print(f"[FAIL] Overall result | Failed checks: {', '.join(failed)}.", flush=True)
         raise SystemExit(1)
-    print("[PASS] Overall result | All checks passed.", flush=True)
+    print("[PASS] Overall result | All requested checks passed.", flush=True)
     return (snapshot.uri,)

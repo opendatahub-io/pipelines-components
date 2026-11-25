@@ -10,8 +10,11 @@ dependencies:
   external_services:
     - name: Argo Workflows
       version: "3.6.0"
+    - name: Service built from a Git commit
+      version: "===0123456789abcdef0123456789abcdef01234567"
 lastVerified: 3025-03-15T00:00:00Z
 ci:
+  compile_check: true
   skip_dependency_probe: false
 links:
   documentation: https://kubeflow.org/components/happy-path-component
