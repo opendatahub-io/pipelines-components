@@ -16,8 +16,8 @@ EXIT_ERROR = 2  # Actual error (e.g., missing function, failed to write file)
 # Markdown formatting constraints (per .markdownlint.json)
 MAX_LINE_LENGTH = 300  # Maximum line length for Markdown content
 
-# Words with custom display names instead of standard title casing.
-# Keys must be lowercase.
+# Words with non-standard capitalization that should be preserved as-is
+# instead of being title-cased. Keys must be lowercase.
 SPECIAL_CASE_WORDS = {
     "kfp": "KFP",
     "api": "API",
