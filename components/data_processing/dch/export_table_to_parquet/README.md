@@ -17,7 +17,6 @@ Uses the gateway CA and task token to look up the saved connection and read the 
 | `source_table` | `str` | `None` | Source table in schema.table_name format, such as analytics.customers. |
 | `snapshot` | `dsl.Output[dsl.Dataset]` | `None` | Parquet dataset artifact. |
 | `report` | `dsl.Output[dsl.HTML]` | `None` | HTML report with the source table, snapshot statistics, and artifact URI. |
-| `max_snapshot_size_bytes` | `int` | `1073741824` | Maximum size in bytes of the staged Parquet file, including its footer. |
 | `trusted_host` | `str` | `""` | Optional HTTPS gateway restriction set by the pipeline author. An empty value uses dch_host as the endpoint for the task ServiceAccount token. |
 
 ## Outputs 📤
@@ -111,10 +110,12 @@ the source database. The task uses the Red Hat UBI 9 Python 3.12 image from `reg
 It installs its dependencies from GitHub and PyPI and uses ephemeral disk to stage the complete
 Parquet file before KFP uploads it.
 
-The staged Parquet file is capped at 1 GiB by default. Set `max_snapshot_size_bytes`
-to a positive byte limit that leaves space on the task pod for runtime files and the
-HTML report. The cap applies to the compressed Parquet file, including its footer.
-If the next write would exceed the limit, the task stops and deletes the staged file.
+### Export size limit
+
+Each export can stage up to 1 GiB of compressed Parquet, including its footer.
+Allow pod disk space for the snapshot, runtime files, and HTML report. If the
+next write would exceed 1 GiB, the task fails and deletes the staged file.
+For larger sources, export a smaller table or a view with fewer rows or columns.
 
 ### Check the DSPA artifact store
 

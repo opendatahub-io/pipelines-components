@@ -1,6 +1,7 @@
 """Unit tests for DCH table export."""
 
 import sys
+from io import BufferedWriter
 from pathlib import Path
 from random import Random
 from types import SimpleNamespace
@@ -15,6 +16,7 @@ GATEWAY = "dch-gateway.example.com:443"
 CONNECTION_ID = "saved-connection"
 SOURCE_TABLE = "public.training"
 TOKEN = "test-runner-token"
+SNAPSHOT_LIMIT_BYTES = 1_073_741_824
 
 
 @pytest.fixture
@@ -61,9 +63,7 @@ def test_component_compiles(tmp_path):
         "connection_id",
         "trusted_host",
         "source_table",
-        "max_snapshot_size_bytes",
     }
-    assert spec.inputs["max_snapshot_size_bytes"].default == 1_073_741_824
     assert spec.inputs["trusted_host"].default == ""
     assert set(spec.outputs) == {"snapshot", "report", "snapshot_uri"}
 
@@ -219,16 +219,17 @@ def test_logs_report_failure_separately_from_snapshot(services, outputs, capsys,
     assert "[FAIL] Parquet snapshot" not in output
 
 
-def test_rejects_nonpositive_snapshot_limit(services, outputs, capsys):
-    """Reject an invalid size limit before contacting DCH."""
-    with pytest.raises(SystemExit) as failure:
-        export_table_to_parquet.python_func(GATEWAY, CONNECTION_ID, SOURCE_TABLE, *outputs, max_snapshot_size_bytes=0)
-    assert failure.value.code == 1
-    services.client.assert_not_called()
-    assert "max_snapshot_size_bytes must be a positive integer" in capsys.readouterr().out
+def _simulate_written_bytes(monkeypatch, written_bytes):
+    """Exercise the 1 GiB limit without writing a large test file."""
+
+    class NearCapacityWriter(BufferedWriter):
+        def tell(self):
+            return super().tell() + written_bytes
+
+    monkeypatch.setattr("io.BufferedWriter", NearCapacityWriter)
 
 
-def test_stops_reading_and_removes_snapshot_when_a_batch_exceeds_limit(services, outputs, capsys):
+def test_stops_reading_and_removes_snapshot_when_a_batch_exceeds_limit(services, outputs, capsys, monkeypatch):
     """Abort the stream on an oversized write and clean up the staged file."""
     import pyarrow as pa
 
@@ -237,17 +238,18 @@ def test_stops_reading_and_removes_snapshot_when_a_batch_exceeds_limit(services,
         pytest.fail("The export requested another batch after exceeding its size limit")
 
     services.dch.read_batches.side_effect = oversized_batches
+    _simulate_written_bytes(monkeypatch, SNAPSHOT_LIMIT_BYTES - 128)
 
     with pytest.raises(SystemExit) as failure:
-        export_table_to_parquet.python_func(GATEWAY, CONNECTION_ID, SOURCE_TABLE, *outputs, max_snapshot_size_bytes=128)
+        export_table_to_parquet.python_func(GATEWAY, CONNECTION_ID, SOURCE_TABLE, *outputs)
     assert failure.value.code == 1
     assert not list(Path(outputs[0].path).parent.iterdir())
     output = capsys.readouterr().out
-    assert "[FAIL] Parquet snapshot | Parquet file exceeds max_snapshot_size_bytes (128 bytes)" in output
+    assert "[FAIL] Parquet snapshot | Parquet file exceeds the 1 GiB limit (1,073,741,824 bytes)" in output
 
 
 @pytest.mark.parametrize("empty", [False, True])
-def test_enforces_limit_including_parquet_footer(services, outputs, tmp_path, capsys, empty):
+def test_enforces_limit_including_parquet_footer(services, outputs, tmp_path, capsys, monkeypatch, empty):
     """Allow an exact fit and reject a one-byte overflow, even for an empty table."""
     import pyarrow as pa
     import pyarrow.parquet as pq
@@ -259,15 +261,17 @@ def test_enforces_limit_including_parquet_footer(services, outputs, tmp_path, ca
     run(GATEWAY, CONNECTION_ID, SOURCE_TABLE, *outputs)
     file_size = Path(outputs[0].path).stat().st_size
 
+    _simulate_written_bytes(monkeypatch, SNAPSHOT_LIMIT_BYTES - file_size)
     exact = dsl.Dataset(uri=str(tmp_path / "exact")), dsl.HTML(uri=str(tmp_path / "exact-report"))
-    run(GATEWAY, CONNECTION_ID, SOURCE_TABLE, *exact, max_snapshot_size_bytes=file_size)
+    run(GATEWAY, CONNECTION_ID, SOURCE_TABLE, *exact)
     assert Path(exact[0].path).stat().st_size == file_size
     assert pq.ParquetFile(exact[0].path).metadata.num_rows == (0 if empty else 3)
 
     rejected = tmp_path / "rejected"
     capped = dsl.Dataset(uri=str(rejected / "snapshot")), dsl.HTML(uri=str(rejected / "report"))
+    _simulate_written_bytes(monkeypatch, SNAPSHOT_LIMIT_BYTES - file_size + 1)
     with pytest.raises(SystemExit) as failure:
-        run(GATEWAY, CONNECTION_ID, SOURCE_TABLE, *capped, max_snapshot_size_bytes=file_size - 1)
+        run(GATEWAY, CONNECTION_ID, SOURCE_TABLE, *capped)
     assert failure.value.code == 1
     assert not list(rejected.iterdir())
-    assert "[FAIL] Parquet snapshot | Parquet file exceeds max_snapshot_size_bytes" in capsys.readouterr().out
+    assert "[FAIL] Parquet snapshot | Parquet file exceeds the 1 GiB limit" in capsys.readouterr().out

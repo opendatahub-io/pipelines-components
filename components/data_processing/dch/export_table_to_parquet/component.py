@@ -20,7 +20,6 @@ def export_table_to_parquet(
     source_table: str,
     snapshot: dsl.Output[dsl.Dataset],
     report: dsl.Output[dsl.HTML],
-    max_snapshot_size_bytes: int = 1_073_741_824,
     trusted_host: str = "",
 ) -> NamedTuple("Outputs", [("snapshot_uri", str)]):
     """Export a relational table through a saved DCH Flight SQL connection.
@@ -35,7 +34,6 @@ def export_table_to_parquet(
         source_table: Source table in schema.table_name format, such as analytics.customers.
         snapshot: Parquet dataset artifact.
         report: HTML report with the source table, snapshot statistics, and artifact URI.
-        max_snapshot_size_bytes: Maximum size in bytes of the staged Parquet file, including its footer.
         trusted_host: Optional HTTPS gateway restriction set by the pipeline author.
             An empty value uses dch_host as the endpoint for the task ServiceAccount token.
 
@@ -59,6 +57,7 @@ def export_table_to_parquet(
     table_parts = [identifier.strip() for identifier in source_table.split(".", 2)]
     ca = os.getenv("SSL_CERT_FILE") or None
     account = Path("/var/run/secrets/kubernetes.io/serviceaccount")
+    snapshot_limit_bytes = 1_073_741_824
     checks = dict.fromkeys(
         (
             "Gateway and input",
@@ -71,13 +70,13 @@ def export_table_to_parquet(
     )
 
     class SnapshotSizeLimitExceeded(ValueError):
-        """A Parquet write would exceed the configured size limit."""
+        """A Parquet write would exceed the snapshot size limit."""
 
     class BoundedSnapshotWriter(BufferedWriter):
         """Check the file position before passing each write to disk."""
 
         def write(self, data):
-            if self.tell() + len(data) > max_snapshot_size_bytes:
+            if self.tell() + len(data) > snapshot_limit_bytes:
                 raise SnapshotSizeLimitExceeded
             return super().write(data)
 
@@ -154,9 +153,6 @@ def export_table_to_parquet(
     def run_checks():
         name = "Gateway and input"
         start(name, "Validating DCH_HOST before sending the ServiceAccount token.")
-        if type(max_snapshot_size_bytes) is not int or max_snapshot_size_bytes <= 0:
-            record(name, "FAIL", "max_snapshot_size_bytes must be a positive integer.")
-            return
         try:
             requested_authority = authority(dch_host)
             if trusted_host and requested_authority != authority(trusted_host):
@@ -268,8 +264,8 @@ def export_table_to_parquet(
             record(
                 "Parquet snapshot",
                 "FAIL",
-                f"Parquet file exceeds max_snapshot_size_bytes ({max_snapshot_size_bytes:,} bytes). "
-                "Export a smaller table or raise the limit if the pod has enough disk space.",
+                f"Parquet file exceeds the 1 GiB limit ({snapshot_limit_bytes:,} bytes). "
+                "Export a smaller table or view.",
             )
         except (DCHError, pa.ArrowException, OSError, ValueError) as exc:
             log_failure("Parquet snapshot", exc)

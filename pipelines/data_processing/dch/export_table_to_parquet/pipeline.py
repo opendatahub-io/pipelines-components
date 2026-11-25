@@ -30,7 +30,6 @@ def create_export_table_to_parquet_pipeline(trusted_host: str = "") -> GraphComp
         DCH_HOST: str,
         connection_id: str,
         source_table: str,
-        max_snapshot_size_bytes: int = 1_073_741_824,
     ) -> SnapshotOutputs:
         """Export a DCH table as Parquet and publish an HTML summary.
 
@@ -38,7 +37,6 @@ def create_export_table_to_parquet_pipeline(trusted_host: str = "") -> GraphComp
             DCH_HOST: DCH gateway hostname and optional port for the run.
             connection_id: ID of the saved SQL-capable relational DCH connection in the run namespace.
             source_table: Source table in schema.table_name format, such as analytics.customers.
-            max_snapshot_size_bytes: Maximum size in bytes of the staged Parquet file, including its footer.
 
         Returns:
             The Parquet Dataset, HTML report, and exact Parquet URI.
@@ -48,7 +46,6 @@ def create_export_table_to_parquet_pipeline(trusted_host: str = "") -> GraphComp
             connection_id=connection_id,
             trusted_host=trusted_host,
             source_table=source_table,
-            max_snapshot_size_bytes=max_snapshot_size_bytes,
         )
         task.set_caching_options(False)
         return SnapshotOutputs(

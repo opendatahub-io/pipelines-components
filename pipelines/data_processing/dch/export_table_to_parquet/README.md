@@ -13,7 +13,6 @@ Export a DCH table as Parquet and publish an HTML summary.
 | `DCH_HOST` | `str` | `None` | DCH gateway hostname and optional port for the run. |
 | `connection_id` | `str` | `None` | ID of the saved SQL-capable relational DCH connection in the run namespace. |
 | `source_table` | `str` | `None` | Source table in schema.table_name format, such as analytics.customers. |
-| `max_snapshot_size_bytes` | `int` | `1073741824` | Maximum size in bytes of the staged Parquet file, including its footer. |
 
 ## Outputs 📤
 
@@ -79,13 +78,17 @@ should not choose the token destination, the pipeline author can set
 | `DCH_HOST` | The deployment's DCH HTTPS gateway hostname and optional port. |
 | `connection_id` | The saved DCH connection ID for a relational connector that accepts SQL over Flight. |
 | `source_table` | The table in `schema.table_name` format, for example `analytics.customers`. |
-| `max_snapshot_size_bytes` | Maximum staged Parquet file size in bytes. Defaults to 1 GiB. |
 
 For the first run, choose a small table. Check for `[PASS] DCH connection lookup`
 and `[PASS] Parquet snapshot` in the task log, then open the HTML `report` and read
 the Parquet file at `snapshot_uri` to verify that KFP uploaded both artifacts to
-the DSPA artifact store. Exports that exceed the size limit fail
-before publishing a snapshot. The `snapshot_uri` output identifies the Parquet
-object. Pass it and a label column to the
+the DSPA artifact store. Pass `snapshot_uri` and a label column to the
 [separate AutoGluon pipeline](../../../../components/data_processing/dch/export_table_to_parquet/README.md#train-from-the-snapshot)
 to train a tabular model.
+
+## Export size limit
+
+The task stages one compressed Parquet file on pod disk, with a fixed limit of
+1 GiB including the footer. If the export would exceed the limit, the task
+fails and deletes the partial file before publishing a snapshot. To export a
+larger source, select a smaller table or a view with fewer rows or columns.

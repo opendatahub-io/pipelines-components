@@ -24,11 +24,9 @@ def test_compiles_a_single_export_task(tmp_path, gateway):
         "DCH_HOST",
         "connection_id",
         "source_table",
-        "max_snapshot_size_bytes",
     }
     assert "defaultValue" not in inputs["source_table"]
     assert "defaultValue" not in inputs["DCH_HOST"]
-    assert inputs["max_snapshot_size_bytes"]["defaultValue"] == 1_073_741_824
 
     (task,) = root["dag"]["tasks"].values()
     assert task["taskInfo"]["name"] == "export-table-to-parquet"
@@ -37,7 +35,6 @@ def test_compiles_a_single_export_task(tmp_path, gateway):
     assert parameters["trusted_host"] == {"runtimeValue": {"constant": gateway}}
     assert parameters["dch_host"] == {"componentInputParameter": "DCH_HOST"}
     assert parameters["source_table"] == {"componentInputParameter": "source_table"}
-    assert parameters["max_snapshot_size_bytes"] == {"componentInputParameter": "max_snapshot_size_bytes"}
 
     outputs = root["outputDefinitions"]
     assert outputs["artifacts"]["snapshot"]["artifactType"]["schemaTitle"] == "system.Dataset"
