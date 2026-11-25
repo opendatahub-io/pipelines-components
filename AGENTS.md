@@ -71,7 +71,7 @@ Process (expected for agents):
 ### Common tasks
 
 | Task | Command | Reference pattern |
-| --- | --- | --- |
+|---|---|---|
 | New component | `make component CATEGORY=<cat> NAME=<name>` | `components/data_processing/yoda_data_processor/` |
 | New pipeline | `make pipeline CATEGORY=<cat> NAME=<name>` | `pipelines/training/sft/` |
 | Subcategory asset | Add `SUBCATEGORY=<sub>`; add `CREATE_SHARED=true` for shared utils | Subcategory OWNERS/README auto-created |
@@ -123,14 +123,8 @@ Whole-repo: `make lint` (check) or `make format` (fix).
 
 ### Other validations
 
-For a pipeline factory that requires deployment settings, expose a zero-argument
-`create_pipeline_for_validation()` function in `pipeline.py` so compile and base
-image CI can validate the graph with test-only settings.
-Metadata accepts `ci.compile_check` and full Git SHA-1 dependency pins prefixed
-with `===`.
-
 | Validation | Config | CI workflow |
-| --- | --- | --- |
+|---|---|---|
 | Markdown lint | [`.markdownlint.json`](.markdownlint.json) | [`markdown-lint.yml`](.github/workflows/markdown-lint.yml) |
 | YAML lint | [`.yamllint.yml`](.yamllint.yml) | [`yaml-lint.yml`](.github/workflows/yaml-lint.yml) |
 | Import guard | [`import_exceptions.yaml`](.github/scripts/check_imports/import_exceptions.yaml); see [`CONTRIBUTING.md`](docs/CONTRIBUTING.md#testing-and-quality) | [`ci-checks.yml`](.github/workflows/ci-checks.yml) |

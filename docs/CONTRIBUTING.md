@@ -238,15 +238,11 @@ tags:  # Optional keywords for discoverability
   - evaluation
 lastVerified: 2025-11-18T00:00:00Z  # Updated annually; components are removed after 12 months without update
 ci:
-  compile_check: true           # Optional. Enable compile and dependency validation
   skip_dependency_probe: false   # Optional. Set true only with justification
 links:  # Optional, can use custom key-value (not limited to documentation, issue_tracker)
   documentation: https://kubeflow.org/components/my_component
   issue_tracker: https://github.com/kubeflow/pipelines-components/issues
 ```
-
-Use a semantic version for a released dependency. To pin a dependency built from
-a source revision, use `===` followed by its full Git SHA-1.
 
 ### OWNERS File
 
@@ -720,11 +716,6 @@ Every component and pipeline that sets `ci.compile_check: true` in its `metadata
 successfully and declare well-formed dependency metadata. The compile-check CLI discovers
 metadata-backed assets, validates their `dependencies` block, and compiles the exposed
 `@dsl.component`/`@dsl.pipeline` functions.
-
-A pipeline factory that requires deployment settings can expose a zero-argument
-`create_pipeline_for_validation()` function in `pipeline.py`. Return the same graph
-using test-only settings. The compile and base image checks use this function to
-validate the graph.
 
 Run it locally with:
 

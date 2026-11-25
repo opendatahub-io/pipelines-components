@@ -32,12 +32,7 @@ from ..lib.discovery import (
     resolve_component_path,
     resolve_pipeline_path,
 )
-from ..lib.kfp_compilation import (
-    compile_and_get_yaml,
-    find_decorated_functions_runtime,
-    find_pipeline_validation_targets,
-    load_module_from_path,
-)
+from ..lib.kfp_compilation import compile_and_get_yaml, find_decorated_functions_runtime, load_module_from_path
 
 
 @dataclass
@@ -145,16 +140,9 @@ def process_asset(
         result["errors"].append(f"Failed to load module: {e}")
         return result
 
-    try:
-        if asset_type == "pipeline":
-            functions = find_pipeline_validation_targets(module)
-        else:
-            functions = find_decorated_functions_runtime(module, asset_type)
-    except Exception as exc:
-        result["errors"].append(f"Failed to discover validation targets: {exc}")
-        return result
+    functions = find_decorated_functions_runtime(module, asset_type)
     if not functions:
-        result["errors"].append(f"No {asset_type} validation targets found")
+        result["errors"].append(f"No @dsl.{asset_type} decorated functions found")
         return result
 
     compiled_count = 0

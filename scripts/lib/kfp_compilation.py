@@ -125,24 +125,6 @@ def find_decorated_functions_runtime(module: Any, decorator_type: str) -> list[t
     return functions
 
 
-def find_pipeline_validation_targets(module: ModuleType) -> list[tuple[str, Any]]:
-    """Find pipeline graphs, including a graph built with test-only deployment settings."""
-    from kfp.dsl.graph_component import GraphComponent
-
-    targets = [
-        (name, obj)
-        for name, obj in find_decorated_functions_runtime(module, "pipeline")
-        if isinstance(obj, GraphComponent)
-    ]
-    factory = getattr(module, "create_pipeline_for_validation", None)
-    if factory is not None:
-        graph = factory()
-        if not isinstance(graph, GraphComponent):
-            raise TypeError("create_pipeline_for_validation() must return a KFP pipeline graph")
-        targets.append(("create_pipeline_for_validation", graph))
-    return targets
-
-
 def find_decorated_function_names_ast(file_path: Path) -> dict[str, list[str]]:
     """Find functions decorated with KFP decorators in a Python file.
 

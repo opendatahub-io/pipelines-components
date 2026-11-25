@@ -3,7 +3,7 @@
 from typing import NamedTuple
 
 from kfp import dsl
-from kfp.dsl.graph_component import GraphComponent
+from kfp.dsl import graph_component
 from kfp_components.components.data_processing.dch.export_table_to_parquet import export_table_to_parquet
 
 
@@ -15,7 +15,7 @@ class SnapshotOutputs(NamedTuple):
     snapshot_uri: str
 
 
-def create_export_table_to_parquet_pipeline(trusted_host: str = "") -> GraphComponent:
+def create_export_table_to_parquet_pipeline(trusted_host: str = "") -> graph_component.GraphComponent:
     """Build the one-task export pipeline.
 
     Args:
@@ -60,6 +60,4 @@ def create_export_table_to_parquet_pipeline(trusted_host: str = "") -> GraphComp
     return pipeline
 
 
-def create_pipeline_for_validation() -> GraphComponent:
-    """Build the default pipeline for CI validation."""
-    return create_export_table_to_parquet_pipeline()
+dch_export_table_pipeline = create_export_table_to_parquet_pipeline()

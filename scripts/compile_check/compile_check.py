@@ -24,7 +24,6 @@ from ..lib.discovery import get_repo_root
 from ..lib.kfp_compilation import (
     compile_and_get_yaml,
     find_decorated_functions_runtime,
-    find_pipeline_validation_targets,
     load_module_from_path,
 )
 from ..lib.metadata_utils import (
@@ -120,15 +119,11 @@ def validate_target(target: MetadataTarget) -> ValidationResult:
         result.add_error(f"Failed to load module defined in {target.module_path}.\n{traceback.format_exc()}")
         return result
 
-    try:
-        if target.target_kind == "pipeline":
-            objects = find_pipeline_validation_targets(module)
-        else:
-            objects = find_decorated_functions_runtime(module, "component")
-            objects = [(name, obj) for name, obj in objects if not isinstance(obj, graph_component.GraphComponent)]
-    except Exception:
-        result.add_error(f"Failed to discover validation targets in {target.module_path}.\n{traceback.format_exc()}")
-        return result
+    objects = find_decorated_functions_runtime(module, target.target_kind)
+    if target.target_kind == "pipeline":
+        objects = [(name, obj) for name, obj in objects if isinstance(obj, graph_component.GraphComponent)]
+    else:
+        objects = [(name, obj) for name, obj in objects if not isinstance(obj, graph_component.GraphComponent)]
 
     if not objects:
         result.add_error(f"No @dsl.{target.target_kind} decorated functions discovered in module {target.module_path}.")

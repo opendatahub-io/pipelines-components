@@ -34,8 +34,6 @@ Uses the gateway CA and task token to look up the saved connection and read the 
 - **Dependencies**:
   - Kubeflow:
     - Name: Pipelines, Version: >=2.16.1
-  - External Services:
-    - Name: Data Connect Hub, Version: ===6d58bc9975a431c8f8a9040e610520d20c980f36
 - **Tags**:
   - data_processing
   - data_connect_hub
@@ -60,6 +58,8 @@ Uses the gateway CA and task token to look up the saved connection and read the 
 <!-- custom-content -->
 
 ## Prerequisites
+
+The component installs the [DCH Python SDK at commit `6d58bc9`](https://github.com/opendatahub-io/data-connect-hub/tree/6d58bc9975a431c8f8a9040e610520d20c980f36/sdk/python).
 
 Run in the DCH tenant namespace that owns the connection. Configure a pipeline server with an S3-backed
 artifact store and use its default pipeline root. The task pod needs access to the DCH gateway
