@@ -13,7 +13,7 @@ Export a DCH table as CSV or Parquet and publish an HTML summary.
 | `DCH_HOST` | `str` | `None` | DCH gateway hostname and optional port for the run. |
 | `connection_id` | `str` | `None` | ID of the saved SQL-capable relational DCH connection in the run namespace. |
 | `source_table` | `str` | `None` | Source table in schema.table_name format, such as analytics.customers. |
-| `output_format` | `str` | `csv` | Snapshot format, either csv (default) or parquet. |
+| `output_format` | `str` | `parquet` | Snapshot format, either parquet (default) or csv. |
 
 ## Outputs 📤
 
@@ -82,7 +82,7 @@ should not choose the token destination, the pipeline author can set
 | `DCH_HOST` | The deployment's DCH HTTPS gateway hostname and optional port. |
 | `connection_id` | The saved DCH connection ID for a relational connector that accepts SQL over Flight. |
 | `source_table` | The table in `schema.table_name` format, for example `analytics.customers`. |
-| `output_format` | `csv` (default) or `parquet`. |
+| `output_format` | `parquet` (default) or `csv`. |
 
 For the first run, choose a small table. Check for `[PASS] DCH connection lookup`
 and `[PASS] Table snapshot` in the task log, then open the HTML `report` and read
@@ -96,7 +96,7 @@ column. In this example, `analytics.customer_churn` contains a binary target
 column named `churned`.
 
 1. Run the DCH export with the saved connection, `source_table=analytics.customer_churn`,
-   and `output_format=csv` (the default). The export reads the table over Flight SQL
+   and set `output_format=csv`. The export reads the table over Flight SQL
    and publishes the CSV snapshot to the pipeline server's artifact store.
 2. Copy `snapshot_uri` from the completed run. Use the snapshot as training data in the
    [AutoGluon tabular training pipeline](../../../training/automl/autogluon_tabular_training_pipeline/README.md).

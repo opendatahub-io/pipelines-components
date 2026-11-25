@@ -29,7 +29,7 @@ def test_compiles_a_single_export_task(tmp_path, gateway):
     }
     assert "defaultValue" not in inputs["source_table"]
     assert "defaultValue" not in inputs["DCH_HOST"]
-    assert inputs["output_format"]["defaultValue"] == "csv"
+    assert inputs["output_format"]["defaultValue"] == "parquet"
 
     (task,) = root["dag"]["tasks"].values()
     assert task["taskInfo"]["name"] == "export-table"

@@ -219,8 +219,8 @@ To run the component as a standalone pipeline, use the [DCH table export pipelin
 
 Supply the DCH gateway, saved connection ID, and `source_table` when creating a run.
 Use the `schema.table_name` format, for example `analytics.customers`.
-Use `output_format="csv"` for a CSV export, or choose `parquet` for typed columns
-that CSV cannot represent, such as nested lists.
+Parquet is the default and preserves types such as nested lists. Set
+`output_format="csv"` to export a CSV file.
 The component sends the task ServiceAccount token to the selected HTTPS gateway.
 Set an explicit `trusted_host` when composing the pipeline to restrict that destination.
 Disable caching so each run captures fresh data.
@@ -232,7 +232,7 @@ from kfp_components.components.data_processing.dch.export_table_to_parquet impor
 )
 
 @dsl.pipeline(name="export-dch-table")
-def export_dch_table(DCH_HOST: str, connection_id: str, source_table: str, output_format: str = "csv") -> str:
+def export_dch_table(DCH_HOST: str, connection_id: str, source_table: str, output_format: str = "parquet") -> str:
     task = export_table_to_parquet(
         dch_host=DCH_HOST,
         connection_id=connection_id,

@@ -30,7 +30,7 @@ def create_export_table_to_parquet_pipeline(trusted_host: str = "") -> graph_com
         DCH_HOST: str,
         connection_id: str,
         source_table: str,
-        output_format: str = "csv",
+        output_format: str = "parquet",
     ) -> SnapshotOutputs:
         """Export a DCH table as CSV or Parquet and publish an HTML summary.
 
@@ -38,7 +38,7 @@ def create_export_table_to_parquet_pipeline(trusted_host: str = "") -> graph_com
             DCH_HOST: DCH gateway hostname and optional port for the run.
             connection_id: ID of the saved SQL-capable relational DCH connection in the run namespace.
             source_table: Source table in schema.table_name format, such as analytics.customers.
-            output_format: Snapshot format, either csv (default) or parquet.
+            output_format: Snapshot format, either parquet (default) or csv.
 
         Returns:
             The Dataset, HTML report, and exact snapshot URI.
