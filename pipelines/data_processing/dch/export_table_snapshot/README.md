@@ -69,9 +69,13 @@ Upload the generated `dch-export-table-snapshot.yaml` from the same directory to
 pipeline server in the connection's tenant namespace. For `DCH_HOST`, use the hostname
 and optional port of the route that serves the DCH REST and Flight SQL APIs. DCH can
 share the OpenShift AI ingress hostname if the gateway routes its APIs there.
-The task sends its ServiceAccount token to that endpoint. To restrict the token
-destination, pass `trusted_host` to `create_export_table_snapshot_pipeline()` before
-compiling the pipeline with the KFP SDK.
+
+The task sends its ServiceAccount token to the gateway specified by `DCH_HOST`.
+Use the default reference pipeline in projects where run submitters are trusted
+to act as that ServiceAccount. If users can launch runs without that level of
+access, pass the approved Data Connect Hub gateway as `trusted_host` to
+`create_export_table_snapshot_pipeline()` before compiling with the KFP SDK.
+The task then requires `DCH_HOST` to match the approved gateway before sending the token.
 
 | Run input | Value |
 | --- | --- |
