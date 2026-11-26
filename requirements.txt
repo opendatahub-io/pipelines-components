@@ -9,8 +9,8 @@ cffi==2.1.1 \
     --hash=sha256:7123bebb7e015332260e23440f5dbf77da6a21fd386855ef304c368047209e8b \
     --hash=sha256:ae0ee3bab20eda5bac76b79b440dbdced94f012a7d451e36c014d1e21a1845f8 \
     --hash=sha256:e3f14bab9c26b799565e7f7c9dba5b03d4bb8ba4e9e0752d6b691f3cea26e696
-charset-normalizer==3.5.2 \
-    --hash=sha256:90955d1179ab190ee1c9a9670cd36cd19077b6d0ff565c4a8a086a6dfe258174
+charset-normalizer==3.5.3 \
+    --hash=sha256:a4eea72fbab349658f7dcd0433dc7ce358e0649224d5fb753eaf0f1afe3828ca
 click==8.5.1 \
     --hash=sha256:78e321eca9b64e3feab6295a7844d76c7b69f10a4049163c8013b1524e7322e2
 click-option-group==0.5.7 \
