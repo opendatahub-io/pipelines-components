@@ -4,15 +4,10 @@ from typing import NamedTuple
 
 from kfp import dsl
 
-DCH_SDK = (
-    "data-connect-hub[flight] @ git+https://github.com/opendatahub-io/data-connect-hub.git"
-    "@6d58bc9975a431c8f8a9040e610520d20c980f36#subdirectory=sdk/python"
-)
-
 
 @dsl.component(
     base_image="registry.access.redhat.com/ubi9/python-312:latest",
-    packages_to_install=[DCH_SDK],
+    packages_to_install=["data-connect-hub[flight]==0.2.1"],
 )
 def export_table_snapshot(
     dch_host: str,

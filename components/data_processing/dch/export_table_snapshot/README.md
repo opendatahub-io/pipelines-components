@@ -59,14 +59,15 @@ Uses the gateway CA and task token to look up the saved connection and read the 
 
 ## Prerequisites
 
-The component installs the [DCH Python SDK at commit `6d58bc9`](https://github.com/opendatahub-io/data-connect-hub/tree/6d58bc9975a431c8f8a9040e610520d20c980f36/sdk/python).
+The component installs `data-connect-hub[flight]==0.2.1` at run time.
+The task needs access to PyPI or a package mirror that also supplies the Flight SQL
+dependencies, including `adbc-driver-flightsql`. [DCH Python SDK on PyPI](https://pypi.org/project/data-connect-hub/0.2.1/)
 
 Run in the DCH tenant namespace that owns the connection. Configure a pipeline server with an S3-backed
 artifact store and use its default pipeline root. The task pod needs access to the DCH gateway
 over HTTPS and Flight SQL. The DCH Flight service uses the saved connection to access
 the source database. The task uses the Red Hat UBI 9 Python 3.12 image from `registry.access.redhat.com`.
-Installing the SDK at run time requires Git in the task image and access to GitHub
-and the Python package index. The task stages the full file on pod disk before KFP uploads it.
+The task stages the full file on pod disk before KFP uploads it.
 
 ### Export size limit
 
