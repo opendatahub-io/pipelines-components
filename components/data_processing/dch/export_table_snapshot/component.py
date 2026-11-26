@@ -10,12 +10,10 @@ from kfp import dsl
     packages_to_install=["data-connect-hub[flight]==0.2.1"],
 )
 def export_table_snapshot(
-    dch_host: str,
     connection_id: str,
     source_table: str,
     snapshot: dsl.Output[dsl.Dataset],
     report: dsl.Output[dsl.HTML],
-    trusted_host: str = "",
     output_format: str = "parquet",
 ) -> NamedTuple("Outputs", [("snapshot_uri", str)]):
     """Export a relational table through a saved DCH Flight SQL connection.
@@ -25,13 +23,11 @@ def export_table_snapshot(
     HTML report through KFP.
 
     Args:
-        dch_host: DCH gateway hostname and optional port requested for the run.
-        connection_id: ID of a saved SQL-capable relational DCH connection in the task namespace.
+        connection_id: ID of a saved Flight SQL connection in the task namespace.
+            Requires the dch-gateway Secret with a host key for the Data Connect Hub gateway.
         source_table: Source table in schema.table_name format, such as analytics.customers.
         snapshot: CSV or Parquet dataset artifact.
         report: HTML report with the source table, snapshot statistics, and artifact URI.
-        trusted_host: Optional HTTPS gateway restriction set by the pipeline author.
-            An empty value uses dch_host as the endpoint for the task ServiceAccount token.
         output_format: Snapshot format, either csv or parquet.
 
     Returns:
@@ -52,7 +48,7 @@ def export_table_snapshot(
     from data_connect_hub import DataConnectClient
     from pyarrow import csv
 
-    gateway = (trusted_host or dch_host).strip().rstrip("/")
+    gateway = os.getenv("DCH_TRUSTED_HOST", "").strip().rstrip("/")
     table_parts = [identifier.strip() for identifier in source_table.split(".", 2)]
     output_format = output_format.strip().lower()
     snapshot_writers = {"csv": csv.CSVWriter, "parquet": pq.ParquetWriter}
@@ -122,8 +118,7 @@ def export_table_snapshot(
             details.append(hint)
         record(name, "FAIL", " | ".join(details))
 
-    def authority(value):
-        value = value.strip()
+    def validate_gateway(value):
         if "\\" in value or any(character.isspace() or ord(character) < 32 for character in value):
             raise ValueError("Expected an HTTPS gateway hostname and optional port")
         parsed = urlsplit(value if "://" in value else f"https://{value}")
@@ -137,7 +132,6 @@ def export_table_snapshot(
             or parsed.port == 0
         ):
             raise ValueError("Expected an HTTPS gateway hostname and optional port")
-        return parsed.hostname, parsed.port or 443
 
     def read_token():
         return (account / "token").read_text().strip()
@@ -155,14 +149,11 @@ def export_table_snapshot(
 
     def run_checks():
         name = "Gateway and input"
-        start(name, "Validating DCH_HOST before sending the ServiceAccount token.")
+        start(name, "Validating the gateway from the dch-gateway Secret before using the ServiceAccount token.")
         try:
-            requested_authority = authority(dch_host)
-            if trusted_host and requested_authority != authority(trusted_host):
-                record(name, "FAIL", f"DCH_HOST must match the compiled gateway {trusted_host}.")
-                return
+            validate_gateway(gateway)
         except ValueError:
-            record(name, "FAIL", "Expected an HTTPS gateway hostname with an optional port.")
+            record(name, "FAIL", "Set the dch-gateway Secret's host key to an HTTPS hostname and optional port.")
             return
         if not re.fullmatch(r"[A-Za-z0-9._-]{1,128}", connection_id):
             record(name, "FAIL", "The connection ID is empty or has an invalid format.")

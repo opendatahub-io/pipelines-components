@@ -10,8 +10,7 @@ Export a DCH table as CSV or Parquet and publish an HTML summary.
 
 | Parameter | Type | Default | Description |
 | --------- | ---- | ------- | ----------- |
-| `DCH_HOST` | `str` | `None` | Hostname and optional port of the DCH gateway route exposed to the task pod. |
-| `connection_id` | `str` | `None` | ID of the saved SQL-capable relational DCH connection in the run namespace. |
+| `connection_id` | `str` | `None` | ID of the saved Flight SQL connection in the run namespace. Requires the dch-gateway Secret with a host key in that namespace. |
 | `source_table` | `str` | `None` | Source table in schema.table_name format, such as analytics.customers. |
 | `output_format` | `str` | `parquet` | Snapshot format, either parquet (default) or csv. |
 
@@ -54,6 +53,12 @@ Export a DCH table as CSV or Parquet and publish an HTML summary.
 
 ## Prerequisites
 
+The pipeline requires a Kubernetes Secret named `dch-gateway` in the run namespace.
+Its `host` key supplies the approved gateway hostname and optional port for the
+task's ServiceAccount token. Only trusted administrators should be able to create,
+edit, or replace this Secret. If the Secret or key is missing, the task container
+cannot start. [Create the gateway Secret](../../../../components/data_processing/dch/export_table_snapshot/README.md#create-the-required-gateway-secret)
+
 Follow the [component setup steps](../../../../components/data_processing/dch/export_table_snapshot/README.md#prerequisites)
 for pipeline server artifact storage, gateway TLS, the DCH connection, and ServiceAccount permissions.
 
@@ -66,21 +71,12 @@ python pipelines/data_processing/dch/export_table_snapshot/pipeline.py
 ```
 
 Upload the generated `dch-export-table-snapshot.yaml` from the same directory to the
-pipeline server in the connection's tenant namespace. For `DCH_HOST`, use the hostname
-and optional port of the route that serves the DCH REST and Flight SQL APIs. DCH can
-share the OpenShift AI ingress hostname if the gateway routes its APIs there.
-
-The task sends its ServiceAccount token to the gateway specified by `DCH_HOST`.
-Use the default reference pipeline in projects where run submitters are trusted
-to act as that ServiceAccount. If users can launch runs without that level of
-access, pass the approved Data Connect Hub gateway as `trusted_host` to
-`create_export_table_snapshot_pipeline()` before compiling with the KFP SDK.
-The task then requires `DCH_HOST` to match the approved gateway before sending the token.
+pipeline server in the connection's tenant namespace. The pipeline reads the gateway
+from the namespace's `dch-gateway` Secret at run time.
 
 | Run input | Value |
 | --- | --- |
-| `DCH_HOST` | The deployment's DCH HTTPS gateway hostname and optional port. |
-| `connection_id` | The saved DCH connection ID for a relational connector that accepts SQL over Flight. |
+| `connection_id` | The saved Flight SQL connection ID. The run namespace must have the `dch-gateway` Secret with a `host` key. |
 | `source_table` | The table in `schema.table_name` format, for example `analytics.customers`. |
 | `output_format` | `parquet` (default) or `csv`. |
 

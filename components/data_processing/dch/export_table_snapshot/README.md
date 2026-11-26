@@ -12,12 +12,10 @@ Uses the gateway CA and task token to look up the saved connection and read the 
 
 | Parameter | Type | Default | Description |
 | --------- | ---- | ------- | ----------- |
-| `dch_host` | `str` | `None` | DCH gateway hostname and optional port requested for the run. |
-| `connection_id` | `str` | `None` | ID of a saved SQL-capable relational DCH connection in the task namespace. |
+| `connection_id` | `str` | `None` | ID of a saved Flight SQL connection in the task namespace. Requires the dch-gateway Secret with a host key for the Data Connect Hub gateway. |
 | `source_table` | `str` | `None` | Source table in schema.table_name format, such as analytics.customers. |
 | `snapshot` | `dsl.Output[dsl.Dataset]` | `None` | CSV or Parquet dataset artifact. |
 | `report` | `dsl.Output[dsl.HTML]` | `None` | HTML report with the source table, snapshot statistics, and artifact URI. |
-| `trusted_host` | `str` | `""` | Optional HTTPS gateway restriction set by the pipeline author. An empty value uses dch_host as the endpoint for the task ServiceAccount token. |
 | `output_format` | `str` | `parquet` | Snapshot format, either csv or parquet. |
 
 ## Outputs 📤
@@ -96,6 +94,21 @@ oc get dspa "$PIPELINE_SERVER_NAME" -n "$TENANT_NAMESPACE" \
 For a launcher error such as `PutObject ... no such host`, compare the hostname
 in the log with the provider's endpoint for that bucket. Correct the pipeline
 server's artifact store host or region if they differ.
+
+### Create the required gateway Secret
+
+An administrator must create a Secret named `dch-gateway` in the pipeline run's
+tenant namespace. Set its `host` key to the approved gateway hostname and optional
+port for the DCH REST and Flight SQL APIs.
+
+```sh
+oc create secret generic dch-gateway -n "$TENANT_NAMESPACE" \
+  --from-literal=host=dch.example.com:443
+```
+
+The task sends its ServiceAccount token to this gateway. Restrict who can create,
+edit, or replace the Secret to administrators trusted to choose the destination.
+The Secret is required even when the gateway uses a certificate the task already trusts.
 
 ### 1. Configure gateway TLS trust
 
@@ -218,28 +231,29 @@ oc auth can-i get "secret/$CREDENTIAL_SECRET_NAME" -n "$TENANT_NAMESPACE" \
 
 To run the component as a standalone pipeline, use the [DCH table export pipeline](../../../../pipelines/data_processing/dch/export_table_snapshot/README.md).
 
-Supply the DCH gateway, saved connection ID, and `source_table` when creating a run.
+Supply the saved connection ID and `source_table` when creating a run.
 Use the `schema.table_name` format, for example `analytics.customers`.
 Parquet is the default and preserves types such as nested lists. Set
 `output_format="csv"` to export a CSV file.
-The component sends the task ServiceAccount token to the selected HTTPS gateway.
-Set an explicit `trusted_host` when composing the pipeline to restrict that destination.
+When composing your own pipeline, inject the `host` key from the required
+`dch-gateway` Secret as `DCH_TRUSTED_HOST`.
 Disable caching so each run captures fresh data.
 
 ```python
 from kfp import dsl
+from kfp.kubernetes import use_secret_as_env
 from kfp_components.components.data_processing.dch.export_table_snapshot import (
     export_table_snapshot,
 )
 
 @dsl.pipeline(name="export-dch-table")
-def export_dch_table(DCH_HOST: str, connection_id: str, source_table: str, output_format: str = "parquet") -> str:
+def export_dch_table(connection_id: str, source_table: str, output_format: str = "parquet") -> str:
     task = export_table_snapshot(
-        dch_host=DCH_HOST,
         connection_id=connection_id,
         source_table=source_table,
         output_format=output_format,
     ).set_caching_options(False)
+    use_secret_as_env(task, secret_name="dch-gateway", secret_key_to_env={"host": "DCH_TRUSTED_HOST"})
     return task.outputs["snapshot_uri"]
 ```
 

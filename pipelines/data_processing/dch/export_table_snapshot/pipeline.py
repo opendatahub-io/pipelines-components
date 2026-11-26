@@ -4,6 +4,7 @@ from typing import NamedTuple
 
 from kfp import dsl
 from kfp.dsl import graph_component
+from kfp.kubernetes import use_secret_as_env
 from kfp_components.components.data_processing.dch.export_table_snapshot import export_table_snapshot
 
 
@@ -15,19 +16,11 @@ class SnapshotOutputs(NamedTuple):
     snapshot_uri: str
 
 
-def create_export_table_snapshot_pipeline(trusted_host: str = "") -> graph_component.GraphComponent:
-    """Build the one-task export pipeline.
-
-    Args:
-        trusted_host: Optional gateway restriction. By default the endpoint is supplied at run time.
-
-    Returns:
-        The KFP graph to compile for the deployment.
-    """
+def create_export_table_snapshot_pipeline() -> graph_component.GraphComponent:
+    """Build the export pipeline with its required gateway Secret."""
 
     @dsl.pipeline(name="dch-export-table-snapshot", display_name="DCH Table Export")
     def pipeline(
-        DCH_HOST: str,
         connection_id: str,
         source_table: str,
         output_format: str = "parquet",
@@ -35,8 +28,8 @@ def create_export_table_snapshot_pipeline(trusted_host: str = "") -> graph_compo
         """Export a DCH table as CSV or Parquet and publish an HTML summary.
 
         Args:
-            DCH_HOST: Hostname and optional port of the DCH gateway route exposed to the task pod.
-            connection_id: ID of the saved SQL-capable relational DCH connection in the run namespace.
+            connection_id: ID of the saved Flight SQL connection in the run namespace.
+                Requires the dch-gateway Secret with a host key in that namespace.
             source_table: Source table in schema.table_name format, such as analytics.customers.
             output_format: Snapshot format, either parquet (default) or csv.
 
@@ -44,13 +37,12 @@ def create_export_table_snapshot_pipeline(trusted_host: str = "") -> graph_compo
             The Dataset, HTML report, and exact snapshot URI.
         """
         task = export_table_snapshot(
-            dch_host=DCH_HOST,
             connection_id=connection_id,
-            trusted_host=trusted_host,
             source_table=source_table,
             output_format=output_format,
         )
         task.set_display_name("export-table-snapshot").set_caching_options(False)
+        use_secret_as_env(task, secret_name="dch-gateway", secret_key_to_env={"host": "DCH_TRUSTED_HOST"})
         return SnapshotOutputs(
             snapshot=task.outputs["snapshot"],
             report=task.outputs["report"],
