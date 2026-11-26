@@ -1,4 +1,4 @@
-# Export Table To Parquet ✨
+# Export Table Snapshot ✨
 
 > ⚠️ **Stability: alpha** — This asset is not yet stable and may change.
 
@@ -28,7 +28,7 @@ Uses the gateway CA and task token to look up the saved connection and read the 
 
 ## Metadata 🗂️
 
-- **Name**: export_table_to_parquet
+- **Name**: export_table_snapshot
 - **Description**: Export a relational table through a saved Data Connect Hub Flight SQL connection as CSV or Parquet and publish an HTML report from one KFP task.
 - **Stability**: alpha
 - **Dependencies**:
@@ -65,8 +65,8 @@ Run in the DCH tenant namespace that owns the connection. Configure a pipeline s
 artifact store and use its default pipeline root. The task pod needs access to the DCH gateway
 over HTTPS and Flight SQL. The DCH Flight service uses the saved connection to access
 the source database. The task uses the Red Hat UBI 9 Python 3.12 image from `registry.access.redhat.com`.
-It installs its dependencies from GitHub and PyPI and uses ephemeral disk to stage the complete
-snapshot file before KFP uploads it.
+Installing the SDK at run time requires Git in the task image and access to GitHub
+and the Python package index. The task stages the full file on pod disk before KFP uploads it.
 
 ### Export size limit
 
@@ -215,7 +215,7 @@ oc auth can-i get "secret/$CREDENTIAL_SECRET_NAME" -n "$TENANT_NAMESPACE" \
 
 ## Use in a pipeline
 
-To run the component as a standalone pipeline, use the [DCH table export pipeline](../../../../pipelines/data_processing/dch/export_table_to_parquet/README.md).
+To run the component as a standalone pipeline, use the [DCH table export pipeline](../../../../pipelines/data_processing/dch/export_table_snapshot/README.md).
 
 Supply the DCH gateway, saved connection ID, and `source_table` when creating a run.
 Use the `schema.table_name` format, for example `analytics.customers`.
@@ -227,13 +227,13 @@ Disable caching so each run captures fresh data.
 
 ```python
 from kfp import dsl
-from kfp_components.components.data_processing.dch.export_table_to_parquet import (
-    export_table_to_parquet,
+from kfp_components.components.data_processing.dch.export_table_snapshot import (
+    export_table_snapshot,
 )
 
 @dsl.pipeline(name="export-dch-table")
 def export_dch_table(DCH_HOST: str, connection_id: str, source_table: str, output_format: str = "parquet") -> str:
-    task = export_table_to_parquet(
+    task = export_table_snapshot(
         dch_host=DCH_HOST,
         connection_id=connection_id,
         source_table=source_table,
@@ -245,10 +245,15 @@ def export_dch_table(DCH_HOST: str, connection_id: str, source_table: str, outpu
 The task streams the selected table in Arrow batches through DCH Flight and writes one
 CSV or Parquet file. KFP uploads the dataset and HTML report using its artifact-store credentials.
 The report includes the table, row and column counts, format, file size, and snapshot URI.
-Connection checks and errors appear in the task log.
+Both files are required for a successful run. If writing the report fails, the task fails
+even if it has finished writing the snapshot.
+
+Connection checks and errors appear in the task log. The connection lookup uses a
+20-second REST timeout and allows up to two retries for transient failures. The Flight SQL
+read uses a 300-second timeout and a failed stream ends the task.
 
 ## Train with AutoML
 
 Use the exported CSV snapshot as input to the managed tabular AutoML pipeline.
 Parquet snapshots require an AutoML version with Parquet input support. Follow the
-[AutoML handoff instructions](../../../../pipelines/data_processing/dch/export_table_to_parquet/README.md#train-with-automl).
+[AutoML handoff instructions](../../../../pipelines/data_processing/dch/export_table_snapshot/README.md#train-with-automl).

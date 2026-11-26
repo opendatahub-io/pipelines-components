@@ -14,7 +14,7 @@ DCH_SDK = (
     base_image="registry.access.redhat.com/ubi9/python-312:latest",
     packages_to_install=[DCH_SDK],
 )
-def export_table_to_parquet(
+def export_table_snapshot(
     dch_host: str,
     connection_id: str,
     source_table: str,
@@ -54,7 +54,7 @@ def export_table_to_parquet(
 
     import pyarrow as pa
     import pyarrow.parquet as pq
-    from data_connect_hub import DataConnectClient, DCHError
+    from data_connect_hub import DataConnectClient
     from pyarrow import csv
 
     gateway = (trusted_host or dch_host).strip().rstrip("/")
@@ -147,7 +147,7 @@ def export_table_to_parquet(
     def read_token():
         return (account / "token").read_text().strip()
 
-    def dch_client(tenant, flight_timeout):
+    def dch_client(tenant, flight_timeout, max_retries=0):
         return DataConnectClient(
             endpoint=gateway,
             tenant_id=tenant,
@@ -155,7 +155,7 @@ def export_table_to_parquet(
             ca_cert=ca,
             rest_timeout=20,
             flight_timeout=flight_timeout,
-            max_retries=0,
+            max_retries=max_retries,
         )
 
     def run_checks():
@@ -195,13 +195,13 @@ def export_table_to_parquet(
         trust = "launcher CA bundle" if ca else "default CA trust"
         start(name, f"Looking up the saved connection via DCH REST using {trust}.")
         try:
-            with dch_client(tenant, flight_timeout=20) as client:
+            with dch_client(tenant, flight_timeout=20, max_retries=2) as client:
                 connection = client.get_connection(connection_id)
                 if connection.format != "tabular":
                     record(name, "FAIL", "The saved connection is not tabular.")
                     return
                 record(name, "PASS", f"DCH REST returned the connection using {trust}.")
-        except (DCHError, OSError, ValueError, KeyError, IndexError) as exc:
+        except Exception as exc:
             log_failure(name, exc)
             return
         return tenant
@@ -252,8 +252,8 @@ def export_table_to_parquet(
         report_path = Path(report.path)
         report_path.parent.mkdir(parents=True, exist_ok=True)
         report_path.write_text(
-            "<!doctype html><html lang='en'><meta charset='utf-8'>"
-            "<title>DCH table snapshot</title><body><h1>DCH table snapshot</h1><dl>"
+            "<!doctype html><html lang='en'><head><meta charset='utf-8'>"
+            "<title>DCH table snapshot</title></head><body><h1>DCH table snapshot</h1><dl>"
             f"<dt>Table</dt><dd><code>{escape('.'.join(table_parts))}</code></dd>"
             f"<dt>Rows</dt><dd>{metadata['row_count']:,}</dd>"
             f"<dt>Columns</dt><dd>{metadata['column_count']:,}</dd>"
@@ -276,12 +276,12 @@ def export_table_to_parquet(
                 f"Snapshot file exceeds the 1 GiB limit ({snapshot_limit_bytes:,} bytes). "
                 "Export a smaller table or view.",
             )
-        except (DCHError, pa.ArrowException, OSError, ValueError) as exc:
+        except Exception as exc:
             log_failure("Table snapshot", exc)
         else:
             try:
                 write_report()
-            except (OSError, ValueError) as exc:
+            except Exception as exc:
                 record("HTML report", "FAIL", f"Could not write the snapshot summary ({type(exc).__name__}).")
     for name, status in checks.items():
         if status == "SKIP":
@@ -289,7 +289,8 @@ def export_table_to_parquet(
 
     failed = [name for name, status in checks.items() if status == "FAIL"]
     if failed:
-        print(f"[FAIL] Overall result | Failed checks: {', '.join(failed)}.", flush=True)
-        raise SystemExit(1)
+        summary = f"Failed checks: {', '.join(failed)}."
+        print(f"[FAIL] Overall result | {summary}", flush=True)
+        raise RuntimeError(summary)
     print("[PASS] Overall result | All checks passed.", flush=True)
     return (snapshot.uri,)

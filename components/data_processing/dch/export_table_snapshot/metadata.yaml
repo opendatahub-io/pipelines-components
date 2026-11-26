@@ -1,5 +1,5 @@
 ---
-name: export_table_to_parquet
+name: export_table_snapshot
 description: >-
   Export a relational table through a saved Data Connect Hub Flight SQL connection
   as CSV or Parquet and publish an HTML report from one KFP task.

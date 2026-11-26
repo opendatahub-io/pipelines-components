@@ -1,4 +1,4 @@
-# Data Connect Hub Export Table To Parquet ✨
+# Data Connect Hub Export Table Snapshot ✨
 
 > ⚠️ **Stability: alpha** — This asset is not yet stable and may change.
 
@@ -10,7 +10,7 @@ Export a DCH table as CSV or Parquet and publish an HTML summary.
 
 | Parameter | Type | Default | Description |
 | --------- | ---- | ------- | ----------- |
-| `DCH_HOST` | `str` | `None` | DCH gateway hostname and optional port for the run. |
+| `DCH_HOST` | `str` | `None` | Hostname and optional port of the DCH gateway route exposed to the task pod. |
 | `connection_id` | `str` | `None` | ID of the saved SQL-capable relational DCH connection in the run namespace. |
 | `source_table` | `str` | `None` | Source table in schema.table_name format, such as analytics.customers. |
 | `output_format` | `str` | `parquet` | Snapshot format, either parquet (default) or csv. |
@@ -23,7 +23,7 @@ Export a DCH table as CSV or Parquet and publish an HTML summary.
 
 ## Metadata 🗂️
 
-- **Name**: dch-export-table-to-parquet
+- **Name**: dch-export-table-snapshot
 - **Description**: Export a relational table through DCH Flight SQL as CSV or Parquet and publish an HTML report.
 - **Stability**: alpha
 - **Dependencies**:
@@ -54,28 +54,24 @@ Export a DCH table as CSV or Parquet and publish an HTML summary.
 
 ## Prerequisites
 
-Follow the [component setup steps](../../../../components/data_processing/dch/export_table_to_parquet/README.md#prerequisites)
+Follow the [component setup steps](../../../../components/data_processing/dch/export_table_snapshot/README.md#prerequisites)
 for pipeline server artifact storage, gateway TLS, the DCH connection, and ServiceAccount permissions.
 
 ## Compile and run
 
-Compile the pipeline once and enter the DCH gateway when you create a run.
+From the repository root with the project installed, run:
 
-```python
-from kfp import compiler
-from kfp_components.pipelines.data_processing.dch.export_table_to_parquet import (
-    create_export_table_to_parquet_pipeline,
-)
-
-pipeline = create_export_table_to_parquet_pipeline()
-compiler.Compiler().compile(pipeline, package_path="dch-export-table-to-parquet.yaml")
+```sh
+python pipelines/data_processing/dch/export_table_snapshot/pipeline.py
 ```
 
-Upload the YAML to the pipeline server in the connection's tenant namespace. Use the
-deployment's DCH HTTPS gateway for `DCH_HOST`. The task sends its
-ServiceAccount token to that endpoint. If pipeline runners can submit runs but
-should not choose the token destination, the pipeline author can set
-`trusted_host` when compiling a version restricted to one gateway.
+Upload the generated `dch-export-table-snapshot.yaml` from the same directory to the
+pipeline server in the connection's tenant namespace. For `DCH_HOST`, use the hostname
+and optional port of the route that serves the DCH REST and Flight SQL APIs. DCH can
+share the OpenShift AI ingress hostname if the gateway routes its APIs there.
+The task sends its ServiceAccount token to that endpoint. To restrict the token
+destination, pass `trusted_host` to `create_export_table_snapshot_pipeline()` before
+compiling the pipeline with the KFP SDK.
 
 | Run input | Value |
 | --- | --- |

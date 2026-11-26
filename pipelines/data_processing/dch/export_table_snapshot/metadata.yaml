@@ -1,5 +1,5 @@
 ---
-name: dch-export-table-to-parquet
+name: dch-export-table-snapshot
 description: Export a relational table through DCH Flight SQL as CSV or Parquet and publish an HTML report.
 stability: alpha
 dependencies:

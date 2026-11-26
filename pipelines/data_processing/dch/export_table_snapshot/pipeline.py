@@ -4,7 +4,7 @@ from typing import NamedTuple
 
 from kfp import dsl
 from kfp.dsl import graph_component
-from kfp_components.components.data_processing.dch.export_table_to_parquet import export_table_to_parquet
+from kfp_components.components.data_processing.dch.export_table_snapshot import export_table_snapshot
 
 
 class SnapshotOutputs(NamedTuple):
@@ -15,7 +15,7 @@ class SnapshotOutputs(NamedTuple):
     snapshot_uri: str
 
 
-def create_export_table_to_parquet_pipeline(trusted_host: str = "") -> graph_component.GraphComponent:
+def create_export_table_snapshot_pipeline(trusted_host: str = "") -> graph_component.GraphComponent:
     """Build the one-task export pipeline.
 
     Args:
@@ -25,7 +25,7 @@ def create_export_table_to_parquet_pipeline(trusted_host: str = "") -> graph_com
         The KFP graph to compile for the deployment.
     """
 
-    @dsl.pipeline(name="dch-export-table-to-parquet", display_name="DCH Table Export")
+    @dsl.pipeline(name="dch-export-table-snapshot", display_name="DCH Table Export")
     def pipeline(
         DCH_HOST: str,
         connection_id: str,
@@ -35,7 +35,7 @@ def create_export_table_to_parquet_pipeline(trusted_host: str = "") -> graph_com
         """Export a DCH table as CSV or Parquet and publish an HTML summary.
 
         Args:
-            DCH_HOST: DCH gateway hostname and optional port for the run.
+            DCH_HOST: Hostname and optional port of the DCH gateway route exposed to the task pod.
             connection_id: ID of the saved SQL-capable relational DCH connection in the run namespace.
             source_table: Source table in schema.table_name format, such as analytics.customers.
             output_format: Snapshot format, either parquet (default) or csv.
@@ -43,14 +43,14 @@ def create_export_table_to_parquet_pipeline(trusted_host: str = "") -> graph_com
         Returns:
             The Dataset, HTML report, and exact snapshot URI.
         """
-        task = export_table_to_parquet(
+        task = export_table_snapshot(
             dch_host=DCH_HOST,
             connection_id=connection_id,
             trusted_host=trusted_host,
             source_table=source_table,
             output_format=output_format,
         )
-        task.set_display_name("export-table").set_caching_options(False)
+        task.set_display_name("export-table-snapshot").set_caching_options(False)
         return SnapshotOutputs(
             snapshot=task.outputs["snapshot"],
             report=task.outputs["report"],
@@ -60,4 +60,15 @@ def create_export_table_to_parquet_pipeline(trusted_host: str = "") -> graph_com
     return pipeline
 
 
-dch_export_table_pipeline = create_export_table_to_parquet_pipeline()
+dch_export_table_pipeline = create_export_table_snapshot_pipeline()
+
+
+if __name__ == "__main__":
+    from pathlib import Path
+
+    from kfp.compiler import Compiler
+
+    Compiler().compile(
+        dch_export_table_pipeline,
+        package_path=str(Path(__file__).with_name("dch-export-table-snapshot.yaml")),
+    )

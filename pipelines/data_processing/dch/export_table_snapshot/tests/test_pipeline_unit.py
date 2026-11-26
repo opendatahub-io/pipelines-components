@@ -3,7 +3,7 @@
 import pytest
 from kfp import compiler
 
-from ..pipeline import create_export_table_to_parquet_pipeline
+from ..pipeline import create_export_table_snapshot_pipeline
 
 
 @pytest.mark.parametrize("gateway", ["", "gateway.example.com:443"])
@@ -12,12 +12,12 @@ def test_compiles_a_single_export_task(tmp_path, gateway):
     import yaml
 
     options = {"trusted_host": gateway} if gateway else {}
-    pipeline = create_export_table_to_parquet_pipeline(**options)
+    pipeline = create_export_table_snapshot_pipeline(**options)
     output = tmp_path / "pipeline.yaml"
     compiler.Compiler().compile(pipeline, str(output))
 
     spec = yaml.safe_load(output.read_text())
-    assert spec["pipelineInfo"]["name"] == "dch-export-table-to-parquet"
+    assert spec["pipelineInfo"]["name"] == "dch-export-table-snapshot"
     assert spec["pipelineInfo"]["displayName"] == "DCH Table Export"
     root = spec["root"]
     inputs = root["inputDefinitions"]["parameters"]
@@ -32,7 +32,8 @@ def test_compiles_a_single_export_task(tmp_path, gateway):
     assert inputs["output_format"]["defaultValue"] == "parquet"
 
     (task,) = root["dag"]["tasks"].values()
-    assert task["taskInfo"]["name"] == "export-table"
+    assert task["taskInfo"]["name"] == "export-table-snapshot"
+    assert task["componentRef"]["name"] == "comp-export-table-snapshot"
     parameters = task["inputs"]["parameters"]
     assert task["cachingOptions"].get("enableCache", False) is False
     assert parameters["trusted_host"] == {"runtimeValue": {"constant": gateway}}
