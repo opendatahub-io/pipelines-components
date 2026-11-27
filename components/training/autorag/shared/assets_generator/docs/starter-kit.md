@@ -32,9 +32,9 @@ require a collection that has already been indexed; document indexing is a separ
 pipeline step.
 
 Deployment requires an OpenShift cluster with the Agent Sandbox operator, a logged-in
-`oc` client, `podman`, `uv`, `python3`, and `curl`. The generated Makefile runs the OpenShell CLI from the
-RHOAI image in a container and keeps the gateway registration and the mTLS client
-certificates in `~/.config/openshell`, so no local OpenShell CLI installation is needed.
+`oc` client, the `openshell` CLI, `podman`, `uv`, `python3`, and `curl`.
+The generated Makefile runs the `openshell` binary and keeps the gateway registration
+and the mTLS client certificates in `~/.config/openshell`.
 It also requires an OpenShell gateway that is already installed on the cluster.
 Setting up the gateway is a one-time cluster prerequisite and is not part of the
 generated starter kit. MaaS must provide reachable chat and embedding models, and
@@ -60,6 +60,8 @@ authentication. It reads gateway, sandbox runtime, supervisor, and CLI image
 references from the installed RHOAI ClusterServiceVersion (CSV), preserving image
 digests. The Helm chart is pinned by `OPENSHELL_CHART_REPO` and
 `OPENSHELL_CHART_REF`; these replace the former `OPENSHELL_VERSION` setting.
+When `registry.redhat.io` is not logged in, the script uses the same image names and
+digests from `quay.io/rhoai` (`OPENSHELL_FALLBACK_REGISTRY`).
 Run `bash pipelines-components/scripts/setup-openshell-gateway.sh --help` for all setup overrides.
 
 !!! warning "Migrating an upstream 0.0.99 gateway"
@@ -110,27 +112,22 @@ reads `grpc_proxy`, `GRPC_PROXY`, `https_proxy`, `HTTPS_PROXY`, `http_proxy`, or
 authentication, and resolve to IPv4. With neither a local-proxy setting nor a
 native database host, the entrypoint launches the agent directly.
 
-`make build-openshell` selects the Red Hat sandbox base image from the latest
-succeeded RHOAI CSV and assembles its Python runtime using UBI Python 3.12.
-Set `OPENSHELL_BASE_IMAGE` to override the build's base image; editing the
-Containerfile's default `BASE_IMAGE` alone does not override the Makefile.
-The CLI can fall back to a matching image under `quay.io/rhoai`, and failed
-`registry.redhat.io` sandbox-image pulls are retried through `quay.io`.
+`make build-openshell` assembles the sandbox Python runtime using UBI Python
+3.12. Set `OPENSHELL_BASE_IMAGE` to override the build's base image; otherwise
+the Containerfile `BASE_IMAGE` default applies. The kit runs the installed
+`openshell` command. Failed `registry.redhat.io` sandbox-image pulls are retried
+through `quay.io`.
 
 | Setting | Default | Purpose |
 |---|---|---|
-| `RHOAI_CSV_NAMESPACE` | `redhat-ods-operator` | Namespace queried for the installed RHOAI CSV |
-| `OPENSHELL_CLI_IMAGE` | RHOAI CSV CLI image | Override the containerized CLI image |
-| `OPENSHELL_BASE_IMAGE` | RHOAI CSV sandbox image | Override the sandbox build's base image |
-| `OPENSHELL_FALLBACK_REGISTRY` | `quay.io/rhoai` | Registry prefix used for CLI image fallback |
+| `OPENSHELL_BASE_IMAGE` | Containerfile `BASE_IMAGE` | Override the sandbox build's base image |
 | `OPENSHELL_NAMESPACE` | `openshell` | Namespace of the gateway, certificates, and agent route |
 | `OPENSHELL_GATEWAY_NAME` | `openshift` | Gateway registration selected by the CLI |
 | `OPENSHELL_CLI_STATE` | `~/.config/openshell` | Host directory holding gateway registration and mTLS credentials |
-| `OPENSHELL_PODMAN_USERNS` | `--userns=keep-id` | User-namespace flags for the CLI container |
 
 Export environment settings before running `make`. Make variables such as
 `OPENSHELL_GATEWAY_NAME` and `OPENSHELL_CLI_STATE` can also be passed on its command
-line. To use a compatible locally installed CLI, pass `OPENSHELL_CLI=openshell`.
+line.
 
 Run these commands from the extracted starter-kit directory:
 
