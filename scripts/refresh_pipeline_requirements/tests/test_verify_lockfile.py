@@ -129,6 +129,25 @@ class TestParseLockfilePins:
 
         assert parse_lockfile_pins(requirements_txt) == []
 
+    def test_direct_wheel_hash_does_not_attach_to_previous_pin(self, tmp_path: Path):
+        """Direct URL wheels are not checked against the configured simple index."""
+        requirements_txt = _write_lockfile(
+            tmp_path,
+            "pillow==13.0.0 \\\n"
+            "    --hash=sha256:1111\n"
+            "torch @ https://example.com/torch-2.13.0-cp312-cp312-linux_x86_64.whl \\\n"
+            "    --hash=sha256:2222\n"
+            "triton==3.7.1 \\\n"
+            "    --hash=sha256:3333\n",
+        )
+
+        pins = parse_lockfile_pins(requirements_txt)
+
+        assert [(pin.name, pin.hashes) for pin in pins] == [
+            ("pillow", {"sha256:1111"}),
+            ("triton", {"sha256:3333"}),
+        ]
+
 
 class TestFileArch:
     """Tests for file_arch filename classification."""

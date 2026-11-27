@@ -1,0 +1,6 @@
+--index-url https://packages.redhat.com/api/pypi/public-rhai/cuda13.0-torch2.13-el9.8/simple
+
+torch==2.13.0
+torchvision==0.28.0
+onnxruntime-gpu==1.25.0
+triton==3.7.1

@@ -16,7 +16,8 @@ _EXPECTED_ROOT_DAG_TASK_IDS = (
     "documents-discovery",
     "rag-templates-optimization",
     "search-space-preparation",
-    "text-extraction",
+    "prepare-extraction-inputs",
+    "condition-branches-1",
     "models-pre-selector",
 )
 
@@ -43,6 +44,7 @@ class TestDocumentsRagOptimizationPipelineUnit:
         assert "ogx_secret_name" not in inputs
         assert "vector_io_provider_id" not in inputs
         assert "preset" in inputs
+        assert "gpu_acceleration" in inputs
         assert "responses_request_default_question" not in inputs
 
     def test_compiled_pipeline_root_dag_task_ids(self):
@@ -77,8 +79,8 @@ class TestDocumentsRagOptimizationPipelineUnit:
                 package_path=tmp_path,
             )
             spec = load_pipeline_spec_document(Path(tmp_path))
-            te_task = spec["root"]["dag"]["tasks"]["text-extraction"]
-            assert "search-space-preparation" in te_task["dependentTasks"]
+            branches = spec["root"]["dag"]["tasks"]["condition-branches-1"]
+            assert "search-space-preparation" in branches["dependentTasks"]
         finally:
             Path(tmp_path).unlink(missing_ok=True)
 
@@ -92,12 +94,32 @@ class TestDocumentsRagOptimizationPipelineUnit:
                 package_path=tmp_path,
             )
             spec = load_pipeline_spec_document(Path(tmp_path))
-            te_task = spec["root"]["dag"]["tasks"]["text-extraction"]
-            ocr_lang = te_task["inputs"]["parameters"]["ocr_lang"]["taskOutputParameter"]
-            assert ocr_lang["producerTask"] == "search-space-preparation"
-            assert ocr_lang["outputParameterKey"] == "detected_ocr_lang"
+            branches = spec["root"]["dag"]["tasks"]["condition-branches-1"]
+            detected_language = branches["inputs"]["parameters"][
+                "pipelinechannel--search-space-preparation-detected_ocr_lang"
+            ]["taskOutputParameter"]
+            assert detected_language["producerTask"] == "search-space-preparation"
+            assert detected_language["outputParameterKey"] == "detected_ocr_lang"
+            for component_name in ("comp-condition-2", "comp-condition-3"):
+                extraction = next(iter(spec["components"][component_name]["dag"]["tasks"].values()))
+                assert extraction["inputs"]["parameters"]["ocr_lang"] == {
+                    "componentInputParameter": "pipelinechannel--search-space-preparation-detected_ocr_lang"
+                }
         finally:
             Path(tmp_path).unlink(missing_ok=True)
+
+    def test_gpu_branch_requests_one_gpu_and_cpu_branch_requests_none(self, tmp_path):
+        """The KFP driver can apply the literal GPU limit only to GPU extraction."""
+        pipeline_path = tmp_path / "optimization.yaml"
+        compiler.Compiler().compile(documents_rag_optimization_pipeline, package_path=str(pipeline_path))
+        spec = load_pipeline_spec_document(pipeline_path)
+        executors = spec["deploymentSpec"]["executors"]
+
+        gpu = executors["exec-text-extraction"]["container"]["resources"]["accelerator"]
+        cpu = executors["exec-text-extraction-2"]["container"]["resources"]
+        assert gpu["resourceType"] == "nvidia.com/gpu"
+        assert gpu["resourceCount"] == "1"
+        assert "accelerator" not in cpu
 
     def test_optimization_consumes_models_pre_selector_report(self):
         """Optimization must receive the (possibly reduced) report from models_pre_selector."""

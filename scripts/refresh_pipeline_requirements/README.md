@@ -134,3 +134,7 @@ uv run python -m scripts.refresh_pipeline_requirements.refresh_pipeline_requirem
 Each pipeline directory must contain a `requirements.in` with a `--index-url` line.
 The generated `requirements.txt` keeps that index URL and includes package hashes
 for Hermeto offline builds.
+When a pipeline installs GPU packages from a separate lockfile, list their CPU
+counterparts in `requirements.in` as `# gpu-lock-packages: torch torchvision ...`.
+The refresh omits those packages from the application lockfile while retaining
+the other resolved dependencies.
