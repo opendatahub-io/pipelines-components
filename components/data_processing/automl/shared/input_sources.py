@@ -10,9 +10,9 @@ live here instead of being duplicated (see ``user_test_data.py`` and
   through a ranged GET when the extension is inconclusive. Detection never
   raises: an inconclusive probe falls back to CSV, the loaders' historical
   behavior.
-* **Staging** (:func:`staged_parquet_source`): Parquet metadata (the footer) sits
-  at the *end* of the file, so unlike CSV a Parquet object cannot be parsed as a
-  forward-only stream. It must be downloaded to seekable local storage first.
+* **Staging** (:func:`staged_parquet_source`): The Parquet footer sits at the end
+  of the file, so the reader needs seekable access. The loaders download the
+  complete object to local storage before sampling.
 * **Chunked reading** (:func:`iter_parquet_batches`): yield bounded pandas
   batches from a staged Parquet file, mirroring ``pd.read_csv(..., chunksize=)``
   so the loaders' samplers can consume either format the same way. Corrupted or

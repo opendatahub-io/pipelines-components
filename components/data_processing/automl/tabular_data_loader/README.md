@@ -280,7 +280,8 @@ Match stage ids to the tabular pipeline entry in ``component_stage_map.json`` fr
   workspace train splits (`models_selection_train_dataset.parquet`, `extra_train_dataset.parquet`)
   and the `sampled_test_dataset` artifact. No full-size CSV copy of any split is kept.
 - **Sampling budget in memory** — 100 MiB for `speed`, 1 GiB for `balanced`, and 10 GiB for `quality`.
-- **Parquet staging** — Up to 2 GiB on node-local storage or up to 16 GiB on the pipeline workspace for larger objects.
+- **Parquet staging** — The loader downloads the complete S3 object before sampling, including for `first_n_rows`.
+  The on-disk limit is 2 GiB on node-local storage or 16 GiB on the pipeline workspace for larger objects.
 
 ## Logging 📝
 

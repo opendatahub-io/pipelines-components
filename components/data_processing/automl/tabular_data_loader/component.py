@@ -125,6 +125,7 @@ def automl_data_loader(  # noqa: D417
 
     import boto3
     import pandas as pd
+    from kfp_components.components.data_processing.automl.shared.errors import s3_tls_validation_error
     from kfp_components.components.data_processing.automl.shared.input_sources import (
         FORMAT_CSV,
         FORMAT_PARQUET,
@@ -289,16 +290,6 @@ def automl_data_loader(  # noqa: D417
                 aws_access_key_id=credentials["access_key"],
                 aws_secret_access_key=credentials["secret_key"],
                 verify=effective_ssl_cert_path or True,
-            )
-
-        def _tls_validation_error(bucket, key, exc):
-            """Build the guided error for S3 TLS certificate validation failures."""
-            certificate_source = effective_ssl_cert_path or "the system trust bundle"
-            return RuntimeError(
-                "S3 TLS certificate validation failed when downloading "
-                f"s3://{bucket}/{key}. Verify that ssl_cert_path="
-                f"{certificate_source!r} is a PEM CA bundle that trusts the S3 endpoint. "
-                "Do not disable certificate verification."
             )
 
         def _format_name(source_format):
@@ -621,7 +612,7 @@ def automl_data_loader(  # noqa: D417
             try:
                 response = s3_client.get_object(Bucket=bucket_name, Key=file_key)
             except SSLError as exc:
-                raise _tls_validation_error(bucket_name, file_key, exc) from exc
+                raise s3_tls_validation_error(bucket_name, file_key, effective_ssl_cert_path) from exc
 
             if "source_bytes" not in io_metrics:
                 source_bytes = response.get("ContentLength")
@@ -688,7 +679,7 @@ def automl_data_loader(  # noqa: D417
                         source_label=source_uri,
                     )
             except SSLError as exc:
-                raise _tls_validation_error(bucket_name, file_key, exc) from exc
+                raise s3_tls_validation_error(bucket_name, file_key, effective_ssl_cert_path) from exc
             io_metrics.update(sampling_metrics)
             io_metrics["download_and_parse_seconds"] = round(time.monotonic() - transfer_started, 3)
             return data, io_metrics

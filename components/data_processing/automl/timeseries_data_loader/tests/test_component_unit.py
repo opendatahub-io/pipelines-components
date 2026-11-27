@@ -2060,13 +2060,21 @@ class TestParquetInput:
 
     @mock.patch.dict(os.environ, mocked_env_variables, clear=True)
     @pytest.mark.parametrize("parquet_is_training", [False, True])
-    def test_mixed_csv_and_parquet_item_ids_match(self, tmp_path, parquet_is_training):
-        """Whole-valued Parquet float IDs match CSV integer text in either direction."""
+    @pytest.mark.parametrize(
+        ("csv_ids", "parquet_ids", "expected_ids"),
+        [
+            pytest.param(("1", "2"), (1.0, 2.0), {"1", "2"}, id="integer-text"),
+            pytest.param(("1.0", "-0.00"), (1.0, -0.0), {"1", "0"}, id="float-text"),
+            pytest.param(("001", "01"), ("001", "01"), {"001", "01"}, id="leading-zeros"),
+        ],
+    )
+    def test_mixed_csv_parquet_item_ids_match(self, tmp_path, parquet_is_training, csv_ids, parquet_ids, expected_ids):
+        """Both formats resolve the same series IDs in either direction."""
         train = _panel_frame()
         test = _panel_frame(rows_per_series=10)
         parquet_frame, csv_frame = (train, test) if parquet_is_training else (test, train)
-        parquet_frame["item_id"] = parquet_frame["item_id"].map({"series-1": 1.0, "series-2": 2.0})
-        csv_frame["item_id"] = csv_frame["item_id"].map({"series-1": 1, "series-2": 2})
+        parquet_frame["item_id"] = parquet_frame["item_id"].map(dict(zip(("series-1", "series-2"), parquet_ids)))
+        csv_frame["item_id"] = csv_frame["item_id"].map(dict(zip(("series-1", "series-2"), csv_ids)))
         payloads = {
             "data.csv": csv_frame.to_csv(index=False).encode("utf-8"),
             "data.parquet": _parquet_bytes(parquet_frame),
@@ -2088,9 +2096,19 @@ class TestParquetInput:
             )
 
         written_test = pd.read_parquet(sampled_test.path)
-        assert set(written_test["item_id"]) == {"1", "2"}
+        assert set(written_test["item_id"]) == expected_ids
         selection = pd.read_parquet(result.models_selection_train_data_path)
-        assert set(selection["item_id"]) == {"1", "2"}
+        assert set(selection["item_id"]) == expected_ids
+
+    @mock.patch.dict(os.environ, mocked_env_variables, clear=True)
+    def test_csv_only_preserves_decimal_text_item_ids(self, tmp_path):
+        """CSV-only runs keep integer and decimal spellings as distinct series."""
+        frame = _panel_frame()
+        frame["item_id"] = frame["item_id"].map({"series-1": "1", "series-2": "1.0"})
+
+        _, sampled_test = _run_loader(tmp_path, frame.to_csv(index=False))
+
+        assert set(pd.read_parquet(sampled_test.path)["item_id"]) == {"1", "1.0"}
 
 
 class TestCorruptParquetRejected:

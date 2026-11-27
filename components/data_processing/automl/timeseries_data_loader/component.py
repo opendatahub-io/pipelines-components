@@ -149,6 +149,7 @@ def timeseries_data_loader(
         except Exception as e:  # noqa: BLE001 - stats logging must never break the run
             logger.debug("Could not compute dataset stats for %s: %s", name, e)
 
+    from kfp_components.components.data_processing.automl.shared.errors import s3_tls_validation_error
     from kfp_components.components.data_processing.automl.shared.input_sources import (
         FORMAT_CSV,
         FORMAT_PARQUET,
@@ -371,16 +372,6 @@ def timeseries_data_loader(
         if uses_synthetic_id:
             id_column = SYNTHETIC_ITEM_ID_COLUMN
 
-        def _tls_validation_error(bucket, key, exc):
-            """Build the guided error for S3 TLS certificate validation failures."""
-            certificate_source = effective_ssl_cert_path or "the system trust bundle"
-            return RuntimeError(
-                "S3 TLS certificate validation failed when downloading "
-                f"s3://{bucket}/{key}. Verify that ssl_cert_path="
-                f"{certificate_source!r} is a PEM CA bundle that trusts the S3 endpoint. "
-                "Do not disable certificate verification."
-            )
-
         def _csv_chunks(stream):
             """Yield dataframe chunks from a CSV text stream, applying the loader's id dtype policy."""
             try:
@@ -439,9 +430,9 @@ def timeseries_data_loader(
                         )
                     chunk[id_column] = SYNTHETIC_ITEM_ID_VALUE
                 chunk = _clean_timeseries_dataframe(chunk, id_column, timestamp_column, logger)
-                if source_format == FORMAT_PARQUET and not uses_synthetic_id:
-                    # Convert after null validation. AutoGluon accepts string IDs,
-                    # and whole-valued floats must match integer IDs such as "1".
+                if normalize_ids:
+                    # Use integer spelling for whole decimals in either source.
+                    # Keep lexical IDs with leading zeros, such as "001" and "01".
                     ids = chunk[id_column]
                     id_dtype = ids.cat.categories.dtype if isinstance(ids.dtype, pd.CategoricalDtype) else ids.dtype
                     string_ids = ids.astype(str)
@@ -449,11 +440,17 @@ def timeseries_data_loader(
                         numeric_ids = ids.astype(id_dtype)
                         whole = numeric_ids.mod(1).eq(0)
                         string_ids.loc[whole] = numeric_ids[whole].map(int).astype(str)
+                    else:
+                        string_ids = string_ids.str.replace(
+                            r"\A(-?(?:0|[1-9][0-9]*))\.0+\Z",
+                            lambda match: "0" if match[1] == "-0" else match[1],
+                            regex=True,
+                        )
                     chunk[id_column] = string_ids
                 stringify_mixed_object_columns(chunk)
                 yield chunk
 
-        def _load_latest(bucket, key, budget, profile_name, *, is_test=False):
+        def _load_latest(bucket, key, budget, profile_name, source_format, *, is_test=False):
             """Load the latest per-series observations from a CSV or Parquet S3 source.
 
             The source format is detected from the object key (with a magic-byte
@@ -464,9 +461,7 @@ def timeseries_data_loader(
             """
             from botocore.exceptions import SSLError
 
-            s3_client = get_s3_client()
             source_uri = test_data_source_uri(bucket, key)
-            source_format = detect_input_source_format(s3_client, bucket, key, component_logger=logger)
 
             minimum_rows = (
                 prediction_length + 1
@@ -496,14 +491,14 @@ def timeseries_data_loader(
                         if staged.source_bytes is not None:
                             report["source_bytes"] = staged.source_bytes
                 except SSLError as exc:
-                    raise _tls_validation_error(bucket, key, exc) from exc
+                    raise s3_tls_validation_error(bucket, key, effective_ssl_cert_path) from exc
                 report["source_format"] = source_format
                 return frame, report
 
             try:
                 response = s3_client.get_object(Bucket=bucket, Key=key)
             except SSLError as exc:
-                raise _tls_validation_error(bucket, key, exc) from exc
+                raise s3_tls_validation_error(bucket, key, effective_ssl_cert_path) from exc
             source_bytes = response.get("ContentLength")
             with io.TextIOWrapper(response["Body"], encoding="utf-8") as stream:
                 frame, report = sample_latest_timeseries(
@@ -520,7 +515,20 @@ def timeseries_data_loader(
             report["source_format"] = source_format
             return frame, report
 
-        df, sampling_report = _load_latest(bucket_name, file_key, MAX_SIZE_BYTES, "training_series_profile.jsonl")
+        # Resolve both formats before the sampler groups rows by ID.
+        s3_client = get_s3_client()
+        train_source_format = detect_input_source_format(s3_client, bucket_name, file_key, component_logger=logger)
+        has_user_test_data = bool(test_data_file_key)
+        test_source_format = (
+            detect_input_source_format(s3_client, test_data_bucket_name, test_data_file_key, component_logger=logger)
+            if has_user_test_data
+            else None
+        )
+        normalize_ids = not uses_synthetic_id and FORMAT_PARQUET in (train_source_format, test_source_format)
+
+        df, sampling_report = _load_latest(
+            bucket_name, file_key, MAX_SIZE_BYTES, "training_series_profile.jsonl", train_source_format
+        )
         if len(df) == 0:
             raise ValueError("No data was loaded from S3. The file may be empty or inaccessible.")
         stringify_mixed_object_columns(df)
@@ -566,8 +574,6 @@ def timeseries_data_loader(
             early = groups.cumcount() < cutoffs
             return frame[early].copy(), frame[~early].copy()
 
-        has_user_test_data = bool(test_data_file_key)
-
         if has_user_test_data:
             test_data_source = test_data_source_uri(test_data_bucket_name, test_data_file_key)
 
@@ -578,6 +584,7 @@ def timeseries_data_loader(
                     test_data_file_key,
                     TEST_DATA_MAX_SIZE_BYTES,
                     "test_series_profile.jsonl",
+                    test_source_format,
                     is_test=True,
                 )
             except Exception as e:

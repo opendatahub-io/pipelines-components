@@ -156,11 +156,12 @@ Dashboards align stage ids with ``component_stage_map.json`` from
 
 ### Latest observations per series
 
-The loader scans the entire CSV and keeps the most recent observations **for every ID**.
+The loader scans the entire CSV or Parquet source and keeps the most recent observations **for every ID**.
 Recency is determined by parsed timestamps, independently of file order. Grouped,
 interleaved, descending and unsorted panels follow the same policy. A global file
-`head` or `tail` is never used for training-data sampling. IDs are read as strings,
-so values such as `001` and `01` remain distinct.
+`head` or `tail` is never used for training-data sampling. When either source is Parquet,
+whole-valued floats and unpadded whole-decimal text such as `1.0` become `1` in both datasets.
+Text IDs such as `001` and `01` remain distinct. CSV-only runs preserve IDs as read.
 
 Duplicate `(id, timestamp)` keys keep the last occurrence in the source, including
 when duplicate records occur in different read chunks. Timestamps are normalized
@@ -189,9 +190,11 @@ Snappy Parquet files on the workspace. A disposable SQLite index stores only ser
 IDs, timestamps, byte estimates and row locations. It replaces duplicate locations
 and provides latest-first access without sorting the full payload. Only selected
 rows are assembled into the output DataFrame; each selected Parquet part is read
-at most once. The source CSV is downloaded and parsed once.
+at most once. CSV sources stream from S3. The loader downloads each complete Parquet
+source before sampling. A Parquet source staged on the workspace uses up to 16 GiB
+and can coexist with the sampling spool until the scan and sampling finish.
 
-Scratch storage is capped at 16 GiB. The loader also reserves the preset sample
+Sampling spool storage is capped at 16 GiB. The loader also reserves the preset sample
 budget plus 256 MiB of free workspace for outputs. Workspace exhaustion fails
 explicitly; it never falls back to an incomplete source prefix. Temporary files
 are removed before training, including when reading, validation or sampling fails.
@@ -204,7 +207,7 @@ Full scanning adds I/O compared with the former early-stop loader. Training/refi
 presets and time budgets are unchanged, but training cost can still depend on the
 number of retained series and observations.
 
-User-provided test CSVs use the same per-series timestamp policy with their own
+User-provided test datasets use the same per-series timestamp policy with their own
 50 MiB / 100 MiB / 1 GiB budgets. Truncation is reported, and each retained test
 series must have more observations than `prediction_length` for evaluation context.
 
