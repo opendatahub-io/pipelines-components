@@ -395,6 +395,7 @@ def timeseries_data_loader(
             prefix would silently keep a damaged file's rows.
             """
             format_name = "Parquet file" if source_format == FORMAT_PARQUET else "CSV"
+            originals_by_canonical_id = {}
             while True:
                 try:
                     chunk = next(raw_chunks)
@@ -435,17 +436,28 @@ def timeseries_data_loader(
                     # Keep lexical IDs with leading zeros, such as "001" and "01".
                     ids = chunk[id_column]
                     id_dtype = ids.cat.categories.dtype if isinstance(ids.dtype, pd.CategoricalDtype) else ids.dtype
+                    original_ids = ids
                     string_ids = ids.astype(str)
                     if pd.api.types.is_float_dtype(id_dtype):
                         numeric_ids = ids.astype(id_dtype)
                         whole = numeric_ids.mod(1).eq(0)
                         string_ids.loc[whole] = numeric_ids[whole].map(int).astype(str)
                     else:
+                        original_ids = string_ids
                         string_ids = string_ids.str.replace(
                             r"\A(-?(?:0|[1-9][0-9]*))\.0+\Z",
                             lambda match: "0" if match[1] == "-0" else match[1],
                             regex=True,
                         )
+                    for canonical_id, original_id in zip(string_ids, original_ids, strict=True):
+                        previous_id = originals_by_canonical_id.setdefault(canonical_id, original_id)
+                        if previous_id != original_id:
+                            kind = "test dataset" if is_test else "training dataset"
+                            raise ValueError(
+                                f"ID normalization collision in {kind} column {id_column!r}. "
+                                "Distinct original IDs normalize to the same series ID. "
+                                "Use IDs that remain distinct after normalization."
+                            )
                     chunk[id_column] = string_ids
                 stringify_mixed_object_columns(chunk)
                 yield chunk

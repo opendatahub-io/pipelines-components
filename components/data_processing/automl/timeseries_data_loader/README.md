@@ -161,6 +161,7 @@ Recency is determined by parsed timestamps, independently of file order. Grouped
 interleaved, descending and unsorted panels follow the same policy. A global file
 `head` or `tail` is never used for training-data sampling. When either source is Parquet,
 whole-valued floats and unpadded whole-decimal text such as `1.0` become `1` in both datasets.
+The loader rejects a source if distinct IDs in that file normalize to the same series ID.
 Text IDs such as `001` and `01` remain distinct. CSV-only runs preserve IDs as read.
 
 Duplicate `(id, timestamp)` keys keep the last occurrence in the source, including

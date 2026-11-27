@@ -2101,6 +2101,43 @@ class TestParquetInput:
         assert set(selection["item_id"]) == expected_ids
 
     @mock.patch.dict(os.environ, mocked_env_variables, clear=True)
+    @pytest.mark.parametrize("colliding_format", ["csv", "parquet"])
+    @pytest.mark.parametrize("collision_in_test", [False, True])
+    def test_rejects_item_id_normalization_collision_across_chunks(self, tmp_path, colliding_format, collision_in_test):
+        """Reject two distinct IDs in one source before their observations can be merged."""
+        csv_ids = ("1", "1.0") if colliding_format == "csv" else ("1", "2")
+        parquet_ids = ("1", "1.0") if colliding_format == "parquet" else ("1", "2")
+        payloads = {
+            "panel.csv": _panel_frame(100, csv_ids).to_csv(index=False).encode("utf-8"),
+            "panel.parquet": _parquet_bytes(_panel_frame(100, parquet_ids)),
+        }
+        colliding_key = f"panel.{colliding_format}"
+        other_key = "panel.parquet" if colliding_format == "csv" else "panel.csv"
+        train_key, test_key = (other_key, colliding_key) if collision_in_test else (colliding_key, other_key)
+        sampled_test = _make_test_artifact(tmp_path)
+
+        # Each original ID occupies ten separate chunks before the next ID starts.
+        with (
+            mock.patch.object(sampling, "PANDAS_CHUNK_SIZE", 10),
+            _mock_boto3_parquet(payloads),
+            pytest.raises(ValueError, match=r"ID normalization collision.*'item_id'"),
+        ):
+            timeseries_data_loader.python_func(
+                file_key=train_key,
+                bucket_name="b",
+                workspace_path=str(tmp_path),
+                target="target",
+                id_column="item_id",
+                timestamp_column="timestamp",
+                sampled_test_dataset=sampled_test,
+                test_data_bucket_name="test-bucket",
+                test_data_file_key=test_key,
+            )
+
+        assert not Path(sampled_test.path).exists()
+        assert not list((tmp_path / "datasets").glob("*.parquet"))
+
+    @mock.patch.dict(os.environ, mocked_env_variables, clear=True)
     def test_csv_only_preserves_decimal_text_item_ids(self, tmp_path):
         """CSV-only runs keep integer and decimal spellings as distinct series."""
         frame = _panel_frame()
