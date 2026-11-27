@@ -28,4 +28,5 @@ SPECIAL_CASE_WORDS = {
     "cd": "CD",
     "automl": "AutoML",
     "autorag": "AutoRAG",
+    "dch": "Data Connect Hub",
 }
