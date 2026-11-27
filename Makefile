@@ -106,7 +106,6 @@ readme:
 sync-packages:
 	@$(UVRUN) python -m scripts.sync_packages.sync_packages
 
-AIPCC_INDEX_URL := https://packages.redhat.com/api/pypi/public-rhai/cpu-torch2.13-el9.8-test/simple
 # Refresh Hermeto-compatible requirements.txt for RHOAI pipelines (requires Podman or Docker)
 # Verifies lockfile hash/architecture coverage against the index afterwards; see scripts/refresh_pipeline_requirements/README.md
 # Usage: make pipeline-requirements [PIPELINE=path/to/pipeline] [RUNTIME=podman|docker] [IMAGE=...] [NO_UPGRADE=true] [DRY_RUN=true] [QUIET=true] [NO_VERIFY=true] [ARCH_CHECK=error|warn]
@@ -127,20 +126,6 @@ pipeline-requirements:
 		$${IMAGE:+--image "$$IMAGE"} \
 		$${PIPELINE:+"$$PIPELINE"}
 
-# RHEL UBI9 (glibc 2.34)
-PYTHON_PLATFORM := x86_64-manylinux_2_34
-
+# Regenerate requirements.txt and requirements-build.txt; see scripts/update_requirements.sh
 requirements:
-	echo "--index-url $(AIPCC_INDEX_URL)" > requirements.txt
-	echo "" >> requirements.txt
-	uv pip compile pyproject.toml --generate-hashes --no-header --no-annotate \
-		--no-emit-package kfp-components \
-		--python-version 3.12 \
-		--python-platform $(PYTHON_PLATFORM) \
-		--index-url "$(AIPCC_INDEX_URL)" >> requirements.txt
-	echo "--index-url $(AIPCC_INDEX_URL)" > requirements-build.txt
-	echo "" >> requirements-build.txt
-	printf 'pip>=26.1.2\nsetuptools\nwheel\n' | uv pip compile --generate-hashes --no-header --no-annotate \
-		--python-version 3.12 \
-		--python-platform $(PYTHON_PLATFORM) \
-		--index-url "$(AIPCC_INDEX_URL)" - >> requirements-build.txt
+	scripts/update_requirements.sh
