@@ -179,6 +179,8 @@ class TestTextExtractionUnitTests:
             max_extraction_workers=4,
             docling_artifacts_path=str(TEST_ARTIFACTS_PATH),
             docling_config=mock_docling_config_cls.return_value,
+            worker_startup_timeout=300.0,
+            document_timeout=600.0,
         )
 
     @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
@@ -807,3 +809,20 @@ class TestTextExtractionUnitTests:
         kwargs = mock_docling_config_cls.call_args.kwargs
         assert kwargs["do_ocr"] is True
         assert kwargs["do_table_structure"] is (preset_value == "balanced")
+
+
+@mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
+def test_explicit_worker_deadlines_are_forwarded(tmp_path):
+    """Operators can allow longer model loading or conversion without changing images."""
+    modules, extract, _ = _make_ai4rag_mocks()
+    descriptor = _write_descriptor(tmp_path, {"bucket": "bucket", "documents": [{"key": "file.txt"}]})
+    output = mock.MagicMock(path=str(tmp_path / "output"))
+    with mock.patch.dict("sys.modules", modules):
+        text_extraction.python_func(
+            documents_descriptor=descriptor,
+            extracted_text=output,
+            worker_startup_timeout=1200.0,
+            document_timeout=7200.0,
+        )
+    assert extract.call_args.kwargs["worker_startup_timeout"] == 1200.0
+    assert extract.call_args.kwargs["document_timeout"] == 7200.0

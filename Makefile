@@ -106,7 +106,7 @@ readme:
 sync-packages:
 	@$(UVRUN) python -m scripts.sync_packages.sync_packages
 
-AIPCC_INDEX_URL := https://packages.redhat.com/api/pypi/public-rhai/cpu-torch2.13-el9.8-test/simple
+AIPCC_INDEX_URL := https://packages.redhat.com/api/pypi/public-rhai/cpu-torch2.15-el9.8-test/simple
 # Refresh Hermeto-compatible requirements.txt for RHOAI pipelines (requires Podman or Docker)
 # Verifies lockfile hash/architecture coverage against the index afterwards; see scripts/refresh_pipeline_requirements/README.md
 # Usage: make pipeline-requirements [PIPELINE=path/to/pipeline] [RUNTIME=podman|docker] [IMAGE=...] [NO_UPGRADE=true] [DRY_RUN=true] [QUIET=true] [NO_VERIFY=true] [ARCH_CHECK=error|warn]

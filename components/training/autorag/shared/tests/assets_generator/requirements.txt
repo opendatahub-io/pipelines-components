@@ -1,5 +1,4 @@
-# Validate relocation with the same runtime version; upgrade separately.
-ai4rag==0.25.4
+ai4rag==0.27.0
 pytest
 pytest-mock
 nbformat

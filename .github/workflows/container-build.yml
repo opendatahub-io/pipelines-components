@@ -55,6 +55,7 @@ jobs:
             build-context: .
           - name: pipelines-training-autorag-documents_rag_optimization_pipeline-inference
             context: pipelines/training/autorag/documents_rag_optimization_pipeline/inference
+            build-context: .
 
     steps:
       - name: Checkout repository

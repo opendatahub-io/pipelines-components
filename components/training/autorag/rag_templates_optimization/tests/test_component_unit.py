@@ -1075,7 +1075,7 @@ class TestPresetWarmStartConfiguration:
 def test_connection_provider_survives_optimization_and_indexing(tmp_path, provider, database_env, backend):
     """Generated indexing inputs preserve explicit selection and legacy precedence."""
     mocks = _make_ai4rag_mocks()
-    pattern = _pattern_payload("pattern_a")
+    pattern = _pattern_payload("PatternA")
     pattern["settings"]["store_binding"]["provider_type"] = backend
     mocks.KFPEventHandler.return_value.patterns = [{"payload": pattern, "evaluation_results": []}]
     report = _write_search_space_report(tmp_path)
@@ -1103,7 +1103,8 @@ def test_connection_provider_survives_optimization_and_indexing(tmp_path, provid
         )
     mocks.get_vector_store_config.assert_called_once_with(backend)
     assert mocks.AI4RAGSearchSpace.call_args.kwargs["vector_store_type"] == backend
-    payload = json.loads((Path(rag_patterns.path) / "pattern_a" / "pattern.json").read_text())
+    payload = json.loads((Path(rag_patterns.path) / "PatternA" / "pattern.json").read_text())
+    assert payload["name"] == "PatternA"
     params = payload["indexing"]["pipeline_spec"]["parameters"]
     assert params["db_provider"] == provider
     assert "provider" not in params

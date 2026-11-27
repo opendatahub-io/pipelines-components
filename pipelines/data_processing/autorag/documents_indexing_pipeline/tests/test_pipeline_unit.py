@@ -227,3 +227,25 @@ def test_indexing_receives_provider_and_shared_database_secret(tmp_path):
     content = path.read_text()
     for env in ("AUTORAG_DB_URI", "AUTORAG_DB_password", "AUTORAG_DB_ca_crt", "AUTORAG_DB_schema"):
         assert content.count(f"envVar: {env}\n") == 1
+
+
+def test_native_thread_limits_apply_only_to_extraction(tmp_path):
+    """Bound native threads before parent imports without constraining other tasks."""
+    output = tmp_path / "thread-limits.yaml"
+    compiler.Compiler().compile(documents_indexing_pipeline, package_path=str(output))
+    spec = load_pipeline_spec_document(output)
+    executors = spec["deploymentSpec"]["executors"]
+    expected = {
+        "OPENBLAS_NUM_THREADS": "1",
+        "MKL_NUM_THREADS": "1",
+        "OMP_NUM_THREADS": "1",
+        "VECLIB_MAXIMUM_THREADS": "1",
+        "NUMEXPR_NUM_THREADS": "1",
+        "TOKENIZERS_PARALLELISM": "false",
+    }
+    for name, executor in executors.items():
+        environment = {item["name"]: item["value"] for item in executor["container"].get("env", [])}
+        if name == "exec-text-extraction":
+            assert expected.items() <= environment.items()
+        else:
+            assert not expected.keys() & environment.keys()
