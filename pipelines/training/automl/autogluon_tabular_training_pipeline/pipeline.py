@@ -89,7 +89,7 @@ def autogluon_tabular_training_pipeline(
     0. **Component stage map**: Publishes the static component-to-stage-to-step map as a KFP
        artifact for dashboards before any data I/O.
 
-    1. **Data Loading & Splitting**: Loads tabular (CSV) data from an S3-compatible
+    1. **Data Loading & Splitting**: Loads tabular data (CSV or Parquet) from an S3-compatible
        object storage bucket using AWS credentials configured via Kubernetes secrets.
        The component samples the data (up to 100 MiB for the "speed" preset, up to 1 GiB
        for "balanced", and up to 10 GiB for "quality"), then performs a two-stage split:
@@ -143,7 +143,8 @@ def autogluon_tabular_training_pipeline(
             AWS_SECRET_ACCESS_KEY, AWS_S3_ENDPOINT, AWS_DEFAULT_REGION). Used for training data
             and optional user-provided external test data.
         train_data_bucket_name: S3-compatible bucket name containing the tabular data file.
-        train_data_file_key: S3 object key of the CSV file (features and target column).
+        train_data_file_key: S3 object key of the training data file, CSV or Parquet
+            (features and target column).
         label_column: Name of the target/label column in the dataset.
         task_type: "binary", "multiclass", or "regression"; drives metrics and model types.
         top_n: Number of top models to select and refit (default: 3); positive integer from range [1, 10].
@@ -152,7 +153,7 @@ def autogluon_tabular_training_pipeline(
         preset: Training quality tier. "speed" (45-minute selection budget, default, 4 vCPU / 16 GiB), "balanced" (180-minute selection budget, 8 vCPU / 32 GiB), or "quality" (six-hour selection budget, 16 vCPU / 64 GiB).
         test_data_bucket_name: Optional S3-compatible bucket name for a user-provided test dataset.
             Default: empty string (use the holdout split from training data).
-        test_data_file_key: Optional S3 object key for a user-provided test CSV file.
+        test_data_file_key: Optional S3 object key for a user-provided test data file, CSV or Parquet.
             Default: empty string (use the holdout split from training data).
 
     Returns:

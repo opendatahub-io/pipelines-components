@@ -28,8 +28,8 @@ platform, not by this pipeline. Filter the child runs by the ``run_type=model`` 
 
 0. **Component stage map**: Publishes the static component-to-stage-to-step map as a KFP artifact for dashboards before any data I/O.
 
-1. **Data Loading & Splitting**: Loads tabular (CSV) data from an S3-compatible object storage bucket using AWS credentials configured via Kubernetes secrets. The component samples the data (up to 100 MiB for the "speed" preset, up to 1 GiB for "balanced", and up to 10 GiB for "quality"), then
-performs a two-stage split: *Primary split** (default 80/20): separates a *test set* (20%, written to an S3 artifact) from the *train portion* (80%). **Secondary split** (default 30/70 of the train portion): produces ``models_selection_train_dataset.parquet`` (30%, used for model selection) and
+1. **Data Loading & Splitting**: Loads tabular data (CSV or Parquet) from an S3-compatible object storage bucket using AWS credentials configured via Kubernetes secrets. The component samples the data (up to 100 MiB for the "speed" preset, up to 1 GiB for "balanced", and up to 10 GiB for "quality"),
+then performs a two-stage split: *Primary split** (default 80/20): separates a *test set* (20%, written to an S3 artifact) from the *train portion* (80%). **Secondary split** (default 30/70 of the train portion): produces ``models_selection_train_dataset.parquet`` (30%, used for model selection) and
 ``extra_train_dataset.parquet`` (70%, passed to ``refit_full`` as extra data). Both train Parquet files are written to the PVC workspace under ``{workspace_path}/datasets/``. For classification tasks the splits are stratified by the label column. For ``quality``, selection is capped at 30% of the
 balanced 1 GiB budget; remaining rows are used for final refit.
 
@@ -62,7 +62,7 @@ The pipeline leverages AutoGluon's unique ensembling strategy that combines mult
 | --------- | ---- | ------- | ----------- |
 | `train_data_secret_name` | `str` | `None` | Kubernetes secret name with S3 credentials (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_S3_ENDPOINT, AWS_DEFAULT_REGION). Used for training data and optional user-provided external test data. |
 | `train_data_bucket_name` | `str` | `None` | S3-compatible bucket name containing the tabular data file. |
-| `train_data_file_key` | `str` | `None` | S3 object key of the CSV file (features and target column). |
+| `train_data_file_key` | `str` | `None` | S3 object key of the training data file, CSV or Parquet (features and target column). |
 | `label_column` | `str` | `None` | Name of the target/label column in the dataset. |
 | `task_type` | `str` | `None` | "binary", "multiclass", or "regression"; drives metrics and model types. |
 | `top_n` | `int` | `3` | Number of top models to select and refit (default: 3); positive integer from range [1, 10]. |
@@ -70,7 +70,7 @@ The pipeline leverages AutoGluon's unique ensembling strategy that combines mult
 | `eval_metric` | `str` | `""` | Metric used for model ranking. Empty string (default) is resolved by the component to "r2" for regression and "accuracy" for binary and multiclass classification. |
 | `preset` | `str` | `speed` | Training quality tier. "speed" (45-minute selection budget, default, 4 vCPU / 16 GiB), "balanced" (180-minute selection budget, 8 vCPU / 32 GiB), or "quality" (six-hour selection budget, 16 vCPU / 64 GiB). |
 | `test_data_bucket_name` | `str` | `""` | Optional S3-compatible bucket name for a user-provided test dataset. Default: empty string (use the holdout split from training data). |
-| `test_data_file_key` | `str` | `""` | Optional S3 object key for a user-provided test CSV file. Default: empty string (use the holdout split from training data). |
+| `test_data_file_key` | `str` | `""` | Optional S3 object key for a user-provided test data file, CSV or Parquet. Default: empty string (use the holdout split from training data). |
 
 ## Metadata 🗂️
 
