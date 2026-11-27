@@ -37,6 +37,7 @@ def autogluon_timeseries_models_training(
     train_data_secret_name: str = "",
     train_data_bucket_name: str = "",
     train_data_file_key: str = "",
+    freq: str = "",
 ) -> NamedTuple(
     "outputs",
     top_models=List[str],
@@ -61,6 +62,9 @@ def autogluon_timeseries_models_training(
         target: Name of the target column to forecast.
         id_column: Name of the column identifying each time series (item_id).
         timestamp_column: Name of the timestamp/datetime column.
+        freq: Optional pandas frequency (e.g. "D"). Empty tries AutoGluon inference,
+            then a shared grid inferred from gaps in selection + extra training data.
+            Automatic frequency validates selection/test grids; explicit freq permits resampling.
         train_data_path: Path to the selection training Parquet file.
         test_data: Test dataset artifact for evaluation.
         top_n: Number of top models to select for full refit.
@@ -122,6 +126,11 @@ def autogluon_timeseries_models_training(
     )
     from kfp_components.components.training.automl.shared.back_testing_charts import (
         notebook_backtest_charts_source,
+    )
+    from kfp_components.components.training.automl.shared.timeseries_frequency import (
+        infer_frequency_from_gaps,
+        validate_frequency_expansion,
+        validate_frequency_grid,
     )
     from kfp_components.components.training.automl.shared.timeseries_notebook_utils import (
         build_predict_sample_artifact,
@@ -207,6 +216,17 @@ def autogluon_timeseries_models_training(
             raise TypeError("split_config must be a dictionary or None.")
         sampling_config = sampling_config or {}
         split_config = split_config or {}
+        if not isinstance(freq, str):
+            raise ValueError("freq must be a string.")
+        effective_freq = freq.strip() or None
+        if effective_freq is not None:
+            try:
+                offset = pd.tseries.frequencies.to_offset(effective_freq)
+                if offset.n <= 0:
+                    raise ValueError("Frequency must be positive.")
+                effective_freq = offset.freqstr
+            except (TypeError, ValueError, OverflowError) as exc:
+                raise ValueError(f"freq {freq!r} is not a valid positive pandas frequency.") from exc
         time_limit = PRESET_TIME_LIMITS[preset]
 
         train_df = pd.read_parquet(train_data_path)
@@ -238,11 +258,60 @@ def autogluon_timeseries_models_training(
             test_ts.num_items,
         )
 
+        extra_train_ts_df = TimeSeriesDataFrame.from_path(
+            path=extra_train_data_path,
+            id_column=id_column,
+            timestamp_column=timestamp_column,
+        )
+        full_train_ts_df = TimeSeriesDataFrame(pd.concat([train_ts, extra_train_ts_df], axis=0))
+        del extra_train_ts_df, train_df, test_df
+
         # Create predictor path in workspace
         predictor_path = Path(workspace_path) / "timeseries_predictor"
 
+        status.record("model_selection", "started")
+        frequency_source = "explicit"
+        if effective_freq is None:
+            try:
+                effective_freq = full_train_ts_df.infer_frequency(num_items=None, raise_if_irregular=True)
+                frequency_source = "inferred"
+            except ValueError:
+                effective_freq = infer_frequency_from_gaps(full_train_ts_df)
+                frequency_source = "gaps"
+                logger.warning(
+                    "Strict frequency inference failed; inferred freq=%r from timestamp gaps. "
+                    "AutoGluon will resample to this grid. Set freq explicitly to override this heuristic.",
+                    effective_freq,
+                )
+            validate_frequency_grid(train_ts, effective_freq, name="selection training data")
+            validate_frequency_grid(test_ts, effective_freq, name="test data")
+        else:
+            validate_frequency_expansion(full_train_ts_df, effective_freq, name="full training data")
+            validate_frequency_expansion(train_ts, effective_freq, name="selection training data")
+            validate_frequency_expansion(test_ts, effective_freq, name="test data")
+        del full_train_ts_df
+
+        status.record(
+            "model_selection",
+            "started",
+            message={"level": "info", "text": f"Using frequency {effective_freq!r} (source: {frequency_source})."},
+            metrics={"freq": effective_freq, "frequency_source": frequency_source},
+        )
+        # Match AutoGluon: resampling an already regular index can shift its timestamps.
+        if test_ts.infer_frequency(num_items=None) != effective_freq:
+            test_ts = test_ts.convert_frequency(effective_freq)
+        required_periods = prediction_length + 1
+        for item_id, periods in test_ts.num_timesteps_per_item().items():
+            if periods < required_periods:
+                raise ValueError(
+                    f"Series {item_id!r} in test data has {periods} periods at frequency {effective_freq!r}; "
+                    f"requires at least {required_periods} periods (prediction_length={prediction_length} "
+                    "plus one history period)."
+                )
+
         # Create TimeSeriesPredictor
         predictor = TimeSeriesPredictor(
+            freq=effective_freq,
             prediction_length=prediction_length,
             target=target,
             eval_metric=eval_metric,
@@ -257,7 +326,6 @@ def autogluon_timeseries_models_training(
             time_limit,
             prediction_length,
         )
-        status.record("model_selection", "started")
         # Accumulates only the model-fitting call durations (selection fit + refit loop) for the
         # parent metric, excluding leaderboard, evaluation, notebook and logging overhead.
         total_fit_time_seconds = 0.0
@@ -312,6 +380,8 @@ def autogluon_timeseries_models_training(
         # Create model config
         model_config = {
             "prediction_length": prediction_length,
+            "freq": effective_freq,
+            "frequency_source": frequency_source,
             "eval_metric": eval_metric,
             "target": target,
             "id_column": id_column,
@@ -323,15 +393,6 @@ def autogluon_timeseries_models_training(
             "known_covariates_names": known_covariates_names or [],
             "num_models_trained": len(leaderboard),
         }
-
-        # Stage 2: Full refit of selected models on full train data (selection + extra).
-        selection_ts_df = train_ts
-        extra_train_ts_df = TimeSeriesDataFrame.from_path(
-            path=extra_train_data_path,
-            id_column=id_column,
-            timestamp_column=timestamp_column,
-        )
-        full_train_ts_df = TimeSeriesDataFrame(pd.concat([selection_ts_df, extra_train_ts_df], axis=0))
 
         sample_row_list = json.loads(sample_rows or "[]")
         if not isinstance(sample_row_list, list):
@@ -352,6 +413,15 @@ def autogluon_timeseries_models_training(
         failed_models = []
 
         status.record("refit_and_evaluate", "started")
+
+        # Reload the extra split so the combined frame is only retained during refit.
+        extra_train_ts_df = TimeSeriesDataFrame.from_path(
+            path=extra_train_data_path,
+            id_column=id_column,
+            timestamp_column=timestamp_column,
+        )
+        full_train_ts_df = TimeSeriesDataFrame(pd.concat([train_ts, extra_train_ts_df], axis=0))
+        del extra_train_ts_df
 
         def replace_placeholder_in_notebook(notebook, replacements):
             for cell in notebook.get("cells", []):
@@ -488,6 +558,7 @@ def autogluon_timeseries_models_training(
                         train_data=full_train_ts_df,
                         path=Path(workspace_path) / "timeseries_refit",
                         predictor_kwargs={
+                            "freq": effective_freq,
                             "prediction_length": prediction_length,
                             "target": target,
                             "eval_metric": eval_metric,
@@ -758,6 +829,7 @@ def autogluon_timeseries_models_training(
                     top_n=top_n,
                     eval_metric=eval_metric,
                     preset=preset,
+                    freq=freq,
                 )
                 write_experiment_notebook(
                     output_dir=Path(experiment_notebook.path),

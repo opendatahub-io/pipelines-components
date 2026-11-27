@@ -43,6 +43,7 @@ Refit outputs for all selected models are written under one ``models_artifact``,
 | `train_data_secret_name` | `str` | `""` | Kubernetes secret name for S3 credentials used by the pipeline. |
 | `train_data_bucket_name` | `str` | `""` | S3 bucket containing the training dataset. |
 | `train_data_file_key` | `str` | `""` | S3 object key for the training dataset. |
+| `freq` | `str` | `""` | Optional pandas frequency (e.g. "D"). Empty tries AutoGluon inference, then a shared grid inferred from gaps in selection + extra training data. Automatic frequency validates selection/test grids; explicit freq permits resampling. |
 
 ## Outputs 📤
 

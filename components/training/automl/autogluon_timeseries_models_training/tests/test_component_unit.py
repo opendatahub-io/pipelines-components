@@ -17,15 +17,17 @@ from ..component import autogluon_timeseries_models_training
 def isolated_sys_modules():
     """Mock component dependencies while keeping notebook helpers on real pandas."""
     import pandas as pd
-    from kfp_components.components.training.automl.shared import timeseries_notebook_utils
+    from kfp_components.components.training.automl.shared import timeseries_frequency, timeseries_notebook_utils
 
     # A cached helper retains its own pandas reference. Exercise it with real
     # pandas even when this suite runs before the loader or shared tests.
     with (
         mock.patch.object(timeseries_notebook_utils, "pd", pd),
+        mock.patch.object(timeseries_frequency, "pd", pd),
         mock.patch.dict(sys.modules, clear=False) as mocked_modules,
     ):
         mocked_modules["pandas"] = mock.MagicMock()
+        mocked_modules["pandas"].tseries.frequencies.to_offset = pd.tseries.frequencies.to_offset
         _ag = mock.MagicMock()
         _ag.__path__ = []
         _ag.__spec__ = None
@@ -68,6 +70,46 @@ def isolated_sys_modules():
         mocked_modules["autogluon.timeseries.models.ensemble"] = _ensemble
         with mock.patch("kfp_components.components.training.automl.shared.timeseries_refit.shutil.copytree"):
             yield
+
+
+@pytest.fixture(autouse=True)
+def mock_frequency_grid():
+    """Grid behavior is tested on real pandas separately from mocked SDK calls."""
+    with mock.patch(
+        "kfp_components.components.training.automl.shared.timeseries_frequency.validate_frequency_grid"
+    ) as validate:
+        yield validate
+
+
+@pytest.fixture(autouse=True)
+def mock_frequency_expansion():
+    """Expansion arithmetic is tested on real pandas independently of SDK doubles."""
+    with mock.patch(
+        "kfp_components.components.training.automl.shared.timeseries_frequency.validate_frequency_expansion"
+    ) as validate:
+        yield validate
+
+
+@pytest.fixture
+def frequency_component_kwargs(mock_artifacts, tmp_path):
+    """Common component arguments for frequency failure tests."""
+    models, extra_path, html, notebook = mock_artifacts
+    return {
+        "target": "target",
+        "id_column": "item_id",
+        "timestamp_column": "timestamp",
+        "train_data_path": "/tmp/train.parquet",
+        "test_data": mock.MagicMock(),
+        "top_n": 1,
+        "workspace_path": str(tmp_path),
+        "pipeline_name": "pipeline",
+        "run_id": "run",
+        "models_artifact": models,
+        "extra_train_data_path": extra_path,
+        "html_artifact": html,
+        "experiment_notebook": notebook,
+        "component_status": _make_component_status_artifact(tmp_path),
+    }
 
 
 @pytest.fixture
@@ -136,6 +178,8 @@ def _mock_ts_df():
     ts_df = mock.MagicMock()
     ts_df.num_items = 3
     ts_df.__len__.return_value = 30
+    ts_df.infer_frequency.return_value = "D"
+    ts_df.convert_frequency.return_value = ts_df
     return ts_df
 
 
@@ -174,16 +218,130 @@ class TestTimeseriesModelsTrainingUnitTests:
         assert hasattr(autogluon_timeseries_models_training, "python_func")
 
     @mock.patch("pandas.read_parquet")
+    @pytest.mark.parametrize("freq", ["invalid", "0D", "-1D", None, 1])
+    def test_invalid_frequency_fails_before_loading_or_model_selection(
+        self, read_parquet, frequency_component_kwargs, freq
+    ):
+        """Reject invalid user input before loading data or recording model selection."""
+        with pytest.raises(ValueError, match="freq"):
+            autogluon_timeseries_models_training.python_func(**frequency_component_kwargs, freq=freq)
+        read_parquet.assert_not_called()
+        status_path = Path(frequency_component_kwargs["component_status"].path) / "component_status.json"
+        assert json.loads(status_path.read_text())["stages"] == []
+
+    @mock.patch("pandas.read_parquet")
+    @mock.patch("autogluon.timeseries.TimeSeriesDataFrame")
+    @mock.patch("autogluon.timeseries.TimeSeriesPredictor")
+    def test_incompatible_test_grid_fails_before_fitting(
+        self, predictor, ts_frame, read_parquet, mock_frequency_grid, frequency_component_kwargs
+    ):
+        """Reject incompatible evaluation timestamps before selection or refit training."""
+        ts_frame.return_value = _mock_ts_df()
+        mock_frequency_grid.side_effect = [None, ValueError("test data has incompatible timestamps")]
+        with pytest.raises(ValueError, match="test data has incompatible"):
+            autogluon_timeseries_models_training.python_func(**frequency_component_kwargs)
+        predictor.assert_not_called()
+        assert mock_frequency_grid.call_args_list[-1].kwargs["name"] == "test data"
+
+    @mock.patch("pandas.read_parquet")
+    @mock.patch("autogluon.timeseries.TimeSeriesDataFrame")
+    @mock.patch("autogluon.timeseries.TimeSeriesPredictor")
+    @pytest.mark.parametrize("split", ["full training data", "selection training data", "test data"])
+    def test_explicit_frequency_expansion_fails_before_fitting(
+        self, predictor, ts_frame, read_parquet, mock_frequency_expansion, frequency_component_kwargs, split
+    ):
+        """Check all splits before explicit frequencies can trigger excessive resampling."""
+
+        def validate(data, freq, name):
+            if name == split:
+                raise ValueError(f"series 'sparse' in {name} exceeds the 1000x limit")
+
+        mock_frequency_expansion.side_effect = validate
+        with pytest.raises(ValueError, match=f"series 'sparse' in {split}.*1000x"):
+            autogluon_timeseries_models_training.python_func(**frequency_component_kwargs, freq="s")
+        predictor.assert_not_called()
+
+    @mock.patch("pandas.read_parquet")
+    @mock.patch("autogluon.timeseries.TimeSeriesDataFrame")
+    @mock.patch("autogluon.timeseries.TimeSeriesPredictor")
+    @pytest.mark.parametrize("freq", ["D", ""])
+    @pytest.mark.parametrize("periods", [1, 24, 25])
+    def test_holdout_periods_are_checked_after_conversion(
+        self, predictor, ts_frame, read_parquet, frequency_component_kwargs, freq, periods
+    ):
+        """Reject an item shortened by aggregation before fitting any model."""
+        train_ts, test_ts, converted = mock.MagicMock(), mock.MagicMock(), mock.MagicMock()
+        ts_frame.from_data_frame.side_effect = [train_ts, test_ts]
+        ts_frame.return_value.infer_frequency.return_value = "D"
+        test_ts.infer_frequency.return_value = "IRREG"
+        test_ts.convert_frequency.return_value = converted
+        converted.num_timesteps_per_item.return_value = {"long": 100, "short": periods}
+        predictor.side_effect = RuntimeError("reached predictor construction")
+        if periods < 25:
+            with pytest.raises(ValueError, match=f"'short'.*{periods} periods.*'D'.*at least 25 periods"):
+                autogluon_timeseries_models_training.python_func(
+                    **frequency_component_kwargs, freq=freq, prediction_length=24
+                )
+            predictor.assert_not_called()
+        else:
+            with pytest.raises(RuntimeError, match="reached predictor construction"):
+                autogluon_timeseries_models_training.python_func(
+                    **frequency_component_kwargs, freq=freq, prediction_length=24
+                )
+        test_ts.convert_frequency.assert_called_once_with("D")
+
+    @mock.patch("pandas.read_parquet")
+    @mock.patch("autogluon.timeseries.TimeSeriesDataFrame")
+    @mock.patch("autogluon.timeseries.TimeSeriesPredictor")
+    @pytest.mark.parametrize(
+        ("start", "freq"),
+        [("2020-01-01 12:00", "D"), ("2020-01-01 12:00", "1D"), ("2020-01-01 00:15", "h")],
+    )
+    def test_regular_holdout_keeps_original_timestamps(
+        self, predictor, ts_frame, read_parquet, frequency_component_kwargs, start, freq
+    ):
+        """Do not resample a matching holdout, which would shift noon/quarter-hour timestamps."""
+        from kfp_components.components.training.automl.shared.timeseries_frequency import pd
+
+        dates = pd.date_range(start, periods=30, freq=freq)
+        test_ts = _mock_ts_df()
+        test_ts.index = pd.MultiIndex.from_product([["a"], dates], names=["item_id", "timestamp"])
+        original_index = test_ts.index.copy()
+        test_ts.infer_frequency.return_value = pd.infer_freq(dates)
+        test_ts.num_timesteps_per_item.return_value = {"a": len(dates)}
+        ts_frame.from_data_frame.side_effect = [_mock_ts_df(), test_ts]
+        predictor.side_effect = RuntimeError("reached predictor construction")
+
+        with pytest.raises(RuntimeError, match="reached predictor construction"):
+            autogluon_timeseries_models_training.python_func(**frequency_component_kwargs, freq=freq)
+
+        test_ts.convert_frequency.assert_not_called()
+        pd.testing.assert_index_equal(test_ts.index, original_index)
+
+    @mock.patch("pandas.read_parquet")
     @mock.patch("pandas.concat")
     @mock.patch("autogluon.timeseries.TimeSeriesDataFrame")
     @mock.patch("autogluon.timeseries.TimeSeriesPredictor")
+    @mock.patch(
+        "kfp_components.components.training.automl.shared.timeseries_frequency.infer_frequency_from_gaps",
+        return_value="15min",
+    )
+    @pytest.mark.parametrize(
+        ("freq", "inferred_freq"), [("", "h"), ("   ", "h"), ("", None), ("D", None), (" h ", None), ("2h", None)]
+    )
     def test_basic_flow_returns_expected_outputs(
         self,
+        mock_gap_inference,
         mock_predictor_cls,
         mock_ts_df_cls,
         mock_concat,
         mock_read_parquet,
         mock_artifacts,  # noqa: F811
+        mock_frequency_grid,
+        mock_frequency_expansion,
+        freq,
+        inferred_freq,
+        caplog,
     ):
         """Happy path returns top models, config, and predictor path with full refit."""
         models_artifact, extra_train_path, html_artifact, experiment_notebook = mock_artifacts
@@ -205,11 +363,23 @@ class TestTimeseriesModelsTrainingUnitTests:
 
         extra_ts = _mock_ts_df()
         full_train_ts = _mock_ts_df()
+        refit_train_ts = _mock_ts_df()
         # from_data_frame is called for: train, test, and once per model for build_predict_sample_artifact
-        mock_ts_df_cls.from_data_frame.return_value = _mock_ts_df()
+        train_ts, test_ts = _mock_ts_df(), _mock_ts_df()
+        mock_ts_df_cls.from_data_frame.side_effect = [train_ts, test_ts]
+        if inferred_freq is None:
+            full_train_ts.infer_frequency.side_effect = ValueError("Irregular timestamps")
+        else:
+            full_train_ts.infer_frequency.return_value = inferred_freq
         mock_ts_df_cls.from_path.return_value = extra_ts
-        mock_ts_df_cls.return_value = full_train_ts
+        mock_ts_df_cls.side_effect = [full_train_ts, refit_train_ts]
         mock_concat.return_value = mock.MagicMock()
+
+        def selection_fit(**kwargs):
+            assert mock_ts_df_cls.from_path.call_count == 1
+            assert mock_ts_df_cls.call_count == 1
+
+        mock_predictor.fit.side_effect = selection_fit
 
         train_df, test_df = mock.MagicMock(), mock.MagicMock()
         mock_read_parquet.side_effect = [train_df, test_df]
@@ -233,6 +403,7 @@ class TestTimeseriesModelsTrainingUnitTests:
             models_artifact=models_artifact,
             extra_train_data_path=extra_train_path,
             prediction_length=24,
+            freq=freq,
             html_artifact=html_artifact,
             experiment_notebook=experiment_notebook,
             component_status=_DEFAULT_COMPONENT_STATUS,
@@ -242,12 +413,14 @@ class TestTimeseriesModelsTrainingUnitTests:
         mock_read_parquet.assert_any_call("/tmp/test.parquet")
         mock_ts_df_cls.from_data_frame.assert_any_call(train_df, id_column="item_id", timestamp_column="timestamp")
         mock_ts_df_cls.from_data_frame.assert_any_call(test_df, id_column="item_id", timestamp_column="timestamp")
-        mock_ts_df_cls.from_path.assert_called_once_with(
-            path=extra_train_path,
-            id_column="item_id",
-            timestamp_column="timestamp",
-        )
-        mock_concat.assert_called_once()
+        assert mock_ts_df_cls.from_path.call_args_list == 2 * [
+            mock.call(
+                path=extra_train_path,
+                id_column="item_id",
+                timestamp_column="timestamp",
+            )
+        ]
+        assert mock_concat.call_count == 2
         concat_frames = mock_concat.call_args[0][0]
         assert len(concat_frames) == 2
         assert concat_frames[1] is extra_ts
@@ -256,6 +429,40 @@ class TestTimeseriesModelsTrainingUnitTests:
         assert result.eval_metric == "mean_absolute_scaled_error"
         assert result.predictor_path == "/tmp/workspace/timeseries_predictor"
         assert result.model_config["prediction_length"] == 24
+        expected_freq = freq.strip() or inferred_freq or "15min"
+        assert all(call.kwargs["freq"] == expected_freq for call in mock_predictor_cls.call_args_list)
+        train_ts.infer_frequency.assert_not_called()
+        if expected_freq == "D":
+            test_ts.convert_frequency.assert_not_called()
+        else:
+            test_ts.convert_frequency.assert_called_once_with(expected_freq)
+        assert result.model_config["freq"] == expected_freq
+        expected_source = "explicit" if freq.strip() else ("inferred" if inferred_freq else "gaps")
+        assert result.model_config["frequency_source"] == expected_source
+        status = json.loads((Path(_DEFAULT_COMPONENT_STATUS.path) / "component_status.json").read_text())
+        selection = next(stage for stage in status["stages"] if stage["id"] == "model_selection")
+        assert selection["metrics"]["freq"] == expected_freq
+        assert selection["metrics"]["frequency_source"] == expected_source
+        if freq.strip():
+            full_train_ts.infer_frequency.assert_not_called()
+            mock_frequency_grid.assert_not_called()
+            assert mock_frequency_expansion.call_args_list == [
+                mock.call(full_train_ts, expected_freq, name="full training data"),
+                mock.call(train_ts, expected_freq, name="selection training data"),
+                mock.call(test_ts, expected_freq, name="test data"),
+            ]
+        else:
+            mock_frequency_expansion.assert_not_called()
+            full_train_ts.infer_frequency.assert_called_once_with(num_items=None, raise_if_irregular=True)
+            assert mock_frequency_grid.call_args_list == [
+                mock.call(train_ts, expected_freq, name="selection training data"),
+                mock.call(test_ts, expected_freq, name="test data"),
+            ]
+        if not freq.strip() and inferred_freq is None:
+            mock_gap_inference.assert_called_once_with(full_train_ts)
+            assert "inferred freq='15min' from timestamp gaps" in caplog.text
+        else:
+            mock_gap_inference.assert_not_called()
         assert result.model_config["presets"] == "speed"
         assert result.model_config["time_limit"] == 600
         assert mock_predictor.fit.call_args.kwargs["presets"] == "medium_quality"
@@ -267,6 +474,7 @@ class TestTimeseriesModelsTrainingUnitTests:
         assert result.model_config["known_covariates_names"] == []
         assert result.model_config["num_models_trained"] == 3
         assert mock_refit_predictor.fit.call_count == 2
+        assert all(call.kwargs["train_data"] is refit_train_ts for call in mock_refit_predictor.fit.call_args_list)
         assert all(call.kwargs["time_limit"] == 300 for call in mock_refit_predictor.fit.call_args_list)
         assert [call.kwargs["model"] for call in mock_refit_predictor.evaluate.call_args_list] == ["DeepAR", "TFT"]
         # Verify full refit happened
@@ -523,12 +731,10 @@ class TestTimeseriesModelsTrainingUnitTests:
         # Check that first predictor call (selection) has known_covariates
         assert mock_predictor_cls.call_args_list[0][1]["known_covariates_names"] == covariates
         assert result.model_config["known_covariates_names"] == covariates
-        mock_ts_df_cls.from_path.assert_called_once_with(
-            path=extra_train_path,
-            id_column="item_id",
-            timestamp_column="timestamp",
-        )
-        mock_concat.assert_called_once()
+        assert mock_ts_df_cls.from_path.call_args_list == 2 * [
+            mock.call(path=extra_train_path, id_column="item_id", timestamp_column="timestamp")
+        ]
+        assert mock_concat.call_count == 2
 
     @mock.patch("pandas.read_parquet")
     @mock.patch("autogluon.timeseries.TimeSeriesDataFrame")
