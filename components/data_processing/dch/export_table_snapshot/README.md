@@ -32,6 +32,8 @@ Uses the gateway CA and task token to look up the saved connection and read the 
 - **Dependencies**:
   - Kubeflow:
     - Name: Pipelines, Version: >=2.16.1
+  - External Services:
+    - Name: Data Connect Hub Python SDK, Version: ==0.2.1
 - **Tags**:
   - data_processing
   - data_connect_hub
@@ -106,8 +108,12 @@ oc create secret generic dch-gateway -n "$TENANT_NAMESPACE" \
   --from-literal=host=dch.example.com:443
 ```
 
-The task sends its ServiceAccount token to this gateway. Restrict who can create,
-edit, or replace the Secret to administrators trusted to choose the destination.
+**Trust requirement.** The task sends its ServiceAccount token to the host
+configured in `dch-gateway`. Anyone who can create, update, patch, or delete and
+replace this Secret must be trusted to act as the pipeline runner. If users can
+launch the pipeline but cannot act as the runner, restrict those Secret
+operations to trusted administrators before making the pipeline available to them.
+
 The Secret is required even when the gateway uses a certificate the task already trusts.
 
 ### 1. Configure gateway TLS trust

@@ -6,6 +6,9 @@ dependencies:
   kubeflow:
     - name: Pipelines
       version: ">=2.16.1"
+  external_services:
+    - name: Data Connect Hub Python SDK
+      version: "==0.2.1"
 tags:
   - data_processing
   - data_connect_hub

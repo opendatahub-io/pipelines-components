@@ -28,6 +28,8 @@ Export a DCH table as CSV or Parquet and publish an HTML summary.
 - **Dependencies**:
   - Kubeflow:
     - Name: Pipelines, Version: >=2.16.1
+  - External Services:
+    - Name: Data Connect Hub Python SDK, Version: ==0.2.1
 - **Tags**:
   - data_processing
   - data_connect_hub
