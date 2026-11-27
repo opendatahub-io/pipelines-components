@@ -7,5 +7,5 @@
     // PR branch on the hbelmiro fork, where the config exists.
     "github>hbelmiro/konflux-central//renovate/pipelines-components-renovate.json5#worktree-wp1-aipipelines-renovate"
   ],
-  "baseBranches": ["main"]
+  "baseBranchPatterns": ["main"]
 }
