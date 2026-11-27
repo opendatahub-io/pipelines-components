@@ -40,9 +40,7 @@ concurrency:
   group: renovate
   cancel-in-progress: false
 
-permissions:
-  contents: write
-  pull-requests: write
+permissions: {}  # authenticated by the RENOVATE_TOKEN PAT, not GITHUB_TOKEN
 
 jobs:
   renovate:
@@ -50,7 +48,7 @@ jobs:
     if: >-
       github.event_name != 'schedule'
       || github.repository == 'opendatahub-io/pipelines-components'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - name: Checkout (config validation only)
@@ -65,6 +63,9 @@ jobs:
           RENOVATE_TOKEN: ${{ secrets.RENOVATE_TOKEN }}
           DRY_RUN: ${{ inputs.dry_run }}
           LOG_LEVEL: ${{ inputs.log_level || 'info' }}
+          # Midstream on schedule (guarded above); on dispatch, whatever
+          # repository the run was dispatched from (fork rehearsal).
+          REPO: ${{ github.repository }}
           # Pinned image — bump version and digest together.
           RENOVATE_IMAGE: ghcr.io/renovatebot/renovate:45.1.0@sha256:5b61108eec9d45728326d41303abb1f81a8f536039446ba31805de7bf79d9151
         run: |
@@ -82,6 +83,7 @@ jobs:
           # Fail fast on an invalid config instead of silently running with
           # defaults (e.g. an unknown key would otherwise be ignored).
           docker run --rm \
+            -e RENOVATE_TOKEN \
             -v "$GITHUB_WORKSPACE/.github/renovate.json5:/tmp/renovate.json5:ro" \
             --entrypoint renovate-config-validator \
             "$RENOVATE_IMAGE" --strict /tmp/renovate.json5
@@ -98,7 +100,7 @@ jobs:
           docker run --rm \
             -e RENOVATE_TOKEN \
             -e RENOVATE_PLATFORM=github \
-            -e RENOVATE_REPOSITORIES='["opendatahub-io/pipelines-components"]' \
+            -e RENOVATE_REPOSITORIES="[\"${REPO}\"]" \
             -e LOG_LEVEL \
             -e LOG_FILE=/tmp/renovate-log/renovate.ndjson \
             -e LOG_FILE_LEVEL=debug \
