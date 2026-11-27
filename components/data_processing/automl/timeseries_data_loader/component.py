@@ -149,8 +149,7 @@ def timeseries_data_loader(
         except Exception as e:  # noqa: BLE001 - stats logging must never break the run
             logger.debug("Could not compute dataset stats for %s: %s", name, e)
 
-    from kfp_components.components.training.automl.shared.component_status import ComponentStatusTracker
-    from kfp_components.components.training.automl.shared.input_sources import (
+    from kfp_components.components.data_processing.automl.shared.input_sources import (
         FORMAT_CSV,
         FORMAT_PARQUET,
         ParquetSourceError,
@@ -158,6 +157,7 @@ def timeseries_data_loader(
         iter_parquet_batches,
         staged_parquet_source,
     )
+    from kfp_components.components.training.automl.shared.component_status import ComponentStatusTracker
     from kfp_components.components.training.automl.shared.parquet_utils import stringify_mixed_object_columns
     from kfp_components.components.training.automl.shared.timeseries_sampling import (
         PANDAS_CHUNK_SIZE,
@@ -439,16 +439,17 @@ def timeseries_data_loader(
                         )
                     chunk[id_column] = SYNTHETIC_ITEM_ID_VALUE
                 chunk = _clean_timeseries_dataframe(chunk, id_column, timestamp_column, logger)
-                # CSV sources read the id column as strings (the dtype policy in
-                # _csv_chunks) and the synthetic path injects a string constant, but
-                # Parquet preserves the stored dtype (float64, int64, categorical).
-                # AutoGluon requires item_id values of integer or string dtype: a
-                # float64 id column passes every loader check yet produces artifacts
-                # AutoGluon rejects downstream, and mixed CSV/Parquet inputs (train
-                # plus user test data) would carry inconsistent id types. Normalize
-                # after the null check inside _clean_timeseries_dataframe -- casting
-                # first would turn null ids into the string "nan" and mask them.
-                chunk[id_column] = chunk[id_column].astype(str)
+                if source_format == FORMAT_PARQUET and not uses_synthetic_id:
+                    # Convert after null validation. AutoGluon accepts string IDs,
+                    # and whole-valued floats must match integer IDs such as "1".
+                    ids = chunk[id_column]
+                    id_dtype = ids.cat.categories.dtype if isinstance(ids.dtype, pd.CategoricalDtype) else ids.dtype
+                    string_ids = ids.astype(str)
+                    if pd.api.types.is_float_dtype(id_dtype):
+                        numeric_ids = ids.astype(id_dtype)
+                        whole = numeric_ids.mod(1).eq(0)
+                        string_ids.loc[whole] = numeric_ids[whole].map(int).astype(str)
+                    chunk[id_column] = string_ids
                 stringify_mixed_object_columns(chunk)
                 yield chunk
 

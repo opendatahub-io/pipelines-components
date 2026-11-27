@@ -55,7 +55,7 @@ def _deterministic_train_test_split(X, y, *, test_size=0.25, stratify=None, rand
 
 
 @contextmanager
-def _mock_boto3_and_sklearn(get_object_side_effect=None, head_object_side_effect=None, download_file_side_effect=None):
+def _mock_boto3_and_sklearn(get_object_side_effect, head_object_side_effect=None):
     """Inject fake boto3/botocore and sklearn modules; pandas and pyarrow run for real.
 
     Only the touched sys.modules entries are set (and restored) individually:
@@ -64,12 +64,9 @@ def _mock_boto3_and_sklearn(get_object_side_effect=None, head_object_side_effect
     """
     mock_boto3 = mock.MagicMock()
     mock_s3 = mock.MagicMock()
-    if get_object_side_effect is not None:
-        mock_s3.get_object.side_effect = get_object_side_effect
+    mock_s3.get_object.side_effect = get_object_side_effect
     if head_object_side_effect is not None:
         mock_s3.head_object.side_effect = head_object_side_effect
-    if download_file_side_effect is not None:
-        mock_s3.download_file.side_effect = download_file_side_effect
     mock_boto3.client.return_value = mock_s3
 
     mock_botocore = mock.MagicMock()
@@ -113,10 +110,10 @@ def _frame(rows: int, *, classification: bool = False) -> pd.DataFrame:
     )
 
 
-def _parquet_bytes(frame: pd.DataFrame) -> bytes:
+def _parquet_bytes(frame: pd.DataFrame, compression="snappy") -> bytes:
     """Serialize a dataframe to an in-memory Parquet file."""
     buffer = io.BytesIO()
-    frame.to_parquet(buffer, index=False)
+    frame.to_parquet(buffer, index=False, compression=compression)
     return buffer.getvalue()
 
 
@@ -133,14 +130,10 @@ def _serving_parquet_payload(payload: bytes):
     def head_object(*, Bucket, Key):
         return {"ContentLength": len(payload)}
 
-    def download_file(bucket, key, filename, **kwargs):
-        Path(filename).write_bytes(payload)
+    def get_object(*, Bucket, Key, Range=None):
+        return {"Body": io.BytesIO(payload[:4] if Range else payload)}
 
-    def get_object(*, Bucket, Key, **kwargs):
-        # Only reached for magic-byte sniffing (extensionless keys).
-        return {"Body": io.BytesIO(payload[:4]), "ContentLength": len(payload)}
-
-    return get_object, head_object, download_file
+    return get_object, head_object
 
 
 def _status_json(component_status) -> dict:
@@ -157,13 +150,15 @@ class TestParquetInput:
     """A valid Parquet training source trains-ready data without any manual conversion."""
 
     @mock.patch.dict("os.environ", mocked_env_variables, clear=True)
-    def test_parquet_input_random_sampling(self, tmp_path):
+    @pytest.mark.parametrize("compression", ["snappy", "gzip", "lz4", "zstd", "brotli"])
+    def test_parquet_input_random_sampling(self, tmp_path, compression):
         """A valid Parquet file is staged, sampled, and split exactly like a CSV source."""
         frame = _frame(120)
-        get_object, head_object, download_file = _serving_parquet_payload(_parquet_bytes(frame))
+        payload = _parquet_bytes(frame, compression)
+        get_object, head_object = _serving_parquet_payload(payload)
         sampled_test, component_status = _make_artifacts(tmp_path)
 
-        with _mock_boto3_and_sklearn(get_object, head_object, download_file) as mock_s3:
+        with _mock_boto3_and_sklearn(get_object, head_object) as mock_s3:
             result = automl_data_loader.python_func(
                 file_key="data/train.parquet",
                 bucket_name="bucket",
@@ -173,9 +168,7 @@ class TestParquetInput:
                 component_status=component_status,
             )
 
-        # CSV keys are not sniffed or staged; Parquet keys are staged, never streamed.
-        mock_s3.get_object.assert_not_called()
-        mock_s3.download_file.assert_called_once()
+        mock_s3.get_object.assert_called_once_with(Bucket="bucket", Key="data/train.parquet")
 
         assert result.sample_config["n_samples"] == 120
         selection = pd.read_parquet(result.models_selection_train_data_path)
@@ -187,16 +180,16 @@ class TestParquetInput:
         metrics = _stage_metrics(_status_json(component_status))
         assert metrics["source_format"] == "parquet"
         assert metrics["s3_transfer_mode"] == "parquet_local"
-        assert metrics["source_bytes"] == len(_parquet_bytes(frame))
+        assert metrics["source_bytes"] == len(payload)
 
     @mock.patch.dict("os.environ", mocked_env_variables, clear=True)
     def test_parquet_input_stratified_sampling(self, tmp_path):
         """Classification tasks keep stratified splits over Parquet chunks."""
         frame = _frame(120, classification=True)
-        get_object, head_object, download_file = _serving_parquet_payload(_parquet_bytes(frame))
+        get_object, head_object = _serving_parquet_payload(_parquet_bytes(frame))
         sampled_test, component_status = _make_artifacts(tmp_path)
 
-        with _mock_boto3_and_sklearn(get_object, head_object, download_file):
+        with _mock_boto3_and_sklearn(get_object, head_object):
             result = automl_data_loader.python_func(
                 file_key="data/train.parquet",
                 bucket_name="bucket",
@@ -216,10 +209,10 @@ class TestParquetInput:
     def test_extensionless_parquet_detected_by_magic_bytes(self, tmp_path):
         """A Parquet file without a Parquet extension is sniffed and read as Parquet."""
         payload = _parquet_bytes(_frame(120))
-        get_object, head_object, download_file = _serving_parquet_payload(payload)
+        get_object, head_object = _serving_parquet_payload(payload)
         sampled_test, component_status = _make_artifacts(tmp_path)
 
-        with _mock_boto3_and_sklearn(get_object, head_object, download_file) as mock_s3:
+        with _mock_boto3_and_sklearn(get_object, head_object) as mock_s3:
             result = automl_data_loader.python_func(
                 file_key="data/export",
                 bucket_name="bucket",
@@ -230,7 +223,7 @@ class TestParquetInput:
             )
 
         # The ranged GET sniffs the leading magic bytes; the full object is staged.
-        sniff = mock_s3.get_object.call_args
+        sniff = mock_s3.get_object.call_args_list[0]
         assert sniff.kwargs["Range"] == "bytes=0-3"
         assert result.sample_config["n_samples"] == 120
         metrics = _stage_metrics(_status_json(component_status))
@@ -248,18 +241,14 @@ class TestParquetUserDataTestData:
         parquet_payloads = {"data/train.parquet": _parquet_bytes(train), "data/test.parquet": _parquet_bytes(test)}
 
         def get_object(*, Bucket, Key, **kwargs):
-            payload = parquet_payloads[Key]
-            return {"Body": io.BytesIO(payload[:4]), "ContentLength": len(payload)}
+            return {"Body": io.BytesIO(parquet_payloads[Key])}
 
         def head_object(*, Bucket, Key):
             return {"ContentLength": len(parquet_payloads[Key])}
 
-        def download_file(bucket, key, filename, **kwargs):
-            Path(filename).write_bytes(parquet_payloads[key])
-
         sampled_test, component_status = _make_artifacts(tmp_path)
 
-        with _mock_boto3_and_sklearn(get_object, head_object, download_file):
+        with _mock_boto3_and_sklearn(get_object, head_object):
             result = automl_data_loader.python_func(
                 file_key="data/train.parquet",
                 bucket_name="bucket",
@@ -300,10 +289,10 @@ class TestCorruptParquetRejected:
     def test_non_parquet_bytes_named_parquet_rejected(self, tmp_path):
         """A CSV payload renamed to .parquet is rejected naming the file and the problem."""
         payload = b"feature_1,f2,target\n1,s0,10.0\n"
-        get_object, head_object, download_file = _serving_parquet_payload(payload)
-        sampled_test, _ = _make_artifacts(tmp_path)
+        get_object, head_object = _serving_parquet_payload(payload)
+        sampled_test, component_status = _make_artifacts(tmp_path)
 
-        with _mock_boto3_and_sklearn(get_object, head_object, download_file):
+        with _mock_boto3_and_sklearn(get_object, head_object):
             with pytest.raises(ValueError) as exc_info:
                 automl_data_loader.python_func(
                     file_key="data/train.parquet",
@@ -311,6 +300,7 @@ class TestCorruptParquetRejected:
                     workspace_path=str(tmp_path),
                     label_column="target",
                     sampled_test_dataset=sampled_test,
+                    component_status=component_status,
                 )
 
         message = str(exc_info.value)
@@ -323,10 +313,10 @@ class TestCorruptParquetRejected:
     def test_truncated_parquet_rejected(self, tmp_path):
         """A Parquet file cut short is rejected with a truncation-specific message."""
         payload = _parquet_bytes(_frame(120))[:600]
-        get_object, head_object, download_file = _serving_parquet_payload(payload)
-        sampled_test, _ = _make_artifacts(tmp_path)
+        get_object, head_object = _serving_parquet_payload(payload)
+        sampled_test, component_status = _make_artifacts(tmp_path)
 
-        with _mock_boto3_and_sklearn(get_object, head_object, download_file):
+        with _mock_boto3_and_sklearn(get_object, head_object):
             with pytest.raises(ValueError) as exc_info:
                 automl_data_loader.python_func(
                     file_key="data/train.parquet",
@@ -334,6 +324,7 @@ class TestCorruptParquetRejected:
                     workspace_path=str(tmp_path),
                     label_column="target",
                     sampled_test_dataset=sampled_test,
+                    component_status=component_status,
                 )
 
         message = str(exc_info.value)
@@ -344,10 +335,10 @@ class TestCorruptParquetRejected:
     @mock.patch.dict("os.environ", mocked_env_variables, clear=True)
     def test_empty_parquet_object_rejected(self, tmp_path):
         """A zero-byte Parquet upload is rejected naming the empty file."""
-        get_object, head_object, download_file = _serving_parquet_payload(b"")
-        sampled_test, _ = _make_artifacts(tmp_path)
+        get_object, head_object = _serving_parquet_payload(b"")
+        sampled_test, component_status = _make_artifacts(tmp_path)
 
-        with _mock_boto3_and_sklearn(get_object, head_object, download_file):
+        with _mock_boto3_and_sklearn(get_object, head_object):
             with pytest.raises(ValueError, match="is empty \\(0 bytes\\)"):
                 automl_data_loader.python_func(
                     file_key="data/train.parquet",
@@ -355,6 +346,7 @@ class TestCorruptParquetRejected:
                     workspace_path=str(tmp_path),
                     label_column="target",
                     sampled_test_dataset=sampled_test,
+                    component_status=component_status,
                 )
 
         self._assert_no_outputs(tmp_path, sampled_test)
@@ -363,10 +355,10 @@ class TestCorruptParquetRejected:
     def test_corrupt_parquet_rejected_for_stratified_sampling_too(self, tmp_path):
         """Every sampling strategy rejects damaged Parquet, including the recoverable-partial-read one."""
         payload = b"feature_1,f2,target\n1,s0,A\n"
-        get_object, head_object, download_file = _serving_parquet_payload(payload)
-        sampled_test, _ = _make_artifacts(tmp_path)
+        get_object, head_object = _serving_parquet_payload(payload)
+        sampled_test, component_status = _make_artifacts(tmp_path)
 
-        with _mock_boto3_and_sklearn(get_object, head_object, download_file):
+        with _mock_boto3_and_sklearn(get_object, head_object):
             with pytest.raises(ValueError, match="is not a valid Parquet file") as exc_info:
                 automl_data_loader.python_func(
                     file_key="data/train.parquet",
@@ -375,6 +367,7 @@ class TestCorruptParquetRejected:
                     label_column="target",
                     task_type="binary",
                     sampled_test_dataset=sampled_test,
+                    component_status=component_status,
                 )
 
         # The descriptive Parquet error is not double-wrapped in a generic read error.
@@ -390,17 +383,15 @@ class TestCorruptParquetRejected:
         parquet_payloads = {"data/test.parquet": test_payload}
 
         def get_object(*, Bucket, Key, **kwargs):
-            return {"Body": io.BytesIO(train_csv.encode("utf-8")), "ContentLength": len(train_csv)}
+            payload = parquet_payloads[Key] if Key in parquet_payloads else train_csv.encode("utf-8")
+            return {"Body": io.BytesIO(payload), "ContentLength": len(payload)}
 
         def head_object(*, Bucket, Key):
             return {"ContentLength": len(parquet_payloads[Key])}
 
-        def download_file(bucket, key, filename, **kwargs):
-            Path(filename).write_bytes(parquet_payloads[key])
+        sampled_test, component_status = _make_artifacts(tmp_path)
 
-        sampled_test, _ = _make_artifacts(tmp_path)
-
-        with _mock_boto3_and_sklearn(get_object, head_object, download_file):
+        with _mock_boto3_and_sklearn(get_object, head_object):
             with pytest.raises(ValueError) as exc_info:
                 automl_data_loader.python_func(
                     file_key="data/train.csv",
@@ -408,6 +399,7 @@ class TestCorruptParquetRejected:
                     workspace_path=str(tmp_path),
                     label_column="target",
                     sampled_test_dataset=sampled_test,
+                    component_status=component_status,
                     test_data_bucket_name="test-bucket",
                     test_data_file_key="data/test.parquet",
                 )
@@ -488,9 +480,9 @@ class TestCsvParquetParity:
         """Run the loader over a staged Parquet source; return the three output paths."""
         workspace.mkdir(parents=True)
         sampled_test, component_status = _make_artifacts(workspace)
-        get_object, head_object, download_file = _serving_parquet_payload(parquet_payload)
+        get_object, head_object = _serving_parquet_payload(parquet_payload)
 
-        with _mock_boto3_and_sklearn(get_object, head_object, download_file):
+        with _mock_boto3_and_sklearn(get_object, head_object):
             result = automl_data_loader.python_func(
                 file_key="data/train.parquet",
                 bucket_name="bucket",

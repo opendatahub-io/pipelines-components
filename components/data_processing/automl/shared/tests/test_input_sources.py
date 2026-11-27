@@ -5,12 +5,14 @@ actual (deliberately corrupted) files; S3 clients are plain mocks.
 """
 
 import io
+import tempfile
 from pathlib import Path
 from unittest import mock
 
 import pandas as pd
 import pytest
-from kfp_components.components.training.automl.shared.input_sources import (
+from kfp_components.components.data_processing.automl.shared import input_sources
+from kfp_components.components.data_processing.automl.shared.input_sources import (
     FORMAT_CSV,
     FORMAT_PARQUET,
     NODE_LOCAL_STAGING_MAX_BYTES,
@@ -179,6 +181,14 @@ class TestIterParquetBatches:
         assert "corrupted or malformed" in message
         assert "Underlying error" in message
 
+    def test_encrypted_footer_is_rejected_descriptively(self, tmp_path):
+        """The encrypted Parquet magic is reported as an encryption error."""
+        path = tmp_path / "encrypted.parquet"
+        path.write_bytes(b"PARE\x00\x00\x00\x00PARE")
+
+        with pytest.raises(ValueError, match="has an encrypted footer"):
+            iter_parquet_batches(path, 100, source_label="s3://bucket/encrypted.parquet")
+
     def test_tiny_file_is_rejected_descriptively(self, tmp_path):
         """A file too small to structurally be Parquet is rejected as truncated."""
         path = tmp_path / "train.parquet"
@@ -197,7 +207,7 @@ class TestStagedParquetSource:
     def _s3_with_payload(payload: bytes, content_length=None):
         s3 = mock.MagicMock()
         s3.head_object.return_value = {"ContentLength": len(payload) if content_length is None else content_length}
-        s3.download_file.side_effect = lambda bucket, key, filename: open(filename, "wb").write(payload)
+        s3.get_object.return_value = {"Body": io.BytesIO(payload)}
         return s3
 
     def test_small_object_stages_node_locally_and_cleans_up(self, tmp_path):
@@ -213,7 +223,8 @@ class TestStagedParquetSource:
             assert staged_path.read_bytes() == payload
 
         assert not staged_path.exists()
-        s3.download_file.assert_called_once()
+        s3.get_object.assert_called_once_with(Bucket="bucket", Key="train.parquet")
+        assert s3.get_object.return_value["Body"].closed
         # The workspace was never touched for a small object.
         assert not workspace.exists()
 
@@ -252,7 +263,7 @@ class TestStagedParquetSource:
                 pass
 
         assert "node-local staging budget" in str(exc_info.value)
-        s3.download_file.assert_not_called()
+        s3.get_object.assert_not_called()
 
     def test_object_above_workspace_budget_is_rejected(self, tmp_path):
         """Objects beyond the workspace staging limit are refused before any download."""
@@ -263,14 +274,13 @@ class TestStagedParquetSource:
                 pass
 
         assert "staging limit" in str(exc_info.value)
-        s3.download_file.assert_not_called()
+        s3.get_object.assert_not_called()
 
     def test_unknown_size_stages_node_locally(self, tmp_path):
         """A failed size probe still allows staging (best effort), with source_bytes unknown."""
         payload = _parquet_bytes(_simple_frame(3))
-        s3 = mock.MagicMock()
+        s3 = self._s3_with_payload(payload)
         s3.head_object.side_effect = RuntimeError("HEAD not supported")
-        s3.download_file.side_effect = lambda bucket, key, filename: open(filename, "wb").write(payload)
         workspace = tmp_path / "workspace"
 
         with staged_parquet_source(s3, "bucket", "train.parquet", workspace_dir=workspace) as staged:
@@ -281,24 +291,50 @@ class TestStagedParquetSource:
     def test_invalid_content_length_is_treated_as_unknown(self, tmp_path):
         """A non-integer ContentLength (e.g. a mock or a broken store) degrades to unknown size."""
         payload = _parquet_bytes(_simple_frame(3))
-        s3 = mock.MagicMock()
-        s3.head_object.return_value = {"ContentLength": object()}
-        s3.download_file.side_effect = lambda bucket, key, filename: open(filename, "wb").write(payload)
+        s3 = self._s3_with_payload(payload, content_length=object())
 
         with staged_parquet_source(s3, "bucket", "train.parquet") as staged:
             assert staged.source_bytes is None
 
-    def test_download_failure_propagates_and_cleans_up(self):
+    @pytest.mark.parametrize(("source_bytes", "limit"), [(None, 8), (8, 8), (9, 16)])
+    def test_transfer_enforces_selected_staging_limit(self, tmp_path, monkeypatch, source_bytes, limit):
+        """Unknown sizes and stale HEAD results cannot overflow either staging location."""
+        monkeypatch.setattr(input_sources, "NODE_LOCAL_STAGING_MAX_BYTES", 8)
+        monkeypatch.setattr(input_sources, "WORKSPACE_STAGING_MAX_BYTES", 16)
+        monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+        s3 = mock.MagicMock()
+        s3.head_object.return_value = {"ContentLength": source_bytes}
+        workspace = tmp_path / "workspace"
+        staging_dir = workspace if source_bytes == 9 else tmp_path
+        first_chunk = b"x" * limit
+        body = s3.get_object.return_value["Body"]
+        body.read.side_effect = [first_chunk, b"exceeds limit"]
+
+        def check_partial_file():
+            path = next(staging_dir.glob("automl-parquet-*"))
+            assert path.read_bytes() == first_chunk
+
+        body.close.side_effect = check_partial_file
+        with pytest.raises(ValueError, match=f"exceeds the {limit}-byte staging limit"):
+            with staged_parquet_source(s3, "bucket", "train.parquet", workspace_dir=workspace):
+                pytest.fail("Staging succeeded for an object above the limit")
+
+        body.close.assert_called_once()
+        assert not list(staging_dir.glob("automl-parquet-*"))
+
+    def test_download_failure_propagates_and_cleans_up(self, tmp_path, monkeypatch):
         """Download errors propagate unwrapped (loaders keep their TLS/ClientError handling)."""
+        monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
         s3 = mock.MagicMock()
         s3.head_object.return_value = {"ContentLength": 128}
-        s3.download_file.side_effect = RuntimeError("NoSuchKey")
+        s3.get_object.side_effect = RuntimeError("NoSuchKey")
 
         with pytest.raises(RuntimeError, match="NoSuchKey"):
             with staged_parquet_source(s3, "bucket", "train.parquet"):
                 pass
 
-        s3.download_file.assert_called_once()
+        s3.get_object.assert_called_once()
+        assert not list(tmp_path.glob("automl-parquet-*"))
 
     def test_sampling_error_still_cleans_up(self, tmp_path):
         """An exception raised while sampling inside the context removes the staged file."""

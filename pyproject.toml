@@ -59,6 +59,7 @@ packages = [
     "kfp_components.components",
     "kfp_components.components.data_processing",
     "kfp_components.components.data_processing.automl",
+    "kfp_components.components.data_processing.automl.shared",
     "kfp_components.components.data_processing.automl.tabular_data_loader",
     "kfp_components.components.data_processing.automl.timeseries_data_loader",
     "kfp_components.components.data_processing.autorag",

@@ -275,12 +275,12 @@ Match stage ids to the tabular pipeline entry in ``component_stage_map.json`` fr
 
 ## Supported formats and limits 📋
 
-- **Input format**: CSV only (S3 source file, and the optional user-provided test dataset).
+- **Input formats** — CSV and Parquet for both the S3 training source and the optional test dataset.
 - **Output format**: Snappy-compressed Parquet for all pipeline-owned copies — the two PVC
   workspace train splits (`models_selection_train_dataset.parquet`, `extra_train_dataset.parquet`)
   and the `sampled_test_dataset` artifact. No full-size CSV copy of any split is kept.
-- **Size limit**: Preset-dependent size budget in memory (sampled if larger) — ``"speed"``: 100 MiB, ``"balanced"``: 1 GiB.
-- **Streaming**: Data is read in batches (10k rows per chunk) to handle large files.
+- **Sampling budget in memory** — 100 MiB for `speed`, 1 GiB for `balanced`, and 10 GiB for `quality`.
+- **Parquet staging** — Up to 2 GiB on node-local storage or up to 16 GiB on the pipeline workspace for larger objects.
 
 ## Logging 📝
 

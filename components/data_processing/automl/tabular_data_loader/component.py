@@ -125,8 +125,7 @@ def automl_data_loader(  # noqa: D417
 
     import boto3
     import pandas as pd
-    from kfp_components.components.training.automl.shared.component_status import ComponentStatusTracker
-    from kfp_components.components.training.automl.shared.input_sources import (
+    from kfp_components.components.data_processing.automl.shared.input_sources import (
         FORMAT_CSV,
         FORMAT_PARQUET,
         ParquetSourceError,
@@ -134,6 +133,7 @@ def automl_data_loader(  # noqa: D417
         iter_parquet_batches,
         staged_parquet_source,
     )
+    from kfp_components.components.training.automl.shared.component_status import ComponentStatusTracker
     from kfp_components.components.training.automl.shared.parquet_utils import stringify_mixed_object_columns
     from kfp_components.components.training.automl.shared.user_test_data import (
         raise_if_test_data_empty,
@@ -309,9 +309,8 @@ def automl_data_loader(  # noqa: D417
             """Yield dataframe chunks from a CSV stream/path or a staged Parquet file.
 
             Parquet sources are always local paths staged by ``staged_parquet_source``;
-            the eager open inside ``iter_parquet_batches`` validates the file before
-            any sampling work runs, and ``source_label`` keeps its errors pointing at
-            the s3:// URI rather than the local staging path. CSV sources keep the
+            ``iter_parquet_batches`` validates the header and footer before sampling,
+            and ``source_label`` identifies the S3 object in errors. CSV sources keep the
             exact ``pd.read_csv`` streaming call the samplers have always used.
             """
             if source_format == FORMAT_PARQUET:
@@ -336,9 +335,9 @@ def automl_data_loader(  # noqa: D417
 
             ``fail_on_partial_read`` makes a mid-stream error fatal instead of returning the
             rows read so far. Test data must fail closed: a partial holdout set would be
-            scored as if it were complete. A corrupted Parquet file always fails, even for
-            training data: keeping its decoded prefix would silently train on a damaged
-            file instead of rejecting it.
+            scored as if it were complete. Parquet header and footer errors fail before
+            sampling, and decoding errors fail if the sampler reaches them. Row groups
+            beyond the sampled prefix may remain unread, so corruption there can go undetected.
             """
             chunk_list = []
             accumulated_size = 0
@@ -658,9 +657,8 @@ def automl_data_loader(  # noqa: D417
             Parquet footer metadata sits at the end of the file, so the object is
             downloaded to seekable storage first (node-local, or the workspace for
             large objects) and then fed through the same samplers as CSV sources.
-            ``iter_parquet_batches`` validates the file eagerly, so corrupted or
-            malformed Parquet fails here with a descriptive error before any
-            split or training output is produced.
+            ``iter_parquet_batches`` checks the header and footer eagerly and reports
+            decoding errors in row groups reached during sampling.
             """
             from botocore.exceptions import SSLError
 

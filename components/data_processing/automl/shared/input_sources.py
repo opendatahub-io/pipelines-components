@@ -19,9 +19,8 @@ live here instead of being duplicated (see ``user_test_data.py`` and
   malformed files raise :class:`ParquetSourceError` with a message that names
   the file and the underlying problem.
 
-boto3 and pyarrow are imported lazily inside the functions that need them: this
-module is imported by components that run in the AutoML image (where both are
-present) and by unit tests that mock them (where they may be absent).
+PyArrow is imported only when reading Parquet. S3 operations use the client
+provided by the loader.
 """
 
 from __future__ import annotations
@@ -29,15 +28,15 @@ from __future__ import annotations
 import logging
 import os
 import tempfile
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 
 logger = logging.getLogger(__name__)
 
-# Every Parquet file starts and ends with these four bytes. The header magic
-# identifies the format; the trailing magic brackets the footer metadata.
+# The magic bytes identify Parquet files and distinguish encrypted footers.
 PARQUET_MAGIC = b"PAR1"
+_ENCRYPTED_PARQUET_MAGIC = b"PARE"
 PARQUET_SUFFIXES = (".parquet", ".pq")
 CSV_SUFFIXES = (".csv", ".tsv", ".txt")
 
@@ -99,10 +98,9 @@ def detect_input_source_format(s3_client, bucket_name: str, file_key: str, *, co
         str: ``FORMAT_PARQUET`` or ``FORMAT_CSV``.
     """
     log = component_logger or logger
-    key = (file_key or "").lower()
-    if key.endswith(PARQUET_SUFFIXES):
+    if is_parquet_object_key(file_key):
         return FORMAT_PARQUET
-    if key.endswith(CSV_SUFFIXES):
+    if (file_key or "").lower().endswith(CSV_SUFFIXES):
         return FORMAT_CSV
     try:
         response = s3_client.get_object(Bucket=bucket_name, Key=file_key, Range=f"bytes=0-{len(PARQUET_MAGIC) - 1}")
@@ -132,14 +130,15 @@ def staged_parquet_source(s3_client, bucket_name: str, file_key: str, *, workspa
     node-local temporary storage. Larger objects are staged on ``workspace_dir``
     (the pipeline's PVC workspace) up to :data:`WORKSPACE_STAGING_MAX_BYTES`
     (16 GiB), matching the timeseries sampler's spool budget. When the size
-    cannot be determined the object is staged node-local, best effort.
+    cannot be determined the object is staged node-local. The transfer enforces
+    the budget for the selected location as bytes are written.
 
     Download failures propagate to the caller (botocore errors are not wrapped)
     so loaders keep their existing TLS/ClientError handling; the staged file is
     always removed, including when sampling raises.
 
     Args:
-        s3_client: boto3 S3 client used for ``head_object``/``download_file``.
+        s3_client: boto3 S3 client used for ``head_object`` and ``get_object``.
         bucket_name: S3 bucket name.
         file_key: S3 object key.
         workspace_dir: Optional workspace directory (Path or str) used to stage
@@ -153,8 +152,8 @@ def staged_parquet_source(s3_client, bucket_name: str, file_key: str, *, workspa
         ``staged_on_workspace`` (bool).
 
     Raises:
-        ValueError: If the object is larger than the workspace staging budget,
-            or larger than node-local storage with no ``workspace_dir`` given.
+        ValueError: If the object exceeds the staging budget for the available
+            storage or the transfer exceeds the budget for the selected location.
     """
     label = source_label or f"s3://{bucket_name}/{file_key}"
     source_bytes = None
@@ -164,7 +163,7 @@ def staged_parquet_source(s3_client, bucket_name: str, file_key: str, *, workspa
         if isinstance(content_length, int) and content_length >= 0:
             source_bytes = content_length
     except Exception as exc:  # noqa: BLE001 - the size probe is best effort
-        logger.info("Could not determine the size of %s; staging it without a size check: %s", label, exc)
+        logger.info("Could not determine the size of %s; applying the node-local limit during transfer: %s", label, exc)
 
     if source_bytes is not None and source_bytes > WORKSPACE_STAGING_MAX_BYTES:
         raise ValueError(
@@ -187,10 +186,20 @@ def staged_parquet_source(s3_client, bucket_name: str, file_key: str, *, workspa
             "directory is available for larger files."
         )
 
+    staging_limit = WORKSPACE_STAGING_MAX_BYTES if staged_on_workspace else NODE_LOCAL_STAGING_MAX_BYTES
     descriptor, path = tempfile.mkstemp(prefix="automl-parquet-", suffix=".parquet", dir=staging_dir)
     os.close(descriptor)
     try:
-        s3_client.download_file(bucket_name, file_key, path)
+        response = s3_client.get_object(Bucket=bucket_name, Key=file_key)
+        with closing(response["Body"]) as body, open(path, "wb") as staged_file:
+            written = 0
+            while chunk := body.read(1024 * 1024):
+                if written + len(chunk) > staging_limit:
+                    raise ValueError(
+                        f"The Parquet file {label} exceeds the {staging_limit}-byte staging limit. "
+                        "Reduce or partition the dataset."
+                    )
+                written += staged_file.write(chunk)
         yield SimpleNamespace(path=path, source_bytes=source_bytes, staged_on_workspace=staged_on_workspace)
     finally:
         try:
@@ -202,9 +211,8 @@ def staged_parquet_source(s3_client, bucket_name: str, file_key: str, *, workspa
 def iter_parquet_batches(path, batch_rows: int, *, source_label=None):
     """Open a local Parquet file eagerly and yield its rows as pandas DataFrames.
 
-    The file is validated and opened when called (not on first iteration), so a
-    corrupted or malformed file fails before any sampling work starts. Row
-    batches mirror ``pd.read_csv(..., chunksize=batch_rows)``: bounded by
+    The header and footer are validated when called, before sampling starts.
+    Row batches mirror ``pd.read_csv(..., chunksize=batch_rows)``: bounded by
     ``batch_rows`` and decoded lazily, so budget-driven samplers that stop early
     do not decode the whole file.
 
@@ -251,6 +259,10 @@ def iter_parquet_batches(path, batch_rows: int, *, source_label=None):
         header = handle.read(len(PARQUET_MAGIC))
         handle.seek(-len(PARQUET_MAGIC), os.SEEK_END)
         footer = handle.read(len(PARQUET_MAGIC))
+    if _ENCRYPTED_PARQUET_MAGIC in (header, footer):
+        raise ParquetSourceError(
+            f"The Parquet file {label} has an encrypted footer. Upload an unencrypted Parquet file."
+        )
     if header != PARQUET_MAGIC:
         raise ParquetSourceError(
             f"The file {label} is not a valid Parquet file: it does not start with the Parquet "
