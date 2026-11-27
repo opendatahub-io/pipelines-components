@@ -1792,3 +1792,446 @@ def test_invalid_timestamp_after_budget_exhaustion_fails(tmp_path):
     ):
         _run_loader(tmp_path, csv_body)
     assert not list(tmp_path.glob("timeseries-sampling-*"))
+
+
+def _panel_frame(rows_per_series=60, series=("series-1", "series-2")):
+    """Deterministic panel: string ids, typed datetime timestamps, int targets."""
+    frames = []
+    for index, series_id in enumerate(series):
+        base = index * 1000
+        frames.append(
+            pd.DataFrame(
+                {
+                    "item_id": [series_id] * rows_per_series,
+                    "timestamp": pd.date_range("2024-01-01", periods=rows_per_series, freq="D"),
+                    "target": [base + i for i in range(rows_per_series)],
+                    "feature": [i * 10 for i in range(rows_per_series)],
+                }
+            )
+        )
+    return pd.concat(frames, ignore_index=True)
+
+
+def _parquet_bytes(frame, compression="snappy"):
+    """Serialize a dataframe to an in-memory Parquet file."""
+    buffer = io.BytesIO()
+    frame.to_parquet(buffer, index=False, compression=compression)
+    return buffer.getvalue()
+
+
+@contextmanager
+def _mock_boto3_parquet(payloads):
+    """Serve S3 objects by key, including ranged GETs for format detection."""
+    with _mock_boto3_module() as mock_s3:
+        mock_s3.head_object.side_effect = lambda *, Bucket, Key: {"ContentLength": len(payloads[Key])}
+
+        def get_object(*, Bucket, Key, Range=None):
+            payload = payloads[Key]
+            return {"Body": io.BytesIO(payload[:4] if Range else payload), "ContentLength": len(payload)}
+
+        mock_s3.get_object.side_effect = get_object
+        yield mock_s3
+
+
+class TestParquetInput:
+    """Parquet sources load, split, and validate exactly like CSV sources."""
+
+    @mock.patch.dict(os.environ, mocked_env_variables, clear=True)
+    @pytest.mark.parametrize("compression", ["snappy", "gzip", "lz4", "zstd", "brotli"])
+    def test_parquet_panel_with_datetime_column(self, tmp_path, compression):
+        """A valid Parquet panel trains-ready splits; typed timestamps skip the numeric-year probe."""
+        frame = _panel_frame()
+        sampled_test = _make_test_artifact(tmp_path)
+
+        with _mock_boto3_parquet({"ts.parquet": _parquet_bytes(frame, compression)}) as mock_s3:
+            result = timeseries_data_loader.python_func(
+                file_key="ts.parquet",
+                bucket_name="b",
+                workspace_path=str(tmp_path),
+                target="target",
+                id_column="item_id",
+                timestamp_column="timestamp",
+                sampled_test_dataset=sampled_test,
+            )
+
+        mock_s3.get_object.assert_called_once_with(Bucket="b", Key="ts.parquet")
+
+        assert result.sample_config["source_format"] == "parquet"
+        assert result.sample_config["total_rows_loaded"] == 120
+        selection = pd.read_parquet(result.models_selection_train_data_path)
+        extra = pd.read_parquet(result.extra_train_data_path)
+        test = pd.read_parquet(sampled_test.path)
+        # Per-series temporal split: 48/12 per series, then 14/34 of the train rows.
+        assert len(selection) == 28
+        assert len(extra) == 68
+        assert len(test) == 24
+        assert pd.api.types.is_datetime64_ns_dtype(test["timestamp"])
+        assert test.groupby("item_id")["target"].max().to_dict() == {"series-1": 59, "series-2": 1059}
+
+    @mock.patch.dict(os.environ, mocked_env_variables, clear=True)
+    def test_extensionless_parquet_detected_by_magic_bytes(self, tmp_path):
+        """A Parquet file without a Parquet extension is sniffed via a ranged GET and staged."""
+        payload = _parquet_bytes(_panel_frame())
+        sampled_test = _make_test_artifact(tmp_path)
+
+        with _mock_boto3_parquet({"ts-export": payload}) as mock_s3:
+            result = timeseries_data_loader.python_func(
+                file_key="ts-export",
+                bucket_name="b",
+                workspace_path=str(tmp_path),
+                target="target",
+                id_column="item_id",
+                timestamp_column="timestamp",
+                sampled_test_dataset=sampled_test,
+            )
+
+        assert mock_s3.get_object.call_args_list[0].kwargs["Range"] == "bytes=0-3"
+        assert result.sample_config["source_format"] == "parquet"
+
+    @mock.patch.dict(os.environ, mocked_env_variables, clear=True)
+    def test_parquet_numeric_fractional_year_timestamps(self, tmp_path):
+        """Numeric fractional-year timestamps kept as floats keep working through Parquet."""
+        frame = pd.DataFrame(
+            {
+                "item_id": ["series-1"] * 120,
+                "timestamp": [2020.0 + i / 12 for i in range(120)],
+                "target": list(range(120)),
+            }
+        )
+        sampled_test = _make_test_artifact(tmp_path)
+
+        with _mock_boto3_parquet({"ts.parquet": _parquet_bytes(frame)}):
+            result = timeseries_data_loader.python_func(
+                file_key="ts.parquet",
+                bucket_name="b",
+                workspace_path=str(tmp_path),
+                target="target",
+                id_column="item_id",
+                timestamp_column="timestamp",
+                sampled_test_dataset=sampled_test,
+            )
+
+        assert result.sample_config["source_format"] == "parquet"
+        assert result.sample_config["total_rows_loaded"] == 120
+        assert pd.read_parquet(sampled_test.path)["target"].max() == 119
+
+    @mock.patch.dict(os.environ, mocked_env_variables, clear=True)
+    def test_csv_and_parquet_inputs_produce_identical_outputs(self, tmp_path):
+        """The same panel as CSV and as Parquet yields row-for-row identical splits."""
+        frame = _panel_frame()
+
+        csv_run = tmp_path / "csv-run"
+        csv_run.mkdir()
+        csv_result, csv_artifact = _run_loader(csv_run, frame.to_csv(index=False))
+
+        parquet_run = tmp_path / "parquet-run"
+        parquet_run.mkdir()
+        parquet_artifact = _make_test_artifact(parquet_run)
+        with _mock_boto3_parquet({"ts.parquet": _parquet_bytes(frame)}):
+            parquet_result = timeseries_data_loader.python_func(
+                file_key="ts.parquet",
+                bucket_name="b",
+                workspace_path=str(parquet_run),
+                target="target",
+                id_column="item_id",
+                timestamp_column="timestamp",
+                sampled_test_dataset=parquet_artifact,
+            )
+
+        assert csv_result.sample_config["source_format"] == "csv"
+        assert parquet_result.sample_config["source_format"] == "parquet"
+        assert csv_result.sample_config["total_rows_loaded"] == parquet_result.sample_config["total_rows_loaded"]
+        for csv_path, parquet_path in (
+            (csv_artifact.path, parquet_artifact.path),
+            (csv_result.models_selection_train_data_path, parquet_result.models_selection_train_data_path),
+            (csv_result.extra_train_data_path, parquet_result.extra_train_data_path),
+        ):
+            pd.testing.assert_frame_equal(pd.read_parquet(csv_path), pd.read_parquet(parquet_path))
+
+    @mock.patch.dict(os.environ, mocked_env_variables, clear=True)
+    def test_user_parquet_test_data_happy_path(self, tmp_path):
+        """A user-provided Parquet test dataset replaces the holdout split."""
+        train = _panel_frame()
+        test = _panel_frame(rows_per_series=10)
+        payloads = {"train.parquet": _parquet_bytes(train), "test.parquet": _parquet_bytes(test)}
+        sampled_test = _make_test_artifact(tmp_path)
+
+        with _mock_boto3_parquet(payloads):
+            result = timeseries_data_loader.python_func(
+                file_key="train.parquet",
+                bucket_name="b",
+                workspace_path=str(tmp_path),
+                target="target",
+                id_column="item_id",
+                timestamp_column="timestamp",
+                sampled_test_dataset=sampled_test,
+                test_data_bucket_name="test-bucket",
+                test_data_file_key="test.parquet",
+            )
+
+        assert result.split_config["test_size"] == 0.0
+        written_test = pd.read_parquet(sampled_test.path)
+        assert len(written_test) == 20
+        # No primary holdout: all training rows are split between selection and extra.
+        selection = pd.read_parquet(result.models_selection_train_data_path)
+        extra = pd.read_parquet(result.extra_train_data_path)
+        assert len(selection) + len(extra) == 120
+
+    @mock.patch.dict(os.environ, mocked_env_variables, clear=True)
+    def test_two_column_parquet_uses_synthetic_id(self, tmp_path):
+        """Single-series Parquet input (timestamp + target) injects the synthetic id like CSV."""
+        frame = pd.DataFrame(
+            {
+                "timestamp": pd.date_range("2024-01-01", periods=120, freq="D"),
+                "target": list(range(120)),
+            }
+        )
+        sampled_test = _make_test_artifact(tmp_path)
+
+        with _mock_boto3_parquet({"ts.parquet": _parquet_bytes(frame)}):
+            result = timeseries_data_loader.python_func(
+                file_key="ts.parquet",
+                bucket_name="b",
+                workspace_path=str(tmp_path),
+                target="target",
+                id_column="",
+                timestamp_column="timestamp",
+                sampled_test_dataset=sampled_test,
+            )
+
+        assert result.uses_synthetic_id is True
+        assert result.effective_id_column == "__synthetic_item_id"
+        written_test = pd.read_parquet(sampled_test.path)
+        assert set(written_test.columns) == {"__synthetic_item_id", "timestamp", "target"}
+
+    @mock.patch.dict(os.environ, mocked_env_variables, clear=True)
+    def test_csv_train_with_parquet_user_test_data(self, tmp_path):
+        """Formats are detected per source: CSV training data with a Parquet test dataset."""
+        train = _panel_frame()
+        test = _panel_frame(rows_per_series=10)
+        payloads = {"train.csv": train.to_csv(index=False).encode("utf-8"), "test.parquet": _parquet_bytes(test)}
+        sampled_test = _make_test_artifact(tmp_path)
+
+        with _mock_boto3_parquet(payloads):
+            result = timeseries_data_loader.python_func(
+                file_key="train.csv",
+                bucket_name="b",
+                workspace_path=str(tmp_path),
+                target="target",
+                id_column="item_id",
+                timestamp_column="timestamp",
+                sampled_test_dataset=sampled_test,
+                test_data_bucket_name="test-bucket",
+                test_data_file_key="test.parquet",
+            )
+
+        assert result.sample_config["source_format"] == "csv"
+        assert result.sample_config["test_sampling"]["source_format"] == "parquet"
+        assert result.split_config["test_size"] == 0.0
+        assert len(pd.read_parquet(sampled_test.path)) == 20
+
+    @mock.patch.dict(os.environ, mocked_env_variables, clear=True)
+    def test_parquet_float_item_ids_normalized_to_string(self, tmp_path):
+        """Float64 item ids pass every loader check but AutoGluon rejects them; they become strings.
+
+        CSV sources read the id column as strings (the loader's dtype policy), so
+        Parquet's preserved float64 dtype would produce artifacts AutoGluon refuses
+        (item_id must be integer or string) and diverge from the CSV behavior.
+        """
+        frame = _panel_frame()
+        frame["item_id"] = frame["item_id"].map({"series-1": 1.0, "series-2": 2.5})
+        sampled_test = _make_test_artifact(tmp_path)
+
+        with _mock_boto3_parquet({"ts.parquet": _parquet_bytes(frame)}):
+            result = timeseries_data_loader.python_func(
+                file_key="ts.parquet",
+                bucket_name="b",
+                workspace_path=str(tmp_path),
+                target="target",
+                id_column="item_id",
+                timestamp_column="timestamp",
+                sampled_test_dataset=sampled_test,
+            )
+
+        for artifact_path in (sampled_test.path, result.models_selection_train_data_path, result.extra_train_data_path):
+            item_ids = pd.read_parquet(artifact_path)["item_id"]
+            assert item_ids.map(type).eq(str).all()
+            assert set(item_ids) == {"1", "2.5"}
+
+    @mock.patch.dict(os.environ, mocked_env_variables, clear=True)
+    @pytest.mark.parametrize("parquet_is_training", [False, True])
+    @pytest.mark.parametrize(
+        ("csv_ids", "parquet_ids", "expected_ids"),
+        [
+            pytest.param(("1", "2"), (1.0, 2.0), {"1", "2"}, id="integer-text"),
+            pytest.param(("1.0", "-0.00"), (1.0, -0.0), {"1", "0"}, id="float-text"),
+            pytest.param(("001", "01"), ("001", "01"), {"001", "01"}, id="leading-zeros"),
+        ],
+    )
+    def test_mixed_csv_parquet_item_ids_match(self, tmp_path, parquet_is_training, csv_ids, parquet_ids, expected_ids):
+        """Both formats resolve the same series IDs in either direction."""
+        train = _panel_frame()
+        test = _panel_frame(rows_per_series=10)
+        parquet_frame, csv_frame = (train, test) if parquet_is_training else (test, train)
+        parquet_frame["item_id"] = parquet_frame["item_id"].map(dict(zip(("series-1", "series-2"), parquet_ids)))
+        csv_frame["item_id"] = csv_frame["item_id"].map(dict(zip(("series-1", "series-2"), csv_ids)))
+        payloads = {
+            "data.csv": csv_frame.to_csv(index=False).encode("utf-8"),
+            "data.parquet": _parquet_bytes(parquet_frame),
+        }
+        train_key, test_key = ("data.parquet", "data.csv") if parquet_is_training else ("data.csv", "data.parquet")
+        sampled_test = _make_test_artifact(tmp_path)
+
+        with _mock_boto3_parquet(payloads):
+            result = timeseries_data_loader.python_func(
+                file_key=train_key,
+                bucket_name="b",
+                workspace_path=str(tmp_path),
+                target="target",
+                id_column="item_id",
+                timestamp_column="timestamp",
+                sampled_test_dataset=sampled_test,
+                test_data_bucket_name="test-bucket",
+                test_data_file_key=test_key,
+            )
+
+        written_test = pd.read_parquet(sampled_test.path)
+        assert set(written_test["item_id"]) == expected_ids
+        selection = pd.read_parquet(result.models_selection_train_data_path)
+        assert set(selection["item_id"]) == expected_ids
+
+    @mock.patch.dict(os.environ, mocked_env_variables, clear=True)
+    @pytest.mark.parametrize("colliding_format", ["csv", "parquet"])
+    @pytest.mark.parametrize("collision_in_test", [False, True])
+    def test_rejects_item_id_normalization_collision_across_chunks(self, tmp_path, colliding_format, collision_in_test):
+        """Reject two distinct IDs in one source before their observations can be merged."""
+        csv_ids = ("1", "1.0") if colliding_format == "csv" else ("1", "2")
+        parquet_ids = ("1", "1.0") if colliding_format == "parquet" else ("1", "2")
+        payloads = {
+            "panel.csv": _panel_frame(100, csv_ids).to_csv(index=False).encode("utf-8"),
+            "panel.parquet": _parquet_bytes(_panel_frame(100, parquet_ids)),
+        }
+        colliding_key = f"panel.{colliding_format}"
+        other_key = "panel.parquet" if colliding_format == "csv" else "panel.csv"
+        train_key, test_key = (other_key, colliding_key) if collision_in_test else (colliding_key, other_key)
+        sampled_test = _make_test_artifact(tmp_path)
+
+        # Each original ID occupies ten separate chunks before the next ID starts.
+        with (
+            mock.patch.object(sampling, "PANDAS_CHUNK_SIZE", 10),
+            _mock_boto3_parquet(payloads),
+            pytest.raises(ValueError, match=r"ID normalization collision.*'item_id'"),
+        ):
+            timeseries_data_loader.python_func(
+                file_key=train_key,
+                bucket_name="b",
+                workspace_path=str(tmp_path),
+                target="target",
+                id_column="item_id",
+                timestamp_column="timestamp",
+                sampled_test_dataset=sampled_test,
+                test_data_bucket_name="test-bucket",
+                test_data_file_key=test_key,
+            )
+
+        assert not Path(sampled_test.path).exists()
+        assert not list((tmp_path / "datasets").glob("*.parquet"))
+
+    @mock.patch.dict(os.environ, mocked_env_variables, clear=True)
+    def test_csv_only_preserves_decimal_text_item_ids(self, tmp_path):
+        """CSV-only runs keep integer and decimal spellings as distinct series."""
+        frame = _panel_frame()
+        frame["item_id"] = frame["item_id"].map({"series-1": "1", "series-2": "1.0"})
+
+        _, sampled_test = _run_loader(tmp_path, frame.to_csv(index=False))
+
+        assert set(pd.read_parquet(sampled_test.path)["item_id"]) == {"1", "1.0"}
+
+
+class TestCorruptParquetRejected:
+    """Corrupted or malformed Parquet sources fail fast with descriptive errors and no outputs."""
+
+    @staticmethod
+    def _assert_no_outputs(tmp_path, sampled_test):
+        """No split artifacts or sampler scratch may remain after a rejected load."""
+        datasets_dir = tmp_path / "datasets"
+        assert not datasets_dir.exists() or list(datasets_dir.glob("*")) == []
+        assert not Path(sampled_test.path).exists()
+        assert not list(tmp_path.glob("timeseries-sampling-*"))
+
+    def _run_parquet_loader(self, tmp_path, payload, sampled_test):
+        """Run the loader against a single staged Parquet payload."""
+        with _mock_boto3_parquet({"ts.parquet": payload}):
+            timeseries_data_loader.python_func(
+                file_key="ts.parquet",
+                bucket_name="b",
+                workspace_path=str(tmp_path),
+                target="target",
+                id_column="item_id",
+                timestamp_column="timestamp",
+                sampled_test_dataset=sampled_test,
+            )
+
+    @mock.patch.dict(os.environ, mocked_env_variables, clear=True)
+    def test_non_parquet_bytes_named_parquet_rejected(self, tmp_path):
+        """A CSV payload renamed to .parquet is rejected naming the file and the problem."""
+        sampled_test = _make_test_artifact(tmp_path)
+        with pytest.raises(ValueError) as exc_info:
+            self._run_parquet_loader(tmp_path, b"item_id,timestamp,target\nseries-1,2024-01-01,5\n", sampled_test)
+
+        message = str(exc_info.value)
+        assert "s3://b/ts.parquet" in message
+        assert "is not a valid Parquet file" in message
+        assert "does not start with the Parquet magic bytes" in message
+        self._assert_no_outputs(tmp_path, sampled_test)
+
+    @mock.patch.dict(os.environ, mocked_env_variables, clear=True)
+    def test_truncated_parquet_rejected(self, tmp_path):
+        """A Parquet file cut short is rejected with a truncation-specific message."""
+        payload = _parquet_bytes(_panel_frame())
+        sampled_test = _make_test_artifact(tmp_path)
+        with pytest.raises(ValueError) as exc_info:
+            self._run_parquet_loader(tmp_path, payload[: len(payload) // 2], sampled_test)
+
+        message = str(exc_info.value)
+        assert "s3://b/ts.parquet" in message
+        assert "appears truncated" in message
+        self._assert_no_outputs(tmp_path, sampled_test)
+
+    @mock.patch.dict(os.environ, mocked_env_variables, clear=True)
+    def test_empty_parquet_object_rejected(self, tmp_path):
+        """A zero-byte Parquet upload is rejected naming the empty file."""
+        sampled_test = _make_test_artifact(tmp_path)
+        with pytest.raises(ValueError, match="is empty \\(0 bytes\\)"):
+            self._run_parquet_loader(tmp_path, b"", sampled_test)
+
+        self._assert_no_outputs(tmp_path, sampled_test)
+
+    @mock.patch.dict(os.environ, mocked_env_variables, clear=True)
+    def test_corrupt_parquet_test_data_wrapped_as_test_dataset_error(self, tmp_path):
+        """Corrupt Parquet test data fails with the distinguishable test-dataset error."""
+        train = _panel_frame()
+        payloads = {
+            "train.parquet": _parquet_bytes(train),
+            "test.parquet": b"definitely not parquet",
+        }
+        sampled_test = _make_test_artifact(tmp_path)
+
+        with _mock_boto3_parquet(payloads):
+            with pytest.raises(ValueError) as exc_info:
+                timeseries_data_loader.python_func(
+                    file_key="train.parquet",
+                    bucket_name="b",
+                    workspace_path=str(tmp_path),
+                    target="target",
+                    id_column="item_id",
+                    timestamp_column="timestamp",
+                    sampled_test_dataset=sampled_test,
+                    test_data_bucket_name="test-bucket",
+                    test_data_file_key="test.parquet",
+                )
+
+        message = str(exc_info.value)
+        assert "Failed to load user-provided test dataset from s3://test-bucket/test.parquet" in message
+        assert "is not a valid Parquet file" in message
+        self._assert_no_outputs(tmp_path, sampled_test)

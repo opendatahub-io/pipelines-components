@@ -6,11 +6,14 @@
 
 Load and split timeseries data from S3 for AutoGluon training.
 
-This component scans the entire CSV from S3 and retains the latest observations per series (up to 100 MiB of pandas data for the ``"speed"`` preset, up to 1 GiB for ``"balanced"``, and up to 10 GiB for ``"quality"``), applies light **cleansing** (replace ``+/-inf`` with NaN so AutoGluon can apply
-its own missing-value logic; require parseable timestamps and non-null ids; drop duplicate ``(id_column, timestamp_column)`` keys, keeping the last file occurrence). Timestamp order determines recency even for unsorted inputs. Small sources stay in RAM; larger sources use temporary Parquet files and
-a SQLite timestamp index on the workspace. No second S3 download is required. Source/retained counts and timestamp ranges per series are saved as JSONL profiles in ``component_status``. The component then performs a two-stage **per-series temporal** split for efficient AutoGluon training: 1. Primary
-split (default 80/20): for each distinct ``id_column`` value, the earliest (1 - test_size) fraction of rows by ``timestamp_column`` goes to the train portion and the remainder to the test set (so every series with at least two rows contributes holdout data; single-row series stay in train only). 2.
-Secondary split (default 30/70 of each series' train rows): early segment to selection-train, later segment to extra-train.
+This component scans the entire CSV or Parquet source from S3 and retains the latest observations per series (up to 100 MiB of pandas data for the ``"speed"`` preset, up to 1 GiB for ``"balanced"``, and up to 10 GiB for ``"quality"``). The input format is detected from the object key's extension
+(``.parquet`` / ``.pq`` vs ``.csv`` / ``.tsv`` / ``.txt``), sniffing the file's leading magic bytes when the extension is inconclusive; CSV sources stream from S3 while Parquet sources are staged to local storage first (the format's footer metadata sits at the end of the file). Corrupted or
+malformed Parquet files are rejected with a descriptive error before any split or training output is produced.
+
+The component applies light **cleansing** (replace ``+/-inf`` with NaN so AutoGluon can apply its own missing-value logic; require parseable timestamps and non-null ids; drop duplicate ``(id_column, timestamp_column)`` keys, keeping the last file occurrence). Timestamp order determines recency even
+for unsorted inputs. Small sources stay in RAM; larger sources use temporary Parquet files and a SQLite timestamp index on the workspace. No second S3 download is required. Source/retained counts and timestamp ranges per series are saved as JSONL profiles in ``component_status``. The component then
+performs a two-stage **per-series temporal** split for efficient AutoGluon training: 1. Primary split (default 80/20): for each distinct ``id_column`` value, the earliest (1 - test_size) fraction of rows by ``timestamp_column`` goes to the train portion and the remainder to the test set (so every
+series with at least two rows contributes holdout data; single-row series stay in train only). 2. Secondary split (default 30/70 of each series' train rows): early segment to selection-train, later segment to extra-train.
 
 The test set is written to an S3 artifact, while train Parquet files (selection-train and extra-train, Snappy-compressed) are written to the PVC workspace for sharing across pipeline steps.
 
@@ -20,7 +23,7 @@ After cleansing, at least **100** valid records must remain; otherwise the compo
 
 | Parameter | Type | Default | Description |
 | --------- | ---- | ------- | ----------- |
-| `file_key` | `str` | `None` | S3 object key of the CSV file containing time series data. |
+| `file_key` | `str` | `None` | S3 object key of the data file containing time series data. CSV (streamed from S3) or Parquet (staged locally, then read in batches); detected from the key's extension or the file's leading magic bytes. |
 | `bucket_name` | `str` | `None` | S3 bucket name containing the file. |
 | `workspace_path` | `str` | `None` | PVC workspace directory where train Parquet files will be written. |
 | `target` | `str` | `None` | Name of the target column to forecast. |
@@ -32,7 +35,7 @@ After cleansing, at least **100** valid records must remain; otherwise the compo
 | `prediction_length` | `int` | `1` | Forecast horizon used downstream (default: 1). Sampling preserves enough history for the temporal splits and at least one internal validation window when the source provides it. Also validates external test series length. |
 | `known_covariates_names` | `Optional[List[str]]` | `None` | Covariate columns known in advance downstream (default: none). Only used to fail fast when a user-provided test dataset omits one of them. |
 | `test_data_bucket_name` | `str` | `""` | S3 bucket name for user-provided test dataset (default: empty string). |
-| `test_data_file_key` | `str` | `""` | S3 object key of the user-provided test CSV (default: empty string). |
+| `test_data_file_key` | `str` | `""` | S3 object key of the user-provided test data file, CSV or Parquet (default: empty string). |
 | `preset` | `str` | `speed` | Training quality tier controlling the sampling size budget. ``"speed"`` (default) samples up to 100 MiB; ``"balanced"`` samples up to 1 GiB; and ``"quality"`` samples up to 10 GiB. User-provided test datasets are capped at 50 MiB, 100 MiB, and 1 GiB respectively. |
 | `ssl_cert_path` | `Optional[str]` | `None` | Optional path to a PEM-encoded CA bundle used to verify the S3 endpoint. The filename extension is not significant; ``.pem`` and ``.crt`` are both common. It overrides ``AWS_CA_BUNDLE`` for this component; when neither is set, the system trust bundle is used. TLS verification is never disabled. |
 
@@ -64,7 +67,7 @@ def example_pipeline(
     """Example pipeline using timeseries_data_loader.
 
     Args:
-        file_key: S3 key of the data file.
+        file_key: S3 key of the data file (CSV or Parquet).
         bucket_name: S3 bucket name.
         workspace_path: Path to the workspace directory.
         target: Name of the target column.
@@ -82,6 +85,39 @@ def example_pipeline(
         selection_train_size=selection_train_size,
     )
 
+
+@dsl.pipeline(name="timeseries-data-loader-parquet-example")
+def example_parquet_pipeline(
+    train_file_key: str = "data/timeseries.parquet",
+    test_file_key: str = "data/timeseries_test.parquet",
+    bucket_name: str = "my-bucket",
+    workspace_path: str = "/tmp/workspace",
+    target: str = "value",
+    id_column: str = "item_id",
+    timestamp_column: str = "timestamp",
+):
+    """Example pipeline loading Parquet training data and a Parquet user-provided test dataset.
+
+    Args:
+        train_file_key: S3 key of the Parquet training data file.
+        test_file_key: S3 key of the Parquet user-provided test dataset.
+        bucket_name: S3 bucket name.
+        workspace_path: Path to the workspace directory.
+        target: Name of the target column.
+        id_column: Name of the ID column.
+        timestamp_column: Name of the timestamp column.
+    """
+    timeseries_data_loader(
+        file_key=train_file_key,
+        bucket_name=bucket_name,
+        workspace_path=workspace_path,
+        target=target,
+        id_column=id_column,
+        timestamp_column=timestamp_column,
+        test_data_bucket_name=bucket_name,
+        test_data_file_key=test_file_key,
+    )
+
 ```
 
 ## Metadata 🗂️
@@ -96,7 +132,7 @@ def example_pipeline(
   - timeseries
   - automl
   - data-loading
-- **Last Verified**: 2026-10-20 00:00:00+00:00
+- **Last Verified**: 2026-11-16 00:00:00+00:00
 - **Owners**:
   - No Parent Owners: Yes
   - Approvers:
@@ -120,11 +156,13 @@ Dashboards align stage ids with ``component_stage_map.json`` from
 
 ### Latest observations per series
 
-The loader scans the entire CSV and keeps the most recent observations **for every ID**.
+The loader scans the entire CSV or Parquet source and keeps the most recent observations **for every ID**.
 Recency is determined by parsed timestamps, independently of file order. Grouped,
 interleaved, descending and unsorted panels follow the same policy. A global file
-`head` or `tail` is never used for training-data sampling. IDs are read as strings,
-so values such as `001` and `01` remain distinct.
+`head` or `tail` is never used for training-data sampling. When either source is Parquet,
+whole-valued floats and unpadded whole-decimal text such as `1.0` become `1` in both datasets.
+The loader rejects a source if distinct IDs in that file normalize to the same series ID.
+Text IDs such as `001` and `01` remain distinct. CSV-only runs preserve IDs as read.
 
 Duplicate `(id, timestamp)` keys keep the last occurrence in the source, including
 when duplicate records occur in different read chunks. Timestamps are normalized
@@ -153,9 +191,11 @@ Snappy Parquet files on the workspace. A disposable SQLite index stores only ser
 IDs, timestamps, byte estimates and row locations. It replaces duplicate locations
 and provides latest-first access without sorting the full payload. Only selected
 rows are assembled into the output DataFrame; each selected Parquet part is read
-at most once. The source CSV is downloaded and parsed once.
+at most once. CSV sources stream from S3. The loader downloads each complete Parquet
+source before sampling. A Parquet source staged on the workspace uses up to 16 GiB
+and can coexist with the sampling spool until the scan and sampling finish.
 
-Scratch storage is capped at 16 GiB. The loader also reserves the preset sample
+Sampling spool storage is capped at 16 GiB. The loader also reserves the preset sample
 budget plus 256 MiB of free workspace for outputs. Workspace exhaustion fails
 explicitly; it never falls back to an incomplete source prefix. Temporary files
 are removed before training, including when reading, validation or sampling fails.
@@ -168,7 +208,7 @@ Full scanning adds I/O compared with the former early-stop loader. Training/refi
 presets and time budgets are unchanged, but training cost can still depend on the
 number of retained series and observations.
 
-User-provided test CSVs use the same per-series timestamp policy with their own
+User-provided test datasets use the same per-series timestamp policy with their own
 50 MiB / 100 MiB / 1 GiB budgets. Truncation is reported, and each retained test
 series must have more observations than `prediction_length` for evaluation context.
 

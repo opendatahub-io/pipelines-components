@@ -6,7 +6,10 @@
 
 AutoML Data Loader component.
 
-Loads tabular (CSV) data from S3 in batches, sampling up to a preset-dependent size budget (``"speed"``: 100 MiB, ``"balanced"``: 1 GiB, ``"quality"``: 10 GiB), then splits the sampled data into test, selection-train, and extra-train sets.
+Loads tabular data (CSV or Parquet) from S3 in batches, sampling up to a preset-dependent size budget (``"speed"``: 100 MiB, ``"balanced"``: 1 GiB, ``"quality"``: 10 GiB), then splits the sampled data into test, selection-train, and extra-train sets.
+
+The input format is detected from the object key's extension (``.parquet`` / ``.pq`` vs ``.csv`` / ``.tsv`` / ``.txt``), sniffing the file's leading magic bytes when the extension is inconclusive, so Parquet files never need manual conversion to CSV. CSV sources stream from S3; Parquet sources are
+staged to local storage first (the format's footer metadata sits at the end of the file) and are then read in row batches.
 
 The component reads data in chunks to efficiently handle large files without loading the entire dataset into memory at once. After sampling, it performs a two-stage split:
 
@@ -30,7 +33,7 @@ Authentication uses AWS-style credentials provided via environment variables (e.
 
 | Parameter | Type | Default | Description |
 | --------- | ---- | ------- | ----------- |
-| `file_key` | `str` | `None` | S3 object key of the CSV file. |
+| `file_key` | `str` | `None` | S3 object key of the training data file. CSV (streamed from S3) or Parquet (staged locally, then read in batches); detected from the key's extension or the file's leading magic bytes. |
 | `bucket_name` | `str` | `None` | S3 bucket name containing the file. |
 | `workspace_path` | `str` | `None` | PVC workspace directory where train Parquet files will be written. |
 | `label_column` | `str` | `None` | Name of the label/target column in the dataset. |
@@ -41,7 +44,7 @@ Authentication uses AWS-style credentials provided via environment variables (e.
 | `split_config` | `Optional[dict]` | `None` | Split configuration dictionary. Available keys: "test_size" (float), "random_state" (int), "stratify" (bool). |
 | `selection_train_size` | `float` | `0.3` | Model-selection fraction (default 0.3). |
 | `test_data_bucket_name` | `str` | `""` | S3 bucket name for user-provided test dataset (default: empty string). |
-| `test_data_file_key` | `str` | `""` | S3 object key of the user-provided test CSV (default: empty string). |
+| `test_data_file_key` | `str` | `""` | S3 object key of the user-provided test data file, CSV or Parquet (default: empty string). |
 | `preset` | `str` | `speed` | Training quality tier controlling the sampling size budget. ``"speed"`` (default) samples up to 100 MiB; ``"balanced"`` samples up to 1 GiB; and ``"quality"`` samples up to 10 GiB. User-provided test datasets are capped at 50 MiB, 100 MiB, and 1 GiB respectively. |
 | `ssl_cert_path` | `Optional[str]` | `None` | Optional path to a PEM-encoded CA bundle used to verify the S3 endpoint. The filename extension is not significant; ``.pem`` and ``.crt`` are both common. It overrides ``AWS_CA_BUNDLE`` for this component; when neither is set, the system trust bundle is used. TLS verification is never disabled. |
 
@@ -72,7 +75,7 @@ def example_pipeline(
     """Example pipeline using automl_data_loader.
 
     Args:
-        file_key: S3 key of the data file.
+        file_key: S3 key of the data file (CSV or Parquet).
         bucket_name: S3 bucket name.
         workspace_path: Path to the workspace directory.
         label_column: Name of the label column.
@@ -88,6 +91,36 @@ def example_pipeline(
         selection_train_size=selection_train_size,
     )
 
+
+@dsl.pipeline(name="tabular-data-loader-parquet-example")
+def example_parquet_pipeline(
+    train_file_key: str = "data/train.parquet",
+    test_file_key: str = "data/test.parquet",
+    bucket_name: str = "my-bucket",
+    workspace_path: str = "/tmp/workspace",
+    label_column: str = "target",
+    task_type: str = "regression",
+):
+    """Example pipeline loading Parquet training data and a Parquet user-provided test dataset.
+
+    Args:
+        train_file_key: S3 key of the Parquet training data file.
+        test_file_key: S3 key of the Parquet user-provided test dataset.
+        bucket_name: S3 bucket name.
+        workspace_path: Path to the workspace directory.
+        label_column: Name of the label column.
+        task_type: Type of ML task.
+    """
+    automl_data_loader(
+        file_key=train_file_key,
+        bucket_name=bucket_name,
+        workspace_path=workspace_path,
+        label_column=label_column,
+        task_type=task_type,
+        test_data_bucket_name=bucket_name,
+        test_data_file_key=test_file_key,
+    )
+
 ```
 
 ## Metadata 🗂️
@@ -99,7 +132,7 @@ def example_pipeline(
     - Name: Pipelines, Version: >=2.15.2
 - **Tags**:
   - data-processing
-- **Last Verified**: 2026-10-12 00:00:00+00:00
+- **Last Verified**: 2026-11-16 00:00:00+00:00
 - **Owners**:
   - No Parent Owners: Yes
   - Approvers:
@@ -242,12 +275,13 @@ Match stage ids to the tabular pipeline entry in ``component_stage_map.json`` fr
 
 ## Supported formats and limits 📋
 
-- **Input format**: CSV only (S3 source file, and the optional user-provided test dataset).
+- **Input formats** — CSV and Parquet for both the S3 training source and the optional test dataset.
 - **Output format**: Snappy-compressed Parquet for all pipeline-owned copies — the two PVC
   workspace train splits (`models_selection_train_dataset.parquet`, `extra_train_dataset.parquet`)
   and the `sampled_test_dataset` artifact. No full-size CSV copy of any split is kept.
-- **Size limit**: Preset-dependent size budget in memory (sampled if larger) — ``"speed"``: 100 MiB, ``"balanced"``: 1 GiB.
-- **Streaming**: Data is read in batches (10k rows per chunk) to handle large files.
+- **Sampling budget in memory** — 100 MiB for `speed`, 1 GiB for `balanced`, and 10 GiB for `quality`.
+- **Parquet staging** — The loader downloads the complete S3 object before sampling, including for `first_n_rows`.
+  The on-disk limit is 2 GiB on node-local storage or 16 GiB on the pipeline workspace for larger objects.
 
 ## Logging 📝
 

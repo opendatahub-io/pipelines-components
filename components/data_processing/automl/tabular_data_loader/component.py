@@ -33,9 +33,17 @@ def automl_data_loader(  # noqa: D417
 ):
     """AutoML Data Loader component.
 
-    Loads tabular (CSV) data from S3 in batches, sampling up to a preset-dependent
-    size budget (``"speed"``: 100 MiB, ``"balanced"``: 1 GiB, ``"quality"``: 10 GiB), then splits the sampled
-    data into test, selection-train, and extra-train sets.
+    Loads tabular data (CSV or Parquet) from S3 in batches, sampling up to a
+    preset-dependent size budget (``"speed"``: 100 MiB, ``"balanced"``: 1 GiB,
+    ``"quality"``: 10 GiB), then splits the sampled data into test,
+    selection-train, and extra-train sets.
+
+    The input format is detected from the object key's extension (``.parquet`` /
+    ``.pq`` vs ``.csv`` / ``.tsv`` / ``.txt``), sniffing the file's leading magic
+    bytes when the extension is inconclusive, so Parquet files never need manual
+    conversion to CSV. CSV sources stream from S3; Parquet sources are staged to
+    local storage first (the format's footer metadata sits at the end of the
+    file) and are then read in row batches.
 
     The component reads data in chunks to efficiently handle large files without
     loading the entire dataset into memory at once. After sampling, it performs
@@ -71,7 +79,9 @@ def automl_data_loader(  # noqa: D417
     (e.g. from a Kubernetes secret).
 
     Args:
-        file_key: S3 object key of the CSV file.
+        file_key: S3 object key of the training data file. CSV (streamed from S3) or
+            Parquet (staged locally, then read in batches); detected from the key's
+            extension or the file's leading magic bytes.
         bucket_name: S3 bucket name containing the file.
         workspace_path: PVC workspace directory where train Parquet files will be written.
         label_column: Name of the label/target column in the dataset.
@@ -82,7 +92,8 @@ def automl_data_loader(  # noqa: D417
         split_config: Split configuration dictionary. Available keys: "test_size" (float), "random_state" (int), "stratify" (bool).
         selection_train_size: Model-selection fraction (default 0.3).
         test_data_bucket_name: S3 bucket name for user-provided test dataset (default: empty string).
-        test_data_file_key: S3 object key of the user-provided test CSV (default: empty string).
+        test_data_file_key: S3 object key of the user-provided test data file, CSV or Parquet
+            (default: empty string).
         preset: Training quality tier controlling the sampling size budget. ``"speed"``
             (default) samples up to 100 MiB; ``"balanced"`` samples up to 1 GiB; and
             ``"quality"`` samples up to 10 GiB. User-provided test datasets are capped at
@@ -96,7 +107,8 @@ def automl_data_loader(  # noqa: D417
     Raises:
         ValueError: If sampling_method, task_type, or preset is invalid, if required parameters are missing,
             if only one of the ``test_data_*`` pair is set or the test key is not a valid S3 object key,
-            if the test dataset is empty or missing the label or a training feature column, or if
+            if the training or test input is a corrupted or malformed Parquet file, if the test
+            dataset is empty or missing the label or a training feature column, or if
             fewer than 100 valid records remain after data cleansing.
 
     Returns:
@@ -113,6 +125,15 @@ def automl_data_loader(  # noqa: D417
 
     import boto3
     import pandas as pd
+    from kfp_components.components.data_processing.automl.shared.errors import s3_tls_validation_error
+    from kfp_components.components.data_processing.automl.shared.input_sources import (
+        FORMAT_CSV,
+        FORMAT_PARQUET,
+        ParquetSourceError,
+        detect_input_source_format,
+        iter_parquet_batches,
+        staged_parquet_source,
+    )
     from kfp_components.components.training.automl.shared.component_status import ComponentStatusTracker
     from kfp_components.components.training.automl.shared.parquet_utils import stringify_mixed_object_columns
     from kfp_components.components.training.automl.shared.user_test_data import (
@@ -271,10 +292,32 @@ def automl_data_loader(  # noqa: D417
                 verify=effective_ssl_cert_path or True,
             )
 
+        def _format_name(source_format):
+            """Return the human-readable source format for error messages and log lines."""
+            return "Parquet file" if source_format == FORMAT_PARQUET else "CSV"
+
+        def _iter_source_chunks(source, chunk_size, source_format, source_label=None):
+            """Yield dataframe chunks from a CSV stream/path or a staged Parquet file.
+
+            Parquet sources are always local paths staged by ``staged_parquet_source``;
+            ``iter_parquet_batches`` validates the header and footer before sampling,
+            and ``source_label`` identifies the S3 object in errors. CSV sources keep the
+            exact ``pd.read_csv`` streaming call the samplers have always used.
+            """
+            if source_format == FORMAT_PARQUET:
+                return iter_parquet_batches(source, chunk_size, source_label=source_label)
+            return pd.read_csv(source, chunksize=chunk_size)
+
         def _sample_first_n_rows(
-            text_stream, chunk_size, max_size_bytes, truncation_report=None, fail_on_partial_read=False
+            source,
+            chunk_size,
+            max_size_bytes,
+            truncation_report=None,
+            fail_on_partial_read=False,
+            source_format=FORMAT_CSV,
+            source_label=None,
         ):
-            """Take rows from the start of the stream until the size limit is reached.
+            """Take rows from the start of the source until the size limit is reached.
 
             When ``truncation_report`` is a dict, its ``"truncated"`` key is set to True if
             the size limit stopped the read before the stream was exhausted. The signal is
@@ -283,7 +326,9 @@ def automl_data_loader(  # noqa: D417
 
             ``fail_on_partial_read`` makes a mid-stream error fatal instead of returning the
             rows read so far. Test data must fail closed: a partial holdout set would be
-            scored as if it were complete.
+            scored as if it were complete. Parquet header and footer errors fail before
+            sampling, and decoding errors fail if the sampler reaches them. Row groups
+            beyond the sampled prefix may remain unread, so corruption there can go undetected.
             """
             chunk_list = []
             accumulated_size = 0
@@ -294,7 +339,7 @@ def automl_data_loader(  # noqa: D417
                     truncation_report["truncated"] = True
 
             try:
-                for chunk_df in pd.read_csv(text_stream, chunksize=chunk_size):
+                for chunk_df in _iter_source_chunks(source, chunk_size, source_format, source_label):
                     sampling_metrics["batches_read"] += 1
                     sampling_metrics["source_rows_read"] += len(chunk_df)
                     chunk_memory = chunk_df.memory_usage(deep=True).sum()
@@ -321,15 +366,24 @@ def automl_data_loader(  # noqa: D417
                         break
             except MemoryError:
                 raise
+            except ParquetSourceError:
+                raise
             except Exception as e:
                 if not chunk_list or fail_on_partial_read:
-                    raise ValueError(f"Error reading CSV from S3: {str(e)}") from e
-                logger.warning("Partial CSV read, keeping the %s chunk(s) read so far: %s", len(chunk_list), e)
+                    raise ValueError(f"Error reading {_format_name(source_format)} from S3: {str(e)}") from e
+                logger.warning(
+                    "Partial %s read, keeping the %s chunk(s) read so far: %s",
+                    _format_name(source_format),
+                    len(chunk_list),
+                    e,
+                )
                 _mark_truncated()
 
             return pd.concat(chunk_list, ignore_index=True) if chunk_list else pd.DataFrame(), sampling_metrics
 
-        def _sample_stratified(csv_source, chunk_size, max_size_bytes, label_column):
+        def _sample_stratified(
+            source, chunk_size, max_size_bytes, label_column, source_format=FORMAT_CSV, source_label=None
+        ):
             """Merge batches and subsample proportionally by target column to stay under the size limit."""
             subsampled_data = None
             pending_chunks = []
@@ -358,7 +412,7 @@ def automl_data_loader(  # noqa: D417
                 )
 
             try:
-                for chunk_df in pd.read_csv(csv_source, chunksize=chunk_size):
+                for chunk_df in _iter_source_chunks(source, chunk_size, source_format, source_label):
                     sampling_metrics["batches_read"] += 1
                     sampling_metrics["source_rows_read"] += len(chunk_df)
                     if label_column not in chunk_df.columns:
@@ -382,12 +436,17 @@ def automl_data_loader(  # noqa: D417
 
             except MemoryError:
                 raise
+            except ParquetSourceError:
+                # A damaged Parquet file must be rejected outright, never partially sampled.
+                raise
             except Exception as e:
-                logger.debug("Error reading CSV and stratified sampling: %s", e, exc_info=True)
+                logger.debug(
+                    "Error reading %s and stratified sampling: %s", _format_name(source_format), e, exc_info=True
+                )
                 # Preserve rows parsed after the last compaction when recovery is allowed.
                 compact_pending()
                 if subsampled_data is None or subsampled_data.empty:
-                    raise ValueError(f"Error reading CSV from S3: {str(e)}") from e
+                    raise ValueError(f"Error reading {_format_name(source_format)} from S3: {str(e)}") from e
 
             if subsampled_data is None:
                 return pd.DataFrame(), sampling_metrics
@@ -396,7 +455,7 @@ def automl_data_loader(  # noqa: D417
                 sampling_metrics,
             )
 
-        def _sample_random(csv_source, chunk_size, max_size_bytes):
+        def _sample_random(source, chunk_size, max_size_bytes, source_format=FORMAT_CSV, source_label=None):
             """Iterate all batches, merge with accumulated data, randomly subsample when over the limit."""
             subsampled_data = None
             pending_chunks = []
@@ -423,7 +482,7 @@ def automl_data_loader(  # noqa: D417
                 )
 
             try:
-                for chunk_df in pd.read_csv(csv_source, chunksize=chunk_size):
+                for chunk_df in _iter_source_chunks(source, chunk_size, source_format, source_label):
                     sampling_metrics["batches_read"] += 1
                     sampling_metrics["source_rows_read"] += len(chunk_df)
                     pending_chunks.append(chunk_df)
@@ -440,32 +499,41 @@ def automl_data_loader(  # noqa: D417
 
             except MemoryError:
                 raise
+            except ParquetSourceError:
+                # A damaged Parquet file must be rejected outright, never partially sampled.
+                raise
             except Exception as e:
                 # Preserve rows parsed after the last compaction when recovery is allowed.
                 compact_pending()
                 if subsampled_data is None or subsampled_data.empty:
-                    raise ValueError(f"Error reading CSV from S3: {str(e)}") from e
+                    raise ValueError(f"Error reading {_format_name(source_format)} from S3: {str(e)}") from e
                 return subsampled_data, sampling_metrics
 
-        def _sample_csv_source(
-            csv_source,
+        def _sample_source(
+            source,
             max_size_bytes,
             sampling_method,
             label_column,
             truncation_report=None,
             fail_on_partial_read=False,
+            source_format=FORMAT_CSV,
+            source_label=None,
         ):
-            """Sample one CSV source with the configured strategy."""
+            """Sample one CSV or Parquet source with the configured strategy."""
             if sampling_method == "stratified":
-                return _sample_stratified(csv_source, PANDAS_CHUNK_SIZE, max_size_bytes, label_column)
+                return _sample_stratified(
+                    source, PANDAS_CHUNK_SIZE, max_size_bytes, label_column, source_format, source_label
+                )
             if sampling_method == "random":
-                return _sample_random(csv_source, PANDAS_CHUNK_SIZE, max_size_bytes)
+                return _sample_random(source, PANDAS_CHUNK_SIZE, max_size_bytes, source_format, source_label)
             return _sample_first_n_rows(
-                csv_source,
+                source,
                 PANDAS_CHUNK_SIZE,
                 max_size_bytes,
                 truncation_report=truncation_report,
                 fail_on_partial_read=fail_on_partial_read,
+                source_format=source_format,
+                source_label=source_label,
             )
 
         def _try_load_local_representative_sample(
@@ -509,7 +577,7 @@ def automl_data_loader(  # noqa: D417
                 return None
 
             try:
-                data, sampling_metrics = _sample_csv_source(
+                data, sampling_metrics = _sample_source(
                     local_path,
                     max_size_bytes,
                     sampling_method,
@@ -544,20 +612,14 @@ def automl_data_loader(  # noqa: D417
             try:
                 response = s3_client.get_object(Bucket=bucket_name, Key=file_key)
             except SSLError as exc:
-                certificate_source = effective_ssl_cert_path or "the system trust bundle"
-                raise RuntimeError(
-                    "S3 TLS certificate validation failed when downloading "
-                    f"s3://{bucket_name}/{file_key}. Verify that ssl_cert_path="
-                    f"{certificate_source!r} is a PEM CA bundle that trusts the S3 endpoint. "
-                    "Do not disable certificate verification."
-                ) from exc
+                raise s3_tls_validation_error(bucket_name, file_key, effective_ssl_cert_path) from exc
 
             if "source_bytes" not in io_metrics:
                 source_bytes = response.get("ContentLength")
                 if isinstance(source_bytes, int) and source_bytes >= 0:
                     io_metrics["source_bytes"] = source_bytes
 
-            data, sampling_metrics = _sample_csv_source(
+            data, sampling_metrics = _sample_source(
                 io.TextIOWrapper(response["Body"], encoding="utf-8"),
                 max_size_bytes,
                 sampling_method,
@@ -565,6 +627,59 @@ def automl_data_loader(  # noqa: D417
                 truncation_report=truncation_report,
                 fail_on_partial_read=fail_on_partial_read,
             )
+            io_metrics.update(sampling_metrics)
+            io_metrics["download_and_parse_seconds"] = round(time.monotonic() - transfer_started, 3)
+            return data, io_metrics
+
+        def _load_parquet_sample(
+            s3_client,
+            bucket_name,
+            file_key,
+            max_size_bytes,
+            sampling_method,
+            label_column,
+            workspace_dir,
+            io_metrics,
+            truncation_report=None,
+            fail_on_partial_read=False,
+        ) -> tuple[Any, dict[str, Any]]:
+            """Stage one Parquet S3 object locally and sample it in Parquet row batches.
+
+            Parquet footer metadata sits at the end of the file, so the object is
+            downloaded to seekable storage first (node-local, or the workspace for
+            large objects) and then fed through the same samplers as CSV sources.
+            ``iter_parquet_batches`` checks the header and footer eagerly and reports
+            decoding errors in row groups reached during sampling.
+            """
+            from botocore.exceptions import SSLError
+
+            source_uri = test_data_source_uri(bucket_name, file_key)
+            transfer_started = time.monotonic()
+            try:
+                with staged_parquet_source(
+                    s3_client,
+                    bucket_name,
+                    file_key,
+                    workspace_dir=workspace_dir,
+                    source_label=source_uri,
+                ) as staged:
+                    io_metrics["s3_transfer_mode"] = "parquet_local"
+                    if staged.source_bytes is not None:
+                        io_metrics["source_bytes"] = staged.source_bytes
+                    if staged.staged_on_workspace:
+                        io_metrics["staged_on_workspace"] = True
+                    data, sampling_metrics = _sample_source(
+                        staged.path,
+                        max_size_bytes,
+                        sampling_method,
+                        label_column,
+                        truncation_report=truncation_report,
+                        fail_on_partial_read=fail_on_partial_read,
+                        source_format=FORMAT_PARQUET,
+                        source_label=source_uri,
+                    )
+            except SSLError as exc:
+                raise s3_tls_validation_error(bucket_name, file_key, effective_ssl_cert_path) from exc
             io_metrics.update(sampling_metrics)
             io_metrics["download_and_parse_seconds"] = round(time.monotonic() - transfer_started, 3)
             return data, io_metrics
@@ -578,8 +693,14 @@ def automl_data_loader(  # noqa: D417
             label_column,
             truncation_report=None,
             fail_on_partial_read: bool = False,
+            workspace_dir: Optional[str] = None,
         ) -> tuple[Any, dict[str, Any]]:
-            """Load CSV from S3 in batches and return a sampled dataframe using the chosen strategy.
+            """Load CSV or Parquet data from S3 in batches and return a sampled dataframe.
+
+            The source format is detected from the object key (with a magic-byte
+            sniff for inconclusive extensions). Parquet sources are staged locally
+            and read in Parquet row batches; CSV sources stream (or download for
+            representative sampling) exactly as before.
 
             ``truncation_report`` is only honoured by the ``first_n_rows`` strategy; the
             subsampling strategies keep a representative sample of the whole stream.
@@ -591,6 +712,22 @@ def automl_data_loader(  # noqa: D417
                 raise ValueError("label_column must be provided when sampling_method='stratified'")
 
             io_metrics = {"s3_transfer_mode": "streaming"}
+
+            source_format = detect_input_source_format(s3_client, bucket_name, file_key, component_logger=logger)
+            io_metrics["source_format"] = source_format
+            if source_format == FORMAT_PARQUET:
+                return _load_parquet_sample(
+                    s3_client,
+                    bucket_name,
+                    file_key,
+                    max_size_bytes,
+                    sampling_method,
+                    label_column,
+                    workspace_dir,
+                    io_metrics,
+                    truncation_report=truncation_report,
+                    fail_on_partial_read=fail_on_partial_read,
+                )
 
             # Representative samplers inspect the entire source. For moderately sized
             # objects, stage it locally through boto3's concurrent multipart transfer
@@ -641,6 +778,24 @@ def automl_data_loader(  # noqa: D417
                 fail_on_partial_read=fail_on_partial_read,
             )
 
+        def _drop_unused_label_categories(frame):
+            """Remove label categories with no rows left after cleansing.
+
+            Parquet preserves pandas categorical metadata, so a category present
+            in the dictionary but with zero rows (an unused category in the
+            source file, or one emptied by label-NaN drops) still appears in
+            value_counts with count 0 and fails the stratified-split viability
+            check, while the equivalent CSV source (plain object dtype) passes.
+            Stripping unused categories makes both formats behave identically;
+            label columns that are not categorical are returned unchanged. The
+            dtype is probed as a string so the mocked-pandas suite (whose frames
+            carry no dtype at all) treats this as a no-op, like select_dtypes.
+            """
+            label_series = frame[label_column]
+            if str(getattr(label_series, "dtype", "")) == "category":
+                frame[label_column] = label_series.cat.remove_unused_categories()
+            return frame
+
         status.record(
             "prepare_data",
             "running",
@@ -655,6 +810,7 @@ def automl_data_loader(  # noqa: D417
             max_size_bytes=MAX_SIZE_BYTES,
             sampling_method=sampling_method,
             label_column=label_column,
+            workspace_dir=workspace_path,
         )
         load_metrics["load_and_sample_seconds"] = round(time.monotonic() - load_started, 3)
         load_metrics["rows_before_cleansing"] = len(sampled_dataframe)
@@ -682,6 +838,7 @@ def automl_data_loader(  # noqa: D417
 
         n_before_drop = len(sampled_dataframe)
         sampled_dataframe = sampled_dataframe.dropna(subset=[label_column])
+        sampled_dataframe = _drop_unused_label_categories(sampled_dataframe)
         n_dropped = n_before_drop - len(sampled_dataframe)
         if n_dropped:
             logger.info(
@@ -856,6 +1013,7 @@ def automl_data_loader(  # noqa: D417
                     label_column=label_column,
                     truncation_report=truncation_report,
                     fail_on_partial_read=True,
+                    workspace_dir=workspace_path,
                 )
             except Exception as e:
                 raise test_data_load_error(test_data_source, e) from e
@@ -903,6 +1061,7 @@ def automl_data_loader(  # noqa: D417
             user_test_df.replace([math.inf, -math.inf], float("nan"), inplace=True)
             user_test_df.drop_duplicates(inplace=True)
             user_test_df = user_test_df.dropna(subset=[label_column])
+            user_test_df = _drop_unused_label_categories(user_test_df)
 
             if user_test_df.empty:
                 raise ValueError(

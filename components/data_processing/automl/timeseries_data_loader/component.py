@@ -36,13 +36,21 @@ def timeseries_data_loader(
 ):
     """Load and split timeseries data from S3 for AutoGluon training.
 
-    This component scans the entire CSV from S3 and retains the latest observations
-    per series (up to 100 MiB of pandas data for the
+    This component scans the entire CSV or Parquet source from S3 and retains the
+    latest observations per series (up to 100 MiB of pandas data for the
     ``"speed"`` preset, up to 1 GiB for ``"balanced"``, and up to 10 GiB for
-    ``"quality"``),
-    applies light **cleansing** (replace ``+/-inf`` with NaN so AutoGluon can apply its
-    own missing-value logic; require parseable timestamps and non-null ids; drop
-    duplicate ``(id_column, timestamp_column)`` keys, keeping the last file occurrence).
+    ``"quality"``). The input format is detected from the object key's extension
+    (``.parquet`` / ``.pq`` vs ``.csv`` / ``.tsv`` / ``.txt``), sniffing the
+    file's leading magic bytes when the extension is inconclusive; CSV sources
+    stream from S3 while Parquet sources are staged to local storage first (the
+    format's footer metadata sits at the end of the file). Corrupted or
+    malformed Parquet files are rejected with a descriptive error before any
+    split or training output is produced.
+
+    The component applies light **cleansing** (replace ``+/-inf`` with NaN so
+    AutoGluon can apply its own missing-value logic; require parseable timestamps
+    and non-null ids; drop duplicate ``(id_column, timestamp_column)`` keys,
+    keeping the last file occurrence).
     Timestamp order determines recency even for unsorted inputs. Small sources stay
     in RAM; larger sources use temporary Parquet files and a SQLite timestamp index
     on the workspace. No second S3 download is required. Source/retained counts and
@@ -65,7 +73,9 @@ def timeseries_data_loader(
     small to split reliably.
 
     Args:
-        file_key: S3 object key of the CSV file containing time series data.
+        file_key: S3 object key of the data file containing time series data. CSV
+            (streamed from S3) or Parquet (staged locally, then read in batches);
+            detected from the key's extension or the file's leading magic bytes.
         bucket_name: S3 bucket name containing the file.
         workspace_path: PVC workspace directory where train Parquet files will be written.
         target: Name of the target column to forecast.
@@ -82,7 +92,8 @@ def timeseries_data_loader(
         known_covariates_names: Covariate columns known in advance downstream (default: none).
             Only used to fail fast when a user-provided test dataset omits one of them.
         test_data_bucket_name: S3 bucket name for user-provided test dataset (default: empty string).
-        test_data_file_key: S3 object key of the user-provided test CSV (default: empty string).
+        test_data_file_key: S3 object key of the user-provided test data file, CSV or Parquet
+            (default: empty string).
         preset: Training quality tier controlling the sampling size budget. ``"speed"``
             (default) samples up to 100 MiB; ``"balanced"`` samples up to 1 GiB; and
             ``"quality"`` samples up to 10 GiB. User-provided test datasets are capped
@@ -96,6 +107,7 @@ def timeseries_data_loader(
     Raises:
         ValueError: If a required parameter is empty or invalid, if only one of the
             ``test_data_*`` pair is set or the test key is not a valid S3 object key, if the
+            training or test input is a corrupted or malformed Parquet file, if the
             test dataset is empty, missing required or covariate columns, shares no series
             with the training data, or has a series shorter than ``prediction_length``, or if
             fewer than 100 valid records remain after cleansing.
@@ -137,6 +149,15 @@ def timeseries_data_loader(
         except Exception as e:  # noqa: BLE001 - stats logging must never break the run
             logger.debug("Could not compute dataset stats for %s: %s", name, e)
 
+    from kfp_components.components.data_processing.automl.shared.errors import s3_tls_validation_error
+    from kfp_components.components.data_processing.automl.shared.input_sources import (
+        FORMAT_CSV,
+        FORMAT_PARQUET,
+        ParquetSourceError,
+        detect_input_source_format,
+        iter_parquet_batches,
+        staged_parquet_source,
+    )
     from kfp_components.components.training.automl.shared.component_status import ComponentStatusTracker
     from kfp_components.components.training.automl.shared.parquet_utils import stringify_mixed_object_columns
     from kfp_components.components.training.automl.shared.timeseries_sampling import (
@@ -267,8 +288,17 @@ def timeseries_data_loader(
             ts_series = out[ts_col]
             non_null_ts = ts_series[ts_series.notna()]
 
-            # Check if all non-null timestamps are numeric
-            is_numeric = pd.to_numeric(non_null_ts, errors="coerce").notna().all() if len(non_null_ts) > 0 else False
+            # Parquet sources carry typed datetime columns. ``pd.to_numeric`` would
+            # silently convert datetime64 to epoch nanoseconds (values around 1.7e18),
+            # which the fractional-year range check below would then reject. Skip the
+            # numeric probe for real datetime columns; the parsing branch below
+            # normalizes them. CSV sources never reach this point as datetime64.
+            if pd.api.types.is_datetime64_any_dtype(ts_series):
+                is_numeric = False
+            else:
+                is_numeric = (
+                    pd.to_numeric(non_null_ts, errors="coerce").notna().all() if len(non_null_ts) > 0 else False
+                )
 
             if is_numeric:
                 # Convert to numeric
@@ -342,75 +372,149 @@ def timeseries_data_loader(
         if uses_synthetic_id:
             id_column = SYNTHETIC_ITEM_ID_COLUMN
 
-        def _load_latest(bucket, key, budget, profile_name, *, is_test=False):
+        def _csv_chunks(stream):
+            """Yield dataframe chunks from a CSV text stream, applying the loader's id dtype policy."""
+            try:
+                reader = pd.read_csv(
+                    stream,
+                    chunksize=PANDAS_CHUNK_SIZE,
+                    dtype=None if uses_synthetic_id else {id_column: str},
+                )
+            except pd.errors.EmptyDataError:
+                return
+            with reader:
+                yield from reader
+
+        def _prepared_chunks(raw_chunks, *, source_format=FORMAT_CSV, is_test=False):
+            """Validate, normalize, and clean raw source chunks from CSV or Parquet.
+
+            Read errors raised while pulling the next chunk are reported with the
+            source format; validation errors raised for the chunk's contents
+            (missing columns, unparseable timestamps) propagate unwrapped, as
+            before. A corrupted Parquet file always fails: retaining its decoded
+            prefix would silently keep a damaged file's rows.
+            """
+            format_name = "Parquet file" if source_format == FORMAT_PARQUET else "CSV"
+            originals_by_canonical_id = {}
+            while True:
+                try:
+                    chunk = next(raw_chunks)
+                except StopIteration:
+                    return
+                except ParquetSourceError:
+                    raise
+                except Exception as exc:
+                    # A partial scan cannot establish the latest observations.
+                    raise ValueError(f"Error reading {format_name} from S3: {exc}") from exc
+                if not len(chunk):
+                    continue
+                required_columns = {timestamp_column, target}
+                if not uses_synthetic_id:
+                    required_columns.add(id_column)
+                missing = required_columns - set(chunk.columns)
+                if missing:
+                    kind = "test dataset" if is_test else "dataset"
+                    raise ValueError(
+                        f"Missing required columns in {kind}: {missing}. Available columns: {list(chunk.columns)}"
+                    )
+                if uses_synthetic_id:
+                    if not is_test and len(chunk.columns) != 2:
+                        raise ValueError(
+                            "When id_column is not provided, the dataset must have exactly 2 columns "
+                            f"(timestamp + target), but found {len(chunk.columns)} columns: "
+                            f"{list(chunk.columns)}. Provide id_column for panel datasets."
+                        )
+                    if SYNTHETIC_ITEM_ID_COLUMN in chunk.columns:
+                        raise ValueError(
+                            f"Dataset already contains a column named {SYNTHETIC_ITEM_ID_COLUMN!r}. "
+                            "This name is reserved for synthetic ID injection."
+                        )
+                    chunk[id_column] = SYNTHETIC_ITEM_ID_VALUE
+                chunk = _clean_timeseries_dataframe(chunk, id_column, timestamp_column, logger)
+                if normalize_ids:
+                    # Use integer spelling for whole decimals in either source.
+                    # Keep lexical IDs with leading zeros, such as "001" and "01".
+                    ids = chunk[id_column]
+                    id_dtype = ids.cat.categories.dtype if isinstance(ids.dtype, pd.CategoricalDtype) else ids.dtype
+                    original_ids = ids
+                    string_ids = ids.astype(str)
+                    if pd.api.types.is_float_dtype(id_dtype):
+                        numeric_ids = ids.astype(id_dtype)
+                        whole = numeric_ids.mod(1).eq(0)
+                        string_ids.loc[whole] = numeric_ids[whole].map(int).astype(str)
+                    else:
+                        original_ids = string_ids
+                        string_ids = string_ids.str.replace(
+                            r"\A(-?(?:0|[1-9][0-9]*))\.0+\Z",
+                            lambda match: "0" if match[1] == "-0" else match[1],
+                            regex=True,
+                        )
+                    for canonical_id, original_id in zip(string_ids, original_ids, strict=True):
+                        previous_id = originals_by_canonical_id.setdefault(canonical_id, original_id)
+                        if previous_id != original_id:
+                            kind = "test dataset" if is_test else "training dataset"
+                            raise ValueError(
+                                f"ID normalization collision in {kind} column {id_column!r}. "
+                                "Distinct original IDs normalize to the same series ID. "
+                                "Use IDs that remain distinct after normalization."
+                            )
+                    chunk[id_column] = string_ids
+                stringify_mixed_object_columns(chunk)
+                yield chunk
+
+        def _load_latest(bucket, key, budget, profile_name, source_format, *, is_test=False):
+            """Load the latest per-series observations from a CSV or Parquet S3 source.
+
+            The source format is detected from the object key (with a magic-byte
+            sniff for inconclusive extensions). Parquet sources are staged to
+            local storage and read in Parquet row batches; CSV sources stream
+            exactly as before. The returned sampling report records the detected
+            ``source_format`` (and ``source_bytes`` when the store reports it).
+            """
             from botocore.exceptions import SSLError
 
-            try:
-                response = get_s3_client().get_object(Bucket=bucket, Key=key)
-            except SSLError as exc:
-                certificate_source = effective_ssl_cert_path or "the system trust bundle"
-                raise RuntimeError(
-                    "S3 TLS certificate validation failed when downloading "
-                    f"s3://{bucket}/{key}. Verify that ssl_cert_path="
-                    f"{certificate_source!r} is a PEM CA bundle that trusts the S3 endpoint. "
-                    "Do not disable certificate verification."
-                ) from exc
-
-            def _prepared_chunks(stream):
-                try:
-                    reader = pd.read_csv(
-                        stream,
-                        chunksize=PANDAS_CHUNK_SIZE,
-                        dtype=None if uses_synthetic_id else {id_column: str},
-                    )
-                except pd.errors.EmptyDataError:
-                    return
-                with reader:
-                    while True:
-                        try:
-                            chunk = next(reader)
-                        except StopIteration:
-                            return
-                        except Exception as exc:
-                            # A partial scan cannot establish the latest observations.
-                            raise ValueError(f"Error reading CSV from S3: {exc}") from exc
-                        if not len(chunk):
-                            continue
-                        required_columns = {timestamp_column, target}
-                        if not uses_synthetic_id:
-                            required_columns.add(id_column)
-                        missing = required_columns - set(chunk.columns)
-                        if missing:
-                            kind = "test dataset" if is_test else "dataset"
-                            raise ValueError(
-                                f"Missing required columns in {kind}: {missing}. "
-                                f"Available columns: {list(chunk.columns)}"
-                            )
-                        if uses_synthetic_id:
-                            if not is_test and len(chunk.columns) != 2:
-                                raise ValueError(
-                                    "When id_column is not provided, the dataset must have exactly 2 columns "
-                                    f"(timestamp + target), but found {len(chunk.columns)} columns: "
-                                    f"{list(chunk.columns)}. Provide id_column for panel datasets."
-                                )
-                            if SYNTHETIC_ITEM_ID_COLUMN in chunk.columns:
-                                raise ValueError(
-                                    f"Dataset already contains a column named {SYNTHETIC_ITEM_ID_COLUMN!r}. "
-                                    "This name is reserved for synthetic ID injection."
-                                )
-                            chunk[id_column] = SYNTHETIC_ITEM_ID_VALUE
-                        chunk = _clean_timeseries_dataframe(chunk, id_column, timestamp_column, logger)
-                        stringify_mixed_object_columns(chunk)
-                        yield chunk
+            source_uri = test_data_source_uri(bucket, key)
 
             minimum_rows = (
                 prediction_length + 1
                 if is_test
                 else minimum_retained_rows(prediction_length, selection_train_size, bool(test_data_file_key))
             )
+
+            if source_format == FORMAT_PARQUET:
+                try:
+                    with staged_parquet_source(
+                        s3_client,
+                        bucket,
+                        key,
+                        workspace_dir=workspace_path_resolved,
+                        source_label=source_uri,
+                    ) as staged:
+                        raw_chunks = iter_parquet_batches(staged.path, PANDAS_CHUNK_SIZE, source_label=source_uri)
+                        frame, report = sample_latest_timeseries(
+                            _prepared_chunks(raw_chunks, source_format=source_format, is_test=is_test),
+                            id_column=id_column,
+                            timestamp_column=timestamp_column,
+                            max_size_bytes=budget,
+                            workspace_path=workspace_path_resolved,
+                            profile_path=Path(component_status.path) / profile_name,
+                            minimum_rows_per_series=minimum_rows,
+                        )
+                        if staged.source_bytes is not None:
+                            report["source_bytes"] = staged.source_bytes
+                except SSLError as exc:
+                    raise s3_tls_validation_error(bucket, key, effective_ssl_cert_path) from exc
+                report["source_format"] = source_format
+                return frame, report
+
+            try:
+                response = s3_client.get_object(Bucket=bucket, Key=key)
+            except SSLError as exc:
+                raise s3_tls_validation_error(bucket, key, effective_ssl_cert_path) from exc
+            source_bytes = response.get("ContentLength")
             with io.TextIOWrapper(response["Body"], encoding="utf-8") as stream:
-                return sample_latest_timeseries(
-                    _prepared_chunks(stream),
+                frame, report = sample_latest_timeseries(
+                    _prepared_chunks(_csv_chunks(stream), source_format=source_format, is_test=is_test),
                     id_column=id_column,
                     timestamp_column=timestamp_column,
                     max_size_bytes=budget,
@@ -418,8 +522,25 @@ def timeseries_data_loader(
                     profile_path=Path(component_status.path) / profile_name,
                     minimum_rows_per_series=minimum_rows,
                 )
+            if isinstance(source_bytes, int) and source_bytes >= 0:
+                report["source_bytes"] = source_bytes
+            report["source_format"] = source_format
+            return frame, report
 
-        df, sampling_report = _load_latest(bucket_name, file_key, MAX_SIZE_BYTES, "training_series_profile.jsonl")
+        # Resolve both formats before the sampler groups rows by ID.
+        s3_client = get_s3_client()
+        train_source_format = detect_input_source_format(s3_client, bucket_name, file_key, component_logger=logger)
+        has_user_test_data = bool(test_data_file_key)
+        test_source_format = (
+            detect_input_source_format(s3_client, test_data_bucket_name, test_data_file_key, component_logger=logger)
+            if has_user_test_data
+            else None
+        )
+        normalize_ids = not uses_synthetic_id and FORMAT_PARQUET in (train_source_format, test_source_format)
+
+        df, sampling_report = _load_latest(
+            bucket_name, file_key, MAX_SIZE_BYTES, "training_series_profile.jsonl", train_source_format
+        )
         if len(df) == 0:
             raise ValueError("No data was loaded from S3. The file may be empty or inaccessible.")
         stringify_mixed_object_columns(df)
@@ -465,8 +586,6 @@ def timeseries_data_loader(
             early = groups.cumcount() < cutoffs
             return frame[early].copy(), frame[~early].copy()
 
-        has_user_test_data = bool(test_data_file_key)
-
         if has_user_test_data:
             test_data_source = test_data_source_uri(test_data_bucket_name, test_data_file_key)
 
@@ -477,6 +596,7 @@ def timeseries_data_loader(
                     test_data_file_key,
                     TEST_DATA_MAX_SIZE_BYTES,
                     "test_series_profile.jsonl",
+                    test_source_format,
                     is_test=True,
                 )
             except Exception as e:
