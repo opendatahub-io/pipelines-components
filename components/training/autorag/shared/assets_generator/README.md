@@ -27,13 +27,10 @@ bash pipelines-components/scripts/setup-openshell-gateway.sh --help
 
 ## Coordinated release and rollback
 
-This is a breaking move from `ai4rag.assets_generator`; there is no compatibility
-shim. Release the matching ai4rag removal and pipelines-components changes together.
-The AutoRAG training image builds and installs the local wheel with `--no-deps`;
-its hashed requirements provide KFP and kfp-kubernetes. The inference image does
-not need this wheel. Keep ai4rag pinned to 0.25.4 while validating the relocation;
-validate the removal candidate separately before release. Broader dependency
-upgrades are a separate change.
+ai4rag 0.26.0 removed `ai4rag.assets_generator`. The AutoRAG training image builds
+and installs the relocated generator from the local pipelines-components wheel
+with `--no-deps`. Its hashed requirements provide ai4rag 0.27.0, KFP, and
+kfp-kubernetes. The optional generator tests use the same ai4rag version.
 
 Publish and select the matching training runtime image when recompiling managed
 pipelines. Previously compiled pipelines contain the old import path: retain their

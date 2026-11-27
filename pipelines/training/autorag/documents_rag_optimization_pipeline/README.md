@@ -36,9 +36,9 @@ deployment settings), executable notebooks, and evaluation results.
 - **Managed**: Yes
 - **Dependencies**:
   - Kubeflow:
-    - Name: Pipelines, Version: ==2.17.0
+    - Name: Pipelines, Version: ==2.18.2
   - External Services:
-    - Name: ai4rag, Version: ~=0.25.4
+    - Name: ai4rag, Version: ~=0.27.0
     - Name: MaaS, Version: >=1.0.0
     - Name: RHOAI Connections API, Version: >=1.0.0
     - Name: Milvus, Version: >=2.0.0
@@ -49,7 +49,7 @@ deployment settings), executable notebooks, and evaluation results.
   - pipeline
   - autorag
   - rag-optimization
-- **Last Verified**: 2026-11-12 00:00:00+00:00
+- **Last Verified**: 2026-11-27 00:00:00+00:00
 - **Owners**:
   - No Parent Owners: Yes
   - Approvers:
@@ -110,6 +110,14 @@ Canonical component ids are defined in the pipeline JSON templates under
 `documents-rag-optimization-pipeline-graph.json` for Neo4j). The publisher selects the
 template using the database connection, preserving the same component and stage IDs.
 Only the Neo4j template includes `graph_extraction` and knowledge-graph descriptions.
+
+### Pattern artifact names
+
+New runs use names such as `PatternA`, `PatternB`, and `PatternAA`. Warm-start
+candidates use the `-warm-start` suffix, and the selected warm-start pattern is
+published as `PatternA`. Use the names in the run's `rag_patterns` metadata or the
+MLflow artifact URI parameters to locate each pattern. Older runs may use numeric
+suffixes such as `Pattern1`.
 
 ## Breaking Changes (ai4rag 0.8.0)
 

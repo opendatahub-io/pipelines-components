@@ -385,14 +385,16 @@ class TestMlflowPatternLogger:
         run_logger.log_pattern(_pattern_payload())
         assert fake.child_runs()[0]["artifacts"] == []
 
-    def test_logs_kfp_artifact_pointers_on_child_run(self, logger_and_mlflow):
+    @pytest.mark.parametrize("pattern_name", ["Pattern1", "PatternA", "PatternAA"])
+    def test_logs_kfp_artifact_pointers_on_child_run(self, logger_and_mlflow, pattern_name):
         """Child runs point to KFP/S3 output instead of duplicating output files."""
         run_logger, fake = logger_and_mlflow
-        run_logger.log_pattern(_pattern_payload())
-        run_logger.log_pattern_artifact_pointers("s3://bucket/run/rag_patterns", ["rag_pattern_1"])
+        run_logger.log_pattern(_pattern_payload(name=pattern_name))
+        run_logger.log_pattern_artifact_pointers("s3://bucket/run/rag_patterns", [pattern_name])
         params = fake.child_runs()[0]["params"]
-        assert params["kfp.pattern_json_uri"] == "s3://bucket/run/rag_patterns/rag_pattern_1/pattern.json"
-        assert params["kfp.evaluation_results_uri"].endswith("/evaluation_results.json")
+        pattern_uri = f"s3://bucket/run/rag_patterns/{pattern_name}"
+        assert params["kfp.pattern_json_uri"] == f"{pattern_uri}/pattern.json"
+        assert params["kfp.evaluation_results_uri"] == f"{pattern_uri}/evaluation_results.json"
         assert fake.child_runs()[0]["artifacts"] == []
 
     def test_falls_back_to_create_run_when_nesting_unsupported(self):

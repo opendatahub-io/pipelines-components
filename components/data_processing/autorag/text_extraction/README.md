@@ -24,10 +24,12 @@ The four RapidOCR model paths are pinned explicitly from ``$DOCLING_ARTIFACTS_PA
 | `extracted_text` | `dsl.Output[dsl.Artifact]` | `None` | Output artifact directory where DoclingDocument JSON files will be written. |
 | `component_status` | `dsl.Output[dsl.Artifact]` | `None` | Output artifact containing stage-level progress tracking, extraction outcomes, and configured-engine candidate counts. |
 | `error_tolerance` | `Optional[float]` | `None` | Fraction of documents (0.0-1.0) allowed to fail without raising an error. None (the default) means zero tolerance. |
-| `max_extraction_workers` | `Optional[int]` | `None` | Number of parallel worker processes used for text extraction. Defaults to 4. Set to None to use all available CPU cores. |
+| `max_extraction_workers` | `Optional[int]` | `None` | Number of parallel worker processes used for text extraction. None uses half the available CPUs (including container quota), at least one and at most eight, capped by the supported document count. Each worker loads its own models; explicit overrides can exceed the CPU budget. |
 | `preset` | `str` | `speed` | Pipeline quality tier. "speed" (default) disables Docling table structure parsing. "balanced" enables TableFormer table reconstruction. |
 | `ocr_lang` | `Optional[str]` | `None` | Language of the document text, used only to pick the RapidOCR model bundle. Accepts a language name or ISO 639-1 code. Chinese ("chinese", "zh", "ch") selects the Chinese bundle; everything else, including None (the default), selects the English bundle, which covers all Latin-script languages. In the optimization pipeline this is filled from the language AutoRAG detects; for the indexing pipeline pass ``pattern.json`` ``settings.generation.language.code``. |
 | `ssl_cert_path` | `Optional[str]` | `None` | Optional path to a PEM-encoded CA bundle used to verify the S3 endpoint. The filename extension is not significant; ``.pem`` and ``.crt`` are both common. It overrides ``AWS_CA_BUNDLE`` for this component. A wrong or unreadable bundle fails with an actionable error; TLS verification is never disabled. |
+| `worker_startup_timeout` | `float` | `300.0` | Maximum seconds for each conversion worker to initialize, including imports. Must be positive and finite. Defaults to 300 seconds. |
+| `document_timeout` | `float` | `600.0` | Maximum seconds to convert one document, including lazy model loading. Must be positive and finite. Defaults to 600 seconds. Worker loss or timeout fails extraction regardless of error_tolerance. |
 
 ## Usage Examples 🧪
 
@@ -57,12 +59,12 @@ def example_pipeline():
   - Kubeflow:
     - Name: Pipelines, Version: >=2.15.2
   - External Services:
-    - Name: ai4rag, Version: ~=0.25.4
+    - Name: ai4rag, Version: ~=0.27.0
 - **Tags**:
   - data-processing
   - autorag
   - text-extraction
-- **Last Verified**: 2026-11-12 00:00:00+00:00
+- **Last Verified**: 2026-11-27 00:00:00+00:00
 - **Owners**:
   - No Parent Owners: Yes
   - Approvers:

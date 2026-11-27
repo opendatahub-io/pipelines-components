@@ -3,7 +3,8 @@ from kfp.kubernetes import use_secret_as_env
 from kfp_components.components.data_processing.autorag.documents_discovery import (
     documents_discovery,
 )
-from kfp_components.components.data_processing.autorag.text_extraction import (
+from kfp_components.components.data_processing.autorag.text_extraction.component import (
+    EXTRACTION_THREAD_LIMITS,
     text_extraction,
 )
 from kfp_components.components.training.autorag.component_stage_map_publisher import (
@@ -164,6 +165,9 @@ def documents_rag_optimization_pipeline(
         preset=preset,
         ocr_lang=search_space_preparation_task.outputs["detected_ocr_lang"],
     )
+
+    for name, value in EXTRACTION_THREAD_LIMITS.items():
+        text_extraction_task.set_env_variable(name, value)
 
     text_extraction_task.set_caching_options(False)
     text_extraction_task.set_cpu_request("4").set_memory_request("16Gi").set_cpu_limit(MAX_CPUS).set_memory_limit(

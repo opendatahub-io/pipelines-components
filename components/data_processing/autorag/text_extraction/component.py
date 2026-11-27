@@ -3,6 +3,16 @@ from typing import Optional
 from kfp import dsl
 from kfp_components.utils.consts import AUTORAG_IMAGE  # pyright: ignore[reportMissingImports]
 
+# Apply to extraction tasks only: the shared AutoRAG image also runs optimization.
+EXTRACTION_THREAD_LIMITS = {
+    "OPENBLAS_NUM_THREADS": "1",
+    "MKL_NUM_THREADS": "1",
+    "OMP_NUM_THREADS": "1",
+    "VECLIB_MAXIMUM_THREADS": "1",
+    "NUMEXPR_NUM_THREADS": "1",
+    "TOKENIZERS_PARALLELISM": "false",
+}
+
 
 @dsl.component(
     base_image=AUTORAG_IMAGE,  # noqa: E501
@@ -17,6 +27,8 @@ def text_extraction(
     preset: str = "speed",
     ocr_lang: Optional[str] = None,
     ssl_cert_path: Optional[str] = None,
+    worker_startup_timeout: float = 300.0,
+    document_timeout: float = 600.0,
 ):
     """Text Extraction component.
 
@@ -51,7 +63,9 @@ def text_extraction(
         error_tolerance: Fraction of documents (0.0-1.0) allowed to fail without
             raising an error. None (the default) means zero tolerance.
         max_extraction_workers: Number of parallel worker processes used for text
-            extraction. Defaults to 4. Set to None to use all available CPU cores.
+            extraction. None uses half the available CPUs (including container quota),
+            at least one and at most eight, capped by the supported document count.
+            Each worker loads its own models; explicit overrides can exceed the CPU budget.
         preset: Pipeline quality tier. "speed" (default) disables Docling table
             structure parsing. "balanced" enables TableFormer table reconstruction.
         ocr_lang: Language of the document text, used only to pick the RapidOCR model
@@ -66,6 +80,11 @@ def text_extraction(
             are both common. It overrides ``AWS_CA_BUNDLE`` for this component. A wrong
             or unreadable bundle fails with an actionable error; TLS verification is
             never disabled.
+        worker_startup_timeout: Maximum seconds for each conversion worker to initialize,
+            including imports. Must be positive and finite. Defaults to 300 seconds.
+        document_timeout: Maximum seconds to convert one document, including lazy model
+            loading. Must be positive and finite. Defaults to 600 seconds. Worker loss
+            or timeout fails extraction regardless of error_tolerance.
     """
     import json
     import logging
@@ -237,6 +256,8 @@ def text_extraction(
                     max_extraction_workers=max_extraction_workers,
                     docling_artifacts_path=os.environ.get("DOCLING_ARTIFACTS_PATH"),
                     docling_config=docling_config,
+                    worker_startup_timeout=worker_startup_timeout,
+                    document_timeout=document_timeout,
                 )
             except RuntimeError as exc:
                 if not any(marker in str(exc) for marker in ("CERTIFICATE_VERIFY_FAILED", "SSL validation failed")):
