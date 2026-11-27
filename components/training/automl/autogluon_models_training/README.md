@@ -59,7 +59,7 @@ model directory contains a ``model.json`` file with model metadata (name, locati
 - **Tags**:
   - training
   - automl
-- **Last Verified**: 2026-06-10 12:00:00+00:00
+- **Last Verified**: 2026-11-18 00:00:00+00:00
 - **Owners**:
   - No Parent Owners: Yes
   - Approvers:
@@ -162,11 +162,19 @@ One `<ModelName>_FULL/` directory is created for each of the top N selected mode
 
 ### `model.json`
 
-Each model directory contains a `model.json` file with the model's metadata, matching the corresponding entry in `context.models`. When predictor feature metadata is available, an ``inference`` block is also written so consumers can build KServe AutoGluon ``:predict`` bodies without loading AutoGluon:
+Each model directory contains a `model.json` file with the model's metadata, matching the corresponding entry in `context.models`.
+
+The top-level integer `rank` matches the final leaderboard position (1 = best), using unrounded holdout scores.
+If the selected metric is absent from the first leaderboard row, models retain their original selection order
+and ranks are assigned from that order; rank 1 then does not prove the model had the best post-refit holdout score.
+The field is also present in `context.models`. Older artifacts may omit it.
+
+When predictor feature metadata is available, an ``inference`` block is also written so consumers can build KServe AutoGluon ``:predict`` bodies without loading AutoGluon:
 
 ```json
 {
   "name": "LightGBM_BAG_L1_FULL",
+  "rank": 1,
   "location": {
     "model_directory": "LightGBM_BAG_L1_FULL",
     "predictor": "LightGBM_BAG_L1_FULL/predictor",
@@ -254,6 +262,7 @@ Each entry in **`context.models`** contains:
 | Key | Type | Description |
 | --- | ---- | ----------- |
 | `name` | `str` | Model name with `_FULL` suffix (e.g. `"LightGBM_BAG_L1_FULL"`). |
+| `rank` | `int` | Final leaderboard position, as in `model.json`; older artifacts may omit it. |
 | `location` | `dict` | Paths relative to `models_artifact.path`: `model_directory`, `predictor`, `notebook`, `metrics`. |
 | `metrics` | `dict` | `test_data` — evaluation results dict from `evaluate_predictions` (metric names → values). |
 | `inference` | `dict` (optional) | Same `input_data_schema` + `sample_payload` object as in that model’s `model.json`. Omitted when feature metadata cannot be read. |
@@ -274,6 +283,7 @@ Example:
     "models": [
       {
         "name": "LightGBM_BAG_L1_FULL",
+        "rank": 1,
         "location": {
           "model_directory": "LightGBM_BAG_L1_FULL",
           "predictor": "LightGBM_BAG_L1_FULL/predictor",
@@ -300,6 +310,7 @@ Example:
       },
       {
         "name": "NeuralNetFastAI_BAG_L1_FULL",
+        "rank": 2,
         "location": {
           "model_directory": "NeuralNetFastAI_BAG_L1_FULL",
           "predictor": "NeuralNetFastAI_BAG_L1_FULL/predictor",

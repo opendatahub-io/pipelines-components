@@ -66,6 +66,8 @@ packages = [
     "kfp_components.components.data_processing.autorag.documents_indexing",
     "kfp_components.components.data_processing.autorag.text_extraction",
     "kfp_components.components.data_processing.dataset_download",
+    "kfp_components.components.data_processing.dch",
+    "kfp_components.components.data_processing.dch.export_table_snapshot",
     "kfp_components.components.data_processing.download_model",
     "kfp_components.components.data_processing.ingest_to_milvus",
     "kfp_components.components.data_processing.parse_and_chunk",
@@ -94,7 +96,6 @@ packages = [
     "kfp_components.components.training.autorag.search_space_preparation",
     "kfp_components.components.training.autorag.shared",
     "kfp_components.components.training.autorag.shared.assets_generator",
-    "kfp_components.components.training.autorag.shared.runtime_embed",
     "kfp_components.components.training.finetuning",
     "kfp_components.components.training.finetuning.lora",
     "kfp_components.components.training.finetuning.lora_grpo",
@@ -105,6 +106,8 @@ packages = [
     "kfp_components.pipelines.data_processing",
     "kfp_components.pipelines.data_processing.autorag",
     "kfp_components.pipelines.data_processing.autorag.documents_indexing_pipeline",
+    "kfp_components.pipelines.data_processing.dch",
+    "kfp_components.pipelines.data_processing.dch.export_table_snapshot",
     "kfp_components.pipelines.data_processing.ray_data",
     "kfp_components.pipelines.data_processing.ray_data.pdf_documents_processing_rag_pipeline",
     "kfp_components.pipelines.data_processing.sdg",
@@ -140,15 +143,13 @@ packages = [
 
 [tool.setuptools.package-data]
 "*" = ["*.yaml", "*.yml", "*.json"]
-"kfp_components.components.training.autorag.shared.runtime_embed" = [
-    "*.html",
-]
 "kfp_components.components.training.automl.shared" = [
     "*.html",
     "run_status_templates/pipelines/*.json",
     "notebook_templates/*.ipynb",
 ]
 "kfp_components.components.training.autorag.shared" = [
+    "*.html",
     "run_status_templates/pipelines/*.json",
 ]
 

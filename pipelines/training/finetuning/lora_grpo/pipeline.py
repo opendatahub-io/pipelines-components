@@ -1,11 +1,12 @@
 """LoRA GRPO (Group Relative Policy Optimization) Training Pipeline.
 
-A 4-stage pipeline for LoRA GRPO fine-tuning with promotion gating:
-1. Dataset Preparation and LoRA GRPO Training - resolves the input source,
-   then ART runs a 1 GPU TrainJob and merges LoRA adapters
-2. GRPO Evaluation - extracts reward metrics, computes promotion gate
-3. Model Registry - registers promoted model (gated by promotion check)
-4. Model Deployment - deploys via KServe with vLLM (gated by promotion check)
+A 5-stage pipeline for LoRA GRPO fine-tuning with promotion gating.
+After validating the serving replica settings, the pipeline runs these stages:
+1. Dataset preparation - Resolve the dataset source and prepare the training inputs.
+2. LoRA GRPO training - Uses the Kubeflow Trainer with ART which runs a 1 GPU TrainJob and merges LoRA adapters
+3. GRPO evaluation and promotion check - extracts reward metrics, computes promotion gate
+4. Model registration - registers promoted model (gated by promotion check)
+5. Model deployment - deploys via KServe with vLLM (gated by promotion check)
 
 Uses the Kubeflow Trainer with ART backend on a single GPU TrainJob.
 Requires a user-provided ReadWriteMany PVC for persistent model storage
@@ -43,6 +44,7 @@ GRPO_MODEL_REGISTRY = dsl.component(
 @dsl.component(
     base_image="quay.io/opendatahub/odh-th-torch-cpu-py312:odh-3.6-ea.2",
     install_kfp_package=False,
+    packages_to_install=["kfp==2.17.0"],
 )
 def validate_replica_settings(min_replicas: int, max_replicas: int) -> None:
     """Validate serving replica bounds before expensive pipeline stages run."""
@@ -70,7 +72,7 @@ def lora_grpo_pipeline(
     # Optional inputs, ordered by pipeline stage.
     p07_dataset_max_invalid_row_ratio: float = 0.10,
     p08_dataset_data_connection_name: str = "s3-secret",
-    p09_training_num_iterations: int = 50,
+    p09_training_num_iterations: int = 5,
     p10_training_group_size: int = 4,
     p11_training_prompt_batch_size: int = 50,
     p12_training_lora_r: int = 16,
@@ -103,27 +105,44 @@ def lora_grpo_pipeline(
     p38_model_registry_format_version: str = "1.0",
     p39_serving_min_replicas: int = 1,
 ):
-    """LoRA GRPO Training Pipeline - RLVR fine-tuning with promotion gating.
+    """Fine-tune a language model for tool calling with LoRA GRPO.
 
-    RLVR means Reinforcement Learning from Verifiable Rewards.
+    The pipeline uses Group Relative Policy Optimization (GRPO) to train LoRA adapters through
+    Reinforcement Learning from Verifiable Rewards (RLVR).
 
-    A 4-stage pipeline that prepares and trains a language model using LoRA
-    GRPO (Group Relative Policy Optimization) for tool-calling tasks, evaluates
-    training results, and conditionally registers and deploys the model only if
-    training shows improvement.
+    ### Pipeline stages
 
-    Prerequisites:
-        - A ReadWriteMany PVC (e.g., NFS-backed) for model storage and serving.
-          Create with: ``oc create pvc <name> --access-mode=ReadWriteMany
-          --storage-class=nfs-csi --size=50Gi``
-        - ``kubernetes-credentials`` secret with KUBERNETES_SERVER_URL and
-          KUBERNETES_AUTH_TOKEN (required for TrainJob creation).
-        - ``hf-token`` secret (optional, for gated HuggingFace models/datasets).
-        - RHOAI data connection Secret (only required for private S3 datasets;
-          defaults to ``s3-secret`` and is injected optionally).
-        - Model Registry RoleBinding for the pipeline ServiceAccount (required
-          for stage 4).
-        - Pipeline ServiceAccount RBAC for KServe CRDs (required for stage 5).
+    The pipeline validates the serving replica settings before running five stages.
+
+    1. **Dataset preparation:** Resolve the dataset source and prepare the training inputs.
+
+    2. **LoRA GRPO training:** Run a TrainJob using ART on one GPU and merge the LoRA adapter into the base model.
+
+    3. **GRPO evaluation and promotion gate:** Evaluate the recorded rewards. Promotion requires at least two
+       reward observations and a final reward greater than the initial reward.
+
+    4. **Model registration:** Register the model in Model Registry if it passes the promotion gate.
+
+    5. **Model deployment:** Deploy the registered model with KServe and vLLM.
+
+    ### Prerequisites
+
+    - **Shared storage:** A ReadWriteMany PVC in the pipeline project for model storage and serving. See
+      `p01_persistent_pvc` below for setup.
+
+    - **Training credentials:** A `kubernetes-credentials` Secret in the pipeline project with
+      `KUBERNETES_SERVER_URL` and `KUBERNETES_AUTH_TOKEN` for TrainJob creation.
+
+    - **Hugging Face access (optional):** Create an `hf-token` Secret in the pipeline project if the
+      model or dataset is gated.
+
+    - **Private S3 datasets (optional):** If you use a private S3 dataset, create a RHOAI data connection
+      Secret in the pipeline project. The default Secret name is `s3-secret`.
+
+    - **Model Registry access:** A RoleBinding for the pipeline ServiceAccount to register the model.
+
+    - **Model serving access:** Permission for the pipeline ServiceAccount to manage KServe ServingRuntime and
+      InferenceService resources.
 
     Args:
         p01_persistent_pvc: (Required) Name of the ReadWriteMany PVC used for
@@ -147,10 +166,13 @@ def lora_grpo_pipeline(
             fine-tune. If the model is gated, configure the ``hf-token`` secret.
             Examples: ``Qwen/Qwen3-4B`` or
             ``ibm-granite/granite-3.3-8b-instruct``
-        p04_model_registry_address: (Required) Hostname or IP address of the
-            Model Registry service. Pass only the host or IP, without
-            ``http://``, ``https://``, or the ``/api/model_registry/v1alpha3``
-            path.
+        p04_model_registry_address: (Required) Model Registry service address.
+            Provide the hostname or IP, optionally prefixed with ``http://`` or
+            ``https://``. If no scheme is provided, the component prepends
+            ``http://``. Do not include the ``/api/model_registry/v1alpha3``
+            path. When using ``https://``, TLS certificate verification is
+            currently disabled by the registry client while the pod's
+            service-account token is used.
         p05_serving_namespace: (Required) OpenShift project where the KServe
             InferenceService will be created. Must be the same namespace where
             your PVC is provisioned. Should have KServe enabled - typically your
@@ -168,16 +190,16 @@ def lora_grpo_pipeline(
             applied to direct Hugging Face loading.
         p08_dataset_data_connection_name: Name of the RHOAI data connection
             Secret used by the preparation task for private S3 input. It
-            defaults to ``s3-secret``. It is optional for Hugging Face, HTTP(S),
+            defaults to ``s3-secret``. It is not needed for Hugging Face, HTTP(S),
             and local/PVC input. The Secret should provide
             ``AWS_ACCESS_KEY_ID``, ``AWS_SECRET_ACCESS_KEY``, and
             ``AWS_DEFAULT_REGION``; it may provide ``AWS_S3_ENDPOINT``.
         p09_training_num_iterations: Number of GRPO policy-gradient update
             steps. Each iteration generates ``group_size`` rollouts per prompt
-            and updates the LoRA adapter. The promotion gate (stage 3) requires
-            ``final_reward > initial_reward``. Increase the completion timeout
-            when using higher iteration counts, larger models, or slower
-            hardware.
+            and updates the LoRA adapter. The promotion gate requires
+            ``final_reward > initial_reward``. Increase the timeout in
+            ``p15_training_completion_timeout_seconds`` when using higher
+            iteration counts, larger models, or slower hardware.
         p10_training_group_size: Rollouts generated per prompt to estimate
             relative reward advantage. Higher = better gradient signal but more
             memory and time. Default 4 is suitable for single-GPU runs.
@@ -233,12 +255,12 @@ def lora_grpo_pipeline(
             predictor pod. Example: ``2``
         p27_serving_memory_requests: RAM requested and limited for the KServe
             predictor pod. Example: ``8Gi``
-        p28_training_data_config: Optional Hugging Face dataset configuration
-            name. Set it when a multi-configuration dataset does not include the
-            configuration in its URI, for example ``Qwen3`` with
-            ``hf://Agent-Ark/Toucan-1.5M``. Leave it empty when the URI already
-            includes ``:config``, when the dataset has one configuration, or for
-            local/PVC, S3, and HTTP(S) sources. Split selection is not supported;
+        p28_training_data_config: Hugging Face dataset configuration name. Set
+            it for a dataset with multiple configurations when ``p02_dataset_uri``
+            omits the configuration name, for example ``Qwen3`` with
+            ``hf://Agent-Ark/Toucan-1.5M``. Leave it empty when
+            ``p02_dataset_uri`` already includes ``:config``, when the dataset has
+            one configuration, or for local/PVC, S3, and HTTP(S) sources. Split selection is not supported;
             do not use this parameter to specify a split name.
         p29_training_cpu: CPU cores requested for the TrainJob worker pod.
             Example: ``4``
@@ -263,7 +285,7 @@ def lora_grpo_pipeline(
             registry. Use ``pytorch`` for vLLM-served models. Example: ``pytorch``
         p38_model_registry_format_version: Version of the model format. Use
             ``1.0`` for PyTorch. Example: ``1.0``
-        p39_serving_min_replicas: Minimum live KServe predictor replicas. Must
+        p39_serving_min_replicas: Minimum KServe predictor replicas. Must
             be at least 1 and no greater than ``p25_serving_max_replicas``. Set
             to 1 to keep the endpoint always warm. Example: ``1``
     """
@@ -307,7 +329,7 @@ def lora_grpo_pipeline(
     validate_replicas_task.set_caching_options(False)
 
     # =====================================================================
-    # Stage 1: LoRA GRPO Training
+    # Stage 1: Dataset preparation
     # =====================================================================
     prepare_dataset_task = prepare_grpo_dataset(
         dataset_uri=p02_dataset_uri,
@@ -337,6 +359,10 @@ def lora_grpo_pipeline(
         },
         optional=True,
     )
+
+    # =========================================================================
+    # Stage 2: LoRA GRPO training
+    # =========================================================================
 
     training_task = configure_training_task(
         train_model(
@@ -385,9 +411,9 @@ def lora_grpo_pipeline(
         mount_path=PVC_MOUNT_PATH,
     )
 
-    # =========================================================================
-    # Stages 4 + 5 run only when evaluation passes the promotion gate.
-    # =========================================================================
+    # ========================================================================================================
+    # Stages 4 (Model registration)  + 5 (Model deployment) run only when evaluation passes the promotion gate.
+    # ========================================================================================================
     with dsl.If(
         grpo_eval_task.outputs["promotion_passed"] == True,  # noqa: E712 - KFP dsl.If requires explicit == comparison
         name="promotion-gate",

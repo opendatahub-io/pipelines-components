@@ -120,7 +120,7 @@ def example_pipeline(
   - timeseries
   - automl
   - model-selection
-- **Last Verified**: 2026-10-23 00:00:00+00:00
+- **Last Verified**: 2026-11-18 00:00:00+00:00
 - **Owners**:
   - No Parent Owners: Yes
   - Approvers:
@@ -159,8 +159,31 @@ Each refitted model directory includes ``model.json``. When schema construction 
 
 Under each ``{model_name}_FULL/metrics/`` directory:
 
-- **`metrics.json`**: Holdout test metrics from ``TimeSeriesPredictor.evaluate`` (finite values only). Uses AutoGluon's raw **higher-is-better** sign convention (error metrics such as ``mean_absolute_scaled_error`` are negated) so the HTML leaderboard ranks models correctly.
+- **`metrics.json`**: Holdout test metrics from ``TimeSeriesPredictor.evaluate`` (finite values only), restored to their natural signs using AutoGluon scorer metadata.
+  Errors are positive; signed diagnostics such as ``BIAS`` retain their signs. The exported leaderboard ranks errors ascending and higher-is-better metrics descending. AutoGluon's internal top-N selection is unchanged.
 - **`back_testing.json`**: Multi-window backtest with ``per_window_metrics`` and ``series_analysis``
   (best/worst forecast timelines). Window error metrics use **natural positive** signs via
   ``filter_finite_metrics``. Best-effort after refit; omitted if backtest APIs or history are
   insufficient. Visualized in the generated inference notebook when present.
+
+Metric export compatibility:
+
+- Each ``model.json`` and entry in ``models_artifact.metadata.context.models`` may include an integer ``rank``.
+  It is optional even in current exports and, when present, matches the final exported leaderboard,
+  starting at 1 for the best model. Ranks use unrounded holdout scores. Older artifacts do not contain this field.
+  For default leaderboard order, sort by ``rank`` ascending when all ranks are available.
+- New exports carry ``metrics_convention: natural_v1`` and ``metric_directions`` in ``model.json``,
+  ``predictor_metadata.json``, models artifact metadata/context, and leaderboard artifact metadata.
+  Display values directly. Use ``lower_is_better`` / ``higher_is_better`` for tooltips and for ordering when ranks are missing.
+  A ``diagnostic`` metric has no optimization direction. ``metrics.json`` remains a flat mapping with its convention
+  recorded in the accompanying metadata.
+- Older time-series exports without the marker contain raw AutoGluon scores. Sort those scores descending.
+  Legacy backtest signs depend on the metric. Older normalization could leave RMSLE negative, while scorer-based
+  normalization exports it as positive.
+- MLflow records ``metrics_convention`` and the evaluation ``metric_direction`` on parent and model runs;
+  parent best/worst scores and best-model selection follow that direction.
+- ``back_testing.json`` includes ``series_analysis.ranking_metric``. Notebook headings identify this metric and any fallback;
+  annotations name the actual metric. For older artifacts the ranking metric is shown as unavailable.
+- Holdout scores, all-series backtesting aggregates, and individual-series errors cover different scopes and need not match.
+  Holdout and aggregate MAPE are ratios (e.g. 0.05), while per-series MAPE is a percentage (e.g. 5%).
+  Missing aggregate metrics are not replaced by another metric.

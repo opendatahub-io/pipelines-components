@@ -30,6 +30,7 @@ GRPO_MODEL_REGISTRY = dsl.component(
 @dsl.component(
     base_image="quay.io/opendatahub/odh-th-torch-cpu-py312:odh-3.6-ea.2",
     install_kfp_package=False,
+    packages_to_install=["kfp==2.17.0"],
 )
 def validate_replica_settings(min_replicas: int, max_replicas: int) -> None:
     """Validate serving replica bounds before expensive pipeline stages run."""
@@ -75,23 +76,15 @@ def lora_grpo_minimal_pipeline(
     p26_serving_cpu_requests: str = "2",
     p27_serving_memory_requests: str = "8Gi",
 ):
-    """Run the complete quick-start LoRA GRPO workflow.
+    """Run the full LoRA GRPO pipeline with minimal parameters.
+
+    The minimal pipeline runs the same stages as the [standard LoRA GRPO pipeline](../lora_grpo/README.md).
+    You can choose the model and dataset, tune training parameters, and configure serving.
 
     The pipeline prepares the dataset, submits a single-GPU ART TrainJob,
     evaluates reward improvement, and registers and deploys the merged model
     only when the promotion gate passes.
 
-    Private S3 dataset inputs use the optional RHOAI data connection Secret
-    specified by ``p08_dataset_data_connection_name``. It defaults to
-    ``s3-secret``. The Secret should provide
-    ``AWS_ACCESS_KEY_ID``, ``AWS_SECRET_ACCESS_KEY``, and
-    ``AWS_DEFAULT_REGION``; it may provide ``AWS_S3_ENDPOINT``. Hugging Face,
-    HTTP(S), and local/PVC inputs do not require this Secret.
-
-    The following implementation details are intentionally fixed for the
-    minimal variant: the Training Hub runtime, one training GPU, 4 CPU cores,
-    64Gi worker memory, empty TrainJob labels/annotations, the PyTorch model
-    format, and the standard registry/deployment metadata defaults.
 
     Args:
         p01_persistent_pvc: (Required) Name of the ReadWriteMany PVC used for
@@ -115,10 +108,13 @@ def lora_grpo_minimal_pipeline(
             fine-tune. If the model is gated, configure the ``hf-token`` secret.
             Examples: ``Qwen/Qwen3-4B`` or
             ``ibm-granite/granite-3.3-8b-instruct``
-        p04_model_registry_address: (Required) Hostname or IP address of the Model
-            Registry service. Pass only the host or IP, without
-            ``http://``, ``https://``, or the ``/api/model_registry/v1alpha3``
-            path.
+        p04_model_registry_address: (Required) Model Registry service address.
+            Provide the hostname or IP, optionally prefixed with ``http://`` or
+            ``https://``. If no scheme is provided, the component prepends
+            ``http://``. Do not include the ``/api/model_registry/v1alpha3``
+            path. When using ``https://``, TLS certificate verification is
+            currently disabled by the registry client while the pod's
+            service-account token is used.
         p05_serving_namespace: (Required) OpenShift project where the KServe
             InferenceService will be created. Must be the same namespace where
             your PVC is provisioned. Should have
@@ -137,16 +133,16 @@ def lora_grpo_minimal_pipeline(
             applied to direct Hugging Face loading.
         p08_dataset_data_connection_name: Name of the RHOAI data connection
             Secret used by the preparation task for private S3 input. It
-            defaults to ``s3-secret``. It is optional for Hugging Face,
+            defaults to ``s3-secret``. It is not needed for Hugging Face,
             HTTP(S), and local/PVC input. The Secret should provide
             ``AWS_ACCESS_KEY_ID``, ``AWS_SECRET_ACCESS_KEY``, and
             ``AWS_DEFAULT_REGION``; it may provide ``AWS_S3_ENDPOINT``.
         p09_training_num_iterations: Number of GRPO policy-gradient update
             steps. Each iteration generates ``group_size`` rollouts per prompt
             and updates the LoRA adapter. The promotion gate (stage 3) requires
-            ``final_reward > initial_reward``. Increase the completion timeout
-            when using higher iteration counts, larger models, or slower
-            hardware.
+            ``final_reward > initial_reward``. Increase the timeout in
+            ``p15_training_completion_timeout_seconds`` when using higher
+            iteration counts, larger models, or slower hardware.
         p10_training_group_size: Rollouts generated per prompt to estimate
             relative reward advantage. Higher = better gradient signal but more
             memory and time. Default 4 is suitable for single-GPU runs.

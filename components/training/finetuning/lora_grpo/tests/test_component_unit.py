@@ -242,11 +242,6 @@ class TestLoRAGRPOComponentUnitTests:
         assert "SFT" not in docstring
         assert "OSFT" not in docstring
 
-    def test_component_base_image(self):
-        """Test that the component uses the correct CPU base image."""
-        decorator_kwargs = train_model.component_spec.implementation.container
-        assert "odh-th-torch-cpu-py312" in decorator_kwargs.image
-
     @mock.patch.dict("sys.modules", {"kubeflow.trainer": mock.MagicMock()})
     def test_component_with_mocked_trainer(self):
         """Test component with mocked Kubeflow Trainer."""

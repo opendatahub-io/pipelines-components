@@ -14,3 +14,4 @@ This directory contains components in the **Data Processing** category:
 
 - [AutoML](./automl/README.md)
 - [AutoRAG](./autorag/README.md)
+- [Data Connect Hub](./dch/README.md)

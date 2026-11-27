@@ -1,16 +1,12 @@
-from pathlib import Path
 from typing import List, NamedTuple
 
 from kfp import dsl
 from kfp.compiler import Compiler
 from kfp_components.utils.consts import AUTORAG_IMAGE  # pyright: ignore[reportMissingImports]
 
-_AUTORAG_SHARED = Path(__file__).parents[1] / "shared"
-
 
 @dsl.component(
     base_image=AUTORAG_IMAGE,  # noqa: E501
-    embedded_artifact_path=str(_AUTORAG_SHARED / "runtime_embed"),
     install_kfp_package=False,
 )
 def search_space_preparation(
@@ -18,7 +14,6 @@ def search_space_preparation(
     search_space_report: dsl.Output[dsl.Artifact],
     embedding_models: List[str],
     generation_models: List[str],
-    embedded_artifact: dsl.EmbeddedInput[dsl.Dataset] = None,
     component_status: dsl.Output[dsl.Artifact] = None,
     preset: str = "speed",
     db_provider: str = "",
@@ -39,7 +34,6 @@ def search_space_preparation(
         search_space_report: Output artifact for the JSON search space report.
         embedding_models: List of embedding model identifiers to try.
         generation_models: List of generation model identifiers to try.
-        embedded_artifact: Embedded ``autorag.shared`` helpers injected by KFP at runtime.
         component_status: Output artifact containing stage-level progress tracking.
         preset: Pipeline quality tier. "speed" (default) uses recursive chunking
             without contextual enrichment. "balanced" uses hybrid chunking with
@@ -55,12 +49,10 @@ def search_space_preparation(
     Environment variables (required):
         MAAS_BASE_URL, MAAS_API_KEY.
     """
-    import importlib.util
     import logging
     import os
     import ssl
     from collections import namedtuple
-    from pathlib import Path
 
     import pandas as pd
     from ai4rag.search_space.prepare import build_search_space_report, prepare_search_space_with_maas
@@ -82,32 +74,10 @@ def search_space_preparation(
 
     chunking_methods = PRESET_CHUNKING_METHODS[preset]
 
-    if embedded_artifact is None:
-        from kfp_components.components.training.autorag.shared.database_connection import normalize_connection
-    else:
-        connection_path = Path(embedded_artifact.path) / "database_connection.py"
-        connection_spec = importlib.util.spec_from_file_location("_autorag_database_connection", connection_path)
-        connection_module = importlib.util.module_from_spec(connection_spec)
-        connection_spec.loader.exec_module(connection_module)
-        normalize_connection = connection_module.normalize_connection
+    from kfp_components.components.training.autorag.shared.component_status import component_status_tracker
+    from kfp_components.components.training.autorag.shared.database_connection import normalize_connection
 
-    if component_status is None:
-        from kfp_components.components.training.autorag.shared.component_status import (  # pyright: ignore[reportMissingImports]
-            null_component_status_tracker,
-        )
-
-        status = null_component_status_tracker()
-    else:
-        _embedded_path = Path(embedded_artifact.path)
-        _module_path = _embedded_path if _embedded_path.is_file() else _embedded_path / "component_status.py"
-        _spec = importlib.util.spec_from_file_location("_autorag_component_status", _module_path)
-        if _spec is None or _spec.loader is None:
-            raise ValueError(f"Cannot load embedded module from {_module_path}")
-        _status_module = importlib.util.module_from_spec(_spec)
-        _spec.loader.exec_module(_status_module)
-        status = _status_module.bootstrap_status_tracker(
-            embedded_artifact, component_status, "search_space_preparation"
-        )
+    status = component_status_tracker(component_status, "search_space_preparation")
     with status:
         if component_status is not None:
             status.set_metadata(display_name="Search Space Preparation Status")

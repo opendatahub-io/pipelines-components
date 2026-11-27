@@ -1,0 +1,20 @@
+---
+name: dch-export-table-snapshot
+description: Export a relational table through DCH Flight SQL as CSV or Parquet and publish an HTML report.
+stability: alpha
+dependencies:
+  kubeflow:
+    - name: Pipelines
+      version: ">=2.16.1"
+  external_services:
+    - name: Data Connect Hub Python SDK
+      version: "==0.2.1"
+tags:
+  - data_processing
+  - data_connect_hub
+  - sql
+  - csv
+  - parquet
+lastVerified: 2026-11-24T00:00:00Z
+links:
+  documentation: https://github.com/opendatahub-io/data-connect-hub

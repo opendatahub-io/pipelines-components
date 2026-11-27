@@ -7,6 +7,7 @@ import sys
 import threading
 from contextlib import contextmanager
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 import pytest
@@ -48,7 +49,7 @@ def isolated_sys_modules():
             if sub == "autogluon.core.metrics":
                 _m.METRICS = {
                     "binary": {
-                        k: mock.MagicMock()
+                        k: SimpleNamespace(name=k)
                         for k in (
                             "accuracy",
                             "balanced_accuracy",
@@ -65,7 +66,7 @@ def isolated_sys_modules():
                         )
                     },
                     "multiclass": {
-                        k: mock.MagicMock()
+                        k: SimpleNamespace(name=k)
                         for k in (
                             "accuracy",
                             "balanced_accuracy",
@@ -79,7 +80,7 @@ def isolated_sys_modules():
                         )
                     },
                     "regression": {
-                        k: mock.MagicMock()
+                        k: SimpleNamespace(name=k)
                         for k in (
                             "r2",
                             "mean_squared_error",
@@ -96,6 +97,12 @@ def isolated_sys_modules():
                         )
                     },
                 }
+                for alias, canonical in (
+                    ("mse", "mean_squared_error"),
+                    ("rmse", "root_mean_squared_error"),
+                    ("mae", "mean_absolute_error"),
+                ):
+                    _m.METRICS["regression"][alias] = _m.METRICS["regression"][canonical]
             mocked_modules[sub] = _m
 
         def _roc_auc_score_side_effect(y_true, y_score):
@@ -1433,10 +1440,33 @@ class TestAutogluonModelsTrainingUnitTests:
         # clone also called exactly once (not per model)
         mock_predictor.clone.assert_called_once()
 
+    @pytest.mark.parametrize(
+        ("eval_metric", "resolved_metric", "score_key", "scores", "expected_ranks"),
+        [
+            ("r2", "r2", "r2", (0.9, 0.85), [1, 2]),
+            ("r2", "r2", "r2", (0.90001, 0.90002), [2, 1]),
+            ("root_mean_squared_error", "root_mean_squared_error", "root_mean_squared_error", (-0.42, -0.31), [2, 1]),
+            ("rmse", "root_mean_squared_error", "root_mean_squared_error", (-0.42, -0.31), [2, 1]),
+            ("mae", "mean_absolute_error", "r2", (0.8, 0.9), [1, 2]),
+        ],
+    )
+    @mock.patch("kfp_components.components.training.automl.shared.mlflow_tracking.experiment_run_logger")
     @mock.patch("pandas.read_parquet")
     @mock.patch("autogluon.tabular.TabularPredictor")
-    def test_context_models_metadata(self, mock_predictor_class, mock_read_parquet, tmp_path):
-        """context['models'] contains one entry per model with correct name, location, and metrics."""
+    def test_context_models_metadata(
+        self,
+        mock_predictor_class,
+        mock_read_parquet,
+        mock_run_logger,
+        tmp_path,
+        eval_metric,
+        resolved_metric,
+        score_key,
+        scores,
+        expected_ranks,
+    ):
+        """Exported ranks use the unrounded scores under the same key MLflow tracks."""
+        mock_run_logger.return_value.__enter__.return_value.result.return_value = (False, {})
         top_models = ["LightGBM_BAG_L1", "NeuralNetFastAI_BAG_L1"]
         mock_predictor = mock.MagicMock()
         mock_predictor_clone = mock.MagicMock()
@@ -1444,15 +1474,16 @@ class TestAutogluonModelsTrainingUnitTests:
         mock_predictor.clone.return_value = mock_predictor_clone
         mock_predictor.problem_type = "regression"
         mock_predictor.label = "target"
-        mock_predictor.eval_metric = "r2"
+        mock_predictor.eval_metric = mock.Mock(name=resolved_metric)
+        mock_predictor.eval_metric.name = resolved_metric
         _mock_leaderboard_top_models(mock_predictor, top_models)
         # Use distinct prediction objects per model so evaluate_predictions can return
         # the correct metrics regardless of concurrent execution order.
         lgbm_preds = mock.MagicMock(name="lgbm_preds")
         cat_preds = mock.MagicMock(name="cat_preds")
         _metrics_by_pred = {
-            id(lgbm_preds): {"r2": 0.9, "root_mean_squared_error": 0.31},
-            id(cat_preds): {"r2": 0.85, "root_mean_squared_error": 0.42},
+            id(lgbm_preds): {"r2": 0.9, "root_mean_squared_error": 0.31, score_key: scores[0]},
+            id(cat_preds): {"r2": 0.85, "root_mean_squared_error": 0.42, score_key: scores[1]},
         }
         mock_predictor_clone.predict.side_effect = lambda df, model: lgbm_preds if "LightGBM" in model else cat_preds
         mock_predictor_clone.evaluate_predictions.side_effect = lambda y_true, y_pred: _metrics_by_pred[id(y_pred)]
@@ -1467,9 +1498,11 @@ class TestAutogluonModelsTrainingUnitTests:
         mock_models_artifact.path = models_output_dir
         mock_models_artifact.metadata = {}
 
-        autogluon_models_training.python_func(
+        html_artifact = _make_html_artifact(tmp_path)
+        result = autogluon_models_training.python_func(
             label_column="target",
             task_type="regression",
+            eval_metric=eval_metric,
             top_n=2,
             train_data_path="/tmp/train.parquet",
             test_data=mock.MagicMock(path="/tmp/test.parquet"),
@@ -1480,7 +1513,7 @@ class TestAutogluonModelsTrainingUnitTests:
             models_artifact=mock_models_artifact,
             experiment_notebook=_make_experiment_notebook_artifact(tmp_path),
             component_status=_make_component_status_artifact(tmp_path),
-            html_artifact=_make_html_artifact(tmp_path),
+            html_artifact=html_artifact,
         )
 
         context = mock_models_artifact.metadata["context"]
@@ -1496,7 +1529,7 @@ class TestAutogluonModelsTrainingUnitTests:
             Path("LightGBM_BAG_L1_FULL") / "notebooks" / "automl_predictor_notebook.ipynb"
         )
         assert lgbm["location"]["metrics"] == str(Path("LightGBM_BAG_L1_FULL") / "metrics")
-        assert lgbm["metrics"]["test_data"] == {"r2": 0.9, "root_mean_squared_error": 0.31}
+        assert lgbm["metrics"]["test_data"] == _metrics_by_pred[id(lgbm_preds)]
 
         cat = models[1]
         assert cat["name"] == "NeuralNetFastAI_BAG_L1_FULL"
@@ -1506,7 +1539,12 @@ class TestAutogluonModelsTrainingUnitTests:
             Path("NeuralNetFastAI_BAG_L1_FULL") / "notebooks" / "automl_predictor_notebook.ipynb"
         )
         assert cat["location"]["metrics"] == str(Path("NeuralNetFastAI_BAG_L1_FULL") / "metrics")
-        assert cat["metrics"]["test_data"] == {"r2": 0.85, "root_mean_squared_error": 0.42}
+        assert cat["metrics"]["test_data"] == _metrics_by_pred[id(cat_preds)]
+        assert [model["rank"] for model in models] == expected_ranks
+        leaderboard_models = [row["model"] for row in json.loads(html_artifact.metadata["data"])]
+        assert leaderboard_models == [model["name"] for model in sorted(models, key=lambda model: model["rank"])]
+        assert result.best_model_name == context["best_model_name"] == leaderboard_models[0]
+        assert mock_run_logger.call_args.kwargs["eval_metric"] == resolved_metric
 
         # Shared context fields still present alongside models
         assert context["task_type"] == "regression"
@@ -1519,6 +1557,8 @@ class TestAutogluonModelsTrainingUnitTests:
             model_json_path = Path(models_output_dir) / model_entry["name"] / "model.json"
             assert model_json_path.exists()
             on_disk = json.loads(model_json_path.read_text())
+            assert type(on_disk["rank"]) is int
+            assert on_disk["rank"] == model_entry["rank"]
             assert on_disk["name"] == model_entry["name"]
             assert on_disk["location"] == model_entry["location"]
             assert on_disk["metrics"] == model_entry["metrics"]
